@@ -20,6 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'draw = behavior_tree.main:draw_follow',
+            'follow = behavior_tree.main:test_follow'
         ],
     },
 )
