@@ -63,7 +63,6 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
         self.logger.debug(f'setup complete')
         
     def initialise(self) -> None:
-        
         self.logger.debug("Finished initializing")
     
     def update(self):
