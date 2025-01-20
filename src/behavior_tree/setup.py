@@ -21,7 +21,8 @@ setup(
     entry_points={
         'console_scripts': [
             'draw = behavior_tree.main:draw_follow',
-            'follow = behavior_tree.main:test_follow'
+            'follow = behavior_tree.main:test_follow',
+            'follow-audio = behavior_tree.main:test_follow_audio',
         ],
     },
 )

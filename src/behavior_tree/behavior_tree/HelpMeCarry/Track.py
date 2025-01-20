@@ -2,6 +2,7 @@ import py_trees
 
 from behavior_tree.TemplateNodes.Vision import BtNode_TrackPerson
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoGrasp
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from .nodes import BtNode_ProcessTrack
 
 TRACKING_NAMESPACE = "track"
@@ -20,3 +21,14 @@ def createFollowPerson():
     follow.add_child(BtNode_GotoGrasp(name="Goto grasp position", bb_source=TRACKING_NAMESPACE+"/"+TRACKING_POINT_KEY))
 
     return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnSelected([follow_repeat]), children=[track_repeat, follow_repeat])
+
+def createFollowPersonAudio():
+    root = py_trees.composites.Sequence(name="root", memory=True)
+
+    root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Starting to follow person"))
+    follow = createFollowPerson()
+    root.add_child(follow)
+    root.add_child(BtNode_Announce(name="Announce finished", bb_source=None, message="Stopped following after person has reached destination"))
+    root.add_child(py_trees.behaviours.Running(name="done"))
+
+    return root
