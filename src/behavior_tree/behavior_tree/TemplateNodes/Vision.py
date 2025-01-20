@@ -169,12 +169,13 @@ class BtNode_TrackPerson(ServiceHandler):
                 # proceed with picking out the person with the registered id
                 persons : list[Object] = self.response.result().objects
                 for person in persons:
+                    print(f"person id: {person.id}")
                     if person.id == self.person_id:
+                    # if person.id == 1:
                         point_stamped = PointStamped()
                         point_stamped.point = person.centroid
                         point_stamped.header = self.response.result().header
                         self.bb_write_client.set(self.bb_key, point_stamped, overwrite=True)
-                        self.bb_write_client.set(self.bb_time_key, time.time(), overwrite=True)
                         self.feedback_message = f"Detected person with id {self.person_id}, centroid as PointStamped stored to {self.bb_namespace} / {self.bb_key}"
                         return pytree.common.Status.SUCCESS
                 

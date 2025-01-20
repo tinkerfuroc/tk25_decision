@@ -16,11 +16,14 @@ def createFollowPerson():
 
     follow = py_trees.composites.Sequence(name="Follow", memory=True)
     follow_inverter = py_trees.decorators.Inverter(name="follow inverter", child=follow)
-    follow_repeat = py_trees.decorators.Repeat(name="Repeat follow until success", child=follow_inverter, num_success=-1)
+    follow_repeat = py_trees.decorators.Retry(name="Repeat follow until success", child=follow_inverter, num_failures=999)
     follow.add_child(BtNode_ProcessTrack(name="Process track results", bb_namespace=TRACKING_NAMESPACE, bb_key_source=TRACKING_POINT_KEY, threshold_m=0.2, threshold_frames=3))
+    follow.add_child(BtNode_Announce(name="Announce person updated", bb_source=None, message="Person identified"))
     follow.add_child(BtNode_GotoGrasp(name="Goto grasp position", bb_source=TRACKING_NAMESPACE+"/"+TRACKING_POINT_KEY))
+    follow.add_child(BtNode_Announce(name="Announce reached destination", bb_source=None, message="Reached"))
 
     return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnSelected([follow_repeat]), children=[track_repeat, follow_repeat])
+    # return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[track_repeat, follow_repeat])
 
 def createFollowPersonAudio():
     root = py_trees.composites.Sequence(name="root", memory=True)

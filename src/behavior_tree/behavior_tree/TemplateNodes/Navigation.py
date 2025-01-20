@@ -83,7 +83,7 @@ class BtNode_GotoGrasp(ServiceHandler):
     def __init__(self, 
                 name: str,
                 bb_source: str,
-                service_name : str = "goto_grasp",
+                service_name : str = "go_to_grasp",
                 target : PointStamped = None
                 ):
         """
