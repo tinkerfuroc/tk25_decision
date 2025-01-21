@@ -158,7 +158,7 @@ class BtNode_TrackPerson(ServiceHandler):
         if self.response.done():
             # success
             if self.response.result().status == 0:
-                # if the person has been registered yet
+                # if the person has not been registered yet
                 if self.person_id is None:
                     self.person_id = self.response.result().person_id
                     if not (self.person_id > 0):
@@ -180,7 +180,6 @@ class BtNode_TrackPerson(ServiceHandler):
                         return pytree.common.Status.SUCCESS
                 
                 # if none of the people inside persons has matching id
-                # TODO: add logic for searching with mount or some other sort of mechanisms
                 self.feedback_message = f"Unable to find person with id {self.person_id}"
                 return pytree.common.Status.FAILURE
             else:

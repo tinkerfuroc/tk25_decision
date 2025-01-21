@@ -3,6 +3,7 @@ import py_trees
 from rclpy.node import Node
 import math
 
+import time
 from behavior_tree.messages import PointStamped
 
 class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
@@ -14,20 +15,22 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
                  name: str,
                  bb_namespace: str,
                  bb_key_source: str,
-                 threshold_m : float = 0.2,
-                 threshold_frames :int = 3
+                 threshold_m : float = 0.3,
+                 threshold_t : float = 3.0
                  ):
         super(BtNode_ProcessTrack, self).__init__(name=name)
         
         self.bb_namespace = bb_namespace
         self.bb_key_source = bb_key_source
         self.threshold_m = threshold_m
-        self.threshold_frames = threshold_frames
+        self.threshold_t = threshold_t
 
         self.last_point : PointStamped = None
         self.anchor_point : PointStamped = None
+        self.anchor_time : float = time.time()
+        self.point : PointStamped = None
         self.current_point : PointStamped = None
-        self.counter = 0
+        self.moved = True
     
     def target_stopped(self):
         if self.anchor_point is None:
@@ -41,13 +44,14 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
         distance = math.sqrt(((x2-x1) ** 2) + ((y2-y1) ** 2))
 
         if distance < self.threshold_m:
-            self.counter += 1
-            if self.counter >= self.threshold_frames:
+            self.moved = False
+            if time.time() - self.anchor_time > self.threshold_t:
                 return True
             return False
         else:
-            self.counter = 0
+            self.moved  = True
             self.anchor_point = self.current_point
+            self.anchor_time = time.time()
             return False
 
 
@@ -86,11 +90,13 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
 
         # then check if the person has stopped
         if self.target_stopped():
-            self.feedback_message = f"Person stopped (within {self.threshold_m} meters for {self.threshold_frames} updates)"
+            self.feedback_message = f"Person stopped (within {self.threshold_m} meters for more than {self.threshold_t} seconds"
             return py_trees.common.Status.FAILURE
-        if self.counter > 0:
-            self.feedback_message = f"Person has been stopped within {self.threshold_m} meters for {self.counter} updates"
-            return py_trees.common.Status.RUNNING
+        
+        if not self.moved:
+            self.feedback_message = f"Person has been stopped within {self.threshold_m}m for {time.time() - self.anchor_time} seconds"
+            # return py_trees.common.Status.RUNNING
+            return py_trees.common.Status.SUCCESS
         
         # if the point has been updated and the person is still moving, return success and pass this on
         self.feedback_message = "Person location has been updated"
