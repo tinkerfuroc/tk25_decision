@@ -19,7 +19,7 @@ def createFollowPerson():
     follow = py_trees.composites.Sequence(name="Follow", memory=True)
     follow_inverter = py_trees.decorators.Inverter(name="follow inverter", child=follow)
     follow_repeat = py_trees.decorators.Retry(name="Repeat follow until success", child=follow_inverter, num_failures=999)
-    follow.add_child(BtNode_ProcessTrack(name="Process track results", bb_namespace=TRACKING_NAMESPACE, bb_key_source=TRACKING_POINT_KEY, threshold_m=0.2, threshold_frames=5))
+    follow.add_child(BtNode_ProcessTrack(name="Process track results", bb_namespace=TRACKING_NAMESPACE, bb_key_source=TRACKING_POINT_KEY, threshold_m=0.2, threshold_t=5.0))
     follow.add_child(BtNode_Announce(name="Announce person updated", bb_source=None, message="Person identified"))
     follow.add_child(BtNode_GotoGrasp(name="Goto grasp position", bb_source=TRACKING_NAMESPACE+"/"+TRACKING_POINT_KEY))
     follow.add_child(BtNode_Announce(name="Announce reached destination", bb_source=None, message="Searching again"))
@@ -36,11 +36,18 @@ def createFollowPersonAction():
 
     follow = py_trees.composites.Sequence(name="Follow", memory=True)
     follow_inverter = py_trees.decorators.Inverter(name="follow inverter", child=follow)
-    follow_repeat = py_trees.decorators.Retry(name="Repeat follow until success", child=py_trees.decorators.Timeout(name="timeout after 15 sec", child=follow_inverter, duration=15.0), num_failures=999)
-    follow.add_child(BtNode_Announce(name="Announce searching", bb_source=None, message="Searching"))
-    follow.add_child(BtNode_ProcessTrack(name="Process track results", bb_namespace=None, bb_key_source=TRACKING_POINT_KEY, threshold_m=0.2, threshold_frames=3))
-    follow.add_child(BtNode_Announce(name="Announce person updated", bb_source=None, message="Person identified"))
-    follow.add_child(BtNode_CalcGraspPose(name="Calc grasp pose", bb_source=TRACKING_POINT_KEY, bb_dest=GRASP_POSE_KEY))
+    follow_repeat = py_trees.decorators.Retry(name="Repeat follow until success", child=py_trees.decorators.Timeout(name="timeout after 15 sec", child=follow_inverter, duration=13.0), num_failures=999)
+    
+    search_announce = BtNode_Announce(name="Announce searching", bb_source=None, message="Searching")
+    process_track = BtNode_ProcessTrack(name="Process track results", bb_namespace=None, bb_key_source=TRACKING_POINT_KEY, threshold_m=0.2, threshold_t=30.0)
+    search = py_trees.composites.Parallel(name="Search", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[search_announce, process_track])
+    follow.add_child(search)
+
+    update_announce = BtNode_Announce(name="Announce person updated", bb_source=None, message="Identified")
+    calc_pose = BtNode_CalcGraspPose(name="Calc grasp pose", bb_source=TRACKING_POINT_KEY, bb_dest=GRASP_POSE_KEY)
+    update = py_trees.composites.Parallel(name="Update", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[update_announce, calc_pose])
+    follow.add_child(update)
+
     follow.add_child(BtNode_GotoAction(name="Goto pose", key=GRASP_POSE_KEY))
     follow.add_child(BtNode_Announce(name="Announce reached destination", bb_source=None, message="Reached"))
 

@@ -107,6 +107,7 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         called when the action has not provided feedback for longer than the time specified in its last message
         return: status of the node after this happens
         """
+        self.feedback_message = "goal timeout"
         return py_trees.common.Status.FAILURE
      
     def process_feedback(self, feedback):
@@ -120,6 +121,7 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         called during update when the previous feedback returned status code other than 0
         return: status of the node after this happens
         """
+        self.feedback_message = f"abnormal feedback: status {self.action_status}, stage {self.action_stage}"
         return py_trees.common.Status.FAILURE
 
     def process_result(self):
@@ -156,11 +158,11 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self.result_status = None
         self.result_status_string = None
 
-        self.action_status = None
+        self.action_status = 0
         self.action_stage = None
 
         self.last_feedback_time = time.time()
-        self.feedback_timeout = 3
+        self.feedback_timeout = 10000.0
         self.send_goal()
 
     def update(self):

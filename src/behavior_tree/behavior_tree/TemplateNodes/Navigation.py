@@ -11,10 +11,50 @@ from behavior_tree.messages import Goto, GotoGrasp, ComputeGrasp
 from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateToPose
 
+from tf2_ros.transform_listener import TransformListener
+from tf2_ros.buffer import Buffer
+from tf2_ros import LookupException
+
+import action_msgs.msg as action_msgs  # GoalStatus
+
+import time
+
 
 class BtNode_GotoAction(ActionHandler):
-    def __init__(self, name: str, key: str, action_name: str = "'/navigate_to_pose'", wait_for_server_timeout_sec: float = -3):
+    def __init__(self, name: str, key: str, action_name: str = "navigate_to_pose", wait_for_server_timeout_sec: float = -3):
         super().__init__(name, NavigateToPose, action_name, key, wait_for_server_timeout_sec)
+    
+    def send_goal(self):
+        try:
+            goal = NavigateToPose.Goal()
+            goal.pose = self.blackboard.goal
+            self.send_goal_request(goal)
+            self.feedback_message = "sent goal request"
+        except KeyError:
+            pass  # self.send_goal_future will be None, check on that
+    
+    def process_result(self):
+        # for navigation only, where the action can return all sorts of results while it's at it
+        if self.result_status == action_msgs.GoalStatus.STATUS_ABORTED:  # noqa
+            self.feedback_message = "action aborted"
+            return py_trees.common.Status.FAILURE
+        else:
+            return py_trees.common.Status.SUCCESS
+    
+    def feedback_callback(self, msg: Any):
+        """
+        Default generator for feedback messages from the action server. This will
+        update the behaviour's feedback message with a stringified version of the
+        incoming feedback message.
+
+        Args:
+            msg: incoming feedback message (e.g. move_base_msgs.action.MoveBaseFeedback)
+        """
+        feedback = msg.feedback
+        self.last_feedback_time = time.time()
+        self.feedback_timeout = 1000
+        self.action_status = 0
+        self.process_feedback(feedback)  
 
 
 class BtNode_Goto(ServiceHandler):
@@ -182,7 +222,7 @@ class BtNode_CalcGraspPose(ServiceHandler):
             bb_source: path to the key in blackboard containing a geometry_msgs/PoseStamped object of the pos of trash can
             service_name: name of the service of type tinker_decision_msgs/Drop     
         """
-        super(BtNode_GotoGrasp, self).__init__(name, service_name, ComputeGrasp)
+        super(BtNode_CalcGraspPose, self).__init__(name, service_name, ComputeGrasp)
         self.bb_source = bb_source
         self.bb_read_client = None
         self.bb_dest = bb_dest
@@ -210,6 +250,9 @@ class BtNode_CalcGraspPose(ServiceHandler):
             self.logger.debug(f"Setup CalcGraspPose, reading from {self.bb_source}")
         else:
             self.logger.debug(f"Setup CalcGraspPose from fixed point {self.target}")
+        
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self.node)
 
     def initialise(self) -> None:
         """
@@ -226,11 +269,15 @@ class BtNode_CalcGraspPose(ServiceHandler):
 
         self.logger.debug(f"Initialized CalcGraspPose for target point {self.target}")
 
-        transform = self._tf_buffer.lookup_transform(
-                            target_frame="map",
-                            source_frame=request.target.header.frame_id[1 if request.target.header.frame_id[0] == '/' else 0:],
-                            time=rclpy.time.Time()
-                        )
+        try:
+            transform = self._tf_buffer.lookup_transform(
+                                target_frame="map",
+                                source_frame=self.target.header.frame_id[1 if self.target.header.frame_id[0] == '/' else 0:],
+                                time=rclpy.time.Time()
+                            )
+        except LookupException as e:
+            assert False, "Failed to lookup transform"
+            
         map_point = tf2_geometry_msgs.do_transform_point(self.target, transform)
 
         request = ComputeGrasp.Request()
