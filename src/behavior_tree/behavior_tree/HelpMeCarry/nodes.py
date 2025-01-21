@@ -26,14 +26,15 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
 
         self.last_point : PointStamped = None
         self.anchor_point : PointStamped = None
-        self.point : PointStamped = None
+        self.current_point : PointStamped = None
         self.counter = 0
     
     def target_stopped(self):
         if self.anchor_point is None:
+            self.anchor_point = self.current_point
             return False
         
-        x1, y1 = self.point.point.x, self.point.point.y
+        x1, y1 = self.current_point.point.x, self.current_point.point.y
         x2, y2 = self.anchor_point.point.x, self.anchor_point.point.y
 
         # pytagorean theorem to get distance
@@ -46,7 +47,7 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
             return False
         else:
             self.counter = 0
-            self.anchor_point = self.point
+            self.anchor_point = self.current_point
             return False
 
 
@@ -69,19 +70,19 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
         self.logger.debug(f"Updating")
 
         try:
-            self.point = self.bb_read_client.get(self.bb_key_source)
+            self.current_point = self.bb_read_client.get(self.bb_key_source)
         except KeyError as e:
             self.logger.debug("person not found yet")
-            self.point = None
+            self.current_point = None
             self.feedback_message = "Person not found yet"
             return py_trees.common.Status.RUNNING
 
         # first check if the point is the same as the previous one (aka vision was too slow)
-        if (self.last_point is not None) and (self.point.header.stamp.sec == self.last_point.header.stamp.sec):
-            self.feedback_message = "Point has not been updated, waiting..."
+        if (self.last_point is not None) and (self.current_point.header.stamp.sec == self.last_point.header.stamp.sec):
+            self.feedback_message = f"Point has not been updated ({self.current_point.header.stamp.sec} vs {self.last_point.header.stamp.sec}), waiting..."
             return py_trees.common.Status.RUNNING
         
-        self.last_point = self.point
+        self.last_point = self.current_point
 
         # then check if the person has stopped
         if self.target_stopped():

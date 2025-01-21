@@ -18,7 +18,7 @@ def createFollowPerson():
     follow = py_trees.composites.Sequence(name="Follow", memory=True)
     follow_inverter = py_trees.decorators.Inverter(name="follow inverter", child=follow)
     follow_repeat = py_trees.decorators.Retry(name="Repeat follow until success", child=follow_inverter, num_failures=999)
-    follow.add_child(BtNode_ProcessTrack(name="Process track results", bb_namespace=TRACKING_NAMESPACE, bb_key_source=TRACKING_POINT_KEY, threshold_m=0.2, threshold_frames=3))
+    follow.add_child(BtNode_ProcessTrack(name="Process track results", bb_namespace=TRACKING_NAMESPACE, bb_key_source=TRACKING_POINT_KEY, threshold_m=0.2, threshold_frames=5))
     follow.add_child(BtNode_Announce(name="Announce person updated", bb_source=None, message="Person identified"))
     follow.add_child(BtNode_GotoGrasp(name="Goto grasp position", bb_source=TRACKING_NAMESPACE+"/"+TRACKING_POINT_KEY))
     follow.add_child(BtNode_Announce(name="Announce reached destination", bb_source=None, message="Searching again"))
@@ -31,7 +31,7 @@ def createFollowPersonAudio():
 
     root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Starting to follow person"))
     follow = createFollowPerson()
-    follow_wrapper = py_trees.composites.Selector(name="wrapper", memory=True, children=[follow, BtNode_Announce(name="follow failed", message="Following had failed")])
+    follow_wrapper = py_trees.composites.Selector(name="wrapper", memory=True, children=[follow, BtNode_Announce(name="follow failed", bb_source=None, message="Following had failed")])
     root.add_child(follow_wrapper)
     root.add_child(BtNode_Announce(name="Announce finished", bb_source=None, message="Stopped following"))
     root.add_child(py_trees.behaviours.Running(name="Finished"))
