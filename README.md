@@ -25,3 +25,5 @@ int32 delay_limit
 int32 status
 string error_msg
 ```
+
+**Action server应在接受到请求后三秒内发出第一次feedback**

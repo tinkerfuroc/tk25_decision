@@ -1,8 +1,9 @@
 import py_trees
-import threading
 from py_trees.common import Status
+import threading
 from rclpy.node import Node
 from typing import Any
+
 
 class ServiceHandler(py_trees.behaviour.Behaviour):
     """

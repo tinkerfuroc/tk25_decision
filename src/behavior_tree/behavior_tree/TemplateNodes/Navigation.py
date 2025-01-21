@@ -1,10 +1,21 @@
+from typing import Any
 import py_trees
+import rclpy
+import tf2_geometry_msgs
 from .BaseBehaviors import ServiceHandler
+from .ActionBase import ActionHandler
 
 from geometry_msgs.msg import PointStamped, PoseStamped
 
-from behavior_tree.messages import Goto, GotoGrasp
+from behavior_tree.messages import Goto, GotoGrasp, ComputeGrasp
 from nav_msgs.msg import Odometry
+from nav2_msgs.action import NavigateToPose
+
+
+class BtNode_GotoAction(ActionHandler):
+    def __init__(self, name: str, key: str, action_name: str = "'/navigate_to_pose'", wait_for_server_timeout_sec: float = -3):
+        super().__init__(name, NavigateToPose, action_name, key, wait_for_server_timeout_sec)
+
 
 class BtNode_Goto(ServiceHandler):
     def __init__(self, 
@@ -156,28 +167,29 @@ class BtNode_GotoGrasp(ServiceHandler):
             return py_trees.common.Status.RUNNING
 
 
-class BtNode_RelToAbs(ServiceHandler):
+class BtNode_CalcGraspPose(ServiceHandler):
     def __init__(self, 
-            name: str,
-            bb_key_sourse: str,
-            bb_key_result: str,
-            is_point: bool,
-            service_name : str = "rel_to_abs",
-            target : PointStamped | PoseStamped = None
-            ):
+                name: str,
+                bb_source: str,
+                bb_dest:str,
+                service_name : str = "compute_grasp_pos",
+                target : PointStamped = None
+                ):
         """
         executed when creating tree diagram, therefor very minimal
+        Args:
+            name: the name of the pytree node
+            bb_source: path to the key in blackboard containing a geometry_msgs/PoseStamped object of the pos of trash can
+            service_name: name of the service of type tinker_decision_msgs/Drop     
         """
-        super(BtNode_RelToAbs, self).__init__(name, service_name, RelToAbs)
-        self.bb_key_source = bb_key_sourse
-        self.bb_key_result = bb_key_result
-        self.is_point = is_point
+        super(BtNode_GotoGrasp, self).__init__(name, service_name, ComputeGrasp)
+        self.bb_source = bb_source
         self.bb_read_client = None
-        self.bb_write_client = None
+        self.bb_dest = bb_dest
         self.target = target
         self.read = True
         if target is not None:
-            assert (isinstance(target, PointStamped) or isinstance(target, PoseStamped))
+            assert isinstance(self.target, PointStamped)
             self.read = False
 
 
@@ -187,18 +199,17 @@ class BtNode_RelToAbs(ServiceHandler):
         """
         ServiceHandler.setup(self, **kwargs)
 
-        self.bb_write_client = self.attach_blackboard_client(name="RelToAbs Write")
-        self.bb_write_client.register_key(self.bb_key_result, access = py_trees.common.Access.WRITE)
-
+        self.bb_write_client = self.attach_blackboard_client(name="CalcGraspPose Write")
+        self.bb_write_client.register_key(self.bb_dest, access=py_trees.common.Access.WRITE)
 
         if self.read:
-            self.bb_read_client = self.attach_blackboard_client(name="RelToAbs Read")
-            self.bb_read_client.register_key(self.bb_key_source, access=py_trees.common.Access.READ)
+            self.bb_read_client = self.attach_blackboard_client(name="CalcGraspPose Read")
+            self.bb_read_client.register_key(self.bb_source, access=py_trees.common.Access.READ)
 
             # debugger info (shown with DebugVisitor)
-            self.logger.debug(f"Setup RelToAbs, reading from {self.bb_key_source} and writing to {self.bb_key_result}")
+            self.logger.debug(f"Setup CalcGraspPose, reading from {self.bb_source}")
         else:
-            self.logger.debug(f"Setup RelToAbs from fixed Point/Pose and writing to {self.bb_key_result}")
+            self.logger.debug(f"Setup CalcGraspPose from fixed point {self.target}")
 
     def initialise(self) -> None:
         """
@@ -206,50 +217,37 @@ class BtNode_RelToAbs(ServiceHandler):
         """
         if self.read:
             try:
-                self.target = self.bb_read_client.get(self.bb_key_source)
-                assert (isinstance(self.target, PointStamped) or isinstance(self.target, PoseStamped))
+                self.target = self.bb_read_client.get(self.bb_source)
+                assert isinstance(self.target, PointStamped)
+                self.read = True
             except Exception as e:
-                self.feedback_message = f"RelToAbs reading target point/pose failed"
+                self.feedback_message = f"CalcGraspPose reading target point failed"
                 raise e
 
-        self.logger.debug(f"Initialized RelToAbs for target point/pose {self.target}")
+        self.logger.debug(f"Initialized CalcGraspPose for target point {self.target}")
 
-        request = RelToAbs.Request()
-        if self.is_point:
-            request.flags = "point"
-            request.point_rel = self.target
-        else:
-            request.flags = "pose"
-            request.pose_rel = self.target
+        transform = self._tf_buffer.lookup_transform(
+                            target_frame="map",
+                            source_frame=request.target.header.frame_id[1 if request.target.header.frame_id[0] == '/' else 0:],
+                            time=rclpy.time.Time()
+                        )
+        map_point = tf2_geometry_msgs.do_transform_point(self.target, transform)
+
+        request = ComputeGrasp.Request()
+        request.target = map_point
         # setup things that needs to be cleared
         self.response = self.client.call_async(request)
 
-        self.feedback_message = f"Initialized RelToAbs"
+        self.feedback_message = f"Initialized CalcGraspPose, read set to {self.read}"
 
     def update(self):
-        self.logger.debug(f"Update RelToAbs")
+        self.logger.debug(f"Update CalcGraspPose")
         if self.response.done():
-            if self.response.result().status == 0:
-                self.feedback_message = f"RelToAbs Successful"
-                if self.is_point:
-                    self.bb_write_client.set(self.bb_key_result, self.response.result().point_abs, overwrite=True)
-                else:
-                    self.bb_write_client.set(self.bb_key_result, self.response.result().pose_abs, overwrite=True)
-                return py_trees.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"RelToAbs failed with status {self.response.result().status}: {self.response.result().error_msg}"
-                return py_trees.common.Status.FAILURE
+            self.feedback_message = f"CalcGraspPose finished"
+            goal_pose = self.response.result().target
+            self.bb_write_client.set(self.bb_dest, goal_pose, overwrite=True)
+
+            return py_trees.common.Status.SUCCESS
         else:
-            self.feedback_message = "Still converting pose/point"
+            self.feedback_message = f"Still calculating grasping pose {self.target} from {self.bb_source} (read set to {self.read})"
             return py_trees.common.Status.RUNNING
-
-
-class BtNode_Turn(ServiceHandler):
-    def __init__(self, name: str, service_name: str):
-        super().__init__(name, service_name, Goto)
-        self.current_pos = None
-    
-    def setup(self, **kwargs):
-        super().setup(**kwargs)
-        self.odom_sub = self.create_subscription(Odometry, '/rtabmap/odom', self.odomCallback, 1)
-        
