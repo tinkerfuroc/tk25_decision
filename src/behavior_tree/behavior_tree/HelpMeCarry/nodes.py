@@ -95,8 +95,8 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
         
         if not self.moved:
             self.feedback_message = f"Person has been stopped within {self.threshold_m}m for {time.time() - self.anchor_time} seconds"
-            # return py_trees.common.Status.RUNNING
-            return py_trees.common.Status.SUCCESS
+            return py_trees.common.Status.RUNNING
+            # return py_trees.common.Status.SUCCESS
         
         # if the point has been updated and the person is still moving, return success and pass this on
         self.feedback_message = "Person location has been updated"
