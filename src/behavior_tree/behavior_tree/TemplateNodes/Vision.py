@@ -291,7 +291,7 @@ class BtNode_FeatureExtraction(ServiceHandler):
     def __init__(self, 
                  name: str,
                  bb_dest_key: str,
-                 service_name : str = "feature_extraction",
+                 service_name : str = "feature_extraction_service",
                  use_orbbec = True,
                  ):
         super(BtNode_FeatureExtraction, self).__init__(name, service_name, FeatureExtraction)
@@ -337,7 +337,7 @@ class BtNode_SeatRecommend(ServiceHandler):
                  name: str,
                  bb_dest_key: str,
                  bb_source_key: str,
-                 service_name : str = "feature_extraction",
+                 service_name : str = "seat_recommend_service",
                  use_orbbec = True,
                  ):
         super(BtNode_SeatRecommend, self).__init__(name, service_name, SeatRecommendation)
@@ -363,13 +363,13 @@ class BtNode_SeatRecommend(ServiceHandler):
         self.node = None
 
     def initialise(self):
-        request = SeatRecommendation.Request
+        request = SeatRecommendation.Request()
         request.camera = self.camera
         request.names = []
         request.features = []
         if self.blackboard.persons is not None:
             # minus one because the newest registered person is not yet seated and thus will not be in the picture
-            for i in range(self.blackboard.persons - 1):
+            for i in range(len(self.blackboard.persons) - 1):
                 request.names.append(self.blackboard.persons[i].name)
                 request.features.append(self.blackboard.persons[i].features)
         self.response = self.client.call_async(request)

@@ -151,10 +151,13 @@ def draw_follow():
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
 def draw_receptionist():
-    root = createReceptionist(action=True)
+    root = createReceptionist()
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
-if __name__ == "__main__":
+def main():
     draw_follow()
     draw_receptionist()
+
+if __name__ == "__main__":
+    main()
     

@@ -31,14 +31,17 @@ class BtNode_Announce(ServiceHandler):
         self.bb_source = bb_source
         self.bb_read_client = None
         self.announce_msg = message
+        print(self.announce_msg)
+
     
     def setup(self, **kwargs):
         super().setup(**kwargs)
 
+        print(self.announce_msg, self.name)
         # if no announcement message is given, set up a blackboard client to read from given key
-        if not self.announce_msg:
+        if self.announce_msg is None:
             self.bb_read_client = self.attach_blackboard_client(name="Announce Read")
-            self.bb_read_client.register_key(self.bb_source, access=pytree.common.Access.READ)
+            self.bb_read_client.register_key("/" + self.bb_source, access=pytree.common.Access.READ)
             self.logger.debug(f"Setup Announce, reading from {self.bb_source}")
         else:
             self.logger.debug(f"Setup Announce for message {self.announce_msg}")

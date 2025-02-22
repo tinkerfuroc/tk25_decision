@@ -26,7 +26,7 @@ class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
         self.blackboard = self.attach_blackboard_client(name=self.name)
 
         self.blackboard.register_key(
-            key="name",
+            key="person_name",
             access=py_trees.common.Access.READ,
             # make sure to namespace it if not already
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_name)
@@ -45,7 +45,7 @@ class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
         )
         self.blackboard.register_key(
             key="person",
-            access=py_trees.common.Access.READ,
+            access=py_trees.common.Access.WRITE,
             # make sure to namespace it if not already
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_dest)
         )
@@ -59,9 +59,11 @@ class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
                  and the variable exists,  :data:`~py_trees.common.Status.SUCCESS` otherwise
         """
         new_person = Person()
-        new_person.name = self.blackboard.name
+        new_person.name = self.blackboard.person_name
         new_person.fav_drink = self.blackboard.drink
         new_person.features = self.blackboard.features
+        print(new_person.name, new_person.fav_drink, new_person.features)
+        self.feedback_message = f"name: {new_person.name}, drink: {new_person.fav_drink}, features: {new_person.features}"
         persons = []
         if self.blackboard.person is not None:
             persons = self.blackboard.person
@@ -91,6 +93,7 @@ class BtNode_Introduce(BtNode_Announce):
         )
     
     def setup(self, **kwargs):
+        self.announce_msg = "foo"
         return super().setup(**kwargs)
     
     def initialise(self):
