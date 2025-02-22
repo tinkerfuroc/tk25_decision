@@ -4,10 +4,12 @@ import time
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, Object
+from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation
 from geometry_msgs.msg import PointStamped
+from py_trees.common import Status
 
 from .BaseBehaviors import ServiceHandler
+from .structs import Person
 
 
 class BtNode_ScanFor(ServiceHandler):
@@ -271,4 +273,108 @@ class BtNode_FindObj(ServiceHandler):
                 return pytree.common.Status.FAILURE
         else:
             self.feedback_message = "Still finding obj..."
+            return pytree.common.Status.RUNNING
+
+
+class BtNode_FeatureExtraction(ServiceHandler):
+    def __init__(self, 
+                 name: str,
+                 bb_dest_key: str,
+                 service_name : str = "feature_extraction",
+                 use_orbbec = True,
+                 ):
+        super(BtNode_FeatureExtraction, self).__init__(name, service_name, FeatureExtraction)
+
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.key = bb_dest_key
+        self.blackboard.register_key(
+            key="features",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+        )
+        if use_orbbec:
+            self.camera = "orbbec"
+        else:
+            self.camera = "realsense"
+
+        self.node = None
+
+    def initialise(self):
+        request = FeatureExtraction.Request()
+        request.camera = self.camera
+        self.response = self.client.call_async(request)
+
+        self.feedback_message = f"Initialized Feature Extraction"
+    
+    def update(self) -> Status:
+        self.logger.debug(f"Updated FeatureExtraction")
+        if self.response.done():
+            result : FeatureExtraction.Response = self.response.result()
+            if result.status == 0:
+                self.blackboard.features = result.feature
+                self.feedback_message = f"Features: {result.feature}"
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Feature extration failed with error code {result.status}: {result.error_msg}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still extracting feature..."
+            return pytree.common.Status.RUNNING
+
+class BtNode_SeatRecommend(ServiceHandler):
+    def __init__(self, 
+                 name: str,
+                 bb_dest_key: str,
+                 bb_source_key: str,
+                 service_name : str = "feature_extraction",
+                 use_orbbec = True,
+                 ):
+        super(BtNode_SeatRecommend, self).__init__(name, service_name, SeatRecommendation)
+
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.key = bb_dest_key
+        self.blackboard.register_key(
+            key="recommendation",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+        )
+        self.blackboard.register_key(
+            key="persons",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key)
+        )
+
+        if use_orbbec:
+            self.camera = "orbbec"
+        else:
+            self.camera = "realsense"
+
+        self.node = None
+
+    def initialise(self):
+        request = SeatRecommendation.Request
+        request.camera = self.camera
+        request.names = []
+        request.features = []
+        if self.blackboard.persons is not None:
+            # minus one because the newest registered person is not yet seated and thus will not be in the picture
+            for i in range(self.blackboard.persons - 1):
+                request.names.append(self.blackboard.persons[i].name)
+                request.features.append(self.blackboard.persons[i].features)
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized seat recommendation"
+    
+    def update(self) -> Status:
+        self.logger.debug(f"Updated SeatRecommendation")
+        if self.response.done():
+            result : SeatRecommendation.Response = self.response.result()
+            if result.status == 0:
+                self.blackboard.recommendation = "Dear guest, " + result.recommendation
+                self.feedback_message = f"Recommendation: {result.recommendation}"
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Seat recommendation failed with error code {result.status}: {result.error_msg}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still getting seat recommendation..."
             return pytree.common.Status.RUNNING

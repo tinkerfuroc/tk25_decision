@@ -1,0 +1,102 @@
+import py_trees
+from behavior_tree.TemplateNodes.structs import Person
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+
+class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
+    """
+    Set the specified variable on the blackboard.
+
+    Args:
+        variable_name: name of the variable to set, may be nested, e.g. battery.percentage
+        variable_value: value of the variable to set
+        overwrite: when False, do not set the variable if it already exists
+        name: name of the behaviour
+    """
+
+    def __init__(
+        self,
+        name: str,
+        key_dest: str,
+        key_name: str,
+        key_drink: str,
+        key_features: str,
+    ):
+        super().__init__(name=name)
+
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+
+        self.blackboard.register_key(
+            key="name",
+            access=py_trees.common.Access.READ,
+            # make sure to namespace it if not already
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_name)
+        )
+        self.blackboard.register_key(
+            key="drink",
+            access=py_trees.common.Access.READ,
+            # make sure to namespace it if not already
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_drink)
+        )
+        self.blackboard.register_key(
+            key="features",
+            access=py_trees.common.Access.READ,
+            # make sure to namespace it if not already
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_features)
+        )
+        self.blackboard.register_key(
+            key="person",
+            access=py_trees.common.Access.READ,
+            # make sure to namespace it if not already
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_dest)
+        )
+        
+    def update(self):
+        """
+        Attempt to set the stored value in the requested blackboard variable.
+
+        Returns:
+             :data:`~py_trees.common.Status.FAILURE` if no overwrite requested
+                 and the variable exists,  :data:`~py_trees.common.Status.SUCCESS` otherwise
+        """
+        new_person = Person()
+        new_person.name = self.blackboard.name
+        new_person.fav_drink = self.blackboard.drink
+        new_person.features = self.blackboard.features
+        persons = []
+        if self.blackboard.person is not None:
+            persons = self.blackboard.person
+        
+        persons.append(new_person)
+        self.blackboard.person = persons
+
+        return py_trees.common.Status.SUCCESS
+        
+
+class BtNode_Introduce(BtNode_Announce):
+    def __init__(self,
+                 name: str,
+                 key_person: str,
+                 target_id: int,
+                 introduced_id: int,
+                 service_name: str = "announce"
+                 ):
+        super().__init__(name, None, service_name)
+        self.introduced_id = introduced_id
+        self.target_id = target_id
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="persons",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_person)
+        )
+    
+    def setup(self, **kwargs):
+        return super().setup(**kwargs)
+    
+    def initialise(self):
+        self.announce_msg = "Hello " + self.blackboard.persons[self.target_id].name + ". "
+        introduced_person : Person = self.blackboard.persons[self.introduced_id]
+        self.announce_msg += "Here is " + introduced_person.name + \
+              " whose favorite drink is " + introduced_person.fav_drink + ". " + introduced_person.features
+
+        return super().initialise()
