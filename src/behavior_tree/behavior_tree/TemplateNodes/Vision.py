@@ -116,6 +116,7 @@ class BtNode_TrackPerson(ServiceHandler):
         self.use_orbbec = use_orbbec
         self.transform_to_map = transform_to_map
         self.person_id = None
+        self.do_send_tracking = True
 
     def setup(self, **kwargs):
         """
@@ -128,12 +129,8 @@ class BtNode_TrackPerson(ServiceHandler):
         self.bb_write_client.register_key(self.bb_key, access=pytree.common.Access.WRITE)
 
         self.logger.debug(f"Setup Track Person, writing to namespace {self.bb_namespace} and key {self.bb_key}")
-
-    def initialise(self) -> None:
-        """
-        Called when the node is visited
-        """
-        
+    
+    def send_request(self):
         request = ObjectDetection.Request()
         request.prompt = "person"
         if self.use_orbbec:
@@ -146,8 +143,16 @@ class BtNode_TrackPerson(ServiceHandler):
         if self.person_id is None:
             request.flags = "register_person"
         
-        # setup things that needs to be cleared
         self.response = self.client.call_async(request)
+
+    def initialise(self) -> None:
+        """
+        Called when the node is visited
+        """
+        
+        if self.do_send_tracking:
+            self.send_request()
+        self.do_send_tracking = True
 
         self.logger.debug(f"Initialized Track Person with person id {self.person_id}")
         self.feedback_message = f"Initialized Track Person"
@@ -177,9 +182,15 @@ class BtNode_TrackPerson(ServiceHandler):
                         point_stamped.header = self.response.result().header
                         self.bb_write_client.set(self.bb_key, point_stamped, overwrite=True)
                         self.feedback_message = f"Detected person with id {self.person_id}, centroid as PointStamped stored to {self.bb_namespace} / {self.bb_key}"
+                        
+                        # send the next request without waiting for pytree to restart the node
+                        self.send_request()
+                        self.do_send_tracking = False
                         return pytree.common.Status.SUCCESS
                 
                 # if none of the people inside persons has matching id
+                self.send_request()
+                self.do_send_tracking = False
                 self.feedback_message = f"Unable to find person with id {self.person_id}"
                 return pytree.common.Status.FAILURE
             else:

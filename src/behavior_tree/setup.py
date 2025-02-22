@@ -24,6 +24,7 @@ setup(
             'follow = behavior_tree.main:test_follow',
             'follow-audio = behavior_tree.main:test_follow_audio',
             'follow-action = behavior_tree.main:test_follow_action',
+            'test-track = behavior_tree.main:test_track',
         ],
     },
 )

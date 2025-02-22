@@ -27,7 +27,7 @@ def createFollowPerson():
     return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnSelected([follow_repeat]), children=[track_repeat, follow_repeat])
     # return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[track_repeat, follow_repeat])
 
-def createFollowPersonAction():
+def createRepeatTrack():
     # track = py_trees.composites.Selector(name="Track Person", memory=True)
     single_track = BtNode_TrackPerson(name="Detect Person and Save", bb_namespace=None, bb_key=TRACKING_POINT_KEY)
     # track_repeat = py_trees.decorators.Repeat(name="Repeat tracking indefinitely", child=track, num_success=-1)
@@ -40,6 +40,12 @@ def createFollowPersonAction():
     # lost_announce = BtNode_Announce(name="Announce lost person", bb_source=None, message="Out of camera")
     # dummy = py_trees.behaviours.Success(name="Dummy for movement if person is lost")
     # track.add_child(py_trees.composites.Parallel(name="Lost", policy=py_trees.common.ParallelPolicy.SuccessOnSelected([dummy]), children=[lost_announce, dummy]))
+
+    return track_repeat
+
+def createFollowPersonAction():
+    track_repeat = createRepeatTrack()
+    
 
     follow = py_trees.composites.Sequence(name="Follow", memory=True)
     follow_inverter = py_trees.decorators.Inverter(name="follow inverter", child=follow)

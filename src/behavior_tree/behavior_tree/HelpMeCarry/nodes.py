@@ -1,3 +1,4 @@
+import copy
 from typing import Any
 import py_trees
 from rclpy.node import Node
@@ -34,7 +35,8 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
     
     def target_stopped(self):
         if self.anchor_point is None:
-            self.anchor_point = self.current_point
+            self.anchor_point = copy.deepcopy(self.current_point)
+            print("x1, y1: ", self.anchor_point.point.x, self.anchor_point.point.y)
             return False
         
         x1, y1 = self.current_point.point.x, self.current_point.point.y
@@ -42,6 +44,8 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
 
         # pytagorean theorem to get distance
         distance = math.sqrt(((x2-x1) ** 2) + ((y2-y1) ** 2))
+        print("distance: ", distance)
+        print("x1, y1: ", x1, y1, "x2, y2: ", x2, y2)
 
         if distance < self.threshold_m:
             self.moved = False
@@ -50,7 +54,7 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
             return False
         else:
             self.moved  = True
-            self.anchor_point = self.current_point
+            self.anchor_point = copy.deepcopy(self.current_point)
             self.anchor_time = time.time()
             return False
 
@@ -72,6 +76,8 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
     
     def update(self):
         self.logger.debug(f"Updating")
+        if self.anchor_point is not None:
+            print("anchor point ", self.anchor_point.point.x, self.anchor_point.point.y)
 
         try:
             self.current_point = self.bb_read_client.get(self.bb_key_source)
@@ -83,10 +89,10 @@ class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
 
         # first check if the point is the same as the previous one (aka vision was too slow)
         if (self.last_point is not None) and (self.current_point.header.stamp.sec == self.last_point.header.stamp.sec):
-            self.feedback_message = f"Point has not been updated ({self.current_point.header.stamp.sec} vs {self.last_point.header.stamp.sec}), waiting..."
+            self.feedback_message = f"Point has not been updated, waiting..."
             return py_trees.common.Status.RUNNING
         
-        self.last_point = self.current_point
+        self.last_point = copy.deepcopy(self.current_point)
 
         # then check if the person has stopped
         if self.target_stopped():
