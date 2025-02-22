@@ -80,11 +80,13 @@ class BtNode_Introduce(BtNode_Announce):
                  key_person: str,
                  target_id: int,
                  introduced_id: int,
-                 service_name: str = "announce"
+                 service_name: str = "announce",
+                 describe_introduced=False
                  ):
         super().__init__(name, None, service_name)
         self.introduced_id = introduced_id
         self.target_id = target_id
+        self.describe_introduced = describe_introduced
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="persons",
@@ -100,6 +102,8 @@ class BtNode_Introduce(BtNode_Announce):
         self.announce_msg = "Hello " + self.blackboard.persons[self.target_id].name + ". "
         introduced_person : Person = self.blackboard.persons[self.introduced_id]
         self.announce_msg += "Here is " + introduced_person.name + \
-              " whose favorite drink is " + introduced_person.fav_drink + ". " + introduced_person.features
+              " whose favorite drink is " + introduced_person.fav_drink + ". "
+        if self.describe_introduced:
+            self.announce_msg += introduced_person.features
 
         return super().initialise()

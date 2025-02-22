@@ -109,8 +109,11 @@ def createReceptionist():
     root.add_child(createGetNameAndDrink())
     root.add_child(createRegisterFeature())
 
+    # go to living room for introductions
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to living room", KEY_SOFA_POSE), num_failures=10))
+    root.add_child(BtNode_Announce(name="Tell guest to stand on left", bb_source=None, message="Please stand on my left side"))
 
+    # introduce first guest and host to each other, then recommend a seat
     first_introductions = py_trees.composites.Sequence(name="First introductions", memory=True)
     first_introductions.add_child(BtNode_Introduce(name="introduce host to guest", key_person=KEY_PERSONS, target_id=1, introduced_id=0))
     first_introductions.add_child(BtNode_Introduce(name="introduce guest to host", key_person=KEY_PERSONS, target_id=0, introduced_id=1))
@@ -119,7 +122,30 @@ def createReceptionist():
                                                 policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[first_introductions, find_seat_recommendation]))
     root.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
 
-    # TODO: add the second part of receptionist in here
+    # go to door to greet second guest
+    root.add_child(BtNode_Announce(name="announce intention", bb_source=None, message="Going to greet second guest"))
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
+    root.add_child(createGetNameAndDrink())
+    root.add_child(createRegisterFeature())
+
+    # go to living room for introductions
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to living room", KEY_SOFA_POSE), num_failures=10))
+    root.add_child(BtNode_Announce(name="Tell guest to stand on left", bb_source=None, message="Please stand on my left side"))
+
+    # introduce second guest
+    second_introductions = py_trees.composites.Sequence(name="Second introductions", memory=True)
+    # introduce second guest to host
+    second_introductions.add_child(BtNode_Introduce(name="introduce host to second guest", key_person=KEY_PERSONS, target_id=2, introduced_id=0))
+    second_introductions.add_child(BtNode_Introduce(name="introduce second guest to host", key_person=KEY_PERSONS, target_id=0, introduced_id=2))
+    # introduce second guest to first guest
+    second_introductions.add_child(BtNode_Introduce(name="introduce first guest to second guest", key_person=KEY_PERSONS, target_id=2, introduced_id=1, describe_introduced=True))
+    second_introductions.add_child(BtNode_Introduce(name="introduce second guest to first guest", key_person=KEY_PERSONS, target_id=1, introduced_id=2))
+    root.add_child(py_trees.composites.Parallel(name="Get recommendation", 
+                                                policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[second_introductions, find_seat_recommendation]))
+    root.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
+
+    root.add_child(BtNode_Announce(name="Task accomplished", bb_source=None, message="Receptionist task accomplished."))
+    root.add_child(py_trees.behaviours.Running(name="end"))
 
     return root
 
