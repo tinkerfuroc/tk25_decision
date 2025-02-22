@@ -195,9 +195,9 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             if self.action_status != 0:
                 return self.process_abnormal_feedback()
             return self.regular_update()
-        elif not self.get_result_future.done():
+        elif (self.get_result_future is None) or (not self.get_result_future.done()):
             # should never get here
-            # if there is a result status but the future is not done
+            # if there is a result status but the future is not done or there is no goal_response_callback yet
             self.node.get_logger().warn("got result, but future not yet done [{}]".format(self.qualified_name))
             return py_trees.common.Status.RUNNING
         else:

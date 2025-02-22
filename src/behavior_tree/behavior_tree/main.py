@@ -108,7 +108,7 @@ def test_follow_action():
     if PRINT_DEBUG:
         py_trees.logging.level = py_trees.logging.Level.DEBUG
     
-    tree.tick_tock(period_ms=250.0,post_tick_handler=print_tree)
+    tree.tick_tock(period_ms=100.0,post_tick_handler=print_tree)
 
     try:
         rclpy.spin(tree.node)
