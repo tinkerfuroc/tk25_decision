@@ -62,6 +62,11 @@ class BtNode_WriteToBlackboard(py_trees.behaviour.Behaviour):
         self.bb_key = bb_key
         self.bb_source = bb_source
         self.object = object
+
+        # attaches a blackboard (more like a shared memory section with key-value pair references) under the namespace Locations
+        self.bb_write_client = self.attach_blackboard_client(name=f"Write {self.name}", namespace=self.bb_namespace)
+         # register a key with the name of the object, with this client having write access
+        self.bb_write_client.register_key(self.bb_key, access=py_trees.common.Access.WRITE)
     
     def setup(self, **kwargs: Any) -> None:
         try:
@@ -69,11 +74,6 @@ class BtNode_WriteToBlackboard(py_trees.behaviour.Behaviour):
         except KeyError as e:
             error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
             raise KeyError(error_message) from e  # 'direct cause' traceability
-
-        # attaches a blackboard (more like a shared memory section with key-value pair references) under the namespace Locations
-        self.bb_write_client = self.attach_blackboard_client(name=f"Write {self.name}", namespace=self.bb_namespace)
-         # register a key with the name of the object, with this client having write access
-        self.bb_write_client.register_key(self.bb_key, access=py_trees.common.Access.WRITE)
 
         if self.object is None:
             self.bb_read_client = self.attach_blackboard_client(name="WriteToBlackboard")

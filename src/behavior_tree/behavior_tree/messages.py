@@ -1,4 +1,4 @@
-from tinker_vision_msgs.srv import ObjectDetection
+from tinker_vision_msgs.srv import ObjectDetection, FeatureExtraction, SeatRecommendation
 # from tinker_decision_msgs.srv import ObjectDetection
 from tk_nav_interfaces.srv import Goto, GotoGrasp, RelToAbs
 # from tinker_decision_msgs.srv import Goto, GotoGrasp, RelToAbs
