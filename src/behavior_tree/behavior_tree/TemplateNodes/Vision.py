@@ -4,7 +4,7 @@ import time
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation
+from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching
 from geometry_msgs.msg import PointStamped
 from py_trees.common import Status
 
@@ -388,4 +388,64 @@ class BtNode_SeatRecommend(ServiceHandler):
                 return pytree.common.Status.FAILURE
         else:
             self.feedback_message = "Still getting seat recommendation..."
+            return pytree.common.Status.RUNNING
+
+
+class BtNode_FeatureMatching(ServiceHandler):
+    def __init__(self,
+                 name: str,
+                 bb_dest_key: str,
+                 bb_persons_key: str,
+                 service_name: str = "feature_matching_service",
+                 use_orbbec: bool = True,
+                 max_distance: float = 2.0,
+                 target_frame: str = "base_link"
+                 ):
+        super().__init__(name, service_name, FeatureMatching)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.key = bb_dest_key
+        self.blackboard.register_key(
+            key="centroids",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+        )
+        self.blackboard.register_key(
+            key="persons",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_persons_key)
+        )
+
+        if use_orbbec:
+            self.camera = "orbbec"
+        else:
+            self.camera = "realsense"
+        self.max_distance = max_distance
+        self.target_frame = target_frame
+
+        self.node = None
+    
+    def initialise(self):
+        request = FeatureMatching.Request()
+        request.camera = self.camera
+        request.features = [person.features for person in self.blackboard.persons]
+        request.features = request.features[:-1] # remove last person as that is the new guest who is not seated yet
+        request.max_distance = self.max_distance
+        # TODO: add parameter regarding target frame (preferabbly base link)
+        
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initializec feature matching"
+
+    def update(self) -> Status:
+        self.logger.debug(f"Updated Feature Matching")
+        if self.response.done():
+            result : FeatureMatching.Response = self.response.result()
+            if result.status == 0:
+                self.blackboard.centroids = result.centroids
+                self.feedback_message = f"Centroids: {result.centroids}"
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Feature Matching failed with error code {result.status}: {result.error_msg}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still matching features..."
             return pytree.common.Status.RUNNING

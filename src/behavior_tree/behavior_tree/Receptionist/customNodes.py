@@ -83,7 +83,7 @@ class BtNode_Introduce(BtNode_Announce):
                  service_name: str = "announce",
                  describe_introduced=False
                  ):
-        super().__init__(name, None, service_name)
+        super(BtNode_Announce, self).__init__(name, None, service_name)
         self.introduced_id = introduced_id
         self.target_id = target_id
         self.describe_introduced = describe_introduced

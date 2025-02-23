@@ -31,17 +31,25 @@ class BtNode_Announce(ServiceHandler):
         self.bb_source = bb_source
         self.bb_read_client = None
         self.announce_msg = message
-        print(self.announce_msg)
+        # print(self.announce_msg)
+
+        if self.announce_msg is None:
+            self.blackboard = self.attach_blackboard_client(name=self.name)
+            self.blackboard.register_key(
+                key = "announcement_msg",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source)
+            )
 
     
     def setup(self, **kwargs):
         super().setup(**kwargs)
 
-        print(self.announce_msg, self.name)
+        # print(self.announce_msg, self.name)
         # if no announcement message is given, set up a blackboard client to read from given key
         if self.announce_msg is None:
-            self.bb_read_client = self.attach_blackboard_client(name="Announce Read")
-            self.bb_read_client.register_key("/" + self.bb_source, access=pytree.common.Access.READ)
+            # self.bb_read_client = self.attach_blackboard_client(name="Announce Read")
+            # self.bb_read_client.register_key("/" + self.bb_source, access=pytree.common.Access.READ)
             self.logger.debug(f"Setup Announce, reading from {self.bb_source}")
         else:
             self.logger.debug(f"Setup Announce for message {self.announce_msg}")
@@ -52,7 +60,8 @@ class BtNode_Announce(ServiceHandler):
         # if no announcement message is given, read from the blackboard and verify the information
         if not self.announce_msg:
             try:
-                self.announce_msg = self.bb_read_client.get(self.bb_source)
+                # self.announce_msg = self.bb_read_client.get(self.bb_source)
+                self.announce_msg = self.blackboard.announcement_msg
                 assert isinstance(self.announce_msg, str)
             except Exception as e:
                 self.feedback_message = f"Announce reading message failed"
