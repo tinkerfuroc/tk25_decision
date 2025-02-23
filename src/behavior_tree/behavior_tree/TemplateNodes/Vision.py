@@ -430,8 +430,7 @@ class BtNode_FeatureMatching(ServiceHandler):
         request.features = [person.features for person in self.blackboard.persons]
         request.features = request.features[:-1] # remove last person as that is the new guest who is not seated yet
         request.max_distance = self.max_distance
-        # TODO: add parameter regarding target frame (preferabbly base link)
-        
+        request.target_frame = self.target_frame
         self.response = self.client.call_async(request)
         self.feedback_message = f"Initializec feature matching"
 

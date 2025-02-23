@@ -43,6 +43,7 @@ class BtNode_Announce(ServiceHandler):
 
     
     def setup(self, **kwargs):
+        print(self.service_type)
         super().setup(**kwargs)
 
         # print(self.announce_msg, self.name)

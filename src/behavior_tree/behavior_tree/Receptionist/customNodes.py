@@ -2,6 +2,8 @@ import py_trees
 from behavior_tree.TemplateNodes.structs import Person
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 
+from behavior_tree.messages import TextToSpeech
+
 class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
     """
     Set the specified variable on the blackboard.
@@ -83,7 +85,7 @@ class BtNode_Introduce(BtNode_Announce):
                  service_name: str = "announce",
                  describe_introduced=False
                  ):
-        super(BtNode_Announce, self).__init__(name, None, service_name)
+        super(BtNode_Announce, self).__init__(name, service_name, TextToSpeech)
         self.introduced_id = introduced_id
         self.target_id = target_id
         self.describe_introduced = describe_introduced
@@ -105,5 +107,30 @@ class BtNode_Introduce(BtNode_Announce):
               " whose favorite drink is " + introduced_person.fav_drink + ". "
         if self.describe_introduced:
             self.announce_msg += introduced_person.features
+
+        return super().initialise()
+
+class BtNode_Confirm(BtNode_Announce):
+    def __init__(self,
+                 name: str,
+                 key_confirmed: str,
+                 type: str,
+                 service_name: str = "announce"
+                 ):
+        super(BtNode_Announce, self).__init__(name=name, service_name=service_name, service_type=TextToSpeech)
+        self.type = type
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="confirm_target",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_confirmed)
+        )
+    
+    def setup(self, **kwargs):
+        self.announce_msg = "foo"
+        return super().setup(**kwargs)
+    
+    def initialise(self):
+        self.announce_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ". Correct?"
 
         return super().initialise()
