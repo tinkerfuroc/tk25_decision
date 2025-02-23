@@ -2,7 +2,7 @@ import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching
 
 from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm
@@ -12,7 +12,6 @@ from std_msgs.msg import Header
 import rclpy
 
 import random
-
 
 pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
                         pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0), 
@@ -72,18 +71,24 @@ def createConstantWriter():
 
     return root
 
+def createListenToGuest(bb_dest_key:str, word_list: list[str]):
+    root = py_trees.composites.Selector(name="Listen to guest", memory=True)
+    root.add_child(BtNode_PhraseExtraction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=10.0))
+    root.add_child(py_trees.decorators.SuccessIsFailure(name="success is failure", child=BtNode_Announce(name="Listen Failed, ask for repeat", bb_source="", message="I'm sorry. Could you please repeat that closer to my mic?")))
+    return py_trees.decorators.Retry(name="retry", child=root, num_failures=10)
+
 def createGetInfo(type:str, storage_key:str):
     root = py_trees.composites.Sequence(name=f"Get {type}", memory=True)
     loop = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
-    loop.add_child(BtNode_Announce(name=f"Prompt for {type}", bb_source="", message=f"Please stand clode to my microphone and tell me your {type}"))
-    # TODO: add Audio node for listening and extracting name from user response
+    loop.add_child(BtNode_Announce(name=f"Prompt for {type}", bb_source="", message=f"Please stand close to my microphone and tell me your {type}"))
+    loop.add_child(createListenToGuest(storage_key, names if type == "name" else drinks))
     # random filler dummy values for now
-    value = names[random.randint(0, len(names)-1)] if type == "name" else drinks[random.randint(0, len(drinks)-1)]
-    loop.add_child(BtNode_Announce(name=f"Getting {type}", bb_source="", message=f"Missing module for speech recognition, assuming {type} of {value}"))
-    loop.add_child(py_trees.behaviours.SetBlackboardVariable(name=f"write {type} to blackboard", variable_name=storage_key, variable_value=value, overwrite=True))
+    # value = names[random.randint(0, len(names)-1)] if type == "name" else drinks[random.randint(0, len(drinks)-1)]
+    # loop.add_child(BtNode_Announce(name=f"Getting {type}", bb_source="", message=f"Missing module for speech recognition, assuming {type} of {value}"))
+    # loop.add_child(py_trees.behaviours.SetBlackboardVariable(name=f"write {type} to blackboard", variable_name=storage_key, variable_value=value, overwrite=True))
     loop.add_child(BtNode_Confirm(name=f"Confirm {type} prompt", key_confirmed=storage_key, type=type))
-    # TODO add confirmation module
-    loop.add_child(BtNode_Announce(name=f"Confirm {type}", bb_source="", message="Missing module for name confirmation, assuming confirmed"))
+    loop.add_child(BtNode_GetConfirmation(name=f"Get {type} confirmation", timeout=7.0))
+    # loop.add_child(BtNode_Announce(name=f"Confirm {type}", bb_source="", message="Missing module for name confirmation, assuming confirmed"))
     root.add_child(py_trees.decorators.Retry(name="retry", child=loop, num_failures=10))
     return root
 
@@ -91,30 +96,6 @@ def createGetNameAndDrink():
     root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
     root.add_child(createGetInfo("name", KEY_GUEST_NAME))
     root.add_child(createGetInfo("favorite drink", KEY_GUEST_DRINK))
-
-    # get_name = py_trees.composites.Sequence(name="Get name", memory=True)
-    # get_name.add_child(BtNode_Announce(name="Initial greeting", bb_source="", message="Hello"))
-    # loop_name = py_trees.composites.Sequence(name="get and confirm name", memory=True)
-    # # TODO: add Audio node for listening and extracting name from user response
-    # loop_name.add_child(BtNode_Announce(name="Prompt for name", bb_source="", message="Please stand clode to my microphone and tell me your name"))
-    # name = names[random.randint(0, len(names)-1)]
-    # loop_name.add_child(BtNode_Announce(name="Getting name", bb_source="", message=f"Missing module for speech recognition, assuming name of {name}"))
-    # loop_name.add_child(py_trees.behaviours.SetBlackboardVariable(name="write name to blackboard", variable_name=KEY_GUEST_NAME, variable_value=name, overwrite=True))
-    # loop_name.add_child(BtNode_Announce(name="Confirm name", bb_source="", message="Missing module for name confirmation, assuming confirmed"))
-    # get_name.add_child(py_trees.decorators.Retry(name="retry", child=loop_name, num_failures=10))
-    # root.add_child(get_name)
-    
-    # get_drink = py_trees.composites.Sequence(name="Get name", memory=True)
-    # loop_drink = py_trees.composites.Sequence(name="get and confirm drink", memory=True)
-    # # TODO: add Audio node for listening and extracting name from user response
-    # loop_drink.add_child(BtNode_Announce(name="Prompt for drink", bb_source="", message="Please stand clode to my microphone and tell me your favorite drink"))
-    # drink = drinks[random.randint(0, len(drinks)-1)]
-    # loop_drink.add_child(BtNode_Announce(name="Getting drink", bb_source="", message=f"Missing module for speech recognition, assuming favorite drink of {drink}"))
-    # loop_drink.add_child(py_trees.behaviours.SetBlackboardVariable(name="write drink to blackboard", variable_name=KEY_GUEST_DRINK, variable_value=drink, overwrite=True))
-    # loop_drink.add_child(BtNode_Announce(name="Confirm drink", bb_source="", message="Missing module for drink confirmation, assuming confirmed"))
-    # get_drink.add_child(py_trees.decorators.Retry(name="retry", child=loop_drink, num_failures=10))
-    # root.add_child(get_drink)
-
     return root
 
 def createRegisterFeature():

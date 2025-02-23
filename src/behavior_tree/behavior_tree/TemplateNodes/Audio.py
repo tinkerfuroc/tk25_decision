@@ -2,7 +2,7 @@ import py_trees as pytree
 from py_trees.common import Status
 
 # from tinker_decision_msgs.srv import Announce, WaitForStart
-from behavior_tree.messages import TextToSpeech, WaitForStart
+from behavior_tree.messages import TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation
 
 from .BaseBehaviors import ServiceHandler
 
@@ -128,4 +128,88 @@ class BtNode_WaitForStart(ServiceHandler):
                 return pytree.common.Status.FAILURE
         else:
             self.feedback_message = "Still waiting for start..."
+            return pytree.common.Status.RUNNING
+
+
+class BtNode_PhraseExtraction(ServiceHandler):
+    """
+    Node to extract a phrase from a given speech, returns success once phrase is extracted
+    """
+    def __init__(self, 
+                 name : str,
+                 wordlist : list,
+                 bb_dest_key : str,
+                 service_name : str = "phrase_extraction_service",
+                 timeout : float = 15.0
+                 ):
+        super(BtNode_PhraseExtraction, self).__init__(name, service_name, PhraseExtraction)
+
+        self.wordlist = wordlist
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="phrase",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+        )
+        self.timeout = timeout
+        self.node = None
+    
+    def initialise(self):
+        request = PhraseExtraction.Request()
+        request.timeout = self.timeout
+        request.wordlist = self.wordlist
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized phrase extraction"
+
+    def update(self) -> Status:
+        self.logger.debug(f"Update phrase extraction")
+        if self.response.done():
+            if self.response.result().status == 0:
+                self.feedback_message = f"Extracted phrase: {self.response.result().phrase}"
+                self.blackboard.phrase = self.response.result().phrase
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Phrase extraction failed with error code {self.response.result().status}: {self.response.result().error_message}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still extracting phrase..."
+            return pytree.common.Status.RUNNING
+
+class BtNode_GetConfirmation(ServiceHandler):
+    """
+    Node to get confirmation from a given speech, returns success once confirmation is received
+    """
+    def __init__(self, 
+                 name : str,
+                 service_name : str = "get_confirmation_service",
+                 timeout : float = 15.0
+                 ):
+        super(BtNode_GetConfirmation, self).__init__(name, service_name, GetConfirmation)
+        self.timeout = timeout
+    
+    def setup(self, **kwargs):
+        super().setup(**kwargs)
+
+        self.logger.debug(f"Setup getting confirmation")
+    
+    def initialise(self):
+        request = GetConfirmation.Request()
+        request.timeout = self.timeout
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized get confirmation"
+
+    def update(self) -> Status:
+        self.logger.debug(f"Update get confirmation")
+        if self.response.done():
+            if self.response.result().status == 0:
+                self.feedback_message = f"Got confirmation: {self.response.result().confirmed}"
+                if self.response.result().confirmed:
+                    return pytree.common.Status.SUCCESS
+                else:
+                    return pytree.common.Status.FAILURE
+            else:
+                self.feedback_message = f"Get confirmation failed with error code {self.response.result().status}: {self.response.result().error_message}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still getting confirmation..."
             return pytree.common.Status.RUNNING
