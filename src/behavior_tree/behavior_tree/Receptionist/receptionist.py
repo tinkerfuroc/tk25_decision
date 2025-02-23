@@ -73,22 +73,17 @@ def createConstantWriter():
 
 def createListenToGuest(bb_dest_key:str, word_list: list[str]):
     root = py_trees.composites.Selector(name="Listen to guest", memory=True)
-    root.add_child(BtNode_PhraseExtraction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=10.0))
+    root.add_child(BtNode_PhraseExtraction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=7.0))
     root.add_child(py_trees.decorators.SuccessIsFailure(name="success is failure", child=BtNode_Announce(name="Listen Failed, ask for repeat", bb_source="", message="I'm sorry. Could you please repeat that closer to my mic?")))
     return py_trees.decorators.Retry(name="retry", child=root, num_failures=10)
 
 def createGetInfo(type:str, storage_key:str):
     root = py_trees.composites.Sequence(name=f"Get {type}", memory=True)
     loop = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
-    loop.add_child(BtNode_Announce(name=f"Prompt for {type}", bb_source="", message=f"Please stand close to my microphone and tell me your {type}"))
-    loop.add_child(createListenToGuest(storage_key, names if type == "name" else drinks))
-    # random filler dummy values for now
-    # value = names[random.randint(0, len(names)-1)] if type == "name" else drinks[random.randint(0, len(drinks)-1)]
-    # loop.add_child(BtNode_Announce(name=f"Getting {type}", bb_source="", message=f"Missing module for speech recognition, assuming {type} of {value}"))
-    # loop.add_child(py_trees.behaviours.SetBlackboardVariable(name=f"write {type} to blackboard", variable_name=storage_key, variable_value=value, overwrite=True))
+    loop.add_child(BtNode_Announce(name=f"Prompt for {type}", bb_source="", message=f"Please speak into my microphone and tell me your {type}"))
+    loop.add_child(createListenToGuest(bb_dest_key=storage_key, word_list=names if type == "name" else drinks))
     loop.add_child(BtNode_Confirm(name=f"Confirm {type} prompt", key_confirmed=storage_key, type=type))
-    loop.add_child(BtNode_GetConfirmation(name=f"Get {type} confirmation", timeout=7.0))
-    # loop.add_child(BtNode_Announce(name=f"Confirm {type}", bb_source="", message="Missing module for name confirmation, assuming confirmed"))
+    loop.add_child(BtNode_GetConfirmation(name=f"Get {type} confirmation", timeout=5.0))
     root.add_child(py_trees.decorators.Retry(name="retry", child=loop, num_failures=10))
     return root
 
