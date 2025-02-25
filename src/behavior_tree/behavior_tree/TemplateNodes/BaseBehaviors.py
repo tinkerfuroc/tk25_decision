@@ -99,7 +99,7 @@ class BtNode_WriteToBlackboard(py_trees.behaviour.Behaviour):
 
         try:
             self.bb_write_client.set(self.bb_key, self.object, overwrite=True)
-            self.feedback_message = "Success writing to namespace {self.bb_namespace}, key {self.bb_key}"
+            self.feedback_message = f"Success writing to namespace {self.bb_namespace}, key {self.bb_key}"
             return py_trees.common.Status.SUCCESS
         except Exception as e:
             self.feedback_message = f"Writing to blackboard failed: {e}"
