@@ -22,13 +22,14 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self.action_type = action_type
         self.action_name = action_name
         self.wait_for_server_timeout_sec = wait_for_server_timeout_sec
-        self.blackboard = self.attach_blackboard_client(name=self.name)
-        self.blackboard.register_key(
-            key="goal",
-            access=py_trees.common.Access.READ,
-            # make sure to namespace it if not already
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key)
-        )
+        if key is not None:
+            self.blackboard = self.attach_blackboard_client(name=self.name)
+            self.blackboard.register_key(
+                key="goal",
+                access=py_trees.common.Access.READ,
+                # make sure to namespace it if not already
+                remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key)
+            )
 
         self.node = None
         self.action_client = None

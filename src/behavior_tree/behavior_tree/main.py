@@ -5,12 +5,19 @@ import rclpy
 from .HelpMeCarry.Track import createFollowPerson, createFollowPersonAudio, createRepeatTrack
 from .Receptionist.receptionist import createReceptionist
 from .grasp_intel_demo.grasp_intel import create_demo
+from .grasp_intel_demo.grasp_audio import createGraspAudio
 from .Constants import PRINT_BLACKBOARD, PRINT_DEBUG
 
 def grasp_intel():
     rclpy.init(args=None)
 
     root = create_demo()
+
+
+def grasp_audio():
+    rclpy.init(args=None)
+
+    root = createGraspAudio()
 
     # make it a ros tree
     tree = py_trees_ros.trees.BehaviourTree(root)
