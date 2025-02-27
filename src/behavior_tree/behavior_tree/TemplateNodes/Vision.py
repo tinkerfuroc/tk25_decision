@@ -211,7 +211,8 @@ class BtNode_FindObj(ServiceHandler):
                  bb_namespace: str,
                  bb_key:str,
                  service_name:str = "object_detection",
-                 object:str = None
+                 object:str = None,
+                 target_object_cls:str = None
                  ):
         """
         executed when creating tree diagram, therefor very minimal
@@ -221,6 +222,7 @@ class BtNode_FindObj(ServiceHandler):
         self.bb_key = bb_key
         self.bb_source = bb_source
         self.object = object
+        self.target_object_cls = target_object_cls
         self.read = True
         if self.object is not None:
             self.read = False

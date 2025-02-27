@@ -217,3 +217,54 @@ class BtNode_MoveArm(ServiceHandler):
         else:
             self.feedback_message = f"Still moving arm to {self.arm_joint_pose}..."
             return pytree.common.Status.RUNNING
+
+
+class BtNode_MoveArmSingle(ServiceHandler):
+    def __init__(self, name: str, 
+                 service_name: str, 
+                #  arm_joint_pose: list[float]
+                 arm_pose_bb_key
+                 ):
+        super().__init__(name, service_name, ArmJointService)
+        self.arm_pose_bb_key = arm_pose_bb_key
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="arm_joint_pose",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", arm_pose_bb_key)
+        )
+    
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+
+        # debugger info (shown with DebugVisitor)
+        self.logger.debug(f"Setup MoveArm, reading from {self.arm_pose_bb_key}")
+
+    def initialise(self):
+
+        request = ArmJointService.Request()
+        
+        request.joint0 = self.blackboard.arm_joint_pose[0]
+        request.joint1 = self.blackboard.arm_joint_pose[1]
+        request.joint2 = self.blackboard.arm_joint_pose[2]
+        request.joint3 = self.blackboard.arm_joint_pose[3]
+        request.joint4 = self.blackboard.arm_joint_pose[4]
+        request.joint5 = self.blackboard.arm_joint_pose[5]
+        request.joint6 = self.blackboard.arm_joint_pose[6]
+
+        self.response = self.client.call_async(request)
+
+        self.feedback_message = f"Initialized move arm joint for joints {self.blackboard.arm_joint_pose}"
+    
+    def update(self) -> Status:
+        self.logger.debug(f"Update move arm joint")
+        if self.response.done():
+            if self.response.result().success:
+                self.feedback_message = f"Move arm Successful"
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Move arm failed"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = f"Still moving arm to {self.blackboard.arm_joint_pose}..."
+            return pytree.common.Status.RUNNING
