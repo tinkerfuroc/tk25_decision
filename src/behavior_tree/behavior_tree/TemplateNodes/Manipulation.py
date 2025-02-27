@@ -5,10 +5,12 @@ import py_trees as pytree
 # from tinker_decision_msgs.srv import ObjectDetection
 from geometry_msgs.msg import PointStamped
 from behavior_tree.messages import Grasp, ObjectDetection, Drop, ArmJointService
+from control_msgs.action import GripperCommand
 from py_trees.common import Status
 from behavior_tree.Constants import SCAN_POSES
 
 from .BaseBehaviors import ServiceHandler
+from .ActionBase import ActionHandler
 import math
 
 
@@ -217,3 +219,35 @@ class BtNode_MoveArm(ServiceHandler):
         else:
             self.feedback_message = f"Still moving arm to {self.arm_joint_pose}..."
             return pytree.common.Status.RUNNING
+
+class BtNode_GripperAction(ActionHandler):
+    def __init__(self, 
+                 name: str, 
+                 open_gripper: bool, 
+                 action_name: str = '/xarm_gripper/gripper_action', 
+                 wait_for_server_timeout_sec: float = -3,
+                 ):
+        super().__init__(name, GripperCommand, action_name, None, wait_for_server_timeout_sec)
+        if open_gripper:
+            self.goal = 0.0
+        else:
+            self.goal = 0.85
+    
+    def send_goal(self):
+        try:
+            goal = GripperCommand.Goal()
+            goal.command.position = self.goal
+            goal.command.max_effort = 10.0
+            self.send_goal_request(goal)
+            self.feedback_message = f"Sent gripper goal {self.goal}"
+        except Exception as e:
+            self.feedback_message = f"Failed to send gripper goal {self.goal}"
+            pass
+    
+    def process_result(self):
+        if self.result.position < 0.05:
+            self.feedback_message = f"Gripper action successful"
+            return pytree.common.Status.SUCCESS
+        else:
+            self.feedback_message = f"Gripper action failed"
+            return pytree.common.Status.FAILURE    

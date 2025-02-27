@@ -175,6 +175,48 @@ class BtNode_PhraseExtraction(ServiceHandler):
             self.feedback_message = "Still extracting phrase..."
             return pytree.common.Status.RUNNING
 
+class BtNode_TargetExtraction(ServiceHandler):
+    """
+    Node to extract a grasp target from a given speech, returns success once phrase is extracted
+    """
+    def __init__(self, 
+                 name : str,
+                 bb_dest_key : str,
+                 service_name : str = "target_extraction_service",
+                 timeout : float = 15.0
+                 ):
+        super(BtNode_TargetExtraction, self).__init__(name, service_name, PhraseExtraction)
+
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="target",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+        )
+        self.timeout = timeout
+        self.node = None
+    
+    def initialise(self):
+        request = PhraseExtraction.Request()
+        request.timeout = self.timeout
+        request.wordlist = []
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized target extraction"
+
+    def update(self) -> Status:
+        self.logger.debug(f"Update target extraction")
+        if self.response.done():
+            if self.response.result().status == 0:
+                self.feedback_message = f"Extracted target: {self.response.result().phrase}"
+                self.blackboard.target = self.response.result().phrase
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Target extraction failed with error code {self.response.result().status}: {self.response.result().error_message}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still extracting target..."
+            return pytree.common.Status.RUNNING
+
 class BtNode_GetConfirmation(ServiceHandler):
     """
     Node to get confirmation from a given speech, returns success once confirmation is received
