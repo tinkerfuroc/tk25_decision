@@ -14,6 +14,7 @@ from .structs import Person
 
 class BtNode_ScanFor(ServiceHandler):
 
+    # deprecated
     def __init__(self, 
                  name: str,
                  bb_source: str,
@@ -37,6 +38,26 @@ class BtNode_ScanFor(ServiceHandler):
         self.read = True
         if self.object is not None:
             self.read = False
+    
+    def __init__(self, behavior_name: str, key_obj_type: str, key_object_position: str, service_name: str = "object_detection", use_orbbec: bool = True, transform_to_map: bool = False):
+        super(BtNode_ScanFor, self).__init__(behavior_name, service_name, ObjectDetection)
+        self.bb_source = key_obj_type
+        self.bb_namespace = None
+        self.bb_key = key_object_position
+        self.object = None
+        self.use_orbbec = use_orbbec
+        self.transform_to_map = transform_to_map
+        self.read = True
+    
+    def __init__(self, behavior_name: str, obj_type: str, key_object_position: str, service_name: str = "object_detection", use_orbbec: bool = True, transform_to_map: bool = False):
+        super(BtNode_ScanFor, self).__init__(behavior_name, service_name, ObjectDetection)
+        self.bb_source = None
+        self.bb_namespace = None
+        self.bb_key = key_object_position
+        self.object = obj_type
+        self.use_orbbec = use_orbbec
+        self.transform_to_map = transform_to_map
+        self.read = False
 
 
     def setup(self, **kwargs):
@@ -224,6 +245,23 @@ class BtNode_FindObj(ServiceHandler):
         self.read = True
         if self.object is not None:
             self.read = False
+    
+    def __init__(self, behavior_name: str, obj_type: str, key_extracted_obj_segment: str, service_name: str = "object_detection"):
+        super(BtNode_FindObj, self).__init__(behavior_name, service_name, ObjectDetection)
+        self.bb_source = None
+        self.bb_namespace = None
+        self.bb_key = key_extracted_obj_segment
+        self.object = obj_type
+        self.read = False
+
+    def __init__(self, behavior_name: str, key_obj_type: str, key_extracted_obj_segment: str, service_name: str = "object_detection"):
+        super(BtNode_FindObj, self).__init__(behavior_name, service_name, ObjectDetection)
+        self.bb_source = key_obj_type
+        self.bb_namespace = None
+        self.bb_key = key_extracted_obj_segment
+        self.object = None
+        self.read = True
+
 
     def setup(self, **kwargs):
         """

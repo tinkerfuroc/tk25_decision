@@ -10,6 +10,8 @@ class BtNode_Announce(ServiceHandler):
     """
     Node for making an audio announcement, returns SUCCESS once announcement finished
     """
+
+    # deprecated
     def __init__(self, 
                  name : str,
                  bb_source : str,
@@ -40,7 +42,25 @@ class BtNode_Announce(ServiceHandler):
                 access=pytree.common.Access.READ,
                 remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source)
             )
+    
+    def __init__(self, name: str, bb_source: str, service_type: str = "announce"):
+        super().__init__(name, service_type, TextToSpeech)
 
+        self.announce_msg = None
+        self.bb_source = bb_source
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key = "announcement_msg",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source)
+        )
+    
+    def __init__(self, name: str, message: str, service_type: str = "announce"):
+        super().__init__(name, service_type, TextToSpeech)
+
+        self.announce_msg = message
+        self.bb_source = None
+        self.blackboard = None
     
     def setup(self, **kwargs):
         print(self.service_type)
