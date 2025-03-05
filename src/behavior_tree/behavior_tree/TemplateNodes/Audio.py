@@ -11,49 +11,49 @@ class BtNode_Announce(ServiceHandler):
     Node for making an audio announcement, returns SUCCESS once announcement finished
     """
 
-    # deprecated
-    def __init__(self, 
-                 name : str,
-                 bb_source : str,
-                 service_name : str = "announce",
-                 message : str = None
-                 ):
-        """
-        Args:
-            name: name of the node (to be displayed in the tree)
-            bb_source: blackboard key for retrieving a str announcement message
-            service_name: name of the service for Announce
-            message: optional message, if given, skips reading from blackboard
-        """
+    # # deprecated
+    # def __init__(self, 
+    #              name : str,
+    #              bb_source : str,
+    #              service_name : str = "announce",
+    #              message : str = None
+    #              ):
+    #     """
+    #     Args:
+    #         name: name of the node (to be displayed in the tree)
+    #         bb_source: blackboard key for retrieving a str announcement message
+    #         service_name: name of the service for Announce
+    #         message: optional message, if given, skips reading from blackboard
+    #     """
 
-        # call parent initializer
-        super(BtNode_Announce, self).__init__(name, service_name, TextToSpeech)
+    #     # call parent initializer
+    #     super(BtNode_Announce, self).__init__(name, service_name, TextToSpeech)
         
-        # store parameters
-        self.bb_source = bb_source
-        self.bb_read_client = None
-        self.announce_msg = message
-        # print(self.announce_msg)
+    #     # store parameters
+    #     self.bb_source = bb_source
+    #     self.bb_read_client = None
+    #     self.announce_msg = message
+    #     # print(self.announce_msg)
 
-        if self.announce_msg is None:
-            self.blackboard = self.attach_blackboard_client(name=self.name)
-            self.blackboard.register_key(
-                key = "announcement_msg",
-                access=pytree.common.Access.READ,
-                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source)
-            )
+    #     if self.announce_msg is None:
+    #         self.blackboard = self.attach_blackboard_client(name=self.name)
+    #         self.blackboard.register_key(
+    #             key = "announcement_msg",
+    #             access=pytree.common.Access.READ,
+    #             remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source)
+    #         )
     
-    def __init__(self, name: str, bb_source: str, service_type: str = "announce"):
-        super().__init__(name, service_type, TextToSpeech)
+    # def __init__(self, name: str, bb_source: str, service_type: str = "announce"):
+    #     super().__init__(name, service_type, TextToSpeech)
 
-        self.announce_msg = None
-        self.bb_source = bb_source
-        self.blackboard = self.attach_blackboard_client(name=self.name)
-        self.blackboard.register_key(
-            key = "announcement_msg",
-            access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source)
-        )
+    #     self.announce_msg = None
+    #     self.bb_source = bb_source
+    #     self.blackboard = self.attach_blackboard_client(name=self.name)
+    #     self.blackboard.register_key(
+    #         key = "announcement_msg",
+    #         access=pytree.common.Access.READ,
+    #         remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source)
+    #     )
     
     def __init__(self, name: str, message: str, service_type: str = "announce"):
         super().__init__(name, service_type, TextToSpeech)

@@ -19,7 +19,7 @@ class BtNode_Grasp(ServiceHandler):
     Node for grasping an object with a specific prompt
     """
     def __init__(self, 
-                 behavior_name: str,
+                 name: str,
                  key_obj_segment: str,
                  service_name : str = "grasp",
                  ):
@@ -32,7 +32,7 @@ class BtNode_Grasp(ServiceHandler):
             service_name: name of the service running Grasp
             prompt: optional, if given, skips reading from blackboard
         """
-        super(BtNode_Grasp, self).__init__(behavior_name, service_name, Grasp)
+        super(BtNode_Grasp, self).__init__(name, service_name, Grasp)
         self.bb_source = key_obj_segment
         self.bb_read_client = None
 
@@ -158,12 +158,12 @@ class BtNode_Drop(ServiceHandler):
 
 class BtNode_MoveArm(ServiceHandler):
     def __init__(self, name: str, 
-                 service_name: str, 
                 #  arm_joint_pose: list[float]
-                 arm_pose_bb_key
+                 key_arm_pos,
+                 service_name: str, 
                  ):
         super().__init__(name, service_name, ArmJointService)
-        self.arm_pose_bb_key = arm_pose_bb_key
+        self.arm_pose_bb_key = key_arm_pos
         self.arm_joint_pose = None
     
     def setup(self, **kwargs):

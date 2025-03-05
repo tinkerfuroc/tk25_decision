@@ -14,43 +14,43 @@ from .structs import Person
 
 class BtNode_ScanFor(ServiceHandler):
 
-    # deprecated
-    def __init__(self, 
-                 name: str,
-                 bb_source: str,
-                 bb_namespace: str,
-                 bb_key:str,
-                 service_name : str = "object_detection",
-                 object: str = None,
-                 use_orbbec = True,
-                 transform_to_map = False
-                 ):
-        """
-        executed when creating tree diagram, therefor very minimal
-        """
+    # # deprecated
+    # def __init__(self, 
+    #              name: str,
+    #              bb_source: str,
+    #              bb_namespace: str,
+    #              bb_key:str,
+    #              service_name : str = "object_detection",
+    #              object: str = None,
+    #              use_orbbec = True,
+    #              transform_to_map = False
+    #              ):
+    #     """
+    #     executed when creating tree diagram, therefor very minimal
+    #     """
+    #     super(BtNode_ScanFor, self).__init__(name, service_name, ObjectDetection)
+    #     self.bb_namespace = bb_namespace
+    #     self.bb_key = bb_key
+    #     self.bb_source = bb_source
+    #     self.object = object
+    #     self.use_orbbec = use_orbbec
+    #     self.transform_to_map = transform_to_map
+    #     self.read = True
+    #     if self.object is not None:
+    #         self.read = False
+    
+    # def __init__(self, behavior_name: str, key_obj_type: str, key_object_position: str, service_name: str = "object_detection", use_orbbec: bool = True, transform_to_map: bool = False):
+    #     super(BtNode_ScanFor, self).__init__(behavior_name, service_name, ObjectDetection)
+    #     self.bb_source = key_obj_type
+    #     self.bb_namespace = None
+    #     self.bb_key = key_object_position
+    #     self.object = None
+    #     self.use_orbbec = use_orbbec
+    #     self.transform_to_map = transform_to_map
+    #     self.read = True
+    
+    def __init__(self, name: str, obj_type: str, key_object_position: str, service_name: str = "object_detection", use_orbbec: bool = True, transform_to_map: bool = False):
         super(BtNode_ScanFor, self).__init__(name, service_name, ObjectDetection)
-        self.bb_namespace = bb_namespace
-        self.bb_key = bb_key
-        self.bb_source = bb_source
-        self.object = object
-        self.use_orbbec = use_orbbec
-        self.transform_to_map = transform_to_map
-        self.read = True
-        if self.object is not None:
-            self.read = False
-    
-    def __init__(self, behavior_name: str, key_obj_type: str, key_object_position: str, service_name: str = "object_detection", use_orbbec: bool = True, transform_to_map: bool = False):
-        super(BtNode_ScanFor, self).__init__(behavior_name, service_name, ObjectDetection)
-        self.bb_source = key_obj_type
-        self.bb_namespace = None
-        self.bb_key = key_object_position
-        self.object = None
-        self.use_orbbec = use_orbbec
-        self.transform_to_map = transform_to_map
-        self.read = True
-    
-    def __init__(self, behavior_name: str, obj_type: str, key_object_position: str, service_name: str = "object_detection", use_orbbec: bool = True, transform_to_map: bool = False):
-        super(BtNode_ScanFor, self).__init__(behavior_name, service_name, ObjectDetection)
         self.bb_source = None
         self.bb_namespace = None
         self.bb_key = key_object_position
@@ -226,41 +226,33 @@ class BtNode_TrackPerson(ServiceHandler):
 
 class BtNode_FindObj(ServiceHandler):
 
-    def __init__(self, 
-                 name: str,
-                 bb_source,
-                 bb_namespace: str,
-                 bb_key:str,
-                 service_name:str = "object_detection",
-                 object:str = None
-                 ):
-        """
-        executed when creating tree diagram, therefor very minimal
-        """
-        super(BtNode_FindObj, self).__init__(name, service_name, ObjectDetection)
-        self.bb_namespace = bb_namespace
-        self.bb_key = bb_key
-        self.bb_source = bb_source
-        self.object = object
-        self.read = True
-        if self.object is not None:
-            self.read = False
+    # def __init__(self, 
+    #              name: str,
+    #              bb_source,
+    #              bb_namespace: str,
+    #              bb_key:str,
+    #              service_name:str = "object_detection",
+    #              object:str = None
+    #              ):
+    #     """
+    #     executed when creating tree diagram, therefor very minimal
+    #     """
+    #     super(BtNode_FindObj, self).__init__(name, service_name, ObjectDetection)
+    #     self.bb_namespace = bb_namespace
+    #     self.bb_key = bb_key
+    #     self.bb_source = bb_source
+    #     self.object = object
+    #     self.read = True
+    #     if self.object is not None:
+    #         self.read = False
     
-    def __init__(self, behavior_name: str, obj_type: str, key_extracted_obj_segment: str, service_name: str = "object_detection"):
-        super(BtNode_FindObj, self).__init__(behavior_name, service_name, ObjectDetection)
+    def __init__(self, name: str, obj_type: str, key_extracted_obj_segment: str, service_name: str = "object_detection"):
+        super(BtNode_FindObj, self).__init__(name, service_name, ObjectDetection)
         self.bb_source = None
         self.bb_namespace = None
         self.bb_key = key_extracted_obj_segment
         self.object = obj_type
         self.read = False
-
-    def __init__(self, behavior_name: str, key_obj_type: str, key_extracted_obj_segment: str, service_name: str = "object_detection"):
-        super(BtNode_FindObj, self).__init__(behavior_name, service_name, ObjectDetection)
-        self.bb_source = key_obj_type
-        self.bb_namespace = None
-        self.bb_key = key_extracted_obj_segment
-        self.object = None
-        self.read = True
 
 
     def setup(self, **kwargs):

@@ -21,12 +21,9 @@ import time
 
 
 class BtNode_GotoAction(ActionHandler):
-    def __init__(self, name: str, key: str, action_name: str = "navigate_to_pose", wait_for_server_timeout_sec: float = -3):
-        super().__init__(name, NavigateToPose, action_name, key, wait_for_server_timeout_sec)
-    
-    def __init__(self, behavior_name: str, key_target: str):
-        super().__init__(behavior_name, NavigateToPose, "navigate_to_pose", key_target, -3)
-    
+    def __init__(self, name: str, key_target: str, action_name: str = "navigate_to_pose", wait_for_server_timeout_sec: float = -3):
+        super().__init__(name, NavigateToPose, action_name, key_target, wait_for_server_timeout_sec)
+     
     def send_goal(self):
         try:
             goal = NavigateToPose.Goal()
