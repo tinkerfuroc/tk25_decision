@@ -28,6 +28,7 @@ setup(
             'receptionist = behavior_tree.main:receptionist',
             "grasp-intel = behavior_tree.main:grasp_intel",
             'grasp-audio = behavior_tree.main:grasp_audio',
+            'serve-breakfast = behavior_tree.main:serve_breakfast',
         ],
     },
 )

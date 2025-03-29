@@ -101,10 +101,18 @@ class BtNode_Drop(ServiceHandler):
         """
         super(BtNode_Drop, self).__init__(name, service_name, Drop)
         self.bb_source = bb_source
-        self.bb_read_client = None
+        # self.bb_read_client = None
         self.bin_point = bin_point
 
-        if self.bin_point is not None:
+        if self.bin_point is None:
+            self.blackboard = self.attach_blackboard_client(name=self.name)
+            self.blackboard.register_key(
+                key = "drop_point",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source)
+            )
+        else:
+            self.blackboard = None
             assert isinstance(self.bin_point, PointStamped)
 
 
@@ -115,8 +123,8 @@ class BtNode_Drop(ServiceHandler):
         ServiceHandler.setup(self, **kwargs)
 
         if self.bin_point is None:
-            self.bb_read_client = self.attach_blackboard_client(name="Drop Read")
-            self.bb_read_client.register_key(self.bb_source, access=pytree.common.Access.READ)
+            # self.bb_read_client = self.attach_blackboard_client(name="Drop Read")
+            # self.bb_read_client.register_key(self.bb_source, access=pytree.common.Access.READ)
 
             # debugger info (shown with DebugVisitor)
             self.logger.debug(f"Setup Drop, reading from {self.bb_source}")
@@ -127,7 +135,7 @@ class BtNode_Drop(ServiceHandler):
         """
         if self.bin_point is None:
             try:
-                self.bin_point = self.bb_read_client.get(self.bb_source)
+                self.bin_point = self.blackboard.drop_point
                 assert isinstance(self.bin_point, PointStamped)
             except Exception as e:
                 self.feedback_message = f"Drop reading object name failed"

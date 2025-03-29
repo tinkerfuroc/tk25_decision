@@ -6,12 +6,42 @@ from .HelpMeCarry.Track import createFollowPerson, createFollowPersonAudio, crea
 from .Receptionist.receptionist import createReceptionist
 from .grasp_intel_demo.grasp_intel import create_demo
 from .grasp_intel_demo.grasp_audio import createGraspAudio
+from .ServeBreakfast.serve_breakfast import createServeBreakfast
 from .Constants import PRINT_BLACKBOARD, PRINT_DEBUG
 
 def grasp_intel():
     rclpy.init(args=None)
 
     root = create_demo()
+    return root
+
+def serve_breakfast():
+    rclpy.init(args=None)
+
+    root = createServeBreakfast()
+
+    # make it a ros tree
+    tree = py_trees_ros.trees.BehaviourTree(root)
+    tree.setup(node_name="root_node", timeout=15)
+
+    # function for display the tree to standard output
+    def print_tree(tree):
+        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
+        if PRINT_BLACKBOARD:
+            print(py_trees.display.unicode_blackboard())
+
+    if PRINT_DEBUG:
+        py_trees.logging.level = py_trees.logging.Level.DEBUG
+    
+    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
+
+    try:
+        rclpy.spin(tree.node)
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    finally:
+        tree.shutdown()
+        rclpy.try_shutdown()
 
 
 def grasp_audio():
@@ -190,9 +220,14 @@ def draw_receptionist():
     root = createReceptionist()
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
+def draw_serve_breakfast():
+    root = createServeBreakfast()
+    py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
+
 def main():
     draw_follow()
     draw_receptionist()
+    draw_serve_breakfast()
 
 if __name__ == "__main__":
     main()
