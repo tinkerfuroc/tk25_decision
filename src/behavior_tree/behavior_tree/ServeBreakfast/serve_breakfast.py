@@ -50,7 +50,7 @@ POINT_DROP_MILK = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), f
                                 point=Point(x=4.3053, y=15.9896, z=0.0)
                                 )
 
-ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.6, -60, -2.6, -3.9, 12.4, -84.9, -8.2]]
+ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
 ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -0.4187, 0.0, 1.709, 0.0, 1.343, 0.0]]
 ARM_POS_SCAN_MIDDLE = [x / 180 * math.pi for x in [-87.6, -18.0, 8.3, 42.4, 1.6, -56.1, -20]]
 
@@ -86,19 +86,19 @@ KEY_OBJECT = "object"
 def createConstantWriter():
     root = py_trees.composites.Parallel(name="Write constants to blackboard", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
 
-    root.add_child(BtNode_WriteToBlackboard(name="Write kitchen pose", key=KEY_KITCHEN_POSE, value=POS_KITCHEN))
-    root.add_child(BtNode_WriteToBlackboard(name="Write table pose", key=KEY_TABLE_POSE, value=POS_TABLE))
-    root.add_child(BtNode_WriteToBlackboard(name="Write bowl pose", key=KEY_BOWL_POSE, value=POS_BOWL))
-    root.add_child(BtNode_WriteToBlackboard(name="Write spoon pose", key=KEY_SPOON_POSE, value=POS_SPOON))
-    root.add_child(BtNode_WriteToBlackboard(name="Write cereal pose", key=KEY_CEREAL_POSE, value=POS_CEREAL))
-    root.add_child(BtNode_WriteToBlackboard(name="Write milk pose", key=KEY_MILK_POSE, value=POS_MILK))
-    root.add_child(BtNode_WriteToBlackboard(name="Write bowl point", key=KEY_BOWL_POINT, value=POINT_DROP_BOWL))
-    root.add_child(BtNode_WriteToBlackboard(name="Write spoon point", key=KEY_SPOON_POINT, value=POINT_DROP_SPOON))
-    root.add_child(BtNode_WriteToBlackboard(name="Write cereal point", key=KEY_CEREAL_POINT, value=POINT_DROP_CEREAL))
-    root.add_child(BtNode_WriteToBlackboard(name="Write milk point", key=KEY_MILK_POINT, value=POINT_DROP_MILK))
-    root.add_child(BtNode_WriteToBlackboard(name="Write arm scan pose", key=KEY_ARM_SCAN, value=ARM_POS_SCAN))
-    root.add_child(BtNode_WriteToBlackboard(name="Write arm navigating pose", key=KEY_ARM_NAVIGATING, value=ARM_POS_NAVIGATING))
-    root.add_child(BtNode_WriteToBlackboard(name="Write arm scan middle pose", key=KEY_ARM_SCAN_MIDDLE, value=ARM_POS_SCAN_MIDDLE))
+    root.add_child(BtNode_WriteToBlackboard(name="Write kitchen pose", bb_namespace="", bb_source=None, bb_key=KEY_KITCHEN_POSE, object=POS_KITCHEN))
+    root.add_child(BtNode_WriteToBlackboard(name="Write table pose", bb_namespace="", bb_source=None, bb_key=KEY_TABLE_POSE, object=POS_TABLE))
+    root.add_child(BtNode_WriteToBlackboard(name="Write bowl pose", bb_namespace="", bb_source=None, bb_key=KEY_BOWL_POSE, object=POS_BOWL))
+    root.add_child(BtNode_WriteToBlackboard(name="Write spoon pose", bb_namespace="", bb_source=None, bb_key=KEY_SPOON_POSE, object=POS_SPOON))
+    root.add_child(BtNode_WriteToBlackboard(name="Write cereal pose", bb_namespace="", bb_source=None, bb_key=KEY_CEREAL_POSE, object=POS_CEREAL))
+    root.add_child(BtNode_WriteToBlackboard(name="Write milk pose", bb_namespace="", bb_source=None, bb_key=KEY_MILK_POSE, object=POS_MILK))
+    root.add_child(BtNode_WriteToBlackboard(name="Write bowl point", bb_namespace="", bb_source=None, bb_key=KEY_BOWL_POINT, object=POINT_DROP_BOWL))
+    root.add_child(BtNode_WriteToBlackboard(name="Write spoon point", bb_namespace="", bb_source=None, bb_key=KEY_SPOON_POINT, object=POINT_DROP_SPOON))
+    root.add_child(BtNode_WriteToBlackboard(name="Write cereal point", bb_namespace="", bb_source=None, bb_key=KEY_CEREAL_POINT, object=POINT_DROP_CEREAL))
+    root.add_child(BtNode_WriteToBlackboard(name="Write milk point", bb_namespace="", bb_source=None, bb_key=KEY_MILK_POINT, object=POINT_DROP_MILK))
+    root.add_child(BtNode_WriteToBlackboard(name="Write arm scan pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_SCAN, object=ARM_POS_SCAN))
+    root.add_child(BtNode_WriteToBlackboard(name="Write arm navigating pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
+    root.add_child(BtNode_WriteToBlackboard(name="Write arm scan middle pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_SCAN_MIDDLE, object=ARM_POS_SCAN_MIDDLE))
 
     return root
 

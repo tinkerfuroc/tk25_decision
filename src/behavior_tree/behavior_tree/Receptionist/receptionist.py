@@ -13,22 +13,25 @@ import rclpy
 
 import random
 
+
 pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0), 
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
+                        pose=Pose(position=Point(x=-0.023241120846270065, y=2.5612594602417316, z=0.0), 
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.719766525996756, w=0.6942162113164466))
                                   )
 pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=4.9390, y=14.5222, z=0.0), 
-                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.673597350035888, w=0.7390985117185863))
+                        pose=Pose(position=Point(x=0.34294540817019464, y=1.2331769456468695, z=0.0), 
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.6351394196542072, w=0.7723975126845741))
                                   )
-pose_door_turned = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                               pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0), 
-                                         orientation=Quaternion(x=0.0, y=0.0, z=-0.673597350035888, w=0.7390985117185863))
-                                 )
-pose_sofa_turned = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                               pose=Pose(position=Point(x=4.9390, y=14.5222, z=0.0),
-                                         orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
-                                )
+pose_door_turned = pose_door
+pose_sofa_turned = pose_sofa
+# pose_door_turned = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                                pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0), 
+#                                          orientation=Quaternion(x=0.0, y=0.0, z=-0.673597350035888, w=0.7390985117185863))
+#                                  )
+# pose_sofa_turned = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                                pose=Pose(position=Point(x=4.9390, y=14.5222, z=0.0),
+#                                          orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
+#                                 )
 
 host_name = "host John"
 host_drink = "pepsi"
@@ -135,7 +138,9 @@ def createToSofa():
 def createAnnounceAndScanSofa():
     root = py_trees.composites.Parallel(name="Announce while feature matching", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     root.add_child(BtNode_Announce(name="Tell guest to stand on left", bb_source=None, message="Please stand on my left side"))
-    root.add_child(BtNode_FeatureMatching(name="Feature matching", bb_dest_key=KEY_PERSON_CENTROIDS, bb_persons_key=KEY_PERSONS, max_distance=MAX_SCAN_DISTANCE))
+    # root.add_child(BtNode_FeatureMatching(name="Feature matching", bb_dest_key=KEY_PERSON_CENTROIDS, bb_persons_key=KEY_PERSONS, max_distance=MAX_SCAN_DISTANCE))
+    # TODO: add turn pan tilt to face guest
+    # TODO: add point to guest being introduced
     return root
 
 def createGreetGuest():
@@ -174,6 +179,7 @@ def createReceptionist():
 
     # introduce first guest and host to each other, then recommend a seat
     first_introductions = createFirstIntroductions()
+    # TODO: add turn pan tilt back
     find_seat_recommendation1 = BtNode_SeatRecommend(name="Get seat recommendation", bb_dest_key=KEY_SEAT_RECOMMENDATION, bb_source_key=KEY_PERSONS)
     root.add_child(py_trees.composites.Parallel(name="Get recommendation 1", 
                                                 policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[first_introductions, find_seat_recommendation1]))
@@ -190,6 +196,7 @@ def createReceptionist():
 
     # introduce second guest
     second_introductions = createSecondIntroductions()
+    # TODO: add turn pan tilt back
     find_seat_recommendation2 = BtNode_SeatRecommend(name="Get seat recommendation", bb_dest_key=KEY_SEAT_RECOMMENDATION, bb_source_key=KEY_PERSONS)
     root.add_child(py_trees.composites.Parallel(name="Get recommendation 2", 
                                                 policy=py_trees.common.ParallelPolicy.SuccessOnAll(), 
