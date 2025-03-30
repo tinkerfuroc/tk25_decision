@@ -4,7 +4,7 @@ from tk_nav_interfaces.srv import Goto, GotoGrasp, RelToAbs
 # from tinker_decision_msgs.srv import Goto, GotoGrasp, RelToAbs
 # from tinker_decision_msgs.srv import Drop
 # from tinker_decision_msgs.srv import Grasp
-from tinker_arm_msgs.srv import Grasp, Drop
+from tinker_arm_msgs.srv import Grasp, Drop, Place
 # from tinker_decision_msgs.srv import Announce, WaitForStart
 from tinker_audio_msgs.srv import TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation
 
