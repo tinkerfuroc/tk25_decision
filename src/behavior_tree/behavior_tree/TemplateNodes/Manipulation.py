@@ -166,11 +166,9 @@ class BtNode_Drop(ServiceHandler):
 class BtNode_Place(ServiceHandler):
     def __init__(self, 
                  name: str,
-                 bb_source_point: str,
-                 bb_source_pose: str,
+                 bb_key_point: str,
+                 bb_key_pose: str,
                  service_name : str = "place_node",
-                 target_point : PointStamped = None,
-                 grasp_pose : Pose = None
                  ):
         """
         executed when creating tree diagram, therefor very minimal
@@ -180,64 +178,26 @@ class BtNode_Place(ServiceHandler):
             service_name: name of the service of type tinker_decision_msgs/Drop     
         """
         super(BtNode_Place, self).__init__(name, service_name, Place)
-        self.bb_source_point = bb_source_point
-        self.bb_source_pose = bb_source_pose
-        self.target_point = target_point
-        self.grasp_pose = grasp_pose
+        self.bb_key_point = bb_key_point
+        self.bb_key_pose = bb_key_pose
 
-        self.blackboard = None
-        if self.target_point is None or self.grasp_pose is None:
-            self.blackboard = self.attach_blackboard_client(name=self.name)
-            if self.target_point is None:
-                self.blackboard.register_key(
-                    key = "target_point",
-                    access=pytree.common.Access.READ,
-                    remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source_point)
-                )
-            else:
-                assert isinstance(self.target_point, PointStamped)
-            if self.grasp_pose is None:
-                self.blackboard.register_key(
-                    key = "grasp_pose",
-                    access=pytree.common.Access.READ,
-                    remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source_pose)
-                )
-            else:
-                assert isinstance(self.grasp_pose, Pose)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key = "target_point",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_key_point)
+        )
+        self.blackboard.register_key(
+            key = "grasp_pose",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_key_pose)
+        )
 
-
-    def setup(self, **kwargs):
-        """
-        setup for the node, recursively called with tree.setup()
-        """
-        ServiceHandler.setup(self, **kwargs)
-
-        if self.target_point is None:
-            self.logger.debug(f"Setup Place, reading from {self.bb_source_point}")
-        if self.grasp_pose is None:
-            self.logger.debug(f"Setup Place, reading from {self.bb_source_pose}")
 
     def initialise(self) -> None:
         """
         Called when the node is visited
         """
-        if self.target_point is None:
-            try:
-                self.target_point = self.blackboard.target_point
-                assert isinstance(self.target_point, PointStamped)
-            except Exception as e:
-                self.feedback_message = f"Place reading object name failed"
-                raise e
-        if self.grasp_pose is None:
-            try:
-                self.grasp_pose = self.blackboard.grasp_pose
-                assert isinstance(self.grasp_pose, Pose)
-            except Exception as e:
-                self.feedback_message = f"Place reading object name failed"
-                raise e
-
-        self.logger.debug(f"Initialized Place for point {self.target_point}")
-
         request = Drop.Request()
         request.target_point = self.target_point
         request.grasp_pose = self.grasp_pose
