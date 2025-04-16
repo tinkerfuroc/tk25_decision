@@ -29,6 +29,7 @@ setup(
             "grasp-intel = behavior_tree.main:grasp_intel",
             'grasp-audio = behavior_tree.main:grasp_audio',
             'serve-breakfast = behavior_tree.main:serve_breakfast',
+            'store-groceries = behavior_tree.main:store_groceries',
         ],
     },
 )
