@@ -19,10 +19,13 @@ class BtNode_FindObjTable(ServiceHandler):
                  bb_key_result: str,
                  bb_key_announcement: str,
                  target_frame: str = "base_link",
-                 use_realsense: bool = True):
+                 use_realsense: bool = True,
+                 service_name = "object_detection",
+                 service_type = ObjectDetection,
+                 ):
         super(BtNode_FindObjTable, self).__init__(name=name,
-                                                  service_name="find_object",
-                                                  service_type="behavior_tree/FindObject")
+                                                  service_name=service_name,
+                                                  service_type=service_type)
         self.bb_key_prompt = bb_key_prompt
         self.bb_key_image = bb_key_image
         self.bb_key_segment = bb_key_segment
@@ -68,7 +71,7 @@ class BtNode_FindObjTable(ServiceHandler):
     def update(self):
         self.logger.debug(f"Updating FindObjTable with prompt: {self.blackboard.prompt}")
         if self.response.done():
-            if self.response.result.status == 0:
+            if self.response.result().status == 0:
                 response = self.response.result()
                 self.blackboard.image = response.rgb_image
                 self.blackboard.segmentation = response.segments[0]
@@ -134,9 +137,11 @@ class BtNode_CategorizeGrocery(ActionHandler):
             goal.segment_object = self.blackboard.segmentation
             goal.target_frame = self.blackboard.target_frame
             self.send_goal_request(goal)
+            self.logger.debug(f"Sent goal to categorize grocery with prompt: {self.blackboard.prompt}")
             self.feedback_message = f"Sent goal to categorize grocery with prompt: {self.blackboard.prompt}"
         except Exception as e:
             self.feedback_message = f"Failed to send goal: {e}"
+            self.logger.debug(f"Failed to send goal: {e}")
             return py_trees.common.Status.FAILURE
     
     def process_result(self):
@@ -150,10 +155,11 @@ class BtNode_CategorizeGrocery(ActionHandler):
             return py_trees.common.Status.SUCCESS
     
     def feedback_callback(self, msg):
-        if msg.status != 0:
-            self.feedback_message = f"ERROR:  {msg.status} - {msg.message}"
+        feedback = msg.feedback
+        if feedback.status != 0:
+            self.feedback_message = f"ERROR:  {feedback.status} - {feedback.message}"
         else:
-            self.feedback_message = f"INFO:  {msg.status} - {msg.message}"
+            self.feedback_message = f"INFO:  {feedback.status} - {feedback.message}"
 
 
 class BtNode_GraspWithPose(BtNode_Grasp):
@@ -170,7 +176,7 @@ class BtNode_GraspWithPose(BtNode_Grasp):
         self.logger.debug(f"Update Grasp")
         if self.response.done():
             if self.response.result().success:
-                self.blackboard.pose = self.response.result().pose
+                self.blackboard.pose = self.response.result().grasp_pose
                 self.feedback_message = f"Grasp Successful"
                 return py_trees.common.Status.SUCCESS
             else:

@@ -13,10 +13,11 @@ from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import rclpy
 
-prompt_list = "can . bottle . carton . container . cup . glass . jug . mug . pitcher . pot . sack . tub . tube . vase . box . bag . bowl . canister . jar"
+prompt_list = "can . bottle . apple"
 
+#14.949769937531444
 POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=14.949769937531444, y=-0.5816368740838, z=0.0),
+                        pose=Pose(position=Point(x=15.45, y=-0.5816368740838, z=0.0),
                                   orientation=Quaternion(x=0.0, y=0.0, z=0.21054130352283032, w=0.977584962809324))
                         )
 POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
@@ -25,8 +26,9 @@ POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id
                         )
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
-ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -0.4187, 0.0, 1.709, 0.0, 1.343, 0.0]]
-ARM_POS_PLACING = [x / 180 * math.pi for x in [-87.6, -18.0, 8.3, 42.4, 1.6, -56.1, -20]]
+ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -45.0, 0.0, 0.0, 0.0, -30.0, 0.0]]
+ARM_POS_PLACING = ARM_POS_NAVIGATING
+# ARM_POS_PLACING = [x / 180 * math.pi for x in [-87.6, -18.0, 8.3, 42.4, 1.6, -56.1, -20]]
 
 N_LAYERS = 2
 
@@ -43,13 +45,15 @@ KEY_OBJECT = "object"
 KEY_POINT_PLACE = "point_place"
 
 KEY_GRASP_POSE = "grasp_pose"
+KEY_TARGET_FRAME = "target_frame"
 
-KEY_PROMPT = "can . bottle . apple"
+KEY_PROMPT = "prompt"
 KEY_GRASP_ANNOUNCEMENT = "grasp_announcement"
 
 arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
 place_service_name = "place_node"
+point_target_frame = "base_link"
 
 def createConstantWriter():
     root = py_trees.composites.Sequence("Root", memory=True)
@@ -58,6 +62,7 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard("Write Arm Placing", bb_namespace="", bb_source=None, bb_key=KEY_ARM_PLACING, object=ARM_POS_PLACING))
     root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF, object=POS_SHELF))
     root.add_child(BtNode_WriteToBlackboard("Write Position Table", bb_namespace="", bb_source=None, bb_key=KEY_POS_TABLE, object=POS_TABLE))
+    root.add_child(BtNode_WriteToBlackboard("Write Target Frame", bb_namespace="", bb_source=None, bb_key=KEY_TARGET_FRAME, object=point_target_frame))
     root.add_child(BtNode_WriteToBlackboard("Write Prompt", bb_namespace="", bb_source=None, bb_key=KEY_PROMPT, object=prompt_list))
     return root
 
@@ -77,7 +82,7 @@ def createPlaceOnShelf():
     root = py_trees.composites.Sequence(name="Place object", memory=True)
     root.add_child(BtNode_CategorizeGrocery("Categorize object", n_layers=N_LAYERS, bb_key_prompt=KEY_PROMPT, 
                                             bb_key_image=KEY_TABLE_IMG, bb_key_segment=KEY_OBJ_SEG, 
-                                            bb_target_frame="map", bb_key_result_point=KEY_POINT_PLACE
+                                            bb_target_frame=KEY_TARGET_FRAME, bb_key_result_point=KEY_POINT_PLACE
                                             ))
     root.add_child(BtNode_Place(name="Place object on shelf", bb_key_point=KEY_POINT_PLACE, bb_key_pose=KEY_GRASP_POSE, service_name=place_service_name))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
@@ -107,6 +112,7 @@ def createStoreGroceries():
     root = py_trees.composites.Sequence(name="Store groceries", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(BtNode_Announce(name="Announce starting storing groceries", bb_source=None, message="Starting storing groceries"))
+    root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     # TODO: repeat retry storing groceries five times
     retry_store = py_trees.decorators.Retry(name=f"retry 5 times", child=createStoreOnce(), num_failures=5)
     root.add_child(py_trees.decorators.Repeat(name="repeat 5 times", child=retry_store, num_success=5))

@@ -35,6 +35,7 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             raise KeyError(error_message) from e  # 'direct cause' traceability
 
         # create the service client and wait until it connects
+        print("Connecting to service %s" % self.service_name)
         self.client = self.node.create_client(self.service_type, self.service_name)
         while not self.client.wait_for_service(timeout_sec=1.0):
             self.logger.debug('service not available, waiting again...')

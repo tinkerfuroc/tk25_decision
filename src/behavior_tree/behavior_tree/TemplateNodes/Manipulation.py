@@ -198,9 +198,9 @@ class BtNode_Place(ServiceHandler):
         """
         Called when the node is visited
         """
-        request = Drop.Request()
-        request.target_point = self.target_point
-        request.grasp_pose = self.grasp_pose
+        request = Place.Request()
+        request.target_point = self.blackboard.target_point
+        request.grasp_pose = self.blackboard.grasp_pose
         # setup things that needs to be cleared
         self.response = self.client.call_async(request)
 
