@@ -30,6 +30,7 @@ setup(
             'grasp-audio = behavior_tree.main:grasp_audio',
             'serve-breakfast = behavior_tree.main:serve_breakfast',
             'store-groceries = behavior_tree.main:store_groceries',
+            'store-groceries-placing-only = behavior_tree.main:store_groceries_placing_only',
         ],
     },
 )

@@ -168,7 +168,8 @@ class BtNode_Place(ServiceHandler):
                  name: str,
                  bb_key_point: str,
                  bb_key_pose: str,
-                 service_name : str = "place_node",
+                 bb_key_env_points: str,
+                 service_name : str = "place_service",
                  ):
         """
         executed when creating tree diagram, therefor very minimal
@@ -192,6 +193,11 @@ class BtNode_Place(ServiceHandler):
             access=pytree.common.Access.READ,
             remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_key_pose)
         )
+        self.blackboard.register_key(
+            key="env_points",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_env_points)
+        )
 
 
     def initialise(self) -> None:
@@ -201,6 +207,8 @@ class BtNode_Place(ServiceHandler):
         request = Place.Request()
         request.target_point = self.blackboard.target_point
         request.grasp_pose = self.blackboard.grasp_pose
+        request.env_points = self.blackboard.env_points
+        
         # setup things that needs to be cleared
         self.response = self.client.call_async(request)
 
@@ -209,11 +217,11 @@ class BtNode_Place(ServiceHandler):
     def update(self):
         self.logger.debug(f"Update Place")
         if self.response.done():
-            if self.response.result().status == 0:
+            if self.response.result().success:
                 self.feedback_message = f"Place Successful"
                 return pytree.common.Status.SUCCESS
             else:
-                self.feedback_message = f"Place failed with status {self.response.result().status}: {self.response.result().error_msg}"
+                self.feedback_message = f"Place failed"
                 return pytree.common.Status.FAILURE
         else:
             self.feedback_message = "Still placing object..."
@@ -263,6 +271,7 @@ class BtNode_MoveArm(ServiceHandler):
         request.joint4 = self.arm_joint_pose[4]
         request.joint5 = self.arm_joint_pose[5]
         request.joint6 = self.arm_joint_pose[6]
+        request.add_octomap = False
 
         self.response = self.client.call_async(request)
 
@@ -289,10 +298,12 @@ class BtNode_MoveArmSingle(ServiceHandler):
     def __init__(self, name: str, 
                  service_name: str, 
                 #  arm_joint_pose: list[float]
-                 arm_pose_bb_key
+                 arm_pose_bb_key: str,
+                 add_octomap: bool = False
                  ):
         super().__init__(name, service_name, ArmJointService)
         self.arm_pose_bb_key = arm_pose_bb_key
+        self.add_octomap = add_octomap
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="arm_joint_pose",
@@ -317,6 +328,7 @@ class BtNode_MoveArmSingle(ServiceHandler):
         request.joint4 = self.blackboard.arm_joint_pose[4]
         request.joint5 = self.blackboard.arm_joint_pose[5]
         request.joint6 = self.blackboard.arm_joint_pose[6]
+        request.add_octomap = self.add_octomap
 
         self.response = self.client.call_async(request)
 
@@ -347,7 +359,7 @@ class BtNode_GripperAction(ActionHandler):
         if open_gripper:
             self.goal = 0.0
         else:
-            self.goal = 0.85
+            self.goal = 0.8
     
     def send_goal(self):
         try:
@@ -360,8 +372,11 @@ class BtNode_GripperAction(ActionHandler):
             self.feedback_message = f"Failed to send gripper goal {self.goal}"
             pass
     
+    def feedback_callback(self, msg):
+        pass
+    
     def process_result(self):
-        if self.result.position < 0.05:
+        if self.result_message.position < 0.05:
             self.feedback_message = f"Gripper action successful"
             return pytree.common.Status.SUCCESS
         else:

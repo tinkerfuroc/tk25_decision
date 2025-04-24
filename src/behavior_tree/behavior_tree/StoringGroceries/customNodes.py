@@ -96,6 +96,7 @@ class BtNode_CategorizeGrocery(ActionHandler):
                  bb_key_segment: str,
                  bb_target_frame: str,
                  bb_key_result_point: str,
+                 bb_key_env_points: str,
                  action_name: str = 'grocery_categorize',
                  wait_for_server_timeout_sec: float = -3
                  ):
@@ -109,23 +110,28 @@ class BtNode_CategorizeGrocery(ActionHandler):
         )
         self.blackboard.register_key(
             key="image",
-            access=py_trees.common.Access.WRITE,
+            access=py_trees.common.Access.READ,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_image)
         )
         self.blackboard.register_key(
             key="segmentation",
-            access=py_trees.common.Access.WRITE,
+            access=py_trees.common.Access.READ,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_segment)
-        )
-        self.blackboard.register_key(
-            key="result_point",
-            access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_result_point)
         )
         self.blackboard.register_key(
             key="target_frame",
             access=py_trees.common.Access.READ,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_target_frame)
+        )
+        self.blackboard.register_key(
+            key="env_points",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_env_points)
+        )
+        self.blackboard.register_key(
+            key="result_point",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_result_point)
         )
 
     def send_goal(self):
@@ -151,6 +157,7 @@ class BtNode_CategorizeGrocery(ActionHandler):
         else:
             result = self.result_message.result
             self.blackboard.result_point = result.place_point
+            self.blackboard.env_points = result.env_points
             self.feedback_message = f"Categorize grocery succeeded with target layer {result.shelf_layer} and target point {result.place_point}"
             return py_trees.common.Status.SUCCESS
     
@@ -163,7 +170,10 @@ class BtNode_CategorizeGrocery(ActionHandler):
 
 
 class BtNode_GraspWithPose(BtNode_Grasp):
-    def __init__(self, name: str, bb_key_vision_res: str, bb_key_pose: str, service_name: str = "grasp"):
+    def __init__(self, name: str, 
+                 bb_key_vision_res: str, 
+                 bb_key_pose: str, 
+                 service_name: str = "grasp"):
         super().__init__(name, bb_key_vision_res, service_name)
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
