@@ -14,7 +14,7 @@ from std_msgs.msg import Header
 import rclpy
 
 prompt_list = "can . bottle . apple"
-USE_GRASP_DUMMY = True
+USE_GRASP_DUMMY = False
 
 #14.949769937531444
 POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
@@ -93,8 +93,11 @@ def createConstantWriter():
 def createGraspOnce():
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
     # root.add_child(BtNode_MoveArmSingle("Move arm to find middle", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_GRASPING_MIDDLE, add_octomap=True))
-    root.add_child(BtNode_Announce(name="Announce moving arm", bb_source="", message="Moving arm to find object"))
-    root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
+    parallel_move_arm = py_trees.composites.Parallel("Move arm to find object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_move_arm.add_child(BtNode_Announce(name="Announce moving arm", bb_source="", message="Moving arm to find object"))
+    parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
+    root.add_child(parallel_move_arm)
+    # find object on table
     root.add_child(BtNode_FindObjTable("Find object on table", KEY_PROMPT, KEY_TABLE_IMG, KEY_OBJ_SEG, KEY_OBJECT, KEY_GRASP_ANNOUNCEMENT))
     # add parallel node to grasp and announcing it is grasping
     parallel_grasp = py_trees.composites.Parallel("Parallel Grasp", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
@@ -113,7 +116,7 @@ def createPlaceOnShelf():
     scan_parallel.add_child(BtNode_Announce(name="Announce scanning", bb_source=None, message="Scanning shelf to determine where to place object"))
     scan_parallel.add_child(BtNode_CategorizeGrocery("Categorize object", n_layers=N_LAYERS, bb_key_prompt=KEY_PROMPT, 
                                             bb_key_image=KEY_TABLE_IMG, bb_key_segment=KEY_OBJ_SEG, 
-                                            bb_target_frame=KEY_TARGET_FRAME, bb_key_result_point=KEY_POINT_PLACE_DUMMY, bb_key_env_points=KEY_ENV_POINTS))
+                                            bb_target_frame=KEY_TARGET_FRAME, bb_key_result_point=KEY_POINT_PLACE, bb_key_env_points=KEY_ENV_POINTS))
     root.add_child(scan_parallel)
     root.add_child(BtNode_MoveArmSingle("Move arm to scan", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     # announce placing on shelf
