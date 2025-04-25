@@ -30,7 +30,8 @@ POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id
 #                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.9999828747238424, w=0.005852372086610969))
 #                         )
 POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=-0.2942876962347504, y=0.7816651007796609, z=0.0),
+                        # pose=Pose(position=Point(x=-0.2942876962347504, y=0.7816651007796609, z=0.0),
+                        pose=Pose(position=Point(x=-0.2942876962347504, y=0.6316651007796609, z=0.0),
                                   orientation=Quaternion(x=0.0, y=0.0, z=0.732980291613576, w=0.680249874))
                         )
 
@@ -92,6 +93,7 @@ def createConstantWriter():
 def createGraspOnce():
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
     # root.add_child(BtNode_MoveArmSingle("Move arm to find middle", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_GRASPING_MIDDLE, add_octomap=True))
+    root.add_child(BtNode_Announce(name="Announce moving arm", bb_source="", message="Moving arm to find object"))
     root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     root.add_child(BtNode_FindObjTable("Find object on table", KEY_PROMPT, KEY_TABLE_IMG, KEY_OBJ_SEG, KEY_OBJECT, KEY_GRASP_ANNOUNCEMENT))
     # add parallel node to grasp and announcing it is grasping
@@ -113,7 +115,7 @@ def createPlaceOnShelf():
                                             bb_key_image=KEY_TABLE_IMG, bb_key_segment=KEY_OBJ_SEG, 
                                             bb_target_frame=KEY_TARGET_FRAME, bb_key_result_point=KEY_POINT_PLACE_DUMMY, bb_key_env_points=KEY_ENV_POINTS))
     root.add_child(scan_parallel)
-    root.add_child(BtNode_MoveArmSingle("Move arm to scan", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN))
+    root.add_child(BtNode_MoveArmSingle("Move arm to scan", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     # announce placing on shelf
     place_parallel = py_trees.composites.Parallel("Place object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     place_parallel.add_child(BtNode_Announce(name="Announce placing on shelf", bb_source=None, message="Attempting to place on shelf"))
