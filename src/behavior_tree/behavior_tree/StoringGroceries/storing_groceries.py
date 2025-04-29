@@ -40,7 +40,6 @@ POINT_PLACE = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
 ARM_POS_SCAN_MIDDLE = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 60.0, 30.0, -86.0, 0.0]]
-# ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -45.0, 0.0, 0.0, 0.0, -30.0, 0.0]]
 ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
 ARM_POS_PLACING = ARM_POS_NAVIGATING
 # ARM_POS_PLACING = [x / 180 * math.pi for x in [-87.6, -18.0, 8.3, 42.4, 1.6, -56.1, -20]]
@@ -133,7 +132,7 @@ def createPlaceOnShelf():
                                           bb_key_pose=KEY_GRASP_POSE_DUMMY, 
                                           bb_key_env_points=KEY_ENV_POINTS, 
                                           service_name=place_service_name))
-    place_parallel.add_child(py_trees.decorators.Retry(name="retry 3 times", child=place_sequence, num_failures=3))
+    place_parallel.add_child(py_trees.decorators.Retry(name="retry 2 times", child=place_sequence, num_failures=2))
     root.add_child(place_parallel)
     root.add_child(BtNode_Announce(name="Announce placing complete", bb_source=None, message="Placing on shelf complete"))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))

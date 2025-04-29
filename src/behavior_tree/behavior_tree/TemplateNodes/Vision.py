@@ -4,7 +4,7 @@ import time
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching
+from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud
 from geometry_msgs.msg import PointStamped
 from py_trees.common import Status
 
@@ -449,4 +449,49 @@ class BtNode_FeatureMatching(ServiceHandler):
                 return pytree.common.Status.FAILURE
         else:
             self.feedback_message = "Still matching features..."
+            return pytree.common.Status.RUNNING
+
+
+class BtNode_GetPointCloud(ServiceHandler):
+    def __init__(self,
+                 name: str,
+                 bb_point_cloud_key: str,
+                 service_name: str = "get_point_cloud_service",
+                 camera_name: str = "orbbec",
+                 ):
+        super().__init__(name, service_name, FeatureMatching)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.key = bb_point_cloud_key
+        self.blackboard.register_key(
+            key="point_cloud",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_point_cloud_key)
+        )
+
+        if "orbbec" in camera_name:
+            self.camera = "orbbec"
+        else:
+            self.camera = "realsense"
+
+        self.node = None
+    
+    def initialise(self):
+        request = GetPointCloud.Request()
+        request.camera = self.camera
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized Getting Point Cloud Service"
+
+    def update(self) -> Status:
+        self.logger.debug(f"Updated Point Cloud Service")
+        if self.response.done():
+            result : GetPointCloud.Response = self.response.result()
+            if result.status == 0:
+                self.blackboard.point_cloud = result.points
+                self.feedback_message = f"Successfully got point cloud with {result.points.height * result.points.width} points"
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Point cloud service failed with error code {result.status}: {result.error_msg}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still getting point cloud..."
             return pytree.common.Status.RUNNING

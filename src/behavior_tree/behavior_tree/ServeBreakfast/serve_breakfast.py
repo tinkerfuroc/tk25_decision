@@ -3,8 +3,9 @@ import py_trees
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.Vision import BtNode_FindObj
-from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Drop
+from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_GetPointCloud
+from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Drop, BtNode_Place
+from behavior_tree.StoringGroceries.customNodes import BtNode_GraspWithPose
 
 import math
 
@@ -12,54 +13,103 @@ from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import rclpy
 
-POS_KITCHEN = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                            pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
-                                        orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
-                            )
-POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                            pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
-                                        orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
-                            )
-POS_BOWL = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                            pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
-                                        orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
-                            )
-POS_SPOON = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                            pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
-                                        orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
-                            )
-POS_CEREAL = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                            pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
-                                        orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
-                            )
-POS_MILK = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                            pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
-                                        orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
-                            )
+# POS_KITCHEN = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                             pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
+#                                         orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
+#                             )
+# POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                             pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
+#                                         orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
+#                             )
+# POS_BOWL = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                             pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
+#                                         orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
+#                             )
+# POS_SPOON = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                             pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
+#                                         orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
+#                             )
+# POS_CEREAL = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                             pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
+#                                         orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
+#                             )
+# POS_MILK = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                             pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0),
+#                                         orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
+#                             )
 
-POINT_DROP_BOWL = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                                point=Point(x=4.3053, y=15.9896, z=0.0)
-                                )
-POINT_DROP_SPOON = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                                point=Point(x=4.3053, y=15.9896, z=0.0)
-                                )
-POINT_DROP_CEREAL = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                                point=Point(x=4.3053, y=15.9896, z=0.0)
-                                )
-POINT_DROP_MILK = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                                point=Point(x=4.3053, y=15.9896, z=0.0)
-                                )
+POS_KITCHEN = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=1.9052205940802227, y=0.07986240342385699, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.6162222736893007, w=0.787572288370527))
+                        )
+POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=1.9052205940802227, y=0.07986240342385699, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.6162222736893007, w=0.787572288370527))
+                        )
+POS_BOWL = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=1.9052205940802227, y=0.07986240342385699, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.6162222736893007, w=0.787572288370527))
+                        )
+POS_SPOON = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=1.9052205940802227, y=0.07986240342385699, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.6162222736893007, w=0.787572288370527))
+                        )
+POS_CEREAL = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=1.9052205940802227, y=0.07986240342385699, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.6162222736893007, w=0.787572288370527))
+                        )
+POS_MILK = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=1.9052205940802227, y=0.07986240342385699, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.6162222736893007, w=0.787572288370527))
+                        )
+
+# POINT_DROP_BOWL = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                                 point=Point(x=4.3053, y=15.9896, z=0.0)
+#                                 )
+# POINT_DROP_SPOON = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                                 point=Point(x=4.3053, y=15.9896, z=0.0)
+#                                 )
+# POINT_DROP_CEREAL = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                                 point=Point(x=4.3053, y=15.9896, z=0.0)
+#                                 )
+# POINT_DROP_MILK = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                                 point=Point(x=4.3053, y=15.9896, z=0.0)
+#                                 )
+
+POINT_DROP_BOWL = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        # pose=Pose(position=Point(x=-0.2942876962347504, y=0.7816651007796609, z=0.0),
+                        pose=Pose(position=Point(x=-0.2942876962347504, y=0.6316651007796609, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.732980291613576, w=0.680249874))
+                        )
+POINT_DROP_SPOON = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        # pose=Pose(position=Point(x=-0.2942876962347504, y=0.7816651007796609, z=0.0),
+                        pose=Pose(position=Point(x=-0.2942876962347504, y=0.6316651007796609, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.732980291613576, w=0.680249874))
+                        )
+POINT_DROP_CEREAL = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        # pose=Pose(position=Point(x=-0.2942876962347504, y=0.7816651007796609, z=0.0),
+                        pose=Pose(position=Point(x=-0.2942876962347504, y=0.6316651007796609, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.732980291613576, w=0.680249874))
+                        )
+POINT_DROP_MILK = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        # pose=Pose(position=Point(x=-0.2942876962347504, y=0.7816651007796609, z=0.0),
+                        pose=Pose(position=Point(x=-0.2942876962347504, y=0.6316651007796609, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.732980291613576, w=0.680249874))
+                        )
+
+# ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
+# ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -0.4187, 0.0, 1.709, 0.0, 1.343, 0.0]]
+# ARM_POS_SCAN_MIDDLE = [x / 180 * math.pi for x in [-87.6, -18.0, 8.3, 42.4, 1.6, -56.1, -20]]
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
-ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -0.4187, 0.0, 1.709, 0.0, 1.343, 0.0]]
-ARM_POS_SCAN_MIDDLE = [x / 180 * math.pi for x in [-87.6, -18.0, 8.3, 42.4, 1.6, -56.1, -20]]
+ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
+ARM_POS_SCAN_MIDDLE = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 60.0, 30.0, -86.0, 0.0]]
 
 KEY_ARM_SCAN = "arm_scan"
 KEY_ARM_NAVIGATING = "arm_navigating"
 KEY_ARM_SCAN_MIDDLE = "arm_scan_middle"
 
-
-prompt_bowl = "red bowl"
+prompt_bowl = "bowl"
 prompt_spoon = "spoon"
 prompt_cereal = "cereal box"
 prompt_milk = "white milk carton"
@@ -68,6 +118,9 @@ MAX_SCAN_DISTANCE = 2.0
 
 arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
+place_service_name = "place_service"
+point_cloud_service_name = "get_point_cloud_service"
+point_target_frame = "base_link"
 
 KEY_KITCHEN_POSE = "door_pose"
 KEY_TABLE_POSE = "table_pose"
@@ -81,6 +134,10 @@ KEY_SPOON_POINT = "spoon_point"
 KEY_CEREAL_POINT = "cereal_point"
 
 KEY_OBJECT = "object"
+KEY_OBJECT_CLASS = "object_class"
+
+KEY_GRASP_POSE = "grasp_pose"
+KEY_ENV_POINTS = "env_points"
 
 
 def createConstantWriter():
@@ -104,24 +161,34 @@ def createConstantWriter():
 
 def createGraspOnce(obj_name="object"):
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
-    root.add_child(BtNode_MoveArmSingle("Move arm to scan middle", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN_MIDDLE))
-    root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN))
+    parallel_move_arm = py_trees.composites.Parallel("Move arm to find object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_move_arm.add_child(BtNode_Announce(name="Announce moving arm", bb_source="", message="Moving arm to find object"))
+    parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
+    # parallel_move_arm.add_child(BtNode_WriteToBlackboard(name="Write arm scan middle pose", bb_namespace="", bb_source=None, bb_key=KEY_OBJECT_CLASS, object=obj_name))
+    root.add_child(parallel_move_arm)
+    # find object on table
     root.add_child(BtNode_FindObj(name=f"find {obj_name}", bb_source=None, bb_namespace=None, bb_key=KEY_OBJECT, object=obj_name, target_object_cls=obj_name))
     # add parallel node to grasp and announcing it is grasping
     parallel_grasp = py_trees.composites.Parallel("Parallel Grasp", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_grasp.add_child(BtNode_Announce(name="Announce grasping", bb_source="", message=f"grasping {obj_name}"))
-    parallel_grasp.add_child(BtNode_Grasp(f"Grasp {obj_name}", bb_source=KEY_OBJECT, service_name=grasp_service_name))
+    parallel_grasp.add_child(BtNode_GraspWithPose(f"Grasp object on table", bb_key_vision_res=KEY_OBJECT, bb_key_pose=KEY_GRASP_POSE, service_name=grasp_service_name))
     root.add_child(parallel_grasp)
-    root.add_child(BtNode_MoveArmSingle("Move arm to scan middle", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN_MIDDLE))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
-    return root
+    return py_trees.decorators.Retry(name="retry 5 times", child=root, num_failures=5)
 
 def createFindAndPlace(key_find_location, key_drop_location, obj_name):
     root = py_trees.composites.Sequence(name=f"Find and place {obj_name}", memory=True)
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(f"go to find {obj_name}", key_find_location), num_failures=10))
     root.add_child(createGraspOnce(obj_name=obj_name))
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(f"go to drop {obj_name}", KEY_TABLE_POSE), num_failures=10))
-    root.add_child(BtNode_Drop(f"Drop {obj_name}", bb_source=key_drop_location, service_name=grasp_service_name))
+    parallel_place = py_trees.composites.Parallel("Parallel Place", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_place.add_child(BtNode_Announce(name="Announce placing", bb_source="", message=f"placing {obj_name}"))
+    parallel_place.add_child(BtNode_GetPointCloud("Find environment point cloud", bb_point_cloud_key=KEY_ENV_POINTS, service_name=point_cloud_service_name, camera_name="orbbec"))
+    parallel_place.add_child(BtNode_Place(name="Place object on table",
+                                          bb_key_point=key_drop_location,
+                                          bb_key_pose=KEY_GRASP_POSE,
+                                          bb_key_env_points=KEY_ENV_POINTS,
+                                          service_name=place_service_name))
     return root
 
 def createEnterKitchen():
