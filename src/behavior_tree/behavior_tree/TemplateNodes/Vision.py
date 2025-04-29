@@ -4,7 +4,7 @@ import time
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud
+from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection
 from geometry_msgs.msg import PointStamped
 from py_trees.common import Status
 
@@ -459,7 +459,7 @@ class BtNode_GetPointCloud(ServiceHandler):
                  service_name: str = "get_point_cloud_service",
                  camera_name: str = "orbbec",
                  ):
-        super().__init__(name, service_name, FeatureMatching)
+        super().__init__(name, service_name, GetPointCloud)
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.key = bb_point_cloud_key
         self.blackboard.register_key(
@@ -494,4 +494,46 @@ class BtNode_GetPointCloud(ServiceHandler):
                 return pytree.common.Status.FAILURE
         else:
             self.feedback_message = "Still getting point cloud..."
+            return pytree.common.Status.RUNNING
+
+
+class BtNode_DoorDetection(ServiceHandler):
+    def __init__(self,
+                 name: str,
+                 bb_door_state_key: str,
+                 service_name: str = "door_detection_srv"
+                 ):
+        super().__init__(name, service_name, DoorDetection)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.key = bb_door_state_key
+        self.blackboard.register_key(
+            key="is_open",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_door_state_key)
+        )
+
+        self.camera = "orbbec"
+
+        self.node = None
+    
+    def initialise(self):
+        request = DoorDetection.Request()
+        request.camera = self.camera
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized Door Detection Service"
+
+    def update(self) -> Status:
+        self.logger.debug(f"Updated Door Detection Service")
+        if self.response.done():
+            result : DoorDetection.Response = self.response.result()
+            if result.status == 0:
+                # 0 for close, 1 for open
+                self.blackboard.is_open = result.is_open
+                self.feedback_message = f"Successfully return with is_open = {result.is_open}"
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Door detection service failed with error code {result.status}: {result.error_msg}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still waiting door service..."
             return pytree.common.Status.RUNNING
