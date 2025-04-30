@@ -537,3 +537,19 @@ class BtNode_DoorDetection(ServiceHandler):
         else:
             self.feedback_message = "Still waiting door service..."
             return pytree.common.Status.RUNNING
+
+
+class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
+    def __init__(self, name: str, x: float = 0.0, y: float = 0.0, speed: float = 0.0):
+        super().__init__(name)
+        self.x = x
+        self.y = y
+        self.client = None
+
+    def initialise(self) -> None:
+        # publish message
+        return super().initialise()
+    
+    def update(self) -> Status:
+        # TODO: count 8 loops then return
+        return pytree.common.Status.SUCCESS

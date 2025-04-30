@@ -13,6 +13,8 @@ import rclpy
 
 import random
 
+POINT_TO_PERSON = False
+TURN_PAN_TILT = True
 
 pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
                         pose=Pose(position=Point(x=-0.023241120846270065, y=2.5612594602417316, z=0.0), 

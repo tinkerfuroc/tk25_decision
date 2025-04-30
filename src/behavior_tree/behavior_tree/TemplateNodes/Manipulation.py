@@ -4,7 +4,7 @@ import py_trees as pytree
 # from tinker_decision_msgs.srv import Grasp, Drop
 # from tinker_decision_msgs.srv import ObjectDetection
 from geometry_msgs.msg import PointStamped, Pose
-from behavior_tree.messages import Grasp, ObjectDetection, Drop, ArmJointService, Place
+from behavior_tree.messages import Grasp, ObjectDetection, Drop, ArmJointService, Place, PointTo
 from control_msgs.action import GripperCommand
 from py_trees.common import Status
 from behavior_tree.Constants import SCAN_POSES
@@ -382,3 +382,43 @@ class BtNode_GripperAction(ActionHandler):
         else:
             self.feedback_message = f"Gripper action failed"
             return pytree.common.Status.FAILURE    
+
+
+class BtNode_PointTo(ServiceHandler):
+    def __init__(self, name: str,
+                 bb_key_point: str,
+                 service_name: str = "point_to_service"
+                 ):
+        super().__init__(name, service_name, PointTo)
+        self.bb_key_point = bb_key_point
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="point",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_point)
+        )
+    
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+
+        # debugger info (shown with DebugVisitor)
+        self.logger.debug(f"Setup PointTo, reading from {self.bb_key_point}")
+
+    def initialise(self):
+        request = PointTo.Request()
+        request.point = self.blackboard.point
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized point to {self.blackboard.point}"
+    
+    def update(self) -> Status:
+        self.logger.debug(f"Update point to")
+        if self.response.done():
+            if self.response.result().success:
+                self.feedback_message = f"Point To Successful"
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Point To failed"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = f"Still pointing to {self.blackboard.point}..."
+            return pytree.common.Status.RUNNING

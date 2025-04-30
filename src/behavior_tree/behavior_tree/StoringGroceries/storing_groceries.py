@@ -3,7 +3,7 @@ import py_trees
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.Vision import BtNode_FindObj
+from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_DoorDetection
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Place, BtNode_GripperAction
 from .customNodes import BtNode_CategorizeGrocery, BtNode_FindObjTable, BtNode_GraspWithPose
 
@@ -70,10 +70,21 @@ KEY_TARGET_FRAME = "target_frame"
 KEY_PROMPT = "prompt"
 KEY_GRASP_ANNOUNCEMENT = "grasp_announcement"
 
+KEY_DOOR_STATUS = "door_status"
+
 arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
 place_service_name = "place_service"
 point_target_frame = "base_link"
+
+def createEnterArena():
+    root = py_trees.composites.Sequence(name="Enter arena", memory=True)
+    root.add_child(BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS))
+    parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_enter_arena.add_child(BtNode_Announce(name="Announce entering arena", bb_source=None, message="Entering arena"))
+    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
+    root.add_child(parallel_enter_arena)
+    return root
 
 def createConstantWriter():
     root = py_trees.composites.Sequence("Root", memory=True)
@@ -164,6 +175,7 @@ def createStoreGroceries():
     root.add_child(createConstantWriter())
     root.add_child(BtNode_Announce(name="Announce starting storing groceries", bb_source=None, message="Starting storing groceries"))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    root.add_child(createEnterArena())
     retry_store = py_trees.decorators.Retry(name=f"retry 5 times", child=createStoreOnce(), num_failures=5)
     root.add_child(py_trees.decorators.Repeat(name="repeat 5 times", child=retry_store, num_success=5))
     root.add_child(BtNode_Announce(name="Announce complete", bb_source=None, message="Storing groceries task complete"))
