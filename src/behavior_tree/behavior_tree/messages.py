@@ -15,5 +15,5 @@ import rclpy
 from geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
 from tinker_arm_msgs.srv import ArmJointService, PointTo
 from std_msgs.msg import Header
-from tinker_vision_msgs.msg import Object
+from tinker_vision_msgs.msg import Object, PanTiltCtrl
 from tinker_vision_msgs.action import Categorize

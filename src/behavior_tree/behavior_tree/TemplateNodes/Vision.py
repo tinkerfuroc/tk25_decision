@@ -1,10 +1,11 @@
+import asyncio
 import py_trees as pytree
 import time
 
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection
+from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl
 from geometry_msgs.msg import PointStamped
 from py_trees.common import Status
 
@@ -544,12 +545,46 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         super().__init__(name)
         self.x = x
         self.y = y
+        self.speed = speed
         self.client = None
+    
+    def setup(self, **kwargs) -> None:
+        # node should be passed down the tree from the root node
+        try:
+            self.node = kwargs['node']
+        except KeyError as e:
+            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
+            raise KeyError(error_message) from e  # 'direct cause' traceability
+        
+        # create publisher to a topic
+        self.publisher = self.node.create_publisher(PointStamped, "/pan_tilt_ctrl", 10)
+
 
     def initialise(self) -> None:
         # publish message
-        return super().initialise()
-    
+        msg = PanTiltCtrl()
+        msg.x = self.x
+        msg.y = self.y
+        msg.speed = self.speed
+
+        self.publisher.publish(msg)
+        self.get_logger().info(f"Publishing PanTiltCtrl with x: {self.x}, y: {self.y}, speed: {self.speed}")
+
+        # call wait_seconds to start the timer in a separate thread
+        self.timer_future = asyncio.ensure_future(self.wait_seconds(2.0))
+
     def update(self) -> Status:
         # TODO: count 8 loops then return
-        return pytree.common.Status.SUCCESS
+        if self.timer_future.done():
+            # if the timer is done, cancel the future and return success
+            self.timer_future.cancel()
+            self.get_logger().info("2 seconds passed, PanTiltCtrl finished")
+            return pytree.common.Status.SUCCESS
+        else:
+            # if the timer is not done, return running
+            self.get_logger().info("PanTiltCtrl still running")
+            return pytree.common.Status.RUNNING
+    
+    async def wait_seconds(self, seconds):
+        await asyncio.sleep(seconds)
+        return True
