@@ -18,9 +18,13 @@ USE_GRASP_DUMMY = False
 
 #14.949769937531444
 POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=1.9052205940802227, y=0.07986240342385699, z=0.0),
-                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.6162222736893007, w=0.787572288370527))
+                        pose=Pose(position=Point(x=-2.6210129261016846, y=-2.6210129261016846, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
                         )
+# POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                         pose=Pose(position=Point(x=1.9052205940802227, y=0.07986240342385699, z=0.0),
+#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.6162222736893007, w=0.787572288370527))
+#                         )
 # POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
 #                         pose=Pose(position=Point(x=0.42952810404850056, y=-0.772284168894167, z=0.0),
 #                                   orientation=Quaternion(x=0.0, y=0.0, z=0.041104151942754144, w=0.9991548672218271))
@@ -79,10 +83,12 @@ point_target_frame = "base_link"
 
 def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter arena", memory=True)
-    root.add_child(BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS))
+    
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
     parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_enter_arena.add_child(BtNode_Announce(name="Announce entering arena", bb_source=None, message="Entering arena"))
-    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
+    # parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
+    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_POS_TABLE), num_failures=5))
     root.add_child(parallel_enter_arena)
     return root
 
@@ -174,9 +180,9 @@ def createStoreGroceries():
     root = py_trees.composites.Sequence(name="Store groceries", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(BtNode_Announce(name="Announce starting storing groceries", bb_source=None, message="Starting storing groceries"))
-    root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    # root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     root.add_child(createEnterArena())
-    retry_store = py_trees.decorators.Retry(name=f"retry 5 times", child=createStoreOnce(), num_failures=5)
-    root.add_child(py_trees.decorators.Repeat(name="repeat 5 times", child=retry_store, num_success=5))
-    root.add_child(BtNode_Announce(name="Announce complete", bb_source=None, message="Storing groceries task complete"))
+    # retry_store = py_trees.decorators.Retry(name=f"retry 5 times", child=createStoreOnce(), num_failures=5)
+    # root.add_child(py_trees.decorators.Repeat(name="repeat 5 times", child=retry_store, num_success=5))
+    # root.add_child(BtNode_Announce(name="Announce complete", bb_source=None, message="Storing groceries task complete"))
     return root
