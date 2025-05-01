@@ -3,7 +3,7 @@ import py_trees
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation
-from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt
+from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection
 from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo
 
 from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm
@@ -22,16 +22,16 @@ TURN_PAN_TILT = True
 #                                   orientation=Quaternion(x=0.0, y=0.0, z=0.719766525996756, w=0.6942162113164466))
 #                                   )
 pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                                  orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=1.974, y=0.292, z=0.0), 
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.980803242, w=-0.195))
                                   )
 # pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
 #                         pose=Pose(position=Point(x=0.34294540817019464, y=1.2331769456468695, z=0.0), 
 #                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.6351394196542072, w=0.7723975126845741))
 #                                   )
 pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=0.030819913372397423, y=-0.48087501525878906, z=0.0), 
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0))
+                        pose=Pose(position=Point(x=4.692, y=1.531, z=0.0), 
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.888436267, w=0.459))
                                   )
 pose_door_turned = pose_door
 pose_sofa_turned = pose_sofa
@@ -70,6 +70,19 @@ KEY_PERSON_CENTROIDS = "centroids"
 
 KEY_SEAT_RECOMMENDATION = "seat_recommendation"
 
+KEY_DOOR_STATUS = "door_status"
+
+def createEnterArena():
+    root = py_trees.composites.Sequence(name="Enter arena", memory=True)
+    
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
+    parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_enter_arena.add_child(BtNode_Announce(name="Announce entering arena", bb_source=None, message="Entering arena"))
+    # parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
+    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_SOFA_POSE), num_failures=5))
+    root.add_child(parallel_enter_arena)
+    return root
+
 def createConstantWriter():
     root = py_trees.composites.Parallel(name="Write constants to blackboard", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
 
@@ -94,7 +107,7 @@ def createListenToGuest(bb_dest_key:str, word_list: list[str]):
 def createGetInfo(type:str, storage_key:str):
     root = py_trees.composites.Sequence(name=f"Get {type}", memory=True)
     loop = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
-    loop.add_child(BtNode_Announce(name=f"Prompt for {type}", bb_source="", message=f"Please speak into my microphone and tell me your {type}"))
+    loop.add_child(BtNode_Announce(name=f"Prompt for {type}", bb_source="", message=f"Please speak loudly into my microphone and tell me your {type}"))
     loop.add_child(createListenToGuest(bb_dest_key=storage_key, word_list=names if type == "name" else drinks))
     loop.add_child(BtNode_Confirm(name=f"Confirm {type} prompt", key_confirmed=storage_key, type=type))
     loop.add_child(BtNode_GetConfirmation(name=f"Get {type} confirmation", timeout=5.0))
@@ -110,7 +123,7 @@ def createGetNameAndDrink():
 def createRegisterFeature():
     root = py_trees.composites.Sequence(name="Register features of person in front", memory=True)
 
-    root.add_child(BtNode_Announce(name="Ask to stand in front", bb_source=None, message="Please stand in a meter in front of me so I can remember you. Thank you"))
+    root.add_child(BtNode_Announce(name="Ask to stand in front", bb_source=None, message="Please one meter in front of me so I can remember you."))
     root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_GUEST_FEATURES))
     root.add_child(BtNode_CombinePerson(name="combine person's info", key_dest=KEY_PERSONS, key_name=KEY_GUEST_NAME, key_drink=KEY_GUEST_DRINK, key_features=KEY_GUEST_FEATURES))
 
@@ -165,7 +178,7 @@ def createAnnounceAndScanSofa():
     # TODO: add turn pan tilt to face guest
     root.add_child(BtNode_Announce(name="Tell guest to stand on left", bb_source=None, message="Please stand on my left side"))
     # TODO: add point to guest being introduced
-    root.add_child(BtNode_PointTo(name="Point to guest", bb_source=KEY_PERSONS, target_id=1, point_to_person=POINT_TO_PERSON))
+    # root.add_child(BtNode_PointTo(name="Point to guest", bb_source=KEY_PERSONS, target_id=1, point_to_person=POINT_TO_PERSON))
     return root
 
 def createGreetGuest():
@@ -192,7 +205,8 @@ def createReceptionist():
     root.add_child(createConstantWriter())
 
     # announce start and scan host features
-    root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Starting receptionist, going to scan host features"))
+    root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Starting receptionist"))
+    root.add_child(createEnterArena())
     root.add_child(createScanHostFeatures())
 
     # go to door to greet first guest

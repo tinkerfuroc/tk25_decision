@@ -43,8 +43,8 @@ POS_KITCHEN = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_
                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.6162222736893007, w=0.787572288370527))
                         )
 POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=1.9052205940802227, y=0.07986240342385699, z=0.0),
-                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.6162222736893007, w=0.787572288370527))
+                        pose=Pose(position=Point(x=8.620, y=8.704, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.594, w=0.80446504))
                         )
 POS_BOWL = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                         pose=Pose(position=Point(x=1.9052205940802227, y=0.07986240342385699, z=0.0),
