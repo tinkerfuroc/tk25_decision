@@ -1,31 +1,30 @@
-# import py_trees
+import py_trees
 
-# from behavior_tree.TemplateNodes.Vision import BtNode_TrackPerson
-# from behavior_tree.TemplateNodes.Navigation import BtNode_GotoGrasp, BtNode_CalcGraspPose, BtNode_GotoAction
-# from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-# from .nodes import BtNode_ProcessTrack
+from behavior_tree.TemplateNodes.Vision import BtNode_TrackPerson
+from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+from .nodes import BtNode_ProcessTrack
 
-# TRACKING_NAMESPACE = "track"
-# TRACKING_POINT_KEY = "person"
-# GRASP_POSE_KEY = "goal_pose"
+TRACKING_NAMESPACE = "track"
+TRACKING_POINT_KEY = "person"
+GRASP_POSE_KEY = "goal_pose"
 
-# def createFollowPerson():
-#     track = py_trees.composites.Selector(name="Track Person", memory=True)
-#     track_repeat = py_trees.decorators.Repeat(name="Repeat tracking indefinitely", child=track, num_success=-1)
-#     track.add_child(BtNode_TrackPerson(name="Detect Person and Save", bb_namespace=TRACKING_NAMESPACE, bb_key=TRACKING_POINT_KEY))
-#     # TODO: add node for what to do when vision looses track of person
-#     track.add_child(py_trees.behaviours.Success(name="Dummy for movement if person is lost"))
+def createFollowPerson():
+    track = py_trees.composites.Selector(name="Track Person", memory=True)
+    track_repeat = py_trees.decorators.Repeat(name="Repeat tracking indefinitely", child=track, num_success=-1)
+    track.add_child(BtNode_TrackPerson(name="Detect Person and Save", bb_namespace=TRACKING_NAMESPACE, bb_key=TRACKING_POINT_KEY))
+    
+    # TODO: add node for what to do when vision looses track of person
+    # track.add_child(py_trees.behaviours.Success(name="Dummy for movement if person is lost"))
 
-#     follow = py_trees.composites.Sequence(name="Follow", memory=True)
-#     follow_inverter = py_trees.decorators.Inverter(name="follow inverter", child=follow)
-#     follow_repeat = py_trees.decorators.Retry(name="Repeat follow until success", child=follow_inverter, num_failures=999)
-#     follow.add_child(BtNode_ProcessTrack(name="Process track results", bb_namespace=TRACKING_NAMESPACE, bb_key_source=TRACKING_POINT_KEY, threshold_m=0.2, threshold_t=5.0))
-#     follow.add_child(BtNode_Announce(name="Announce person updated", bb_source=None, message="Person identified"))
-#     follow.add_child(BtNode_GotoGrasp(name="Goto grasp position", bb_source=TRACKING_NAMESPACE+"/"+TRACKING_POINT_KEY))
-#     follow.add_child(BtNode_Announce(name="Announce reached destination", bb_source=None, message="Searching again"))
-
-#     return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnSelected([follow_repeat]), children=[track_repeat, follow_repeat])
-#     # return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[track_repeat, follow_repeat])
+    follow = py_trees.composites.Sequence(name="Follow", memory=True)
+    follow_inverter = py_trees.decorators.Inverter(name="follow inverter", child=follow)
+    follow_repeat = py_trees.decorators.Retry(name="Repeat follow until success", child=follow_inverter, num_failures=999)
+    follow.add_child(BtNode_ProcessTrack(name="Process track results", bb_namespace=TRACKING_NAMESPACE, bb_key_source=TRACKING_POINT_KEY, threshold_m=0.2, threshold_t=5.0))
+    follow.add_child(BtNode_GotoAction(name="Goto person position", key=TRACKING_NAMESPACE+"/"+TRACKING_POINT_KEY, action_timeout_ticks=8))
+    
+    return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnSelected([follow_repeat]), children=[track_repeat, follow_repeat])
+    # return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[track_repeat, follow_repeat])
 
 # def createRepeatTrack():
 #     # track = py_trees.composites.Selector(name="Track Person", memory=True)
@@ -46,7 +45,6 @@
 # def createFollowPersonAction():
 #     track_repeat = createRepeatTrack()
     
-
 #     follow = py_trees.composites.Sequence(name="Follow", memory=True)
 #     follow_inverter = py_trees.decorators.Inverter(name="follow inverter", child=follow)
 #     follow_repeat = py_trees.decorators.Retry(name="Repeat follow until success", child=py_trees.decorators.Timeout(name="timeout after 8 sec", child=follow_inverter, duration=8.0), num_failures=999)

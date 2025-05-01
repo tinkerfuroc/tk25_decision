@@ -21,8 +21,8 @@ import time
 
 
 class BtNode_GotoAction(ActionHandler):
-    def __init__(self, name: str, key: str, action_name: str = "navigate_to_pose", wait_for_server_timeout_sec: float = -3):
-        super().__init__(name, NavigateToPose, action_name, key, wait_for_server_timeout_sec)
+    def __init__(self, name: str, key: str, action_name: str = "navigate_to_pose", wait_for_server_timeout_sec: float = -3, action_timeout_ticks=0):
+        super().__init__(name, NavigateToPose, action_name, key, wait_for_server_timeout_sec, action_timeout_ticks)
     
     def send_goal(self):
         try:
@@ -41,7 +41,7 @@ class BtNode_GotoAction(ActionHandler):
         else:
             return py_trees.common.Status.SUCCESS
     
-    def feedback_callback(self, msg: Any):
+    def feedback_callback(self, msg):
         """
         Default generator for feedback messages from the action server. This will
         update the behaviour's feedback message with a stringified version of the

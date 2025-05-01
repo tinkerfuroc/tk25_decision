@@ -16,7 +16,8 @@ class ActionHandler(py_trees.behaviour.Behaviour):
                  action_type: Any,
                  action_name: str,
                  key: str,
-                 wait_for_server_timeout_sec: float=-3.0
+                 wait_for_server_timeout_sec: float=-3.0,
+                 action_timeout_ticks:int = 0
                  ):
         super(ActionHandler, self).__init__(name)
         self.action_type = action_type
@@ -43,6 +44,8 @@ class ActionHandler(py_trees.behaviour.Behaviour):
                 action_msgs.GoalStatus.STATUS_CANCELED : "STATUS_CANCELED",  # noqa
                 action_msgs.GoalStatus.STATUS_ABORTED  : "STATUS_ABORTED"  # noqa
             }
+
+        self.action_timeout_ticks = action_timeout_ticks
 
     def setup(self, **kwargs):
         """
@@ -166,6 +169,8 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self.feedback_timeout = 10000.0
         self.send_goal()
 
+        self.counter = 0
+
     def update(self):
         """
         Check only to see whether the underlying action server has
@@ -176,6 +181,13 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             :class:`py_trees.common.Status`
         """
         self.logger.debug("{}.update()".format(self.qualified_name))
+
+        if self.action_timeout_ticks != 0:
+            self.counter += 1
+            if self.counter > self.action_timeout_ticks:
+                # TODO: abort the action here
+                self.feedback_message = "action timeout"
+                return py_trees.common.Status.FAILURE
 
         # processing errors
         if self.send_goal_future is None:

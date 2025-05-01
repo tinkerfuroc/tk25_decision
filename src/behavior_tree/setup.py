@@ -24,7 +24,7 @@ setup(
             'follow = behavior_tree.main:test_follow',
             'follow-audio = behavior_tree.main:test_follow_audio',
             'follow-action = behavior_tree.main:test_follow_action',
-            'test-track = behavior_tree.main:test_track',
+            'test-track = behavior_tree.main:test_follow',
             'receptionist = behavior_tree.main:receptionist',
             "grasp-intel = behavior_tree.main:grasp_intel",
             'grasp-audio = behavior_tree.main:grasp_audio',
