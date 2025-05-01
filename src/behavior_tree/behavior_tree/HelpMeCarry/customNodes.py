@@ -16,29 +16,33 @@ class BtNode_FindPointedLuggage(ServiceHandler):
     def __init__(self, 
                  name: str,
                  bb_namespace: str,
-                 bb_key: str = "goal",  # default key
+                 bb_key: str,
+                 bb_key_announce_msg: str,
                  service_name: str = "object_detection"):
         super().__init__(name, service_name, ObjectDetection)
         self.bb_namespace = bb_namespace
         self.bb_key = bb_key
 
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="point",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key)
+        )
+        self.blackboard.register_key(
+            key="announce_msg",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_announce_msg)
+        )
+
     def setup(self, **kwargs):
         super().setup(**kwargs)
-
-        self.bb_write_client = self.attach_blackboard_client(
-            name="FindPointedLuggageWrite", 
-            namespace=self.bb_namespace
-        )
-        self.bb_write_client.register_key(
-            key=self.bb_key,
-            access=py_trees.common.Access.WRITE
-        )
 
     def initialise(self):
         request = ObjectDetection.Request()
         request.prompt = "person, luggage"
         request.flags = "find_pointed_object"
-        request.camera = "realsense"
+        request.camera = "orbbec"
         request.target_frame = "base_link"
 
         self.response = self.client.call_async(request)
@@ -55,15 +59,16 @@ class BtNode_FindPointedLuggage(ServiceHandler):
             return py_trees.common.Status.FAILURE
 
         for obj in result.objects:
-            if obj.being_pointed == 1:
-                pose = PoseStamped()
-                pose.header.frame_id = result.header.frame_id
-                pose.position = obj.centroid
-                # pose.orientation.w = 1.0  # Identity quaternion
-                pose.orientation.x = 0.707106781
-                pose.orientation.z = 0.707106781
+            if obj.being_pointed == 1 or obj.being_pointed == 2:
+                self.blackboard.point = PointStamped
+                self.blackboard.point.point = obj.centroid
+                self.blackboard.point.header = result.header
 
-                self.bb_write_client.set(self.bb_key, pose, overwrite=True)
+                if obj.being_pointed == 1:
+                    self.blackboard.announce_msg = "You are pointing to your left"
+                else:
+                    self.blackboard.announce_msg = "You are pointing to your right"
+
                 self.feedback_message = f"Pointed luggage found and stored in blackboard key '{self.bb_key}'"
                 return py_trees.common.Status.SUCCESS
 
