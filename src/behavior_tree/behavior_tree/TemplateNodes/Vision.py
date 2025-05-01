@@ -527,7 +527,7 @@ class BtNode_DoorDetection(ServiceHandler):
         self.logger.debug(f"Updated Door Detection Service")
         if self.response.done():
             result : DoorDetection.Response = self.response.result()
-            if result.status == 0:
+            if result.is_open == 1:
                 # 0 for close, 1 for open
                 self.blackboard.is_open = result.is_open
                 self.feedback_message = f"Successfully return with is_open = {result.is_open}"
@@ -557,7 +557,7 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
             raise KeyError(error_message) from e  # 'direct cause' traceability
         
         # create publisher to a topic
-        self.publisher = self.node.create_publisher(PointStamped, "/pan_tilt_ctrl", 10)
+        self.publisher = self.node.create_publisher(PanTiltCtrl, "/pan_tilt_ctrl", 10)
 
 
     def initialise(self) -> None:
@@ -568,21 +568,25 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         msg.speed = self.speed
 
         self.publisher.publish(msg)
-        self.get_logger().info(f"Publishing PanTiltCtrl with x: {self.x}, y: {self.y}, speed: {self.speed}")
+        self.logger.info(f"Publishing PanTiltCtrl with x: {self.x}, y: {self.y}, speed: {self.speed}")
 
         # call wait_seconds to start the timer in a separate thread
-        self.timer_future = asyncio.ensure_future(self.wait_seconds(2.0))
+        # self.timer_future = asyncio.ensure_future(self.wait_seconds(2.0))
+        self.cnt = 0
 
     def update(self) -> Status:
         # TODO: count 8 loops then return
-        if self.timer_future.done():
+        # if self.timer_future.done():
+        if self.cnt > 3:
             # if the timer is done, cancel the future and return success
-            self.timer_future.cancel()
-            self.get_logger().info("2 seconds passed, PanTiltCtrl finished")
+            # self.timer_future.cancel()
+            self.cnt = 0
+            self.logger.info("2 seconds passed, PanTiltCtrl finished")
             return pytree.common.Status.SUCCESS
         else:
+            self.cnt += 1
             # if the timer is not done, return running
-            self.get_logger().info("PanTiltCtrl still running")
+            self.logger.info("PanTiltCtrl still running")
             return pytree.common.Status.RUNNING
     
     async def wait_seconds(self, seconds):
