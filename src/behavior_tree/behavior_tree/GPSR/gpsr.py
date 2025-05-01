@@ -1,5 +1,5 @@
-from pytree.nodes.composites import Sequence, Selector, Repeat
-from custom_nodes import (  # 假设你已实现这些自定义节点
+from py_trees.composites import Sequence, Selector, Repeat
+from .custom_nodes import (  # 假设你已实现这些自定义节点
     BtNode_WaitForCommand,
     BtNode_DecideNextAction,
     BtNode_CheckIfMyTurn,
@@ -8,44 +8,135 @@ from custom_nodes import (  # 假设你已实现这些自定义节点
     BtNode_ScanFor,
     BtNode_FindObj,
 )
-from pytree.trees import BehaviourTree
+from py_trees.trees import BehaviourTree
+
+from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
+from std_msgs.msg import Header
+import rclpy
 
 # Import additional nodes from TemplateNodes
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TrackPerson
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_Goto, BtNode_GotoGrasp, BtNode_CalcGraspPose
+from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
 
-# bed, dresser, desk, dining table, storage box, wine rack, sofa, side table, TV cabinet, storage table, sink, dishwasher, bedroom, dining room, living room, kitchen
-KEY_BED_POSE = "bed_pose"
-KEY_DRESSER_POSE = "dresser_pose"
-KEY_DESK_POSE = "desk_pose"
-KEY_DINING_TABLE_POSE = "dining_table_pose"
-KEY_STORAGE_BOX_POSE = "storage_box_pose"
-KEY_WINE_RACK_POSE = "wine_rack_pose"
-KEY_SOFA_POSE = "sofa_pose"
-KEY_SIDE_TABLE_POSE = "side_table_pose"
-KEY_TV_CABINET_POSE = "tv_cabinet_pose"
-KEY_STORAGE_TABLE_POSE = "storage_table_pose"
-KEY_SINK_POSE = "sink_pose"
-KEY_DISHWASHER_POSE = "dishwasher_pose"
-KEY_BEDROOM_POSE = "bedroom_pose"
-KEY_DINING_ROOM_POSE = "dining_room_pose"
-KEY_LIVING_ROOM_POSE = "living_room_pose"
-KEY_KITCHEN_POSE = "kitchen_pose"
+pose_bed = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_dresser = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_desk = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_dining_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_storage_box = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_wine_rack = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_side_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_tv_cabinet = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_storage_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_sink = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_dishwasher = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_bedroom = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_dining_room = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_living_room = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_kitchen = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
 
-# chip, biscuit, bread, sprite, cola, water, dishsoap, handwash, shampoo, cookie, lays
-KEY_CHIP = "chip"
-KEY_BISCUIT = "biscuit"
-KEY_BREAD = "bread"
-KEY_SPRITE = "sprite"
-KEY_COLA = "cola"
-KEY_WATER = "water"
-KEY_DISHSOAP = "dishsoap"
-KEY_HANDWASH = "handwash"
-KEY_SHAMPOO = "shampoo"
-KEY_COOKIE = "cookie"
-KEY_LAYS = "lays"
+KEY_DEST_POSE = "dest_pose"
+
+KEY_ARM_POSE = "arm_pose"
+KEY_GRASP_PROMPT = "grasp_prompt"
+KEY_OBJECT = "object"
+
+KEY_ARM_NAVIGATING = "arm_navigating"
+
+descriptions = {"chip": "blue and pink oreo box",
+                "biscuit": "yellow chips can",
+                "lays": "red chips can",
+                "cookie": "black and green cookie box",
+                "bread": "white bread",
+                "sprite": "green sprite bottle",
+                "cola": "black cola bottle",
+                "orange juice": "orange bottle",
+                "water": "clear water bottle",
+                "dishsoap": "yellow and blue bottle",
+                "handwash": "white handwash bottle",
+                "shampoo": "blue shampoo bottle",
+                "cereal bowl": "blue bowl"}
+
+# # bed, dresser, desk, dining table, storage box, wine rack, sofa, side table, TV cabinet, storage table, sink, dishwasher, bedroom, dining room, living room, kitchen
+# KEY_BED_POSE = "bed_pose"
+# KEY_DRESSER_POSE = "dresser_pose"
+# KEY_DESK_POSE = "desk_pose"
+# KEY_DINING_TABLE_POSE = "dining_table_pose"
+# KEY_STORAGE_BOX_POSE = "storage_box_pose"
+# KEY_WINE_RACK_POSE = "wine_rack_pose"
+# KEY_SOFA_POSE = "sofa_pose"
+# KEY_SIDE_TABLE_POSE = "side_table_pose"
+# KEY_TV_CABINET_POSE = "tv_cabinet_pose"
+# KEY_STORAGE_TABLE_POSE = "storage_table_pose"
+# KEY_SINK_POSE = "sink_pose"
+# KEY_DISHWASHER_POSE = "dishwasher_pose"
+# KEY_BEDROOM_POSE = "bedroom_pose"
+# KEY_DINING_ROOM_POSE = "dining_room_pose"
+# KEY_LIVING_ROOM_POSE = "living_room_pose"
+# KEY_KITCHEN_POSE = "kitchen_pose"
+
+# # chip, biscuit, bread, sprite, cola, water, dishsoap, handwash, shampoo, cookie, lays
+# KEY_CHIP = "blue and pink oreo box"
+# KEY_BISCUIT = "yellow chips can"
+# KEY_BREAD = "red chips"
+# KEY_SPRITE = "sprite"
+# KEY_COLA = "cola"
+# KEY_WATER = "water"
+# KEY_DISHSOAP = "dishsoap"
+# KEY_HANDWASH = "handwash"
+# KEY_SHAMPOO = "shampoo"
+# KEY_COOKIE = "cookie"
+# KEY_LAYS = "lays"
 
 def create_decision_tree():
     # === 根节点 ===
