@@ -85,7 +85,7 @@ pose_kitchen = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame
                         orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
                         )
 
-class BtNode_DecideNextAction(ServiceHandler):
+class BtNode_DecideNextAction(Behaviour):
     """
     Node for making a high-level decision by calling a language model asynchronously.
     Expects a JSON formatted response from LLM containing action details.
@@ -98,8 +98,9 @@ class BtNode_DecideNextAction(ServiceHandler):
                  bb_state: str,
                  bb_next_action: str,
                  bb_params: str,
-                 service_name: str = "decide_next_action"):
-        super(BtNode_DecideNextAction, self).__init__(name, service_name)
+                 service_name: str = "decide_next_action"
+                 ):
+        super(BtNode_DecideNextAction, self).__init__(name)
         self.bb_command = bb_command
         self.bb_action_list = bb_action_list
         self.bb_state = bb_state
@@ -111,10 +112,9 @@ class BtNode_DecideNextAction(ServiceHandler):
         self.client = openai.OpenAI(api_key=OPENAI_API_KEY, base_url="https://openrouter.ai/api/v1")
 
     def setup(self, **kwargs):
-        ServiceHandler.setup(self, **kwargs)
+        # ServiceHandler.setup(self, **kwargs)
         self.bb_client = self.attach_blackboard_client(name="Decision ReadWrite")
         self.bb_client.register_key(self.bb_command, access=Access.READ)
-        self.bb_client.register_key(self.bb_action_list, access=Access.READ)
         self.bb_client.register_key(self.bb_params, access=Access.READ)
         self.bb_client.register_key(self.bb_state, access=Access.READ)
         self.bb_client.register_key(self.bb_next_action, access=Access.WRITE)
@@ -124,11 +124,12 @@ class BtNode_DecideNextAction(ServiceHandler):
         self.logger.debug("Initialising Decision Node")
         try:
             command = self.bb_client.get(self.bb_command)
-            action_list = self.bb_client.get(self.bb_action_list)
+            action_list = self.bb_action_list
             state = self.bb_client.get(self.bb_state)
         except Exception as e:
             self.feedback_message = f"Missing blackboard input: {e}"
-            raise e
+            state = "starting"
+            # raise e
 
         ''' COMMAND:
         Robot please look for a person raising their right arm in the living room and answer a question 
@@ -308,7 +309,7 @@ class BtNode_UpdateState(Behaviour):
 
     def setup(self, **kwargs):
         self.bb_client = self.attach_blackboard_client(name="StateUpdater")
-        self.bb_client.register_key(self.bb_state_key, access=Access.READ_WRITE)
+        self.bb_client.register_key(self.bb_state_key, access=Access.WRITE)
         self.bb_client.register_key(self.bb_params, access=Access.READ)
         self.logger.debug(f"Setup UpdateState node for action: {self.bb_params}")
 
@@ -522,6 +523,7 @@ class BtNode_GetCommand(ServiceHandler):
         if self.response.done():
             if self.response.result().status == 0:
                 self.feedback_message = "got command"
+                self.blackboard.message = self.response.result().message
                 return Status.SUCCESS
             else:
                 self.feedback_message = f"Get Command failed with error code {self.response.result().status}: {self.response.result().error_message}"

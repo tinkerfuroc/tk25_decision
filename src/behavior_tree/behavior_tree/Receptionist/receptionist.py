@@ -50,6 +50,8 @@ host_drink = "pepsi"
 names = ["Alex", "Joe", "Cassandra", "Steven", "Ryan"]
 drinks = ["tea", "coffee", "Mountain Dew", "Cola", "Hot chocolate"]
 
+DEBUG_NO_GOTO = False
+
 MAX_SCAN_DISTANCE = 2.0
 
 KEY_DOOR_POSE = "door_pose"
@@ -60,10 +62,12 @@ KEY_SOFA_POSE_TURNED = "sofa_pose_turned"
 KEY_HOST_NAME = "host_name"
 KEY_HOST_DRINK = "host_drink"
 KEY_HOST_FEATURES = "host_features"
+KEY_HOST_CENTROID = "host_centroid"
 
 KEY_GUEST_NAME = "guest_name"
 KEY_GUEST_DRINK = "guest_drink"
 KEY_GUEST_FEATURES = "guest_features"
+KEY_GUEST_CENTROID = "guest_centroid"
 
 KEY_PERSONS = "persons"
 KEY_PERSON_CENTROIDS = "centroids"
@@ -143,25 +147,27 @@ def createSecondIntroductions():
 def createToDoor():
     root = py_trees.composites.Sequence(name="Go to door", memory=True)
     root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to turn position", KEY_SOFA_POSE_TURNED), num_failures=10))
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
+    if not DEBUG_NO_GOTO:
+        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to turn position", KEY_SOFA_POSE_TURNED), num_failures=10))
+        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
     return root
 
 def createToSofa():
     root = py_trees.composites.Sequence(name="Go to sofa", memory=True)
     root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to turn position", KEY_DOOR_POSE_TURNED), num_failures=10))
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))
+    if not DEBUG_NO_GOTO:
+        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to turn position", KEY_DOOR_POSE_TURNED), num_failures=10))
+        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))
     return root
 
 def createAnnounceAndScanSofa():
     root = py_trees.composites.Parallel(name="Announce while feature matching", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     # Turn head down a bit for better feature matching
     root.add_child(BtNode_TurnPanTilt(name="Turn head down", x=0.0, y=20.0, speed=0.0))
-    # parallel_matching = py_trees.composites.Parallel(name="Feature matching", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    # parallel_matching.add_child(BtNode_FeatureMatching(name="Feature matching", bb_dest_key=KEY_PERSON_CENTROIDS, bb_persons_key=KEY_PERSONS, max_distance=MAX_SCAN_DISTANCE))
-    # parallel_matching.add_child(BtNode_Announce(name="Announce feature matching", bb_source=None, message="Scanning seated personnels"))
-    # root.add_child(parallel_matching)
+    parallel_matching = py_trees.composites.Parallel(name="Feature matching", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_matching.add_child(BtNode_FeatureMatching(name="Feature matching", bb_dest_key=KEY_PERSON_CENTROIDS, bb_persons_key=KEY_PERSONS, max_distance=MAX_SCAN_DISTANCE))
+    parallel_matching.add_child(BtNode_Announce(name="Announce feature matching", bb_source=None, message="Scanning seated personnels"))
+    root.add_child(parallel_matching)
     # TODO: add turn pan tilt to face guest
     root.add_child(BtNode_Announce(name="Tell guest to stand on left", bb_source=None, message="Please stand on my left side"))
     # TODO: add point to guest being introduced
@@ -179,7 +185,8 @@ def createGreetGuest():
 def createScanHostFeatures():
     root = py_trees.composites.Sequence(name="Scan host features", memory=True)
     root.add_child(BtNode_TurnPanTilt(name="Turn head down", x=0.0, y=20.0, speed=0.0))
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))    
+    if not DEBUG_NO_GOTO:
+        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))    
     root.add_child(BtNode_Announce(name="announce scanning host features", bb_source=None, message="Scanning host features"))
     root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_HOST_FEATURES))
     root.add_child(BtNode_CombinePerson(name="combine host's info", key_dest=KEY_PERSONS, key_name=KEY_HOST_NAME, key_drink=KEY_HOST_DRINK, key_features=KEY_HOST_FEATURES))

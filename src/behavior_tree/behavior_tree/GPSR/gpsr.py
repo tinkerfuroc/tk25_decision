@@ -35,68 +35,76 @@ pose_command = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame
                         )
 
 pose_bed = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=1.566056489944458, y=6.0895161628723145, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=-0.9761228067763232, w=0.21721939621293632))
                         )
 pose_dresser = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=3.405961036682129, y=8.099417686462402, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.8461802466425077, w=0.5328967913133131))
                         )
 pose_desk = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=2.5116984844207764, y=5.356934070587158, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=-0.555381997771819, w=0.8315953562586694))
                         )
 pose_dining_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=8.548828125, y=9.025460243225098, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=-0.5326669244808017, w=0.8463249656982618))
                         )
 pose_storage_box = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=7.824709892272949, y=9.984259605407715, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.8371160641822188, w=0.5470253148512153))
                         )
 pose_wine_rack = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=11.366836547851562, y=8.5852632522583, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=-0.5425000369225286, w= 0.8400557778737404))
                         )
 pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=4.526828289031982, y=1.6860325336456299, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.8425765114202682, w=0.5385766634406384))
                         )
 pose_side_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=5.3602375984191895, y=2.7648749351501465, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.838311316272591, w=0.545191835053787))
                         )
 pose_tv_cabinet = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=5.161995887756348, y=0.9691050052642822, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=-0.5424035116291378, w=0.8401181051330698))
                         )
 pose_storage_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=7.924943923950195, y=9.983813285827637, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.8475493057578626, w=0.530716661043692))
                         )
 pose_sink = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=11.239192008972168, y=3.921527862548828, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=-0.5446631727713234, w=0.8386548922093495))
                         )
 pose_dishwasher = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=8.515981674194336, y=4.641963481903076, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.8289533697617991, w=0.5593177189760378))
                         )
 pose_bedroom = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=4.347743034362793, y=6.498143672943115, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z= -0.9773902226260489, w= 0.2114434976891046))
                         )
 pose_dining_room = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=6.191153049468994, y= 7.793015480041504, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.2109386874061353, w=0.9774992941968689))
                         )
 pose_living_room = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=7.179622173309326, y=3.1644139289855957, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=-0.978254684315891, w= 0.20740726268387102))
                         )
 pose_kitchen = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
-                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=8.172871589660645, y=4.122262477874756, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.20610733781268523, w=0.978529389083316))
+                        )
+pose_stove = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=10.980513572692871, y=5.860569000244141, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.8328154566974134, w= 0.553550733976461))
+                        )
+pose_wardrobe = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=12.675935745239258, y=5.432043552398682, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.2077634421957669, w= 0.9781791002096529))
                         )
 
 KEY_DEST_POSE = "dest_pose"
@@ -117,9 +125,9 @@ place_service_name = "place_service"
 
 def createConstantWriter():
     root = Sequence("Root", memory=True)
-    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", None, KEY_ARM_POSE, ARM_POS_SCAN))
-    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", None, KEY_ARM_NAVIGATING, ARM_POS_NAVIGATING))
-    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", None, KEY_COMMAND_POSE, pose_command))
+    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", KEY_ARM_POSE, None, ARM_POS_SCAN))
+    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", KEY_ARM_NAVIGATING, None, ARM_POS_NAVIGATING))
+    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", KEY_COMMAND_POSE, None, pose_command))
     return root
 
 def createEnterArena():
@@ -163,7 +171,7 @@ def create_run_command():
     check_complete_node = BtNode_CheckIfCompleted("check_if_done", "bb/next_action")
 
     # === CHOOSE Selector: 根据next_action选择功能分支 ===
-    choose_node = Selector("CHOOSE")
+    choose_node = Selector("CHOOSE", True)
 
     # ------ 子分支 1: Q&A ------
     qa_seq = Sequence("scan_branch", True)
@@ -192,7 +200,7 @@ def create_run_command():
     goto_seq.add_children([goto_guard, get_pose_stamped, goto_action, goto_update])
 
     # ------ 子分支 4: Grasp ------
-    grasp_seq = Sequence("grasp_branch")
+    grasp_seq = Sequence("grasp_branch", True)
     grasp_guard = BtNode_CheckIfMyTurn("check_grasp", "grasp", "bb/next_action")
     # TODO: add move arm pose
     move_arm = BtNode_MoveArmSingle(name="Move arm to find obj", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_POSE, add_octomap=True)
@@ -210,12 +218,17 @@ def create_run_command():
     ])
 
     # === 组装TASK sequence ===
-    task_seq.add_children([decide_node, check_complete_node, choose_node])
-    task_repeat = decorators.Repeat(name="TASK", num_runs=999, child=task_seq)  # 无限循环直到被上层终止
+    task_seq.add_children([BtNode_Announce("announce", None, message="Deciding next action"), decide_node, check_complete_node, 
+                           BtNode_Announce("announce", "bb/command"),
+                           choose_node])
+    task_repeat = decorators.Repeat(name="TASK", child=task_seq, num_success=999)  # 无限循环直到被上层终止
 
     # === 组装根节点 ===
     goto_command_pose = BtNode_GotoAction(name="go to command position", key=KEY_COMMAND_POSE)
-    root.add_children([goto_command_pose, wait_command_node, task_repeat])
+    root.add_child(goto_command_pose)
+    root.add_child(wait_command_node)
+    root.add_child(task_repeat)
+    # root.add_children([goto_command_pose, wait_command_node, task_repeat])
 
     return root
 
@@ -223,5 +236,6 @@ def createGPSR():
     root = Sequence("GPSR", True)
     root.add_child(createConstantWriter())
     root.add_child(createEnterArena())
+    # root.add_child(create_run_command())
     root.add_child(decorators.Repeat("repeat 3 times", create_run_command(), 3))
     return root

@@ -9,6 +9,7 @@ from .grasp_intel_demo.grasp_audio import createGraspAudio
 from .ServeBreakfast.serve_breakfast import createServeBreakfast
 from .StoringGroceries.storing_groceries import createStoreGroceries
 from .StoringGroceries.storing_groceries_place_only import createStoreGroceriesPlaceOnly
+from .GPSR.gpsr import createGPSR
 from .Constants import PRINT_BLACKBOARD, PRINT_DEBUG
 
 def grasp_intel():
@@ -16,6 +17,34 @@ def grasp_intel():
 
     root = create_demo()
     return root
+
+def gpsr():
+    rclpy.init(args=None)
+
+    root = createGPSR()
+
+    # make it a ros tree
+    tree = py_trees_ros.trees.BehaviourTree(root)
+    tree.setup(node_name="root_node", timeout=15)
+
+    # function for display the tree to standard output
+    def print_tree(tree):
+        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
+        if PRINT_BLACKBOARD:
+            print(py_trees.display.unicode_blackboard())
+
+    if PRINT_DEBUG:
+        py_trees.logging.level = py_trees.logging.Level.DEBUG
+    
+    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
+
+    try:
+        rclpy.spin(tree.node)
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    finally:
+        tree.shutdown()
+        rclpy.try_shutdown()
 
 def store_groceries():
     rclpy.init(args=None)
