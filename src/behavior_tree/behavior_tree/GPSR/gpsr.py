@@ -17,10 +17,15 @@ from std_msgs.msg import Header
 import rclpy
 
 # Import additional nodes from TemplateNodes
+from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation
-from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TrackPerson
+from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_TrackPerson
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
+from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle
+import math
+
+ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
+ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
 
 pose_bed = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
                         pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
@@ -97,6 +102,10 @@ KEY_ARM_NAVIGATING = "arm_navigating"
 
 KEY_QNA_ANSWER = "qna_answer"
 
+arm_service_name = "arm_joint_service"
+grasp_service_name = "start_grasp"
+place_service_name = "place_service"
+
 descriptions = {"chip": "blue and pink oreo box",
                 "biscuit": "yellow chips can",
                 "lays": "red chips can",
@@ -110,6 +119,12 @@ descriptions = {"chip": "blue and pink oreo box",
                 "handwash": "white handwash bottle",
                 "shampoo": "blue shampoo bottle",
                 "cereal bowl": "blue bowl"}
+
+def createConstantWriter():
+    root = Sequence("Root", memory=True)
+    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", None, KEY_ARM_POSE, ARM_POS_SCAN))
+    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", None, KEY_ARM_NAVIGATING, ARM_POS_NAVIGATING))
+    return root
 
 def create_decision_tree():
     # === 根节点 ===
@@ -167,11 +182,15 @@ def create_decision_tree():
     # ------ 子分支 4: Grasp ------
     grasp_seq = Sequence("grasp_branch")
     grasp_guard = BtNode_CheckIfMyTurn("check_grasp", "grasp", "bb/next_action")
-    grasp_action = BtNode_Grasp_GPSR("grasp", bb_source=KEY_OBJECT)
+    # TODO: add move arm pose
+    move_arm = BtNode_MoveArmSingle(name="Move arm to find obj", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_POSE, add_octomap=True)
+    # TODO: match description to a groundDINO prompt
+    find_obj = BtNode_FindObj(name="Find obj", bb_source=KEY_GRASP_PROMPT, bb_namespace=None, bb_key=KEY_OBJECT)
+    grasp = BtNode_Grasp(name="grasp object", bb_source=KEY_OBJECT, service_name=grasp_service_name)
+    move_arm = BtNode_MoveArmSingle(name="Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING)
     grasp_update = BtNode_UpdateState("update_after_grasp", bb_params="bb/params",
                                      bb_state_key="bb/state")
-    grasp_seq.add_children([grasp_guard, grasp_action, grasp_update])
-
+    grasp_seq.add_children([grasp_guard, move_arm, find_obj, grasp, grasp_update])
 
     # Add all branches to the choose node
     choose_node.add_children([
