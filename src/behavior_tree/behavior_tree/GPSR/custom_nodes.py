@@ -13,8 +13,77 @@ from behavior_tree.messages import QuestionAnswer
 
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 
+from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
+from std_msgs.msg import Header
+import rclpy
+
 # Initialize OpenAI API
 openai.api_key = OPENAI_API_KEY
+
+pose_bed = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_dresser = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_desk = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_dining_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_storage_box = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_wine_rack = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_side_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_tv_cabinet = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_storage_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_sink = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_dishwasher = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_bedroom = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_dining_room = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_living_room = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
+pose_kitchen = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        )
 
 class BtNode_DecideNextAction(ServiceHandler):
     """
@@ -334,6 +403,7 @@ class BtNode_QA(ServiceHandler):
 
 
 # write PoseStamped to a blackboard location
+# bed, dresser, desk, dining table, storage box, wine rack, sofa, side table, TV cabinet, storage table, sink, dishwasher, bedroom, dining room, living room, kitchen
 class BtNode_WritePose(Behaviour):
     def __init__(self,
                  name: str,
@@ -351,10 +421,33 @@ class BtNode_WritePose(Behaviour):
             remap_to=Blackboard.absolute_name("/", bb_key_dest)
         )
         # TODO: declare dictionary
+        self.ps2bb = {
+            "bed": pose_bed,
+            "dresser": pose_dresser,
+            "desk": pose_desk,
+            "dining table": pose_dining_table,
+            "storage box": pose_storage_box,
+            "wine rack": pose_wine_rack,
+            "sofa": pose_sofa,
+            "side table": pose_side_table,
+            "TV cabinet": pose_tv_cabinet,
+            "storage table": pose_storage_table,
+            "sink": pose_sink,
+            "dishwasher": pose_dishwasher,
+            "bedroom": pose_bedroom,
+            "dining room": pose_dining_room,
+            "living room": pose_living_room,
+            "kitchen": pose_kitchen
+        }
     
     def initialise(self) -> None:
         return super().initialise()
     
     def update(self) -> Status:
         # 读出param，对照存入PoseStamped到pose位置
-        return super().update()
+        self.blackboard.param = self.blackboard.get("param")
+        if self.blackboard.param in self.ps2bb:
+            self.blackboard.pose = self.ps2bb[self.blackboard.param]
+            return Status.SUCCESS
+        else:
+            return Status.FAILURE
