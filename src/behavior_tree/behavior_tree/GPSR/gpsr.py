@@ -1,16 +1,16 @@
 from py_trees.composites import Sequence, Selector, Repeat
 from .custom_nodes import (  # 假设你已实现这些自定义节点
-    BtNode_WaitForCommand,
+    BtNode_GetCommand,
     BtNode_DecideNextAction,
     BtNode_CheckIfMyTurn,
     BtNode_UpdateState,
     BtNode_CheckIfCompleted,
-    BtNode_Goto,
-    BtNode_Grasp_GPSR,
     BtNode_QA,
-    BtNode_WritePose
+    BtNode_WritePose,
+    BtNode_WriteVisionPrompt
 )
 from py_trees.trees import BehaviourTree
+from py_trees import decorators
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
@@ -22,6 +22,7 @@ from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtr
 from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_TrackPerson
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle
+from behavior_tree.Receptionist.customNodes import BtNode_Confirm
 import math
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
@@ -106,20 +107,6 @@ arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
 place_service_name = "place_service"
 
-descriptions = {"chip": "blue and pink oreo box",
-                "biscuit": "yellow chips can",
-                "lays": "red chips can",
-                "cookie": "black and green cookie box",
-                "bread": "white bread",
-                "sprite": "green sprite bottle",
-                "cola": "black cola bottle",
-                "orange juice": "orange bottle",
-                "water": "clear water bottle",
-                "dishsoap": "yellow and blue bottle",
-                "handwash": "white handwash bottle",
-                "shampoo": "blue shampoo bottle",
-                "cereal bowl": "blue bowl"}
-
 def createConstantWriter():
     root = Sequence("Root", memory=True)
     root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", None, KEY_ARM_POSE, ARM_POS_SCAN))
@@ -131,10 +118,16 @@ def create_decision_tree():
     root = Sequence("Root")
 
     # === Step 1: 等待指令 ===
-    wait_command_node = BtNode_WaitForCommand("wait_for_command", bb_command_key="bb/command")
+    wait_command_node = Sequence(name=f"Get {type}", memory=True)
+    loop = Sequence(name=f"get and confirm {type}", memory=True)
+    loop.add_child(BtNode_Announce(name=f"Prompt for getting command", bb_source="", message=f"Please tell me your command"))
+    loop.add_child(BtNode_GetCommand(name="get command", bb_dest_key="bb/command"))
+    loop.add_child(BtNode_Confirm(name=f"Confirm command", key_confirmed="bb/command", type="command"))
+    loop.add_child(BtNode_GetConfirmation(name=f"Get confirmation", timeout=5.0))
+    wait_command_node.add_child(decorators.Retry(name="retry", child=loop, num_failures=10))
 
     # === Step 2: 重复执行任务的主体 ===
-    task_repeat = Repeat(name="TASK", num_runs=None)  # 无限循环直到被上层终止
+    task_repeat = decorators.Repeat(name="TASK", num_runs=999)  # 无限循环直到被上层终止
     task_seq = Sequence("Task Sequence")
 
     # 决策：由大模型根据指令、能力、先验、状态推理出下一步
@@ -184,13 +177,13 @@ def create_decision_tree():
     grasp_guard = BtNode_CheckIfMyTurn("check_grasp", "grasp", "bb/next_action")
     # TODO: add move arm pose
     move_arm = BtNode_MoveArmSingle(name="Move arm to find obj", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_POSE, add_octomap=True)
-    # TODO: match description to a groundDINO prompt
+    match_prompt = BtNode_WriteVisionPrompt(name="convert class to prompt", bb_key_params="bb/params", bb_key_dest=KEY_GRASP_PROMPT)
     find_obj = BtNode_FindObj(name="Find obj", bb_source=KEY_GRASP_PROMPT, bb_namespace=None, bb_key=KEY_OBJECT)
     grasp = BtNode_Grasp(name="grasp object", bb_source=KEY_OBJECT, service_name=grasp_service_name)
     move_arm = BtNode_MoveArmSingle(name="Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING)
     grasp_update = BtNode_UpdateState("update_after_grasp", bb_params="bb/params",
                                      bb_state_key="bb/state")
-    grasp_seq.add_children([grasp_guard, move_arm, find_obj, grasp, grasp_update])
+    grasp_seq.add_children([grasp_guard, move_arm, match_prompt, find_obj, grasp, grasp_update])
 
     # Add all branches to the choose node
     choose_node.add_children([

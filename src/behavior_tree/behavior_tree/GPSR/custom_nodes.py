@@ -9,7 +9,7 @@ import json
 import time
 from .config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_TEMPERATURE, OPENAI_MAX_TOKENS
 
-from behavior_tree.messages import QuestionAnswer
+from behavior_tree.messages import QuestionAnswer, Listen
 
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 
@@ -358,3 +358,82 @@ class BtNode_WritePose(Behaviour):
     def update(self) -> Status:
         # 读出param，对照存入PoseStamped到pose位置
         return super().update()
+
+
+class BtNode_WriteVisionPrompt(Behaviour):
+    def __init__(self,
+                 name: str,
+                 bb_key_params: str,
+                 bb_key_dest: str):
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="param",
+            access=Access.WRITE,
+            remap_to=Blackboard.absolute_name("/", bb_key_params)
+        )
+        self.blackboard.register_key(
+            key="prompt",
+            access=Access.WRITE,
+            remap_to=Blackboard.absolute_name("/", bb_key_dest)
+        )
+    
+    def initialise(self) -> None:
+        self.descriptions = {"chip": "blue and pink oreo box",
+                "biscuit": "yellow chips can",
+                "lays": "red chips can",
+                "cookie": "black and green cookie box",
+                "bread": "white bread",
+                "sprite": "green sprite bottle",
+                "cola": "black cola bottle",
+                "orange juice": "orange bottle",
+                "water": "clear water bottle",
+                "dishsoap": "yellow and blue bottle",
+                "handwash": "white handwash bottle",
+                "shampoo": "blue shampoo bottle",
+                "cereal bowl": "blue bowl"}
+        return super().initialise()
+    
+    def update(self) -> Status:
+        # 读出param，对照存入PoseStamped到pose位置
+        if self.blackboard.param.lower() in self.descriptions.keys():
+            self.blackboard.prompt = self.descriptions[self.param.lower()]
+            return Status.SUCCESS
+        self.feedback_message = f"'{self.blackboard.param.lower()}' is not in list of prompts!"
+        self.blackboard.prompt = self.blackboard.param.lower()
+        return Status.SUCCESS
+
+
+class BtNode_GetCommand(ServiceHandler):
+    def __init__(self,
+                 name: str,
+                 bb_dest_key: str,
+                 service_name = "listen_service",
+                 timeout : float = 5.0
+                 ):
+        super().__init__(name, service_name, Listen)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="message",
+            access=Access.WRITE,
+            remap_to=Blackboard.absolute_name("/", bb_dest_key)
+        )
+        self.timeout = timeout
+    
+    def initialise(self):
+        request = Listen.Request()
+        request.timeout = self.timeout
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized GetCommand"
+    
+    def update(self):
+        self.logger.debug(f"Update get command")
+        if self.response.done():
+            if self.response.result().status == 0:
+                self.feedback_message = "got command"
+                return Status.SUCCESS
+            else:
+                self.feedback_message = f"Get Command failed with error code {self.response.result().status}: {self.response.result().error_message}"
+                return Status.FAILURE
+        else:
+            self.feedback_message = "Still getting command..."
+            return Status.RUNNING
