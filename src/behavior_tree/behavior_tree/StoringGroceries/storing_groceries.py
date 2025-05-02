@@ -3,7 +3,7 @@ import py_trees
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_DoorDetection
+from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_DoorDetection, BtNode_TurnPanTilt
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Place, BtNode_GripperAction
 from .customNodes import BtNode_CategorizeGrocery, BtNode_FindObjTable, BtNode_GraspWithPose
 
@@ -159,6 +159,7 @@ def createPlaceOnShelf():
     root = py_trees.composites.Sequence(name="Place object", memory=True)
     # move arm to navigating position
     root.add_child(BtNode_MoveArmSingle("Move arm to navigating for easier scanning", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=30.0))
     # move arm to scan position
     scan_parallel = py_trees.composites.Parallel("Scan object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     scan_parallel.add_child(BtNode_Announce(name="Announce scanning", bb_source=None, message="Scanning shelf to determine where to place object"))
@@ -194,6 +195,7 @@ def createPlaceOnShelf():
     root.add_child(BtNode_GripperAction("open gripper", True))
     root.add_child(BtNode_Announce(name="Announce placing complete", bb_source=None, message="Placing on shelf complete"))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    root.add_child(BtNode_TurnPanTilt(name="turn pantilt", x=0.0, y=20.0))
     return py_trees.decorators.Retry(name="retry 5 times", child=root, num_failures=5)
 
 def createGoToShelf():
