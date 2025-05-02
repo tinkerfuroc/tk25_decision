@@ -21,9 +21,9 @@ def createFollowPerson():
     follow_inverter = py_trees.decorators.Inverter(name="follow inverter", child=follow)
     follow_repeat = py_trees.decorators.Retry(name="Repeat follow until success", child=follow_inverter, num_failures=999)
     follow.add_child(BtNode_ProcessTrack(name="Process track results", bb_namespace=TRACKING_NAMESPACE, bb_key_source=TRACKING_POINT_KEY, threshold_m=0.2, threshold_t=5.0))
-    follow.add_child(BtNode_GotoAction(name="Goto person position", key=TRACKING_NAMESPACE+"/"+TRACKING_POINT_KEY, action_timeout_ticks=8))
+    follow.add_child(py_trees.decorators.FailureIsSuccess("FisS", BtNode_GotoAction(name="Goto person position", key=TRACKING_NAMESPACE+"/"+TRACKING_POINT_KEY)))
     
-    return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnSelected([follow_repeat]), children=[track_repeat, follow_repeat])
+    return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnAll([follow_repeat]), children=[track_repeat, follow_repeat])
     # return py_trees.composites.Parallel(name="Follow Person", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[track_repeat, follow_repeat])
 
 # def createRepeatTrack():

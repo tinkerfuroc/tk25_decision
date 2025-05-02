@@ -101,7 +101,7 @@ class BtNode_Introduce(BtNode_Announce):
         return super().setup(**kwargs)
     
     def initialise(self):
-        self.announce_msg = "Hello " + self.blackboard.persons[self.target_id].name + ". "
+        self.announce_msg = "Hello " + self.blackboard.persons[self.target_id].name + ", "
         introduced_person : Person = self.blackboard.persons[self.introduced_id]
         self.announce_msg += "Here is " + introduced_person.name + \
               " whose favorite drink is " + introduced_person.fav_drink + "."

@@ -180,9 +180,9 @@ def createStoreGroceries():
     root = py_trees.composites.Sequence(name="Store groceries", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(BtNode_Announce(name="Announce starting storing groceries", bb_source=None, message="Starting storing groceries"))
-    root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    # root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     root.add_child(createEnterArena())
-    retry_store = py_trees.decorators.Retry(name=f"retry 5 times", child=createStoreOnce(), num_failures=5)
-    root.add_child(py_trees.decorators.Repeat(name="repeat 5 times", child=retry_store, num_success=5))
-    root.add_child(BtNode_Announce(name="Announce complete", bb_source=None, message="Storing groceries task complete"))
+    # retry_store = py_trees.decorators.Retry(name=f"retry 5 times", child=createStoreOnce(), num_failures=5)
+    # root.add_child(py_trees.decorators.Repeat(name="repeat 5 times", child=retry_store, num_success=5))
+    # root.add_child(BtNode_Announce(name="Announce complete", bb_source=None, message="Storing groceries task complete"))
     return root

@@ -17,22 +17,24 @@ import random
 POINT_TO_PERSON = False
 TURN_PAN_TILT = True
 
-# pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-#                         pose=Pose(position=Point(x=-0.023241120846270065, y=2.5612594602417316, z=0.0), 
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=0.719766525996756, w=0.6942162113164466))
-#                                   )
 pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=1.974, y=0.292, z=0.0), 
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.980803242, w=-0.195))
+                        pose=Pose(position=Point(x=2.067663198053498, y=0.3628327496858775, z=0.0), 
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.9669836554706895, w=0.2548383998783207))
                                   )
-# pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=0.34294540817019464, y=1.2331769456468695, z=0.0), 
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.6351394196542072, w=0.7723975126845741))
-#                                   )
 pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=4.692, y=1.531, z=0.0), 
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.888436267, w=0.459))
+                        pose=Pose(position=Point(x=4.609381420586617, y=1.4040476837582534, z=0.0), 
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.8172785256122609, w=0.5762428407998221))
                                   )
+
+# pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                         pose=Pose(position=Point(x=3.033092265789758, y=1.6798440817252815, z=0.0), 
+#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.5449234967191887, w=0.8384857677524004))
+#                                   )
+# pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                         pose=Pose(position=Point(x=2.720678909434828, y=1.4040476837582534, z=0.0), 
+#                                   orientation=Quaternion(x=0.0, y=0.0, z=0.8172785256122609, w=0.5762428407998221))
+#                                   )
+
 pose_door_turned = pose_door
 pose_sofa_turned = pose_sofa
 # pose_door_turned = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
@@ -44,11 +46,12 @@ pose_sofa_turned = pose_sofa
 #                                          orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
 #                                 )
 
-host_name = "host John"
-host_drink = "pepsi"
+host_name = "host Alex"
+host_drink = "Cola"
+# host_drink = "koala"
 
-names = ["Alex", "Joe", "Cassandra", "Steven", "Ryan"]
-drinks = ["tea", "coffee", "Mountain Dew", "Cola", "Hot chocolate"]
+names = ["Alex", "Joe", "Cassandra", "Steven", "Ryan", "Michael"]
+drinks = ["ice tea", "Cola", "water", "milk", "big coke", "fanta"]
 
 MAX_SCAN_DISTANCE = 2.0
 
@@ -101,13 +104,13 @@ def createConstantWriter():
 def createListenToGuest(bb_dest_key:str, word_list: list[str]):
     root = py_trees.composites.Selector(name="Listen to guest", memory=True)
     root.add_child(BtNode_PhraseExtraction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=7.0))
-    root.add_child(py_trees.decorators.SuccessIsFailure(name="success is failure", child=BtNode_Announce(name="Listen Failed, ask for repeat", bb_source="", message="I'm sorry. Could you please repeat that closer to my mic?")))
+    root.add_child(py_trees.decorators.SuccessIsFailure(name="success is failure", child=BtNode_Announce(name="Listen Failed, ask for repeat", bb_source="", message="I'm sorry. Could you please repeat that louder and closer?")))
     return py_trees.decorators.Retry(name="retry", child=root, num_failures=10)
 
 def createGetInfo(type:str, storage_key:str):
     root = py_trees.composites.Sequence(name=f"Get {type}", memory=True)
     loop = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
-    loop.add_child(BtNode_Announce(name=f"Prompt for {type}", bb_source="", message=f"Please speak loudly into my microphone and tell me your {type}"))
+    loop.add_child(BtNode_Announce(name=f"Prompt for {type}", bb_source="", message=f"Please speak loudly and tell me your {type}"))
     loop.add_child(createListenToGuest(bb_dest_key=storage_key, word_list=names if type == "name" else drinks))
     loop.add_child(BtNode_Confirm(name=f"Confirm {type} prompt", key_confirmed=storage_key, type=type))
     loop.add_child(BtNode_GetConfirmation(name=f"Get {type} confirmation", timeout=5.0))
@@ -123,7 +126,7 @@ def createGetNameAndDrink():
 def createRegisterFeature():
     root = py_trees.composites.Sequence(name="Register features of person in front", memory=True)
 
-    root.add_child(BtNode_Announce(name="Ask to stand in front", bb_source=None, message="Please one meter in front of me so I can remember you."))
+    root.add_child(BtNode_Announce(name="Ask to stand in front", bb_source=None, message="Please stand one meter in front of me. Thank you"))
     root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_GUEST_FEATURES))
     root.add_child(BtNode_CombinePerson(name="combine person's info", key_dest=KEY_PERSONS, key_name=KEY_GUEST_NAME, key_drink=KEY_GUEST_DRINK, key_features=KEY_GUEST_FEATURES))
 
@@ -176,7 +179,7 @@ def createAnnounceAndScanSofa():
     # parallel_matching.add_child(BtNode_Announce(name="Announce feature matching", bb_source=None, message="Scanning seated personnels"))
     # root.add_child(parallel_matching)
     # TODO: add turn pan tilt to face guest
-    root.add_child(BtNode_Announce(name="Tell guest to stand on left", bb_source=None, message="Please stand on my left side"))
+    root.add_child(BtNode_Announce(name="Tell guest to stand on left", bb_source=None, message="Please stand on my left"))
     # TODO: add point to guest being introduced
     # root.add_child(BtNode_PointTo(name="Point to guest", bb_source=KEY_PERSONS, target_id=1, point_to_person=POINT_TO_PERSON))
     return root
@@ -193,7 +196,7 @@ def createScanHostFeatures():
     root = py_trees.composites.Sequence(name="Scan host features", memory=True)
     root.add_child(BtNode_TurnPanTilt(name="Turn head down", x=0.0, y=20.0, speed=0.0))
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))    
-    root.add_child(BtNode_Announce(name="announce scanning host features", bb_source=None, message="Scanning host features"))
+    root.add_child(BtNode_Announce(name="announce scanning host features", bb_source=None, message="Scanning host"))
     root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_HOST_FEATURES))
     root.add_child(BtNode_CombinePerson(name="combine host's info", key_dest=KEY_PERSONS, key_name=KEY_HOST_NAME, key_drink=KEY_HOST_DRINK, key_features=KEY_HOST_FEATURES))
     root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
@@ -210,7 +213,7 @@ def createReceptionist():
     root.add_child(createScanHostFeatures())
 
     # go to door to greet first guest
-    root.add_child(BtNode_Announce(name="announce going to greet 1st guest", bb_source=None, message="Going to greet first guest"))
+    root.add_child(BtNode_Announce(name="announce going to greet 1st guest", bb_source=None, message="Going to greet guest"))
     root.add_child(createGreetGuest())
 
     # go to living room for introductions
@@ -227,7 +230,7 @@ def createReceptionist():
     root.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
 
     # go to door to greet second guest
-    root.add_child(BtNode_Announce(name="announce going to greet 2nd guest", bb_source=None, message="Going to greet second guest"))
+    root.add_child(BtNode_Announce(name="announce going to greet 2nd guest", bb_source=None, message="Going to greet guest"))
     root.add_child(createGreetGuest())
 
     # go to living room for introductions

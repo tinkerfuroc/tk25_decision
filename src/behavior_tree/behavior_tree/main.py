@@ -3,6 +3,7 @@ import py_trees_ros
 import rclpy
 
 from .HelpMeCarry.Track import createFollowPerson
+from .HelpMeCarry.help_me_carry import createHelpMeCarry
 from .Receptionist.receptionist import createReceptionist
 from .grasp_intel_demo.grasp_intel import create_demo
 from .grasp_intel_demo.grasp_audio import createGraspAudio
@@ -148,6 +149,34 @@ def receptionist():
     if PRINT_DEBUG:
         py_trees.logging.level = py_trees.logging.Level.DEBUG
     
+    tree.tick_tock(period_ms=250.0,post_tick_handler=print_tree)
+
+    try:
+        rclpy.spin(tree.node)
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    finally:
+        tree.shutdown()
+        rclpy.try_shutdown()
+
+def help_me_carry():
+    rclpy.init(args=None)
+
+    root = createHelpMeCarry()
+
+    # make it a ros tree
+    tree = py_trees_ros.trees.BehaviourTree(root)
+    tree.setup(node_name="root_node", timeout=15)
+
+    # function for display the tree to standard output
+    def print_tree(tree):
+        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
+        if PRINT_BLACKBOARD:
+            print(py_trees.display.unicode_blackboard())
+
+    if PRINT_DEBUG:
+        py_trees.logging.level = py_trees.logging.Level.DEBUG
+    
     tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
 
     try:
@@ -157,6 +186,7 @@ def receptionist():
     finally:
         tree.shutdown()
         rclpy.try_shutdown()
+
 
 def test_follow():
     rclpy.init(args=None)
