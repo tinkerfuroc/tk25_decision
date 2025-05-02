@@ -6,7 +6,9 @@ from .custom_nodes import (  # 假设你已实现这些自定义节点
     BtNode_UpdateState,
     BtNode_CheckIfCompleted,
     BtNode_Goto,
-    BtNode_Grasp_GPSR
+    BtNode_Grasp_GPSR,
+    BtNode_QA,
+    BtNode_WritePose
 )
 from py_trees.trees import BehaviourTree
 
@@ -93,6 +95,8 @@ KEY_OBJECT = "object"
 
 KEY_ARM_NAVIGATING = "arm_navigating"
 
+KEY_QNA_ANSWER = "qna_answer"
+
 descriptions = {"chip": "blue and pink oreo box",
                 "biscuit": "yellow chips can",
                 "lays": "red chips can",
@@ -137,10 +141,11 @@ def create_decision_tree():
     # ------ 子分支 1: Q&A ------
     qa_seq = Sequence("scan_branch")
     qa_guard = BtNode_CheckIfMyTurn("check_qa", "qa", "bb/next_action")
-    qa_action = BtNode_QA("qa")
+    qa_action = BtNode_QA(name="QnA", bb_key_dest=KEY_QNA_ANSWER, timeout=7.0)
+    answer = BtNode_Announce(name="Announce answer", bb_source=KEY_QNA_ANSWER)
     qa_update = BtNode_UpdateState("update_after_qa", bb_params="bb/params",
                                      bb_state_key="bb/state")
-    qa_seq.add_children([qa_guard, qa_action, qa_update])
+    qa_seq.add_children([qa_guard, qa_action, answer, qa_update])
 
     # ------ 子分支 2: Announce ------
     announce_seq = Sequence("announce_branch")
@@ -153,10 +158,11 @@ def create_decision_tree():
     # ------ 子分支 3: Goto ------
     goto_seq = Sequence("goto_branch")
     goto_guard = BtNode_CheckIfMyTurn("check_goto", "goto", "bb/next_action")
-    goto_action = BtNode_Goto("goto", KEY_DEST_POSE)# BtNode_Goto("goto", bb_source="bb/target_pose")
+    get_pose_stamped = BtNode_WritePose("get pose", "bb/params", KEY_DEST_POSE)
+    goto_action = BtNode_GotoAction("goto", KEY_DEST_POSE)# BtNode_Goto("goto", bb_source="bb/target_pose")
     goto_update = BtNode_UpdateState("update_after_goto", bb_params="bb/params",
                                     bb_state_key="bb/state")
-    goto_seq.add_children([goto_guard, goto_action, goto_update])
+    goto_seq.add_children([goto_guard, get_pose_stamped, goto_action, goto_update])
 
     # ------ 子分支 4: Grasp ------
     grasp_seq = Sequence("grasp_branch")

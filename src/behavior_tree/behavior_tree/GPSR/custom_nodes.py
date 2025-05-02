@@ -1,12 +1,15 @@
 import asyncio
-from pytree.nodes.service_handler import ServiceHandler
-from pytree.common import Status, Access
-from pytree.nodes.behaviour import Behaviour
-from pytree.common import Status, Access
+from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
+from py_trees.common import Status, Access
+from py_trees.behaviour import Behaviour
+from py_trees.common import Status, Access
+from py_trees.blackboard import Blackboard
 import openai
 import json
 import time
 from .config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_TEMPERATURE, OPENAI_MAX_TOKENS
+
+from behavior_tree.messages import QuestionAnswer
 
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 
@@ -296,58 +299,62 @@ class BtNode_CheckIfCompleted(Behaviour):
             self.feedback_message = f"Error reading blackboard: {e}"
             return Status.FAILURE
 
-class BtNode_Goto(Behaviour):
-    """
-    Node to move the robot to a specified location.
-    """
-
-    def __init__(self, name: str, bb_location_key: str):
-        super(BtNode_Goto, self).__init__(name)
-        self.bb_location_key = bb_location_key
-        self.bb_client = None
-
-    def setup(self, **kwargs):
-        self.bb_client = self.attach_blackboard_client(name="Goto")
-        self.bb_client.register_key(self.bb_location_key, access=Access.READ)
-        self.logger.debug(f"Setup Goto node for {self.bb_location_key}")
-
+class BtNode_QA(ServiceHandler):
+    def __init__(self, name: str, bb_key_dest: str, timeout: float = 7.0, service_name = "question_answer_service"):
+        super().__init__(name, service_name, QuestionAnswer)
+        self.timeout = timeout
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.key = bb_key_dest
+        self.blackboard.register_key(
+            key="answer",
+            access=Access.WRITE,
+            remap_to=Blackboard.absolute_name("/", bb_key_dest)
+        )
+    
     def initialise(self):
-        self.feedback_message = "Moving to location"
-
+        request = QuestionAnswer.Request()
+        request.timeout = self.timeout
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized QnA, timeout of {self.timeout} seconds"
+    
     def update(self):
-        try:
-            location = self.bb_client.get(self.bb_location_key)
-            self.feedback_message = f"Moving to {location}"
-            # TODO: call GPSR goto function
-            return Status.SUCCESS
-        except Exception as e:
-            self.feedback_message = f"Failed to move: {e}"
-            return Status.FAILURE
-        
-class BtNode_Grasp_GPSR(Behaviour):
-    """
-    Node to grasp an object using the GPSR.
-    """
+        self.logger.debug(f"Updated QnA")
+        if self.response.done():
+            result : QuestionAnswer.Response = self.response.result()
+            if result.status == 0:
+                self.blackboard.answer = result.answer
+                self.feedback_message = f"Answer: {result.answer}"
+                return Status.SUCCESS
+            else:
+                self.feedback_message = f"QnA failed with error code {result.status}: {result.error_message}"
+                return Status.FAILURE
+        else:
+            self.feedback_message = "Still running QnA..."
+            return Status.RUNNING
 
-    def __init__(self, name: str, bb_target_key: str):
-        super(BtNode_Grasp_GPSR, self).__init__(name)
-        self.bb_target_key = bb_target_key
-        self.bb_client = None
 
-    def setup(self, **kwargs):
-        self.bb_client = self.attach_blackboard_client(name="Grasp")
-        self.bb_client.register_key(self.bb_target_key, access=Access.READ)
-        self.logger.debug(f"Setup Grasp node for {self.bb_target_key}")
-
-    def initialise(self):
-        self.feedback_message = "Grasping object"
-
-    def update(self):
-        try:
-            target = self.bb_client.get(self.bb_target_key)
-            self.feedback_message = f"Grasping {target}"
-            # TODO: call GPSR grasp function
-            return Status.SUCCESS
-        except Exception as e:
-            self.feedback_message = f"Failed to grasp: {e}"
-            return Status.FAILURE
+# write PoseStamped to a blackboard location
+class BtNode_WritePose(Behaviour):
+    def __init__(self,
+                 name: str,
+                 bb_key_params: str,
+                 bb_key_dest: str):
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="param",
+            access=Access.WRITE,
+            remap_to=Blackboard.absolute_name("/", bb_key_params)
+        )
+        self.blackboard.register_key(
+            key="pose",
+            access=Access.WRITE,
+            remap_to=Blackboard.absolute_name("/", bb_key_dest)
+        )
+        # TODO: declare dictionary
+    
+    def initialise(self) -> None:
+        return super().initialise()
+    
+    def update(self) -> Status:
+        # 读出param，对照存入PoseStamped到pose位置
+        return super().update()
