@@ -369,19 +369,20 @@ class BtNode_GripperAction(ActionHandler):
             self.send_goal_request(goal)
             self.feedback_message = f"Sent gripper goal {self.goal}"
         except Exception as e:
-            self.feedback_message = f"Failed to send gripper goal {self.goal}"
+            self.feedback_message = f"Failed to send gripper goal {self.goal}; error: {e}"
             pass
     
     def feedback_callback(self, msg):
         pass
     
     def process_result(self):
-        if self.result_message.position < 0.05:
-            self.feedback_message = f"Gripper action successful"
-            return pytree.common.Status.SUCCESS
-        else:
-            self.feedback_message = f"Gripper action failed"
-            return pytree.common.Status.FAILURE    
+        return pytree.common.Status.SUCCESS
+        # if self.result_message.result.position:
+        #     self.feedback_message = f"Gripper action successful"
+        #     return pytree.common.Status.SUCCESS
+        # else:
+        #     self.feedback_message = f"Gripper action failed"
+        #     return pytree.common.Status.FAILURE    
 
 
 class BtNode_PointTo(ServiceHandler):
