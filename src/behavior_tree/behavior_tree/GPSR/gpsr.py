@@ -1,5 +1,5 @@
-from py_trees.composites import Sequence, Selector, Repeat
-from .custom_nodes import (  # 假设你已实现这些自定义节点
+from py_trees.composites import Sequence, Selector, Parallel
+from .custom_nodes import (
     BtNode_GetCommand,
     BtNode_DecideNextAction,
     BtNode_CheckIfMyTurn,
@@ -11,6 +11,7 @@ from .custom_nodes import (  # 假设你已实现这些自定义节点
 )
 from py_trees.trees import BehaviourTree
 from py_trees import decorators
+import py_trees
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
@@ -19,7 +20,7 @@ import rclpy
 # Import additional nodes from TemplateNodes
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation
-from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_TrackPerson
+from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_TrackPerson, BtNode_DoorDetection
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle
 from behavior_tree.Receptionist.customNodes import BtNode_Confirm
@@ -27,6 +28,11 @@ import math
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
 ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
+
+pose_command = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
+                        pose=Pose(position=Point(x=6.3375858, y=5.419048, z=0.0), 
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.721331807, w=0.692589650))
+                        )
 
 pose_bed = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
                         pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
@@ -94,6 +100,7 @@ pose_kitchen = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame
                         )
 
 KEY_DEST_POSE = "dest_pose"
+KEY_COMMAND_POSE = "command_pose"
 
 KEY_ARM_POSE = "arm_pose"
 KEY_GRASP_PROMPT = "grasp_prompt"
@@ -102,6 +109,7 @@ KEY_OBJECT = "object"
 KEY_ARM_NAVIGATING = "arm_navigating"
 
 KEY_QNA_ANSWER = "qna_answer"
+KEY_DOOR_STATUS = "door_status"
 
 arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
@@ -111,11 +119,23 @@ def createConstantWriter():
     root = Sequence("Root", memory=True)
     root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", None, KEY_ARM_POSE, ARM_POS_SCAN))
     root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", None, KEY_ARM_NAVIGATING, ARM_POS_NAVIGATING))
+    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", None, KEY_COMMAND_POSE, pose_command))
     return root
 
-def create_decision_tree():
+def createEnterArena():
+    root = Sequence(name="Enter arena", memory=True)
+    
+    root.add_child(decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
+    parallel_enter_arena = Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_enter_arena.add_child(BtNode_Announce(name="Announce entering arena", bb_source=None, message="Entering arena"))
+    # parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
+    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_COMMAND_POSE), num_failures=5))
+    root.add_child(parallel_enter_arena)
+    return root
+
+def create_run_command():
     # === 根节点 ===
-    root = Sequence("Root")
+    root = Sequence("Root", True)
 
     # === Step 1: 等待指令 ===
     wait_command_node = Sequence(name=f"Get {type}", memory=True)
@@ -127,8 +147,7 @@ def create_decision_tree():
     wait_command_node.add_child(decorators.Retry(name="retry", child=loop, num_failures=10))
 
     # === Step 2: 重复执行任务的主体 ===
-    task_repeat = decorators.Repeat(name="TASK", num_runs=999)  # 无限循环直到被上层终止
-    task_seq = Sequence("Task Sequence")
+    task_seq = Sequence("Task Sequence", True)
 
     # 决策：由大模型根据指令、能力、先验、状态推理出下一步
     decide_node = BtNode_DecideNextAction(
@@ -147,7 +166,7 @@ def create_decision_tree():
     choose_node = Selector("CHOOSE")
 
     # ------ 子分支 1: Q&A ------
-    qa_seq = Sequence("scan_branch")
+    qa_seq = Sequence("scan_branch", True)
     qa_guard = BtNode_CheckIfMyTurn("check_qa", "qa", "bb/next_action")
     qa_action = BtNode_QA(name="QnA", bb_key_dest=KEY_QNA_ANSWER, timeout=7.0)
     answer = BtNode_Announce(name="Announce answer", bb_source=KEY_QNA_ANSWER)
@@ -156,7 +175,7 @@ def create_decision_tree():
     qa_seq.add_children([qa_guard, qa_action, answer, qa_update])
 
     # ------ 子分支 2: Announce ------
-    announce_seq = Sequence("announce_branch")
+    announce_seq = Sequence("announce_branch", True)
     announce_guard = BtNode_CheckIfMyTurn("check_announce", "announce", "bb/next_action")
     announce_action = BtNode_Announce("announce", bb_source="bb/params")
     announce_update = BtNode_UpdateState("update_after_announce", bb_params="bb/params",
@@ -164,7 +183,7 @@ def create_decision_tree():
     announce_seq.add_children([announce_guard, announce_action, announce_update])
 
     # ------ 子分支 3: Goto ------
-    goto_seq = Sequence("goto_branch")
+    goto_seq = Sequence("goto_branch", True)
     goto_guard = BtNode_CheckIfMyTurn("check_goto", "goto", "bb/next_action")
     get_pose_stamped = BtNode_WritePose("get pose", "bb/params", KEY_DEST_POSE)
     goto_action = BtNode_GotoAction("goto", KEY_DEST_POSE)# BtNode_Goto("goto", bb_source="bb/target_pose")
@@ -192,9 +211,17 @@ def create_decision_tree():
 
     # === 组装TASK sequence ===
     task_seq.add_children([decide_node, check_complete_node, choose_node])
-    task_repeat.add_child(task_seq)
+    task_repeat = decorators.Repeat(name="TASK", num_runs=999, child=task_seq)  # 无限循环直到被上层终止
 
     # === 组装根节点 ===
-    root.add_children([wait_command_node, task_repeat])
+    goto_command_pose = BtNode_GotoAction(name="go to command position", key=KEY_COMMAND_POSE)
+    root.add_children([goto_command_pose, wait_command_node, task_repeat])
 
-    return BehaviourTree(root)
+    return root
+
+def createGPSR():
+    root = Sequence("GPSR", True)
+    root.add_child(createConstantWriter())
+    root.add_child(createEnterArena())
+    root.add_child(decorators.Repeat("repeat 3 times", create_run_command(), 3))
+    return root
