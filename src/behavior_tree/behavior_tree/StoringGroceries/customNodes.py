@@ -97,6 +97,7 @@ class BtNode_CategorizeGrocery(ActionHandler):
                  bb_target_frame: str,
                  bb_key_result_point: str,
                  bb_key_env_points: str,
+                 bb_key_reason: str,
                  action_name: str = 'grocery_categorize',
                  wait_for_server_timeout_sec: float = -3
                  ):
@@ -133,6 +134,11 @@ class BtNode_CategorizeGrocery(ActionHandler):
             access=py_trees.common.Access.WRITE,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_result_point)
         )
+        self.blackboard.register_key(
+            key="reason",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_reason)
+        )
 
     def send_goal(self):
         try:
@@ -158,6 +164,7 @@ class BtNode_CategorizeGrocery(ActionHandler):
             result = self.result_message.result
             self.blackboard.result_point = result.place_point
             self.blackboard.env_points = result.env_points
+            self.blackboard.reason = result.place_reason
             self.feedback_message = f"Categorize grocery succeeded with target layer {result.shelf_layer} and target point {result.place_point}"
             return py_trees.common.Status.SUCCESS
     

@@ -233,7 +233,12 @@ def createHelpMeCarry():
     # root.add_child(grasp_luggage)
     
     # # 宣布任务完成
-    root.add_child(BtNode_Announce(name="Announce task complete", bb_source=None, message="Please walk slowly. I will follow you now."))
-    root.add_child(py_trees.decorators.Retry("retry", py_trees.decorators.Repeat("repeat", createFollowPerson(), 999), 999))
+    # root.add_child(BtNode_Announce(name="Announce task complete", bb_source=None, message="Please walk slowly. I will follow you now."))
+    # root.add_child(py_trees.decorators.Retry("retry", py_trees.decorators.Repeat("repeat", createFollowPerson(), 999), 999))
+
+    root.add_child(BtNode_Announce(name="Announce start follow", bb_source=None, message="I will follow you now"))
+    follow = createFollowPerson()
+    announce = py_trees.decorators.Repeat(name="repeat", child=BtNode_Announce(name="Announcement to walk slowly", bb_source=None, message="Please walk slowly as I am rather slow"), num_success=3)
+    root.add_child(py_trees.composites.Parallel(name="Parallel", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[follow, announce]))
     
     return root
