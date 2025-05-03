@@ -443,6 +443,12 @@ class BtNode_FeatureMatching(ServiceHandler):
             result : FeatureMatching.Response = self.response.result()
             if result.status == 0:
                 self.blackboard.centroids = result.centroids
+                # for p in self.blackboard.centroids:
+                #     # p.point.z = 1.30
+                #     fac = p.point.x / 0.6
+                #     p.point.x /= (fac + 1e-6)
+                #     p.point.y /= (fac + 1e-6)
+                #     p.point.z = 1.3
                 self.feedback_message = f"Centroids: {result.centroids}"
                 return pytree.common.Status.SUCCESS
             else:

@@ -131,6 +131,7 @@ class BtNode_Confirm(BtNode_Announce):
         return super().setup(**kwargs)
     
     def initialise(self):
-        self.announce_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ". Am I correct?"
+        # self.announce_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ". Am I correct?"
+        self.announce_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ", correct?"
 
         return super().initialise()

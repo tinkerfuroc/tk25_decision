@@ -386,32 +386,73 @@ class BtNode_GripperAction(ActionHandler):
 
 class BtNode_PointTo(ServiceHandler):
     def __init__(self, name: str,
-                 bb_key_point: str,
+                 bb_key_persons: str,
+                 bb_key_points: str,
+                 bb_key_init_pose: str,
+                 target_id: int = 0,
                  service_name: str = "point_to_service"
                  ):
-        super().__init__(name, service_name, PointTo)
-        self.bb_key_point = bb_key_point
+        super().__init__(name, service_name, ArmJointService)
+        # self.bb_key_point = bb_key_point
+        self.bb_key_persons = bb_key_persons
+        self.bb_key_points = bb_key_points
+        self.bb_keY_init_pose = bb_key_init_pose
+        self.target_id = target_id
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
-            key="point",
+            key="persons",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_point)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_persons)
+        )
+        self.blackboard.register_key(
+            key="points",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_points)
+        )
+        self.blackboard.register_key(
+            key="arm_joint_pose",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_init_pose)
         )
     
     def setup(self, **kwargs):
         ServiceHandler.setup(self, **kwargs)
 
         # debugger info (shown with DebugVisitor)
-        self.logger.debug(f"Setup PointTo, reading from {self.bb_key_point}")
+        self.logger.debug(f"Setup PointTo, reading from {self.bb_key_persons}")
 
     def initialise(self):
-        request = PointTo.Request()
-        request.point = self.blackboard.point
-        self.response = self.client.call_async(request)
-        self.feedback_message = f"Initialized point to {self.blackboard.point}"
+        if len(self.blackboard.persons) <= self.target_id:
+            self.feedback_message = f"Failed to initialize point_to"
+            self.response = None
+        else:
+            # request = PointTo.Request()
+            point = self.blackboard.points[self.target_id]
+            # self.response = self.client.call_async(request)
+
+            request = ArmJointService.Request()
+            
+            request.joint0 = self.blackboard.arm_joint_pose[0]
+            request.joint1 = self.blackboard.arm_joint_pose[1]
+            request.joint2 = self.blackboard.arm_joint_pose[2]
+            request.joint3 = self.blackboard.arm_joint_pose[3]
+            request.joint4 = self.blackboard.arm_joint_pose[4]
+            request.joint5 = self.blackboard.arm_joint_pose[5]
+            request.joint6 = self.blackboard.arm_joint_pose[6]
+            request.joint0 = math.atan2(point.point.y, point.point.x)
+            self.angle = math.atan2(point.point.y, point.point.x)
+            request.add_octomap = False
+
+            self.response = self.client.call_async(request)
+
+            self.feedback_message = f"Initialized point to for joints {self.angle}"
     
     def update(self) -> Status:
         self.logger.debug(f"Update point to")
+        if self.response is None:
+            self.feedback_message = f"Point To failed for joints {self.angle}"
+            return pytree.common.Status.FAILURE
+
         if self.response.done():
             if self.response.result().success:
                 self.feedback_message = f"Point To Successful"
@@ -420,5 +461,5 @@ class BtNode_PointTo(ServiceHandler):
                 self.feedback_message = f"Point To failed"
                 return pytree.common.Status.FAILURE
         else:
-            self.feedback_message = f"Still pointing to {self.blackboard.point}..."
+            self.feedback_message = f"Still pointing...."
             return pytree.common.Status.RUNNING
