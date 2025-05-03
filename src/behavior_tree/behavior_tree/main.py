@@ -323,8 +323,8 @@ def draw_storing_groceries_placing_only():
 def main():
     # draw_follow()
     # draw_receptionist()
-    # draw_serve_breakfast()
-    draw_storing_groceries()
+    draw_serve_breakfast()
+    # draw_storing_groceries()
     # draw_storing_groceries_placing_only()
 
 if __name__ == "__main__":
