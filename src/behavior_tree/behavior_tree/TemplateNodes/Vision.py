@@ -18,24 +18,24 @@ class BtNode_ScanFor(ServiceHandler):
     def __init__(self, 
                  name: str,
                  bb_source: str,
-                 bb_namespace: str,
                  bb_key:str,
                  service_name : str = "object_detection",
                  object: str = None,
                  use_orbbec = True,
-                 transform_to_map = False
+                 transform_to_map = False,
+                 category = "detected objects"
                  ):
         """
         executed when creating tree diagram, therefor very minimal
         """
         super(BtNode_ScanFor, self).__init__(name, service_name, ObjectDetection)
-        self.bb_namespace = bb_namespace
         self.bb_key = bb_key
         self.bb_source = bb_source
         self.object = object
         self.use_orbbec = use_orbbec
         self.transform_to_map = transform_to_map
         self.read = True
+        self.category = category
         if self.object is not None:
             self.read = False
 
@@ -46,7 +46,7 @@ class BtNode_ScanFor(ServiceHandler):
         """
         ServiceHandler.setup(self, **kwargs)
         # attaches a blackboard (more like a shared memory section with key-value pair references) under the namespace Locations
-        self.bb_write_client = self.attach_blackboard_client(name=f"ScanFor", namespace=self.bb_namespace)
+        self.bb_write_client = self.attach_blackboard_client(name=f"ScanFor")
          # register a key with the name of the object, with this client having write access
         self.bb_write_client.register_key(self.bb_key, access=pytree.common.Access.WRITE)
 
@@ -74,6 +74,7 @@ class BtNode_ScanFor(ServiceHandler):
         request = ObjectDetection.Request()
         request.prompt = self.object
         request.flags = "scan"
+        request.category = self.category
         if self.use_orbbec:
             request.camera = "orbbec"
         else:

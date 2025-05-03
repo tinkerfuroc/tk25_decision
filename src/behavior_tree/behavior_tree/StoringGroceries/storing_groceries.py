@@ -3,7 +3,7 @@ import py_trees
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_DoorDetection, BtNode_TurnPanTilt
+from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_DoorDetection, BtNode_TurnPanTilt, BtNode_ScanFor
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Place, BtNode_GripperAction
 from .customNodes import BtNode_CategorizeGrocery, BtNode_FindObjTable, BtNode_GraspWithPose
 
@@ -25,10 +25,14 @@ categories = {"chip": "blue and pink oreo box",
             "dishsoap": "yellow and blue bottle",
             "handwash": "white handwash bottle",
             "shampoo": "blue shampoo bottle",
-            "cereal bowl": "blue bowl"}
+            "cereal bowl": "blue bowl"
+            }
 
-prompt_list = "water bottle . bread . cookie box . white hand sanitizer . yellow chip can . yellow dish washer bottle . green sprite" +\
-                "black cola . blue shampoo"
+prompt_drinks = "green sprite bottle . black cola bottle . orange bottle . clear water bottle"
+prompt_food = "blue and pink oreo box . yellow chips can . red chips can . white bread"
+prompt_utilities = "yellow and blue dishsoap bottle . white handwash bottle . blue shampoo bottle . blue bowl"
+
+prompt_list = prompt_drinks + " . " + prompt_food + " . " + prompt_utilities
 USE_GRASP_DUMMY = False
 
 TRY_TWICE = False
@@ -61,8 +65,8 @@ POS_TABLE3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_i
 #                         )
 POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                         # pose=Pose(position=Point(x=-0.2942876962347504, y=0.7816651007796609, z=0.0),
-                        pose=Pose(position=Point(x=-0.2942876962347504, y=0.6316651007796609, z=0.0),
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.732980291613576, w=0.680249874))
+                        pose=Pose(position=Point(x=12.6343, y=5.4323167, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.1168466165, w=0.9931499726))
                         )
 
 POINT_PLACE = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
@@ -106,6 +110,8 @@ KEY_GRASP_ANNOUNCEMENT = "grasp_announcement"
 KEY_DOOR_STATUS = "door_status"
 
 KEY_PLACE_REASON = "place_reason"
+
+KEY_SCAN_RESULT = "scan_result"
 
 arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
@@ -226,8 +232,11 @@ def createStoreGroceries():
     root.add_child(BtNode_Announce(name="Announce starting storing groceries", bb_source=None, message="Starting storing groceries"))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     root.add_child(createEnterArena())
+    root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_drinks, category="drinks"))
+    root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_food, category="food"))
+    root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_utilities, category="utilities"))
     retry_store = py_trees.decorators.Retry(name=f"retry 2 times", child=createStoreOnce(KEY_POS_TABLE), num_failures=2)
-    root.add_child(py_trees.decorators.Repeat(name="repeat 2 times", child=retry_store, num_success=2))
+    root.add_child(py_trees.decorators.Repeat(name="repeat 1 times", child=retry_store, num_success=1))
     retry_store2 = py_trees.decorators.Retry(name=f"retry 2 times", child=createStoreOnce(KEY_POS_TABLE2), num_failures=2)
     root.add_child(py_trees.decorators.Repeat(name="repeat 2 times", child=retry_store2, num_success=2))
     retry_store3 = py_trees.decorators.Retry(name=f"retry 2 times", child=createStoreOnce(KEY_POS_TABLE3), num_failures=2)
