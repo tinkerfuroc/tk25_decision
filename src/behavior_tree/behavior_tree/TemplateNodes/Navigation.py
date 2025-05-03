@@ -10,6 +10,7 @@ from geometry_msgs.msg import PointStamped, PoseStamped
 # from behavior_tree.messages import Goto, GotoGrasp, ComputeGrasp
 from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateToPose
+from tinker_nav_msgs.srv import ComputeGrasp
 
 from tf2_ros.transform_listener import TransformListener
 from tf2_ros.buffer import Buffer
@@ -55,6 +56,63 @@ class BtNode_GotoAction(ActionHandler):
         self.feedback_timeout = 1000
         self.action_status = 0
         self.process_feedback(feedback)  
+
+
+class BtNode_ComputeGraspPose(ServiceHandler):
+    def __init__(self, 
+                name: str,
+                bb_src: str,
+                bb_target: str,
+                service_name : str = "compute_grasp_pos"
+                ):
+        """
+        executed when creating tree diagram, therefor very minimal
+        Args:
+            name: the name of the pytree node
+            bb_source: path to the key in blackboard containing a geometry_msgs/PoseStamped object of the pos of trash can
+            service_name: name of the service of type tinker_decision_msgs/Drop     
+        """
+        super(BtNode_ComputeGraspPose, self).__init__(name, service_name, ComputeGrasp)
+        self.bb_src = bb_src
+        self.bb_target = bb_target
+
+    def setup(self, **kwargs):
+        """
+        setup for the node, recursively called with tree.setup()
+        """
+        ServiceHandler.setup(self, **kwargs)
+
+        self.bb_read_client = self.attach_blackboard_client(name="ComputeGraspPose Read")
+        self.bb_read_client.register_key(self.bb_src, access=py_trees.common.Access.READ)
+        self.bb_write_client = self.attach_blackboard_client(name="ComputeGraspPose Write")
+        self.bb_write_client.register_key(self.bb_target, access=py_trees.common.Access.WRITE)
+
+        self.logger.debug(f"Setup ComputeGraspPose")
+
+    def initialise(self) -> None:
+        """
+        Called when the node is visited
+        """
+        self.target = self.bb_read_client.get(self.bb_src)
+
+        self.logger.debug(f"Initialized ComputeGraspPose for target point {self.target}")
+
+        request = ComputeGrasp.Request()
+        request.target = self.target
+        # setup things that needs to be cleared
+        self.response = self.client.call_async(request)
+
+        self.feedback_message = f"Initialized ComputeGraspPose"
+
+    def update(self):
+        self.logger.debug(f"Update GotoGrasp")
+        if self.response.done():
+            self.feedback_message = f"GotoGrasp returned"
+            self.bb_write_client.set(self.bb_target, self.response.result().target, overwrite=True)
+            return py_trees.common.Status.SUCCESS
+        else:
+            self.feedback_message = f"Still navigating to grasping pose {self.target}"
+            return py_trees.common.Status.RUNNING
 
 
 # class BtNode_Goto(ServiceHandler):

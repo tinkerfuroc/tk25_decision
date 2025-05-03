@@ -7,7 +7,8 @@ from .custom_nodes import (
     BtNode_CheckIfCompleted,
     BtNode_QA,
     BtNode_WritePose,
-    BtNode_WriteVisionPrompt
+    BtNode_WriteVisionPrompt,
+    BtNode_ScanForWavingPerson
 )
 from py_trees.trees import BehaviourTree
 from py_trees import decorators
@@ -21,12 +22,13 @@ import rclpy
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation
 from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_TrackPerson, BtNode_DoorDetection
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
+from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_ComputeGraspPose
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle
 from behavior_tree.Receptionist.customNodes import BtNode_Confirm
 import math
 
-ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
+# ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
+ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -44.0, 26.0, 20.0, 30.0, -92.0, 0.0]]
 ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
 
 pose_command = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
@@ -107,17 +109,26 @@ pose_wardrobe = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), fram
                         orientation=Quaternion(x=0.0, y=0.0, z=0.2077634421957669, w= 0.9781791002096529))
                         )
 
+KEY_POSE_BEDROOM = "bedroom_pose"
+KEY_POSE_DININGROOM = "diningroom_pose"
+KEY_POSE_KITCHEN = "kitchen_pose"
+KEY_POSE_LIVINGROOM = "livingroom_pose"
+# scan_poses = [KEY_POSE_BEDROOM, KEY_POSE_DININGROOM, KEY_POSE_KITCHEN, KEY_POSE_LIVINGROOM]
+scan_poses = [KEY_POSE_LIVINGROOM, KEY_POSE_KITCHEN, KEY_POSE_DININGROOM, KEY_POSE_BEDROOM]
 KEY_DEST_POSE = "dest_pose"
 KEY_COMMAND_POSE = "command_pose"
 
 KEY_ARM_POSE = "arm_pose"
 KEY_GRASP_PROMPT = "grasp_prompt"
 KEY_OBJECT = "object"
+KEY_GRASP_POSE = "go_to_grasp_pose"
 
 KEY_ARM_NAVIGATING = "arm_navigating"
 
 KEY_QNA_ANSWER = "qna_answer"
 KEY_DOOR_STATUS = "door_status"
+
+KEY_WAVING_PERSON = "waving person"
 
 arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
@@ -128,6 +139,10 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", KEY_ARM_POSE, None, ARM_POS_SCAN))
     root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", KEY_ARM_NAVIGATING, None, ARM_POS_NAVIGATING))
     root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", KEY_COMMAND_POSE, None, pose_command))
+    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", KEY_POSE_BEDROOM, None, pose_bedroom))
+    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", KEY_POSE_DININGROOM, None, pose_dining_room))
+    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", KEY_POSE_KITCHEN, None, pose_kitchen))
+    root.add_child(BtNode_WriteToBlackboard("Write to blackboard", "", KEY_POSE_LIVINGROOM, None, pose_living_room))
     return root
 
 def createEnterArena():
@@ -141,6 +156,23 @@ def createEnterArena():
     root.add_child(parallel_enter_arena)
     return root
 
+def createScanForWaving(idx):
+    root = Sequence("scan for waving", True)
+
+    root.add_child(decorators.Retry("retry", BtNode_GotoAction(f"goto scan pos {idx}", scan_poses[idx]), 3))
+    # TODO: Add scan for waving person, store to blackboard
+    root.add_child(BtNode_ScanForWavingPerson("scan for waving person", bb_target=KEY_WAVING_PERSON, use_orbbec=True, target_frame="map"))
+    return root
+
+def createFindPerson():
+    root = Selector("selector", True)
+    for i in range(4):
+        root.add_child(createScanForWaving(i))
+    root.add_child(decorators.SuccessIsFailure("SisF", BtNode_Announce("announce failed to find person", None, message="Failed to find waving person")))
+
+    return root
+    
+
 def create_run_command():
     # === 根节点 ===
     root = Sequence("Root", True)
@@ -152,85 +184,94 @@ def create_run_command():
     loop.add_child(BtNode_GetCommand(name="get command", bb_dest_key="bb/command"))
     loop.add_child(BtNode_Confirm(name=f"Confirm command", key_confirmed="bb/command", type="command"))
     loop.add_child(BtNode_GetConfirmation(name=f"Get confirmation", timeout=5.0))
+    loop.add_child(BtNode_Announce("received command", None, message="Command received, will execute later"))
     wait_command_node.add_child(decorators.Retry(name="retry", child=loop, num_failures=10))
 
-    # === Step 2: 重复执行任务的主体 ===
-    task_seq = Sequence("Task Sequence", True)
+    find_person_node = createFindPerson()
 
-    # 决策：由大模型根据指令、能力、先验、状态推理出下一步
-    decide_node = BtNode_DecideNextAction(
-        name="decide_next_action",
-        bb_command="bb/command",
-        bb_action_list="qa, announce, goto, grasp",
-        bb_state="bb/state",
-        bb_next_action="bb/next_action",
-        bb_params="bb/params"
-    )
+    go_to_person_node = Sequence("go to person", memory=True)
+    go_to_person_node.add_child(BtNode_ComputeGraspPose("compute grasp pose", bb_src=KEY_WAVING_PERSON, bb_target=KEY_GRASP_POSE))
+    go_to_person_node.add_child(py_trees.decorators.Retry('retry', BtNode_GotoAction('go to person', key=KEY_GRASP_POSE), 3))
 
-    # === 检查是否完成 ===
-    check_complete_node = BtNode_CheckIfCompleted("check_if_done", "bb/next_action")
 
-    # === CHOOSE Selector: 根据next_action选择功能分支 ===
-    choose_node = Selector("CHOOSE", True)
+    # # === Step 2: 重复执行任务的主体 ===wait_command_node
+    # task_seq = Sequence("Task Sequence", True)
 
-    # ------ 子分支 1: Q&A ------
-    qa_seq = Sequence("scan_branch", True)
-    qa_guard = BtNode_CheckIfMyTurn("check_qa", "qa", "bb/next_action")
-    qa_action = BtNode_QA(name="QnA", bb_key_dest=KEY_QNA_ANSWER, timeout=7.0)
-    answer = BtNode_Announce(name="Announce answer", bb_source=KEY_QNA_ANSWER)
-    qa_update = BtNode_UpdateState("update_after_qa", bb_params="bb/params",
-                                     bb_state_key="bb/state")
-    qa_seq.add_children([qa_guard, qa_action, answer, qa_update])
+    # # 决策：由大模型根据指令、能力、先验、状态推理出下一步
+    # decide_node = BtNode_DecideNextAction(
+    #     name="decide_next_action",
+    #     bb_command="bb/command",
+    #     bb_action_list="qa, announce, goto, grasp",
+    #     bb_state="bb/state",
+    #     bb_next_action="bb/next_actiAction(name="go to command position", key=KEY_COMMAND_POSE)
+    # root.add_child(goto_command_pose)on",
+    #     bb_params="bb/params"Action(name="go to command position", key=KEY_COMMAND_POSE)
+    # root.add_child(goto_command_pose)
+    # # === CHOOSE Selector: 根据next_action选择功能分支 ===
+    # choose_node = Selector("CHOOSE", True)
 
-    # ------ 子分支 2: Announce ------
-    announce_seq = Sequence("announce_branch", True)
-    announce_guard = BtNode_CheckIfMyTurn("check_announce", "announce", "bb/next_action")
-    announce_action = BtNode_Announce("announce", bb_source="bb/params")
-    announce_update = BtNode_UpdateState("update_after_announce", bb_params="bb/params",
-                                        bb_state_key="bb/state")
-    announce_seq.add_children([announce_guard, announce_action, announce_update])
+    # # ------ 子分支 1: Q&A ------
+    # qa_seq = Sequence("scan_branch", True)
+    # qa_guard = BtNode_CheckIfMyTurn("check_qa", "qa", "bb/next_action")
+    # qa_action = BtNode_QA(name="QnA", bb_key_dest=KEY_QNA_ANSWER, timeout=7.0)
+    # answer = BtNode_Announce(name="Announce answer", bb_source=KEY_QNA_ANSWER)
+    # qa_update = BtNode_UpdateState("update_after_qa", bb_params="bb/params",
+    #                                  bb_state_key="bb/state")
+    # qa_seq.add_children([qa_guard, qAction(name="go to command position", key=KEY_COMMAND_POSE)
+    # root.add_child(goto_command_pose)a_action, answer, qa_update])
 
-    # ------ 子分支 3: Goto ------
-    goto_seq = Sequence("goto_branch", True)
-    goto_guard = BtNode_CheckIfMyTurn("check_goto", "goto", "bb/next_action")
-    get_pose_stamped = BtNode_WritePose("get pose", "bb/params", KEY_DEST_POSE)
-    goto_action = BtNode_GotoAction("goto", KEY_DEST_POSE)# BtNode_Goto("goto", bb_source="bb/target_pose")
-    goto_update = BtNode_UpdateState("update_after_goto", bb_params="bb/params",
-                                    bb_state_key="bb/state")
-    goto_seq.add_children([goto_guard, get_pose_stamped, goto_action, goto_update])
+    # # ------ 子分支 2: Announce ------
+    # announce_seq = Sequence("announce_branch", True)
+    # announce_guard = BtNode_CheckIfMyTurn("check_announce", "announce", "bb/next_action")
+    # announce_action = BtNode_Announce("announce", bb_source="bb/params")
+    # announce_update = BtNode_UpdateState("update_after_announce", bb_params="bb/params",
+    #                                     bb_state_key="bb/state")
+    # announce_seq.add_children([announce_guard, announce_action, announce_update])
 
-    # ------ 子分支 4: Grasp ------
-    grasp_seq = Sequence("grasp_branch", True)
-    grasp_guard = BtNode_CheckIfMyTurn("check_grasp", "grasp", "bb/next_action")
-    # TODO: add move arm pose
-    move_arm = BtNode_MoveArmSingle(name="Move arm to find obj", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_POSE, add_octomap=True)
-    match_prompt = BtNode_WriteVisionPrompt(name="convert class to prompt", bb_key_params="bb/params", bb_key_dest=KEY_GRASP_PROMPT)
-    find_obj = BtNode_FindObj(name="Find obj", bb_source=KEY_GRASP_PROMPT, bb_namespace=None, bb_key=KEY_OBJECT)
-    grasp = BtNode_Grasp(name="grasp object", bb_source=KEY_OBJECT, service_name=grasp_service_name)
-    move_arm = BtNode_MoveArmSingle(name="Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING)
-    grasp_update = BtNode_UpdateState("update_after_grasp", bb_params="bb/params",
-                                     bb_state_key="bb/state")
-    grasp_seq.add_children([grasp_guard, move_arm, match_prompt, find_obj, grasp, grasp_update])
+    # # ------ 子分支 3: Goto ------
+    # goto_seq = Sequence("goto_branch", True)
+    # goto_guard = BtNode_CheckIfMyTurn("check_goto", "goto", "bb/next_action")
+    # get_pose_stamped = BtNode_WritePose("get pose", "bb/params", KEY_DEST_POSE)
+    # goto_action = BtNode_GotoAction("goto", KEY_DEST_POSE)# BtNode_Goto("goto", bb_source="bb/target_pose")
+    # goto_update = BtNode_UpdateState("update_after_goto", bb_params="bb/params",
+    #                                 bb_state_key="bb/state")
+    # goto_seq.add_children([goto_guard, get_pose_stamped, goto_action, goto_update])
 
-    # Add all branches to the choose node
-    choose_node.add_children([
-        qa_seq, announce_seq, goto_seq, grasp_seq
-    ])
+    # # ------ 子分支 4: Grasp ------
+    # grasp_seq = Sequence("grasp_branch", True)
+    # grasp_guard = BtNode_CheckIfMyTurn("check_grasp", "grasp", "bb/next_action")
+    # # TODO: add move arm pose
+    # move_arm = BtNode_MoveArmSingle(name="Move arm to find obj", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_POSE, add_octomap=True)
+    # match_prompt = BtNode_WriteVisionPrompt(name="convert class to prompt", bb_key_params="bb/params", bb_key_dest=KEY_GRASP_PROMPT)
+    # find_obj = BtNode_FindObj(name="Find obj", bb_source=KEY_GRASP_PROMPT, bb_namespace=None, bb_key=KEY_OBJECT)
+    # grasp = BtNode_Grasp(name="grasp object", bb_source=KEY_OBJECT, service_name=grasp_service_name)
+    # move_arm = BtNode_MoveArmSingle(name="Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING)
+    # grasp_update = BtNode_UpdateState("update_after_grasp", bb_params="bb/params",
+    #                                  bb_state_key="bb/state")
+    # grasp_seq.add_children([grasp_guard, move_arm, match_prompt, find_obj, grasp, grasp_update])
 
-    # === 组装TASK sequence ===
-    task_seq.add_children([BtNode_Announce("announce", None, message="Deciding next action"), decide_node, check_complete_node, 
-                           BtNode_Announce("announce", "bb/command"),
-                           choose_node])
-    task_repeat = decorators.Repeat(name="TASK", child=task_seq, num_success=999)  # 无限循环直到被上层终止
+    # # Add all branches to the choose node
+    # choose_node.add_children([
+    #     qa_seq, announce_seq, goto_seq, grasp_seq
+    # ])
+
+    # # === 组装TASK sequence ===
+    # task_seq.add_children([BtNode_Announce("announce", None, message="Deciding next action"), decide_node, check_complete_node, 
+    #                        BtNode_Announce("announce", "bb/command"),
+    #                        choose_node])
+    # task_repeat = decorators.Repeat(name="TASK", child=task_seq, num_success=999)  # 无限循环直到被上层终止
 
     # === 组装根节点 ===
-    goto_command_pose = BtNode_GotoAction(name="go to command position", key=KEY_COMMAND_POSE)
-    root.add_child(goto_command_pose)
+    # goto_command_pose = BtNode_GotoAction(name="go to command position", key=KEY_COMMAND_POSE)
+    # root.add_child(goto_command_pose)
+    root.add_child(decorators.Retry("retry", find_person_node, 3))
+    root.add_child(BtNode_Announce("getting command", None, message="Getting next command"))
+    root.add_child(go_to_person_node)
     root.add_child(wait_command_node)
-    root.add_child(task_repeat)
+    # root.add_child(task_repeat)
     # root.add_children([goto_command_pose, wait_command_node, task_repeat])
 
-    return root
+    return decorators.Repeat("repeat", root, 3)
 
 def createGPSR():
     root = Sequence("GPSR", True)
@@ -238,4 +279,5 @@ def createGPSR():
     root.add_child(createEnterArena())
     # root.add_child(create_run_command())
     root.add_child(decorators.Repeat("repeat 3 times", create_run_command(), 3))
+    # root.add_child(decorators.Retry("retry", BtNode_ScanForWavingPerson("scan for waving person", bb_target=KEY_WAVING_PERSON, use_orbbec=True, target_frame=""), 5))
     return root
