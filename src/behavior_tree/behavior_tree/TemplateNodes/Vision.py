@@ -91,7 +91,7 @@ class BtNode_ScanFor(ServiceHandler):
         if self.response.done():
             if self.response.result().status == 0:
                 self.bb_write_client.set(self.bb_key, self.response.result(), overwrite=True)
-                self.feedback_message = f"Found object, stored to blackboard {self.bb_namespace} / {self.bb_key}"
+                self.feedback_message = f"Found object, stored to blackboard / {self.bb_key}"
                 return pytree.common.Status.SUCCESS
             else:
                 self.feedback_message = f"Scanning for {self.object} failed with error code {self.response.result().status}: {self.response.result().error_msg}"
