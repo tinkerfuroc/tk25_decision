@@ -32,6 +32,7 @@ setup(
             'store-groceries = behavior_tree.main:store_groceries',
             'store-groceries-placing-only = behavior_tree.main:store_groceries_placing_only',
             'GPSR = behavior_tree.main:gpsr',
+            'restaurant = behavior_tree.main:restaurant'
         ],
     },
 )

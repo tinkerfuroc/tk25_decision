@@ -10,7 +10,7 @@ from geometry_msgs.msg import PointStamped, PoseStamped
 # from behavior_tree.messages import Goto, GotoGrasp, ComputeGrasp
 from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateToPose
-from tinker_nav_msgs.srv import ComputeGrasp
+from tinker_nav_msgs.srv import ComputeGrasp, PoseTransform
 
 from tf2_ros.transform_listener import TransformListener
 from tf2_ros.buffer import Buffer
@@ -114,6 +114,84 @@ class BtNode_ComputeGraspPose(ServiceHandler):
             self.feedback_message = f"Still navigating to grasping pose {self.target}"
             return py_trees.common.Status.RUNNING
 
+
+class BtNode_PoseTransform(ServiceHandler):
+    def __init__(self, 
+                 name: str,
+                 bb_source: str,
+                 bb_target: str,
+                 service_name : str = "pose_transform_service",
+                 target_frame : str = ""
+                 ):
+        """
+        executed when creating tree diagram, therefor very minimal
+        Args:
+            name: the name of the pytree node
+            bb_source: path to the key in blackboard containing a geometry_msgs/PoseStamped object of the pos of trash can
+            service_name: name of the service of type tinker_decision_msgs/Drop     
+        """
+        super(BtNode_PoseTransform, self).__init__(name, service_name, PoseTransform)
+        self.bb_source = bb_source
+        self.bb_target = bb_target
+        self.target_frame = target_frame
+        
+
+    def setup(self, **kwargs):
+        """
+        setup for the node, recursively called with tree.setup()
+        """
+        ServiceHandler.setup(self, **kwargs)
+
+        if len(self.bb_target) > 0 and self.bb_source != self.bb_target:
+            self.bb_read_client = self.attach_blackboard_client(name="PoseTransform Read")
+            self.bb_read_client.register_key(self.bb_source, access=py_trees.common.Access.READ)
+            self.bb_write_client = self.attach_blackboard_client(name="PoseTransform Write")
+            self.bb_write_client.register_key(self.bb_target, access=py_trees.common.Access.WRITE)
+        else:
+            # in-place write
+            self.bb_read_client = None
+            self.bb_write_client = self.attach_blackboard_client(name="PoseTransform Write")
+            self.bb_write_client.register_key(self.bb_source, access=py_trees.common.Access.WRITE)
+
+
+    def initialise(self) -> None:
+        """
+        Called when the node is visited
+        """
+
+        try:
+            if self.bb_read_client is not None:
+                self.src_pose = self.bb_read_client.get(self.bb_source)
+            else:
+                self.src_pose = self.bb_write_client.get(self.bb_source)
+            assert isinstance(self.src_pose, PoseStamped)
+
+        except Exception as e:
+            self.feedback_message = f"PoseTransform reading src pose failed"
+            raise e
+
+        self.logger.debug(f"Initialized PoseTransform for pose {self.src_pose}")
+
+        request = PoseTransform.Request()
+        request.src_pose = self.src_pose
+        request.target_frame = self.target_frame
+
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized PoseTransform"
+
+    def update(self):
+        self.logger.debug(f"Update PoseTransform")
+        if self.response.done():
+            if self.response.result().status == 0:
+                self.feedback_message = f"PoseTransform Successful"
+                self.bb_write_client.set(self.bb_target, self.response.result().pose, overwrite=True)
+                return py_trees.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"PoseTransform failed with status {self.response.result().status}: {self.response.result().error_msg}"
+                return py_trees.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still doing PoseTransform..."
+            return py_trees.common.Status.RUNNING
 
 # class BtNode_Goto(ServiceHandler):
 #     def __init__(self, 
