@@ -65,6 +65,11 @@ pose_sofa_turned = pose_sofa
 #                                          orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
 #                                 )
 
+# pose_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                         pose=Pose(position=Point(x=3.0, y=1.0, z=0.0), # Example coordinates, please adjust
+#                                   orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)) # Example orientation
+#                                   )
+
 host_name = "host Alex"
 host_drink = "Cola"
 # host_drink = "koala"
@@ -79,6 +84,8 @@ KEY_DOOR_POSE = "door_pose"
 KEY_SOFA_POSE = "sofa_pose"
 KEY_DOOR_POSE_TURNED = "door_pose_turned"
 KEY_SOFA_POSE_TURNED = "sofa_pose_turned"
+
+KEY_TABLE_POSE = "table_pose"
 
 KEY_HOST_NAME = "host_name"
 KEY_HOST_DRINK = "host_drink"
@@ -130,6 +137,7 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_PERSONS, object=[]))
     root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_ARM_INIT_POSE, object=ARM_POS_POINT_TO))
     root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
+    root.add_child(BtNode_WriteToBlackboard(name="Write table location", bb_namespace="", bb_source=None, bb_key=KEY_TABLE_POSE, object=pose_table))
 
     return root
 
@@ -318,6 +326,12 @@ def createReceptionist():
     # go to door to greet first guest
     root.add_child(BtNode_Announce(name="announce going to greet 1st guest", bb_source=None, message="Greeting guest"))
     root.add_child(createGreetGuest())
+
+    # Go to table after greeting first guest
+    if not DEBUG_NO_GOTO:
+        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_TABLE_POSE), num_failures=10))
+    root.add_child(BtNode_Announce(name="Announce scanning at table", bb_source=None, message="Scanning at the table."))
+    # TODO: Add scanning node here
 
     # go to living room for introductions
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to living room", KEY_SOFA_POSE), num_failures=10))
