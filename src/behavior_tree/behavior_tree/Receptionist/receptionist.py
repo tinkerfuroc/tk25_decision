@@ -2,7 +2,7 @@ import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation, BtNode_Listen
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection
 from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
 
@@ -31,6 +31,11 @@ pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id
 pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                         pose=Pose(position=Point(x=4.609381420586617, y=1.4040476837582534, z=0.0), 
                                   orientation=Quaternion(x=0.0, y=0.0, z=0.8172785256122609, w=0.5762428407998221))
+                                  )
+
+pose_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=3.0, y=1.0, z=0.0), # Example coordinates, please adjust
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)) # Example orientation
                                   )
 
 # pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
@@ -65,10 +70,6 @@ pose_sofa_turned = pose_sofa
 #                                          orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
 #                                 )
 
-# pose_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=3.0, y=1.0, z=0.0), # Example coordinates, please adjust
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)) # Example orientation
-#                                   )
 
 host_name = "host Alex"
 host_drink = "Cola"
@@ -94,6 +95,7 @@ KEY_HOST_FEATURES = "host_features"
 KEY_GUEST_NAME = "guest_name"
 KEY_GUEST_DRINK = "guest_drink"
 KEY_GUEST_FEATURES = "guest_features"
+KEY_GUEST_INTEREST = "guest_interest"
 
 KEY_PERSONS = "persons"
 KEY_PERSON_CENTROIDS = "centroids"
@@ -171,6 +173,22 @@ def createRegisterFeature():
     root.add_child(BtNode_CombinePerson(name="combine person's info", key_dest=KEY_PERSONS, key_name=KEY_GUEST_NAME, key_drink=KEY_GUEST_DRINK, key_features=KEY_GUEST_FEATURES))
 
     root.add_child(BtNode_Announce(name="Indicate follow", bb_source=None, message="Follow me"))
+
+    return root
+
+def createFindFavoriteDrink(bb_key_fav_drink : str):
+    root = py_trees.composites.Sequence(name="Find favorite drink", memory=True)
+    # Go to table after greeting first guest
+    if not DEBUG_NO_GOTO:
+        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_TABLE_POSE), num_failures=10))
+    parallel_announce_scan = py_trees.composites.Parallel(name="Announce and scan", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_announce_scan.add_child(BtNode_Announce(name="Announce scanning at table", bb_source=None, message="Scanning at the table."))
+
+    # TODO: Add scanning node here
+    root.add_child(BtNode_Announce(name="Missing find drink module", bb_source=None, message="Missing find drink module"))
+
+    root.add_child(parallel_announce_scan)
+    # TODO: Add announce found drink here
 
     return root
 
@@ -268,12 +286,19 @@ def createToDoor():
     return root
 
 def createToSofa():
-    root = py_trees.composites.Sequence(name="Go to sofa", memory=True)
-    root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
-    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+    root = py_trees.composites.Parallel(name="Go to sofa while chatting", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    navigation_seq = py_trees.composites.Sequence(name="Go to sofa", memory=True)
+    navigation_seq.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
+    navigation_seq.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
     if not DEBUG_NO_GOTO:
-        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to turn position", KEY_DOOR_POSE_TURNED), num_failures=10))
-        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))
+        navigation_seq.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to turn position", KEY_DOOR_POSE_TURNED), num_failures=10))
+        navigation_seq.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))
+    
+    get_interest_seq = py_trees.composites.Sequence(name="Get interest", memory=True)
+    get_interest_seq.add_child(BtNode_Announce(name="Ask for interest", bb_source=None, message="What are you interested in?"))
+    get_interest_seq.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=KEY_GUEST_INTEREST, timeout=5.0))
+    get_interest_seq.add_child(BtNode_Announce(name="Repeat interest", bb_source=KEY_GUEST_INTEREST))
+
     return root
 
 def createAnnounceAndScanSofa():
@@ -327,14 +352,9 @@ def createReceptionist():
     root.add_child(BtNode_Announce(name="announce going to greet 1st guest", bb_source=None, message="Greeting guest"))
     root.add_child(createGreetGuest())
 
-    # Go to table after greeting first guest
-    if not DEBUG_NO_GOTO:
-        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_TABLE_POSE), num_failures=10))
-    root.add_child(BtNode_Announce(name="Announce scanning at table", bb_source=None, message="Scanning at the table."))
-    # TODO: Add scanning node here
-
     # go to living room for introductions
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to living room", KEY_SOFA_POSE), num_failures=10))
+    root.add_child(createFindFavoriteDrink(KEY_GUEST_DRINK))
     root.add_child(createToSofa())
     root.add_child(createAnnounceAndScanSofa())
 
@@ -352,6 +372,7 @@ def createReceptionist():
 
     # go to living room for introductions
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to living room", KEY_SOFA_POSE), num_failures=10))
+    root.add_child(createFindFavoriteDrink(KEY_GUEST_DRINK))
     root.add_child(createToSofa())
     root.add_child(createAnnounceAndScanSofa())
 

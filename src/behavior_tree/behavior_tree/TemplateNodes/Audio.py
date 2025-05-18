@@ -2,7 +2,7 @@ import py_trees as pytree
 from py_trees.common import Status
 
 # from tinker_decision_msgs.srv import Announce, WaitForStart
-from behavior_tree.messages import TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation
+from behavior_tree.messages import TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen
 
 from .BaseBehaviors import ServiceHandler
 
@@ -255,3 +255,40 @@ class BtNode_GetConfirmation(ServiceHandler):
         else:
             self.feedback_message = "Still getting confirmation..."
             return pytree.common.Status.RUNNING
+        
+
+class BtNode_Listen(ServiceHandler):
+    def __init__(self,
+                 name: str,
+                 bb_dest_key: str,
+                 service_name = "listen_service",
+                 timeout : float = 5.0
+                 ):
+        super().__init__(name, service_name, Listen)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="message",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+        )
+        self.timeout = timeout
+    
+    def initialise(self):
+        request = Listen.Request()
+        request.timeout = self.timeout
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized listen"
+    
+    def update(self):
+        self.logger.debug(f"Update listen")
+        if self.response.done():
+            if self.response.result().status == 0:
+                self.feedback_message = "got command"
+                self.blackboard.message = self.response.result().message
+                return Status.SUCCESS
+            else:
+                self.feedback_message = f"Listen failed with error code {self.response.result().status}: {self.response.result().error_message}"
+                return Status.FAILURE
+        else:
+            self.feedback_message = "Still listening..."
+            return Status.RUNNING
