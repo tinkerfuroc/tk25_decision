@@ -91,7 +91,7 @@ class BtNode_ScanFor(ServiceHandler):
         if self.response.done():
             if self.response.result().status == 0:
                 self.bb_write_client.set(self.bb_key, self.response.result(), overwrite=True)
-                self.feedback_message = f"Found object, stored to blackboard {self.bb_namespace} / {self.bb_key}"
+                self.feedback_message = f"Found object, stored to blackboard / {self.bb_key}"
                 return pytree.common.Status.SUCCESS
             else:
                 self.feedback_message = f"Scanning for {self.object} failed with error code {self.response.result().status}: {self.response.result().error_msg}"
@@ -444,6 +444,12 @@ class BtNode_FeatureMatching(ServiceHandler):
             result : FeatureMatching.Response = self.response.result()
             if result.status == 0:
                 self.blackboard.centroids = result.centroids
+                # for p in self.blackboard.centroids:
+                #     # p.point.z = 1.30
+                #     fac = p.point.x / 0.6
+                #     p.point.x /= (fac + 1e-6)
+                #     p.point.y /= (fac + 1e-6)
+                #     p.point.z = 1.3
                 self.feedback_message = f"Centroids: {result.centroids}"
                 return pytree.common.Status.SUCCESS
             else:

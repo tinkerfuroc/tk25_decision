@@ -40,7 +40,7 @@ class BtNode_FindPointedLuggage(ServiceHandler):
 
     def initialise(self):
         request = ObjectDetection.Request()
-        request.prompt = "person, luggage"
+        request.prompt = "person , bag"
         request.flags = "find_pointed_object"
         request.camera = "orbbec"
         request.target_frame = "base_link"
@@ -60,14 +60,15 @@ class BtNode_FindPointedLuggage(ServiceHandler):
 
         for obj in result.objects:
             if obj.being_pointed == 1 or obj.being_pointed == 2:
-                self.blackboard.point = PointStamped
+                self.blackboard.point = PointStamped()
                 self.blackboard.point.point = obj.centroid
-                self.blackboard.point.header = result.header
+                self.blackboard.point.header = result.header    
+                self.blackboard.point.point.x -= 0.6
 
                 if obj.being_pointed == 1:
-                    self.blackboard.announce_msg = "You are pointing to your left"
+                    self.blackboard.announce_msg = "You are pointing to the bag on your left"
                 else:
-                    self.blackboard.announce_msg = "You are pointing to your right"
+                    self.blackboard.announce_msg = "You are pointing to the bag on your right"
 
                 self.feedback_message = f"Pointed luggage found and stored in blackboard key '{self.bb_key}'"
                 return py_trees.common.Status.SUCCESS

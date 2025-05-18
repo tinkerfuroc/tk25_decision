@@ -5,11 +5,12 @@ import tf2_geometry_msgs
 from .BaseBehaviors import ServiceHandler
 from .ActionBase import ActionHandler
 
-from geometry_msgs.msg import PointStamped, PoseStamped
+from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Quaternion
 
 # from behavior_tree.messages import Goto, GotoGrasp, ComputeGrasp
 from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateToPose
+from tinker_nav_msgs.srv import SetLuggagePose
 
 from tf2_ros.transform_listener import TransformListener
 from tf2_ros.buffer import Buffer
@@ -24,12 +25,54 @@ class BtNode_GotoAction(ActionHandler):
     def __init__(self, name: str, key: str, action_name: str = "navigate_to_pose", wait_for_server_timeout_sec: float = -3, action_timeout_ticks=0):
         super().__init__(name, NavigateToPose, action_name, key, wait_for_server_timeout_sec, action_timeout_ticks)
     
+    def initialise(self):
+        # self.tf_buffer = Buffer()
+        # self.tf_listener = TransformListener(self.tf_buffer, self.node)
+        return super().initialise()
+
+    def setup(self, **kwargs):
+        self.tf_buffer = None
+        return super().setup(**kwargs)
+
     def send_goal(self):
+        transform = None
+        # if self.tf_buffer is None:
+        #     self.tf_buffer = Buffer()
+        #     self.tf_listener = TransformListener(self.tf_buffer, self.node)
+        # try:
+        #     time_now = self.node.get_clock().now()
+            
+        #     transform = self.tf_buffer.lookup_transform(
+        #                     target_frame='map',
+        #                     source_frame=self.blackboard.goal.header.frame_id,
+        #                     time=time_now
+        #                 )
+        # except:
+        #     self.node.get_logger().warn(f'Failed to lookup transform from {self.blackboard.goal.header.frame_id} to "map" at (now = {time_now}).')
+        #     transform = None
         try:
             goal = NavigateToPose.Goal()
-            goal.pose = self.blackboard.goal
+            if isinstance(self.blackboard.goal, PoseStamped):
+                if self.blackboard.goal.header.frame_id != 'map' and transform is not None:
+                    # assert False
+                    goal.pose.pose = tf2_geometry_msgs.do_transform_pose(self.blackboard.goal.pose, transform)
+                    goal.pose.header.frame_id = 'map'
+                    self.blackboard.goal = goal.pose.pose
+                else:
+                    goal.pose = self.blackboard.goal
+            elif isinstance(self.blackboard.goal, PointStamped):
+                # assert False
+                goal.pose = PoseStamped(header=self.blackboard.goal.header, pose=Pose(position=self.blackboard.goal.point, orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
+                if transform is not None:
+                    goal.pose.pose = tf2_geometry_msgs.do_transform_pose(goal.pose.pose, transform)
+                    goal.pose.header.frame_id = 'map'
+            else:
+                assert False
+            # goal.header = 
             self.send_goal_request(goal)
+            self.goal = goal
             self.feedback_message = "sent goal request"
+            print('goal = ', str(self.goal))
         except KeyError:
             pass  # self.send_goal_future will be None, check on that
     
@@ -55,6 +98,108 @@ class BtNode_GotoAction(ActionHandler):
         self.feedback_timeout = 1000
         self.action_status = 0
         self.process_feedback(feedback)  
+
+
+class BtNode_GoToLuggage(ServiceHandler):
+    def __init__(self, name: str, bb_src_key: str, bb_target_key, service_name: str = "set_luggage_pose"):
+        super().__init__(name, service_name, SetLuggagePose)
+
+        self.bb_src_key = bb_src_key
+        self.bb_target_key = bb_target_key
+    
+    def setup(self, **kwargs):
+        """
+        setup for the node, recursively called with tree.setup()
+        """
+        ServiceHandler.setup(self, **kwargs)
+        self.bb_read_client = self.attach_blackboard_client(name=f"GoToLuggageRead")
+        self.bb_write_client = self.attach_blackboard_client(name=f"GoToLuggageWrite")
+        self.bb_write_client.register_key("target",
+                                         access=py_trees.common.Access.WRITE,
+                                         remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_target_key))
+        self.bb_read_client.register_key("source",
+                                         access=py_trees.common.Access.READ,
+                                         remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_src_key))
+
+    def initialise(self) -> None:
+        """
+        Called when the node is visited
+        """
+        try:
+            self.point = self.bb_read_client.source
+            assert isinstance(self.point, PointStamped)
+        except Exception as e:
+            raise e
+
+        request = SetLuggagePose.Request()
+        request.point = self.point
+        self.response = self.client.call_async(request)
+
+        self.feedback_message = f"Initialized GotoLuggage for {self.point.point.x}, {self.point.point.y}, {self.point.point.z}"
+
+
+    def update(self):
+        self.logger.debug(f"Update GotoLuggage")
+        if self.response.done():
+            if self.response.result().status > 0:
+                self.feedback_message = f"success"
+                self.bb_write_client.target = self.response.result().pose
+                return py_trees.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"GotoLuggage failed: {self.response.result().status}: {self.response.result().errormsg}"
+                return py_trees.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still scanning..."
+            return py_trees.common.Status.RUNNING
+        
+# class BtNode_GoToLuggage(ServiceHandler):
+#     def __init__(self, name: str, bb_key: str, service_name: str = "set_luggage_pose"):
+#         super().__init__(name, service_name, SetLuggagePose)
+
+#         self.bb_key = bb_key
+    
+#     def setup(self, **kwargs):
+#         """
+#         setup for the node, recursively called with tree.setup()
+#         """
+#         ServiceHandler.setup(self, **kwargs)
+#         self.bb_read_client = self.attach_blackboard_client(name=f"GoToLuggage")
+#         self.bb_read_client.register_key(self.bb_key,
+#                                          access=py_trees.common.Access.WRITE,
+#                                          remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_key))
+
+#         self.logger.debug(f"Setup Go To Luggage, reading key {self.bb_key}")
+
+#     def initialise(self) -> None:
+#         """
+#         Called when the node is visited
+#         """
+#         try:
+#             self.point = self.bb_read_client.get(self.bb_key)
+#             assert isinstance(self.point, PointStamped)
+#         except Exception as e:
+#             self.feedback_message = f"GoToLuggage reading point failed"
+#             raise e
+
+#         request = SetLuggagePose.Request()
+#         request.point = self.point
+#         self.response = self.client.call_async(request)
+
+#         self.feedback_message = f"Initialized GotoLuggage for {self.point.point.x}, {self.point.point.y}, {self.point.point.z}"
+
+
+#     def update(self):
+#         self.logger.debug(f"Update GotoLuggage")
+#         if self.response.done():
+#             if self.response.result().status > 0:
+#                 self.feedback_message = f"success"
+#                 return py_trees.common.Status.SUCCESS
+#             else:
+#                 self.feedback_message = f"GotoLuggage failed: {self.response.result().status}: {self.response.result().errormsg}"
+#                 return py_trees.common.Status.FAILURE
+#         else:
+#             self.feedback_message = "Still scanning..."
+#             return py_trees.common.Status.RUNNING
 
 
 # class BtNode_Goto(ServiceHandler):

@@ -31,6 +31,7 @@ setup(
             'serve-breakfast = behavior_tree.main:serve_breakfast',
             'store-groceries = behavior_tree.main:store_groceries',
             'store-groceries-placing-only = behavior_tree.main:store_groceries_placing_only',
+            'help-me-carry = behavior_tree.main:help_me_carry',
         ],
     },
 )
