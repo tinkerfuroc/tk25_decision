@@ -199,7 +199,7 @@ def createPlaceOnShelf():
             place_parallel.add_child(place_sequence)
     root.add_child(place_parallel)
     # Not sure if this works
-    root.add_child(BtNode_GripperAction("open gripper", True))
+    root.add_child(py_trees.decorators.Repeat("repeat", BtNode_GripperAction("open gripper", True), 3))
     root.add_child(BtNode_Announce(name="Announce placing complete", bb_source=None, message="Placing on shelf complete"))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     root.add_child(BtNode_TurnPanTilt(name="turn pantilt", x=0.0, y=20.0))
