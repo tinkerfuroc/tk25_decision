@@ -24,6 +24,10 @@ POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id
                         pose=Pose(position=Point(x=12.203, y=-2.165, z=0.0),
                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.9736709, w=0.227958))
                         )
+POINT_SHELF_LEFT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                                 point=Point(x=12.6343, y=5.4323167, z=0.706))
+POINT_SHELF_RIGHT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                                    point=Point(x=12.6343, y=5.4323167, z=0.706))
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
 ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
@@ -36,6 +40,8 @@ N_LAYERS = 2
 
 KEY_POS_SHELF = "pos_shelf"
 KEY_POS_TABLE = "pos_table"
+KEY_POINT_SHELF_LEFT = "point_shelf_left"
+KEY_POINT_SHELF_RIGHT = "point_shelf_right"
 
 KEY_ARM_SCAN = "arm_scan"
 KEY_ARM_NAVIGATING = "arm_navigating"
@@ -67,13 +73,16 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF, object=POS_SHELF))
     root.add_child(BtNode_WriteToBlackboard("Write Target Frame", bb_namespace="", bb_source=None, bb_key=KEY_TARGET_FRAME, object=point_target_frame))
     root.add_child(BtNode_WriteToBlackboard("Write Prompt", bb_namespace="", bb_source=None, bb_key=KEY_PROMPT, object=prompt_list))
+    root.add_child(BtNode_WriteToBlackboard("Write Point shelf left", bb_namespace="", bb_source=None, bb_key=KEY_POINT_SHELF_LEFT, object=POINT_SHELF_LEFT))
+    root.add_child(BtNode_WriteToBlackboard("Write Point shelf right", bb_namespace="", bb_source=None, bb_key=KEY_POINT_SHELF_RIGHT, object=POINT_SHELF_RIGHT))
     return root
 
 def createPlaceOnShelf():
     root = py_trees.composites.Sequence(name="Place object", memory=True)
     root.add_child(BtNode_CategorizeGrocery("Categorize object", n_layers=N_LAYERS, bb_key_prompt=KEY_PROMPT, 
                                             bb_key_image=KEY_TABLE_IMG, bb_key_segment=KEY_OBJ_SEG, 
-                                            bb_target_frame=KEY_TARGET_FRAME, bb_key_result_point=KEY_POINT_PLACE, bb_key_env_points=KEY_ENV_POINTS))
+                                            bb_target_frame=KEY_TARGET_FRAME, bb_key_result_point=KEY_POINT_PLACE, 
+                                            bb_key_env_points=KEY_ENV_POINTS, bb_key_shelf_left=KEY_POINT_SHELF_LEFT, bb_key_shelf_right=KEY_POINT_SHELF_RIGHT,))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     # announce placing on shelf
     root.add_child(BtNode_Announce(name="Announce placing on shelf", bb_source=None, message="Placing on shelf"))
