@@ -77,7 +77,7 @@ def createPlaceOnShelf():
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     # announce placing on shelf
     root.add_child(BtNode_Announce(name="Announce placing on shelf", bb_source=None, message="Placing on shelf"))
-    root.add_child(BtNode_Place(name="Place object on shelf", bb_key_point=KEY_POINT_PLACE, bb_key_pose=KEY_GRASP_POSE, bb_key_env_points=KEY_ENV_POINTS, service_name=place_service_name))
+    root.add_child(BtNode_Place(name="Place object on shelf", bb_key_point=KEY_POINT_PLACE, bb_key_pose=KEY_GRASP_POSE, bb_key_env_points=KEY_ENV_POINTS, action_name=place_service_name))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN))
     return root
 

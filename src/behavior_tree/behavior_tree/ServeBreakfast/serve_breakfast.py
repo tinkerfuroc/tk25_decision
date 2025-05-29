@@ -135,7 +135,7 @@ def createGoPositionAndPlace(obj_name, drop_position):
                                           bb_key_point=KEY_TABLE_DROP_POINT[drop_position],
                                           bb_key_pose=KEY_GRASP_POSE,
                                           bb_key_env_points=KEY_ENV_POINTS,
-                                          service_name=place_service_name))
+                                          action_name=place_service_name))
     fail_fallback = py_trees.composites.Selector(name="fallback", memory=True)
     fail_fallback.add_child(parallel_place)
     fail_fallback.add_child(py_trees.decorators.Repeat("repeat", BtNode_GripperAction("Open gripper", True), 3))

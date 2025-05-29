@@ -8,6 +8,8 @@ from behavior_tree.messages import Grasp, ObjectDetection, Drop, ArmJointService
 from control_msgs.action import GripperCommand
 from py_trees.common import Status
 from behavior_tree.Constants import SCAN_POSES
+import action_msgs.msg as action_msgs
+
 
 from .BaseBehaviors import ServiceHandler
 from .ActionBase import ActionHandler
@@ -163,22 +165,15 @@ class BtNode_Drop(ServiceHandler):
             self.feedback_message = "Still dropping object..."
             return pytree.common.Status.RUNNING
 
-class BtNode_Place(ServiceHandler):
+class BtNode_Place(ActionHandler):
     def __init__(self, 
                  name: str,
                  bb_key_point: str,
                  bb_key_pose: str,
                  bb_key_env_points: str,
-                 service_name : str = "place_service",
+                 action_name : str = "place_action",
                  ):
-        """
-        executed when creating tree diagram, therefor very minimal
-        Args:
-            name: the name of the pytree node
-            bb_source: path to the key in blackboard containing a geometry_msgs/PointStamped object of the pos of trash can
-            service_name: name of the service of type tinker_decision_msgs/Drop     
-        """
-        super(BtNode_Place, self).__init__(name, service_name, Place)
+        super(BtNode_Place, self).__init__(name, Place, action_name, None, wait_for_server_timeout_sec=-3)
         self.bb_key_point = bb_key_point
         self.bb_key_pose = bb_key_pose
 
@@ -199,33 +194,44 @@ class BtNode_Place(ServiceHandler):
             remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_env_points)
         )
 
-
-    def initialise(self) -> None:
-        """
-        Called when the node is visited
-        """
-        request = Place.Request()
-        request.target_point = self.blackboard.target_point
-        request.grasp_pose = self.blackboard.grasp_pose
-        request.env_points = self.blackboard.env_points
-        
-        # setup things that needs to be cleared
-        self.response = self.client.call_async(request)
-
-        self.feedback_message = f"Initialized Place"
-
-    def update(self):
-        self.logger.debug(f"Update Place")
-        if self.response.done():
-            if self.response.result().success:
-                self.feedback_message = f"Place Successful"
+    def send_goal(self):
+        try:
+            goal = Place.Goal()
+            goal.target_point = self.blackboard.target_point
+            goal.grasp_pose = self.blackboard.grasp_pose
+            goal.env_points = self.blackboard.env_points
+            self.send_cancel_request(goal)
+            self.feedback_message = f"Sent place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}"
+            self.logger.debug(f"Sent place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}")
+        except Exception as e:
+            self.feedback_message = f"Failed to send place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}; error: {e}"
+            self.logger.error(f"Failed to send place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}; error: {e}")
+            return pytree.common.Status.FAILURE
+    
+    def process_feedback(self, feedback):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = f"Place feedback received with status: {self.result_status}"
+            self.logger.debug(f"Place feedback received with status: {self.result_status}")
+            return pytree.common.Status.FAILURE
+        else:
+            result = self.result_message.result
+            if result.success:
+                self.feedback_message = f"Place feedback received with success: {result.success}"
+                self.logger.debug(f"Place feedback received with success")
                 return pytree.common.Status.SUCCESS
             else:
-                self.feedback_message = f"Place failed"
+                self.feedback_message = f"Place feedback received with success: {result.success} and error message {result.error_msg}"
+                self.logger.debug(f"Place feedback received with success: {result.success} and error message {result.error_msg}")
                 return pytree.common.Status.FAILURE
+
+    def feedback_callback(self, msg: Any):
+        feedback = msg.feedback
+        if feedback.status != 0:
+            self.feedback_message = f"ERROR:  {feedback.status} - {feedback.message}"
+            self.logger.error(f"Place feedback received with error: {feedback.status} - {feedback.message}")
         else:
-            self.feedback_message = "Still placing object..."
-            return pytree.common.Status.RUNNING
+            self.feedback_message = f"INFO:  {feedback.status} - {feedback.message}"
+            self.logger.debug(f"Place feedback received with info: {feedback.status} - {feedback.message}")
 
 
 class BtNode_MoveArm(ServiceHandler):

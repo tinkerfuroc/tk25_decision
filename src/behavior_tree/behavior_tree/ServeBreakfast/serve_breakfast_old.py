@@ -188,7 +188,7 @@ def createFindAndPlace(key_find_location, key_drop_location, obj_name):
                                           bb_key_point=key_drop_location,
                                           bb_key_pose=KEY_GRASP_POSE,
                                           bb_key_env_points=KEY_ENV_POINTS,
-                                          service_name=place_service_name))
+                                          action_name=place_service_name))
     return root
 
 def createEnterKitchen():

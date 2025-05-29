@@ -195,13 +195,13 @@ def createPlaceOnShelf():
                                             bb_key_point=KEY_POINT_PLACE,
                                             bb_key_pose=KEY_GRASP_POSE_DUMMY if USE_GRASP_DUMMY else KEY_GRASP_POSE, 
                                             bb_key_env_points=KEY_ENV_POINTS,
-                                            service_name=place_service_name))
+                                            action_name=place_service_name))
         if TRY_TWICE:
             place_sequence.add_child(BtNode_Place(name="Place object on shelf", 
                                                 bb_key_point=KEY_POINT_PLACE, 
                                                 bb_key_pose=KEY_GRASP_POSE_DUMMY, 
                                                 bb_key_env_points=KEY_ENV_POINTS, 
-                                                service_name=place_service_name))
+                                                action_name=place_service_name))
             place_parallel.add_child(py_trees.decorators.Retry(name="retry 2 times", child=place_sequence, num_failures=2))
         else:
             place_parallel.add_child(place_sequence)
