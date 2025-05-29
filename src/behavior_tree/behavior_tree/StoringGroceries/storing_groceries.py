@@ -53,18 +53,6 @@ POS_TABLE3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_i
                         pose=Pose(position=Point(x=10.8109273910, y=3.56819748, z=0.0),
                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.546470351326438, w=0.8374784505413614))
                         )
-# POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=1.9052205940802227, y=0.07986240342385699, z=0.0),
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.6162222736893007, w=0.787572288370527))
-#                         )
-# POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=0.42952810404850056, y=-0.772284168894167, z=0.0),
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=0.041104151942754144, w=0.9991548672218271))
-#                         )
-# POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=1.9408609917631492, y=-1.544248683233972, z=0.0),
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.9999828747238424, w=0.005852372086610969))
-#                         )
 POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                         # pose=Pose(position=Point(x=-0.2942876962347504, y=0.7816651007796609, z=0.0),
                         pose=Pose(position=Point(x=12.6343, y=5.4323167, z=0.0),
@@ -73,6 +61,10 @@ POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id
 
 POINT_PLACE = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                           point=Point(x=-0.266, y=1.297, z=0.706))
+POINT_SHELF_LEFT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                                 point=Point(x=12.6343, y=5.4323167, z=0.706))
+POINT_SHELF_RIGHT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                                    point=Point(x=12.6343, y=5.4323167, z=0.706))
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -44.0, 26.0, 20.0, 30.0, -92.0, 0.0]]
 ARM_POS_SCAN_MIDDLE = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 60.0, 30.0, -86.0, 0.0]]
@@ -90,6 +82,8 @@ KEY_POS_SHELF = "pos_shelf"
 KEY_POS_TABLE = "pos_table"
 KEY_POS_TABLE2 = "pos_table2"
 KEY_POS_TABLE3 = "pos_table3"
+KEY_POINT_SHELF_LEFT = "point_shelf_left"
+KEY_POINT_SHELF_RIGHT = "point_shelf_right"
 
 KEY_ARM_SCAN = "arm_scan"
 KEY_ARM_NAVIGATING = "arm_navigating"
@@ -152,6 +146,8 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard("Write Prompt", bb_namespace="", bb_source=None, bb_key=KEY_PROMPT, object=prompt_list))
     root.add_child(BtNode_WriteToBlackboard("Write Grasp Pose", bb_namespace="", bb_source=None, bb_key=KEY_GRASP_POSE_DUMMY, object=GRASP_POSE_DUMMY))
     root.add_child(BtNode_WriteToBlackboard("Write Point Place", bb_namespace="", bb_source=None, bb_key=KEY_POINT_PLACE, object=POINT_PLACE))
+    root.add_child(BtNode_WriteToBlackboard("Write Point Shelf Left", bb_namespace="", bb_source=None, bb_key=KEY_POINT_SHELF_LEFT, object=POINT_SHELF_LEFT))
+    root.add_child(BtNode_WriteToBlackboard("Write Point Shelf Right", bb_namespace="", bb_source=None, bb_key=KEY_POINT_SHELF_RIGHT, object=POINT_SHELF_RIGHT))
     return root
 
 def createGraspOnce():
@@ -183,7 +179,8 @@ def createPlaceOnShelf():
     scan_parallel.add_child(BtNode_CategorizeGrocery("Categorize object", n_layers=N_LAYERS, bb_key_prompt=KEY_PROMPT, 
                                             bb_key_image=KEY_TABLE_IMG, bb_key_segment=KEY_OBJ_SEG, 
                                             bb_target_frame=KEY_TARGET_FRAME, bb_key_result_point=KEY_POINT_PLACE, 
-                                            bb_key_env_points=KEY_ENV_POINTS, bb_key_reason=KEY_PLACE_REASON))
+                                            bb_key_env_points=KEY_ENV_POINTS, bb_key_reason=KEY_PLACE_REASON,
+                                            bb_key_shelf_left=KEY_POINT_SHELF_LEFT, bb_key_shelf_right=KEY_POINT_SHELF_RIGHT))
     root.add_child(scan_parallel)
     if DO_PLACE:
         root.add_child(BtNode_MoveArmSingle("Move arm to scan", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))

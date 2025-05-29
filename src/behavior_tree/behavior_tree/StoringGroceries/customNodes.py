@@ -98,6 +98,8 @@ class BtNode_CategorizeGrocery(ActionHandler):
                  bb_key_result_point: str,
                  bb_key_env_points: str,
                  bb_key_reason: str,
+                 bb_key_shelf_left: str,
+                 bb_key_shelf_right: str,
                  action_name: str = 'grocery_categorize',
                  wait_for_server_timeout_sec: float = -3
                  ):
@@ -125,6 +127,16 @@ class BtNode_CategorizeGrocery(ActionHandler):
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_target_frame)
         )
         self.blackboard.register_key(
+            key="shelf_left",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_shelf_left)
+        )
+        self.blackboard.register_key(
+            key="shelf_right",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_shelf_right)
+        )
+        self.blackboard.register_key(
             key="env_points",
             access=py_trees.common.Access.WRITE,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_env_points)
@@ -140,6 +152,7 @@ class BtNode_CategorizeGrocery(ActionHandler):
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_reason)
         )
 
+
     def send_goal(self):
         try:
             goal = Categorize.Goal()
@@ -148,6 +161,8 @@ class BtNode_CategorizeGrocery(ActionHandler):
             goal.img_table = self.blackboard.image
             goal.segment_object = self.blackboard.segmentation
             goal.target_frame = self.blackboard.target_frame
+            goal.pt_shelf_left = self.blackboard.shelf_left
+            goal.pt_shelf_right = self.blackboard.shelf_right
             self.send_goal_request(goal)
             self.logger.debug(f"Sent goal to categorize grocery with prompt: {self.blackboard.prompt}")
             self.feedback_message = f"Sent goal to categorize grocery with prompt: {self.blackboard.prompt}"
