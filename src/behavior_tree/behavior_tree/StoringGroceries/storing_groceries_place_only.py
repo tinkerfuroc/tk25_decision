@@ -25,9 +25,9 @@ POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id
                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.9736709, w=0.227958))
                         )
 POINT_SHELF_LEFT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                                 point=Point(x=12.6343, y=5.4323167, z=0.706))
+                                 point=Point(x=1.758157, y=1.4899635, z=0.0))
 POINT_SHELF_RIGHT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                                    point=Point(x=12.6343, y=5.4323167, z=0.706))
+                                    point=Point(x=1.8422846, y=0.60954612, z=0.0))
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
 ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
@@ -52,6 +52,7 @@ KEY_OBJ_SEG = "object_segmentation"
 KEY_OBJECT = "object"
 KEY_POINT_PLACE = "point_place"
 KEY_ENV_POINTS = "env_points"
+KEY_REASON = "reason"
 
 KEY_GRASP_POSE = "grasp_pose"
 KEY_TARGET_FRAME = "target_frame"
@@ -61,7 +62,7 @@ KEY_GRASP_ANNOUNCEMENT = "grasp_announcement"
 
 arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
-place_service_name = "place_service"
+place_service_name = "place_action"
 point_target_frame = "base_link"
 
 def createConstantWriter():
@@ -82,7 +83,8 @@ def createPlaceOnShelf():
     root.add_child(BtNode_CategorizeGrocery("Categorize object", n_layers=N_LAYERS, bb_key_prompt=KEY_PROMPT, 
                                             bb_key_image=KEY_TABLE_IMG, bb_key_segment=KEY_OBJ_SEG, 
                                             bb_target_frame=KEY_TARGET_FRAME, bb_key_result_point=KEY_POINT_PLACE, 
-                                            bb_key_env_points=KEY_ENV_POINTS, bb_key_shelf_left=KEY_POINT_SHELF_LEFT, bb_key_shelf_right=KEY_POINT_SHELF_RIGHT,))
+                                            bb_key_env_points=KEY_ENV_POINTS, bb_key_reason=KEY_REASON,
+                                            bb_key_shelf_left=KEY_POINT_SHELF_LEFT, bb_key_shelf_right=KEY_POINT_SHELF_RIGHT,))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     # announce placing on shelf
     root.add_child(BtNode_Announce(name="Announce placing on shelf", bb_source=None, message="Placing on shelf"))
