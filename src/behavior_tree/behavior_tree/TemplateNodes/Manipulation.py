@@ -200,7 +200,7 @@ class BtNode_Place(ActionHandler):
             goal.target_point = self.blackboard.target_point
             goal.grasp_pose = self.blackboard.grasp_pose
             goal.env_points = self.blackboard.env_points
-            self.send_cancel_request(goal)
+            self.send_goal_request(goal)
             self.feedback_message = f"Sent place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}"
             self.logger.debug(f"Sent place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}")
         except Exception as e:
