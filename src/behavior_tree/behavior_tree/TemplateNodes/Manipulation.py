@@ -208,7 +208,7 @@ class BtNode_Place(ActionHandler):
             self.logger.error(f"Failed to send place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}; error: {e}")
             return pytree.common.Status.FAILURE
     
-    def process_feedback(self, feedback):
+    def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = f"Place feedback received with status: {self.result_status}"
             self.logger.debug(f"Place feedback received with status: {self.result_status}")
