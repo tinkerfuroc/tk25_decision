@@ -14,6 +14,7 @@ import rclpy
 
 import random
 import math
+import json
 
 # POINT_TO_PERSON = False
 TURN_PAN_TILT = True
@@ -24,59 +25,44 @@ DEBUG_NO_GOTO = False
 
 DISABLE_FEATURE_MATCH = False
 
-pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=2.067663198053498, y=0.3628327496858775, z=0.0), 
-                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.9669836554706895, w=0.2548383998783207))
-                                  )
+# read from `constant.json` in the same directory
+# load file
+try:
+    file = open("./constants.json", "r")
+    constants = json.load(file)
+    file.close()
+except FileNotFoundError:
+    print("ERROR: constants.json not found!")
+    raise FileNotFoundError
+
+pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=constants["pose_door"]["point"]["x"], y=constants["pose_door"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_door"]["orientation"]["x"], 
+                                                            y=constants["pose_door"]["orientation"]["y"], 
+                                                            z=constants["pose_door"]["orientation"]["z"], 
+                                                            w=constants["pose_door"]["orientation"]["w"]))
+                            )
 pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=4.609381420586617, y=1.4040476837582534, z=0.0), 
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.8172785256122609, w=0.5762428407998221))
-                                  )
-
+                        pose=Pose(position=Point(x=constants["pose_sofa"]["point"]["x"], y=constants["pose_sofa"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_sofa"]["orientation"]["x"], 
+                                                            y=constants["pose_sofa"]["orientation"]["y"], 
+                                                            z=constants["pose_sofa"]["orientation"]["z"], 
+                                                            w=constants["pose_sofa"]["orientation"]["w"]))
+                            )
 pose_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=3.0, y=1.0, z=0.0), # Example coordinates, please adjust
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)) # Example orientation
-                                  )
+                        pose=Pose(position=Point(x=constants["pose_table"]["point"]["x"], y=constants["pose_table"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_table"]["orientation"]["x"], 
+                                                            y=constants["pose_table"]["orientation"]["y"], 
+                                                            z=constants["pose_table"]["orientation"]["z"], 
+                                                            w=constants["pose_table"]["orientation"]["w"]))
+                            )
+ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
+ARM_POS_POINT_TO = [x / 180 * math.pi for x in constants["arm_pos_point_to"]]
 
-# pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-#                         pose=Pose(position=Point(x=1.137541651725769, y=0.2027300000190735, z=0.0), 
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=0.9825917466042707, w=0.1857779844469438))
-#                                   )
-# pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=2.9621124267578125, y=1.4416371583938599, z=0.0), 
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.07088878254244042, w=0.9974842256946476))
-#                                   )
-
-ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
-ARM_POS_POINT_TO = [x / 180 * math.pi for x in [-85.0, 0.0, 0.0, 0.0, 0.0, -90.0, 0.0]]
-
-# pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=3.033092265789758, y=1.6798440817252815, z=0.0), 
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.5449234967191887, w=0.8384857677524004))
-#                                   )
-# pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=2.720678909434828, y=1.4040476837582534, z=0.0), 
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=0.8172785256122609, w=0.5762428407998221))
-#                                   )
-
-pose_door_turned = pose_door
-pose_sofa_turned = pose_sofa
-# pose_door_turned = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                                pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0), 
-#                                          orientation=Quaternion(x=0.0, y=0.0, z=-0.673597350035888, w=0.7390985117185863))
-#                                  )
-# pose_sofa_turned = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                                pose=Pose(position=Point(x=4.9390, y=14.5222, z=0.0),
-#                                          orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
-#                                 )
-
-
-host_name = "host Alex"
-host_drink = "Cola"
-# host_drink = "koala"
-
-names = ["Alex", "Joe", "Cassandra", "Steven", "Ryan", "Michael"]
-drinks = ["ice tea", "Cola", "water", "milk", "big coke", "fanta"]
+host_name = constants["host_name"]
+host_drink = constants["host_drink"]
+drinks = constants["drinks"]
+names = constants["names"]
 
 KEY_ARM_INIT_POSE = "arm_init_pose"
 KEY_ARM_NAVIGATING = "arm_navigating"
@@ -108,8 +94,6 @@ arm_service_name = "arm_joint_service"
 
 def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter", memory=True)
-    
-
     root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
     
     if not DEBUG_NO_GOTO:
