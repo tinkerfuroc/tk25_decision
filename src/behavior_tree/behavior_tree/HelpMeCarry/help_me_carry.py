@@ -146,7 +146,7 @@ def createGraspLuggage(arm_pose_key):
     # add parallel node to grasp and announcing it is grasping
     parallel_grasp = py_trees.composites.Parallel("Parallel Grasp", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_grasp.add_child(BtNode_Announce(name="Announce grasping", bb_source="", message=f"grasping bag"))
-    parallel_grasp.add_child(BtNode_GraspWithPose(f"Grasp luggage", bb_key_vision_res=KEY_OBJECT, bb_key_pose=KEY_GRASP_POSE, service_name=grasp_service_name))
+    parallel_grasp.add_child(BtNode_GraspWithPose(f"Grasp luggage", bb_key_vision_res=KEY_OBJECT, bb_key_pose=KEY_GRASP_POSE, action_name=grasp_service_name))
     
     # 宣布找到行李
     root.add_child(BtNode_Announce(name="Announce found luggage locally", bb_source=None, message="Grasped."))
@@ -172,7 +172,7 @@ def createGraspLuggage(arm_pose_key):
 #         child=BtNode_Grasp(
 #             name="Grasp luggage",
 #             bb_source=KEY_LUGGAGE_DETECTION,
-#             service_name=grasp_service_name
+#             action_name=grasp_service_name
 #         ),
 #         num_failures=2
 #     ))

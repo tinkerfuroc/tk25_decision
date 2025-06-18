@@ -16,14 +16,14 @@ from .ActionBase import ActionHandler
 import math
 
 
-class BtNode_Grasp(ServiceHandler):
+class BtNode_Grasp(ActionHandler):
     """
     Node for grasping an object with a specific prompt
     """
     def __init__(self, 
                  name: str,
                  bb_source: str,
-                 service_name : str = "grasp",
+                 action_name : str = "grasp",
                  ):
         """
         executed when creating tree diagram, therefor very minimal
@@ -35,56 +35,45 @@ class BtNode_Grasp(ServiceHandler):
             prompt: optional, if given, skips reading from blackboard
         """
         super(BtNode_Grasp, self).__init__(name, service_name, Grasp)
-        self.bb_source = bb_source
-        self.bb_read_client = None
-
-
-    def setup(self, **kwargs):
-        """
-        setup for the node, recursively called with tree.setup()
-        """
-        ServiceHandler.setup(self, **kwargs)
-
-        self.bb_read_client = self.attach_blackboard_client(name="Grasp Read")
-        self.bb_read_client.register_key(self.bb_source, access=pytree.common.Access.READ)
-
-        # debugger info (shown with DebugVisitor)
-        self.logger.debug(f"Setup Grasp, reading from {self.bb_source}")
-        
-
-    def initialise(self) -> None:
-        """
-        Called when the node is visited
-        """
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="vision_result",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source)
+        )
+    
+    def send_goal(self):
         try:
-            vision_result = self.bb_read_client.get(self.bb_source)
-            assert isinstance(vision_result, ObjectDetection.Response)
+            goal = Grasp.Goal()
+            goal.header = self.blackboard.vision_result.header
+            goal.rgb_image = self.blackboard.vision_result.rgb_image
+            goal.depth_image = self.blackboard.vision_result.depth_image
+            goal.segments = self.blackboard.vision_result.segments
+            self.send_goal_request(goal)
+            self.feedback_message = f"Sent grasp goal with header {goal.header} and segments {len(goal.segments)}"
         except Exception as e:
-            self.feedback_message = f"Grasp reading object name failed"
-            raise e
+            self.feedback_message = f"Failed to send grasp goal; error: {e}"
+            self.logger.error(f"Failed to send grasp goal; error: {e}")
+            return pytree.common.Status.FAILURE
 
-        request = Grasp.Request()
-        request.header = vision_result.header
-        request.rgb_image = vision_result.rgb_image
-        request.depth_image = vision_result.depth_image
-        request.segments = vision_result.segments
-        # setup things that needs to be cleared
-        self.response = self.client.call_async(request)
-
-        self.feedback_message = f"Initialized Grasp"
-
-    def update(self):
-        self.logger.debug(f"Update Grasp")
-        if self.response.done():
-            if self.response.result().success:
-                self.feedback_message = f"Grasp Successful"
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Grasp failed with status {self.response.result().stage}: {self.response.result().error_msg}"
-                return pytree.common.Status.FAILURE
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = f"Grasp feedback received with status: {self.result_status}"
+            self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
+            return pytree.common.Status.FAILURE
         else:
-            self.feedback_message = "Still grasping..."
-            return pytree.common.Status.RUNNING
+            result = self.result_message.result
+            if result.success:
+                self.feedback_message = f"Grasp feedback received with success: {result.success}"
+                self.logger.debug(f"Grasp feedback received with success")
+                return pytree.common.Status.SUCCESS
+            else: 
+                self.feedback_message = f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}"
+                self.logger.debug(f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}")
+                return pytree.common.Status.FAILURE
+
+    def feedback_callback(self, msg: Any):
+        return super().feedback_callback(msg)
 
 
 class BtNode_Drop(ServiceHandler):

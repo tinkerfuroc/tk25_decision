@@ -195,26 +195,29 @@ class BtNode_GraspWithPose(BtNode_Grasp):
     def __init__(self, name: str, 
                  bb_key_vision_res: str, 
                  bb_key_pose: str, 
-                 service_name: str = "grasp"):
-        super().__init__(name, bb_key_vision_res, service_name)
-        self.blackboard = self.attach_blackboard_client(name=self.name)
+                 action_name: str = "grasp"):
+        super().__init__(name, bb_key_vision_res, action_name)
         self.blackboard.register_key(
             key="pose",
             access=py_trees.common.Access.WRITE,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_pose)
         )
     
-    def update(self):
-        self.logger.debug(f"Update Grasp")
-        if self.response.done():
-            if self.response.result().success:
-                self.blackboard.pose = self.response.result().grasp_pose
-                self.feedback_message = f"Grasp Successful"
-                return py_trees.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Grasp failed with status {self.response.result().stage}: {self.response.result().error_msg}"
-                return py_trees.common.Status.FAILURE
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = f"Grasp feedback received with status: {self.result_status}"
+            self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
+            return py_trees.common.Status.FAILURE
         else:
-            self.feedback_message = "Still grasping..."
-            return py_trees.common.Status.RUNNING
+            result = self.result_message.result
+            if result.success:
+                self.blackboard.pose = result.grasp_pose
+                self.feedback_message = f"Grasp feedback received with success: {result.success}"
+                self.logger.debug(f"Grasp feedback received with success")
+                return py_trees.common.Status.SUCCESS
+            else: 
+                self.feedback_message = f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}"
+                self.logger.debug(f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}")
+                return py_trees.common.Status.FAILURE
+
         
