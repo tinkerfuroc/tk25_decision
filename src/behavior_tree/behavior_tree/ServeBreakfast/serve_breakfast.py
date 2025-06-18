@@ -104,7 +104,6 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard(name="Write arm scan pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_SCANS[2], object=ARM_POS_SCANS[2]))
     root.add_child(BtNode_WriteToBlackboard(name="Write arm navigating pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
     # root.add_child(BtNode_WriteToBlackboard(name="Write arm scan middle pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_SCAN_MIDDLE, object=ARM_POS_SCAN_MIDDLE))
-
     return root
 
 def createGoPositionAndFind(obj_name, position):
