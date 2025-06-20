@@ -116,8 +116,6 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard(name="Wirte sofa location", bb_namespace="", bb_source=None, bb_key=KEY_SOFA_POSE, object=pose_sofa))
     root.add_child(BtNode_WriteToBlackboard(name="Write door location", bb_namespace="", bb_source=None, bb_key=KEY_DOOR_POSE, object=pose_door))
     root.add_child(BtNode_WriteToBlackboard(name="Write sofa location", bb_namespace="", bb_source=None, bb_key=KEY_SOFA_POSE, object=pose_sofa))
-    root.add_child(BtNode_WriteToBlackboard(name="Write door turned location", bb_namespace="", bb_source=None, bb_key=KEY_DOOR_POSE_TURNED, object=pose_door_turned))
-    root.add_child(BtNode_WriteToBlackboard(name="Write sofa turned location", bb_namespace="", bb_source=None, bb_key=KEY_SOFA_POSE_TURNED, object=pose_sofa_turned))
     root.add_child(BtNode_WriteToBlackboard(name="Write host name", bb_namespace="", bb_source=None, bb_key=KEY_HOST_NAME, object=host_name))
     root.add_child(BtNode_WriteToBlackboard(name="Write host drink", bb_namespace="", bb_source=None, bb_key=KEY_HOST_DRINK, object=host_drink))
     root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_PERSONS, object=[]))

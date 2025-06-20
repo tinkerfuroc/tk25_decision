@@ -1,6 +1,7 @@
 import asyncio
 import py_trees as pytree
 import time
+import math
 
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
@@ -599,3 +600,30 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
     async def wait_seconds(self, seconds):
         await asyncio.sleep(seconds)
         return True
+    
+
+class BtNode_TurnTo(BtNode_TurnPanTilt):
+    """
+    Turn to a specific point relevant to 'base_link'
+    """
+    def __init__(self, 
+                 name: str, 
+                 bb_key_point: PointStamped, 
+                 speed: float = 0.0):
+        super().__init__(name, x=0, y=0, speed=speed)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key='point',
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_point)
+        )
+    
+    def initialise(self) -> None:
+        x = math.atan2(self.blackboard.point.point.y, self.blackboard.point.point.x)
+        y = 0.0
+        msg = PanTiltCtrl()
+        msg.x = x
+        msg.y = y
+        msg.speed = self.speed
+        self.publisher.publish(msg)
+        self.logger.info(f"Publishing PanTiltCtrl with x: {x}, y: {y}, speed: {self.speed}")
