@@ -42,29 +42,29 @@ DO_NAV = True
 
 #14.949769937531444
 POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=11.30716705, y=3.851762, z=0.0),
-                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.5214928409453151, w=0.8532556573751997))
+                        pose=Pose(position=Point(x=-1.6895215511322021, y=1.108468770980835, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.8492025594631408, w=0.5280672428784526))
                         )
-POS_TABLE2 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=11.803406715393066, y=3.946284294128, z=0.0),
-                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.49269899574550025, w=0.8701998044078012))
-                        )
-POS_TABLE3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=10.8109273910, y=3.56819748, z=0.0),
-                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.546470351326438, w=0.8374784505413614))
-                        )
+# POS_TABLE2 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                         pose=Pose(position=Point(x=11.803406715393066, y=3.946284294128, z=0.0),
+#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.49269899574550025, w=0.8701998044078012))
+#                         )
+# POS_TABLE3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+#                         pose=Pose(position=Point(x=10.8109273910, y=3.56819748, z=0.0),
+#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.546470351326438, w=0.8374784505413614))
+#                         )
+POS_TABLE3 = POS_TABLE2 = POS_TABLE
 POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        # pose=Pose(position=Point(x=-0.2942876962347504, y=0.7816651007796609, z=0.0),
-                        pose=Pose(position=Point(x=12.6343, y=5.4323167, z=0.0),
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.1168466165, w=0.9931499726))
+                        pose=Pose(position=Point(x=1.4658832550048828, y=-1.2834669351577759, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.47666905902949136, w=0.8790828221299397))
                         )
 
 POINT_PLACE = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                           point=Point(x=-0.266, y=1.297, z=0.706))
-POINT_SHELF_LEFT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                                 point=Point(x=12.6343, y=5.4323167, z=0.706))
 POINT_SHELF_RIGHT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                                    point=Point(x=12.6343, y=5.4323167, z=0.706))
+                                 point=Point(x=1.2973706722259521, y=-1.860664963722229, z=0.0))
+POINT_SHELF_LEFT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                                    point=Point(x=2.043041944503784, y=-1.4543347358703613, z=0.0))
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -44.0, 26.0, 20.0, 30.0, -92.0, 0.0]]
 ARM_POS_SCAN_MIDDLE = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 60.0, 30.0, -86.0, 0.0]]
