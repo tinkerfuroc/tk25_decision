@@ -2,7 +2,7 @@ import py_trees
 from behavior_tree.TemplateNodes.structs import Person
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 
-from behavior_tree.messages import TextToSpeech
+from behavior_tree.messages import TextToSpeech, FollowHead
 
 class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
     """
@@ -135,3 +135,35 @@ class BtNode_Confirm(BtNode_Announce):
         self.announce_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ", correct?"
 
         return super().initialise()
+    
+class BtNode_HeadTracking():
+    def __init__(self, 
+                 name: str,
+                 service_name: str = "follow_head_service",
+                 repeat : bool = True
+                ):
+        super().__init__(name, service_name, FollowHead)
+        self.repeat = repeat
+    
+    def initialise(self):
+        request = FollowHead.Request()
+        request.closest = True
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Starting head tracking service"
+    
+    def update(self):
+        self.logger.debug(f"Updating Head Tracking...")
+        self.feedback_message = f"Waiting for head tracking service response..."
+        if self.response.done():
+            response : FollowHead.Response = self.response.result()
+            if response.status == 0:
+                if self.repeat:
+                    self.initialise()
+                    self.feedback_message = f"Head tracking service is running again, waiting for next response..."
+                    return py_trees.common.Status.RUNNING
+                return py_trees.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Head tracking service failed with status {response.status}: {response.error_msg}"
+                return py_trees.common.Status.FAILURE
+        else:
+            return py_trees.common.Status.RUNNING

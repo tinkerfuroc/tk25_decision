@@ -6,7 +6,7 @@ from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtr
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection, BtNode_TurnTo
 from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
 
-from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm
+from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm, BtNode_HeadTracking
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
@@ -24,6 +24,7 @@ MAX_SCAN_DISTANCE = 4.5
 DEBUG_NO_GOTO = False
 
 DISABLE_FEATURE_MATCH = False
+DISABLE_FOLLOW_HEAD = False
 
 # read from `constant.json` in the same directory
 # load file
@@ -178,23 +179,23 @@ def createFindFavoriteDrink(bb_key_fav_drink : str):
 def createFirstIntroductions():
     first_introductions = py_trees.composites.Sequence(name="First introductions", memory=True)
     first_introductions.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=90.0, y=45.0, speed=0.0))
-    turn_head_arm = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     
     # introduce host to first guest
-    introduce_sequence = py_trees.composites.Sequence(name="sequence", memory=True)
-    introduce_sequence.add_child(BtNode_TurnPanTilt(name="Turn head to the right, turn to guest1", x=90.0, y=45.0, speed=0.0))
-
-    turn_head_arm.add_child(introduce_sequence)
+    # follow guest1 head
+    if not DISABLE_FOLLOW_HEAD:
+        head_tracking = py_trees.decorators.Repeat(name="repeat head tracking", child=py_trees.decorators.FailureIsSuccess("f is s", BtNode_HeadTracking(name="Follow guest1 head", service_name="follow_head_service")), num_success = -1)
     if not DISABLE_FEATURE_MATCH:
         # point to guest1
         # first_introductions.add_child(BtNode_PointTo(name="Point to host", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=0))
         deco = py_trees.decorators.Retry(name="retry", child=BtNode_PointTo(name="Point to host", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=0), num_failures=3)
-        turn_head_arm.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
+        point_to = py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco)
+    
+    introduce = BtNode_Introduce(name="introduce host to guest", key_person=KEY_PERSONS, target_id=1, introduced_id=0)
+    
+    turn_head_arm = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnSelected([introduce]), children=[head_tracking, point_to, introduce])
     first_introductions.add_child(turn_head_arm)
-    turn_head_arm.add_child(BtNode_Introduce(name="introduce host to guest", key_person=KEY_PERSONS, target_id=1, introduced_id=0))
-    
+
     turn_head_arm2 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    
     # introduce first guest to host
     introduce_sequence2 = py_trees.composites.Sequence(name="sequence", memory=True)
     # introduce_sequence2.add_child(BtNode_TurnPanTilt(name="Turn head to the front", x=0.0, y=20.0, speed=0.0))
@@ -213,21 +214,22 @@ def createFirstIntroductions():
 
 def createSecondIntroductions():
     second_introductions = py_trees.composites.Sequence(name="Second introductions", memory=True)
-    turn_head_arm1 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    second_introductions.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=90.0, y=45.0, speed=0.0))
+    
     # introduce host to second guest
-    introduce_sequence = py_trees.composites.Sequence(name="sequence", memory=True)
-    introduce_sequence.add_child(BtNode_TurnPanTilt(name="Turn head to the right, turn to guest2", x=90.0, y=45.0, speed=0.0))
-       
-    turn_head_arm1.add_child(introduce_sequence)
+    # follow guest1 head
+    if not DISABLE_FOLLOW_HEAD:
+        head_tracking = py_trees.decorators.Repeat(name="repeat head tracking", child=py_trees.decorators.FailureIsSuccess("f is s", BtNode_HeadTracking(name="Follow guest2 head", service_name="follow_head_service")), num_success = -1)
     if not DISABLE_FEATURE_MATCH:
         # point to host
         # second_introductions.add_child(BtNode_PointTo(name="Point to host", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=0))
         deco = py_trees.decorators.Retry(name="retry", child=BtNode_PointTo(name="Point to host", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=0), num_failures=3)
-        turn_head_arm1.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
+        point_to = py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco)
+
+    introduce = BtNode_Introduce(name="introduce host to second guest", key_person=KEY_PERSONS, target_id=2, introduced_id=0)
+    turn_head_arm1 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnSelected([introduce]), children=[head_tracking, point_to, introduce])
     second_introductions.add_child(turn_head_arm1)
-    introduce_sequence.add_child(BtNode_Introduce(name="introduce host to second guest", key_person=KEY_PERSONS, target_id=2, introduced_id=0))
     
-    # second_introductions.add_child(BtNode_TurnPanTilt(name="Turn head to the front", x=0.0, y=20.0, speed=0.0))
     # introduce second guest to host
     turn_head_arm2 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     introduce_sequence2 = py_trees.composites.Sequence(name="sequence", memory=True)
@@ -239,21 +241,22 @@ def createSecondIntroductions():
         # first_introductions.add_child(BtNode_PointTo(name="Point to guest", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=1))
         deco = py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle(name="Move arm to nav, point to guest2", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_INIT_POSE, add_octomap=False), num_failures=3)
         turn_head_arm2.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
-    second_introductions.add_child(turn_head_arm2)
     introduce_sequence2.add_child(BtNode_Introduce(name="introduce second guest to host", key_person=KEY_PERSONS, target_id=0, introduced_id=2))
-    
-    # introduce first guest to second guest
-    turn_head_arm3 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    introduce_sequence3 = py_trees.composites.Sequence(name="sequence", memory=True)
-    introduce_sequence3.add_child(BtNode_TurnPanTilt(name="Turn head to the right, turn to guest2", x=90.0, y=45.0, speed=0.0))
+    second_introductions.add_child(turn_head_arm2)
 
-    turn_head_arm3.add_child(introduce_sequence3)
+    # introduce first guest to second guest
+    second_introductions.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=90.0, y=45.0, speed=0.0))
+    
+    if not DISABLE_FOLLOW_HEAD:
+        head_tracking = py_trees.decorators.Repeat(name="repeat head tracking", child=py_trees.decorators.FailureIsSuccess("f is s", BtNode_HeadTracking(name="Follow guest2 head", service_name="follow_head_service")), num_success = -1)
     if not DISABLE_FEATURE_MATCH:
         # point to guest1
         deco = py_trees.decorators.Retry(name="retry", child=BtNode_PointTo(name="Point to guest1", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=1), num_failures=3)
-        turn_head_arm3.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
+        point_to = py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco)
+    
+    introduce = BtNode_Introduce(name="introduce first guest to second guest", key_person=KEY_PERSONS, target_id=2, introduced_id=1, describe_introduced=True)
+    turn_head_arm3 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnSelected([introduce]), children=[head_tracking, point_to, introduce])
     second_introductions.add_child(turn_head_arm3)
-    introduce_sequence3.add_child(BtNode_Introduce(name="introduce first guest to second guest", key_person=KEY_PERSONS, target_id=2, introduced_id=1, describe_introduced=True))
     
     # introduce second guest to first guest
     turn_head_arm4 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
@@ -268,7 +271,6 @@ def createSecondIntroductions():
         turn_head_arm4.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
     second_introductions.add_child(turn_head_arm4)
     introduce_sequence4.add_child(BtNode_Introduce(name="introduce second guest to first guest", key_person=KEY_PERSONS, target_id=1, introduced_id=2))
-
 
     return second_introductions
 
