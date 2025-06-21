@@ -34,7 +34,7 @@ class BtNode_Grasp(ActionHandler):
             service_name: name of the service running Grasp
             prompt: optional, if given, skips reading from blackboard
         """
-        super(BtNode_Grasp, self).__init__(name, action_name, Grasp)
+        super(BtNode_Grasp, self).__init__(name, Grasp, action_name, bb_source, wait_for_server_timeout_sec=-3)
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="vision_result",

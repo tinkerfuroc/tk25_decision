@@ -29,7 +29,7 @@ DISABLE_FOLLOW_HEAD = False
 # read from `constant.json` in the same directory
 # load file
 try:
-    file = open("./constants.json", "r")
+    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/Receptionist/constants.json", "r")
     constants = json.load(file)
     file.close()
 except FileNotFoundError:

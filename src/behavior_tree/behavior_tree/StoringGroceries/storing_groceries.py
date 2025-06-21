@@ -15,7 +15,7 @@ from std_msgs.msg import Header
 import rclpy
 
 try:
-    file = open("./constants.json", "r")
+    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/StoringGroceries/constants.json", "r")
     constants = json.load(file)
     file.close()
 except FileNotFoundError:
@@ -83,17 +83,16 @@ POS_TABLE3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_i
                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.546470351326438, w=0.8374784505413614))
                         )
 POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        # pose=Pose(position=Point(x=-0.2942876962347504, y=0.7816651007796609, z=0.0),
-                        pose=Pose(position=Point(x=12.6343, y=5.4323167, z=0.0),
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.1168466165, w=0.9931499726))
+                        pose=Pose(position=Point(x=1.4658832550048828, y=-1.2834669351577759, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.47666905902949136, w=0.8790828221299397))
                         )
 POINT_PLACE = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                             point=Point(x=constants["point_place"]["x"], y=constants["point_place"]["y"], z=constants["point_place"]["z"]))
 POINT_SHELF_LEFT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                                 point=Point(x=constants["point_shelf_left"]["x"], y=constants["point_shelf_left"]["y"], z=0.0))
 POINT_SHELF_RIGHT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                                point=Point(x=constants["point_shelf_right"]["x"], y=constants["point_shelf_right"]["y"], z=0.0))
-
+                                    point=Point(x=constants["point_shelf_right"]["x"], y=constants["point_shelf_right"]["y"], z=0.0))
+constants["point_shelf_right"]["x"], y=constants["point_shelf_right"]["y"], z=0.0
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
 ARM_POS_SCAN = [x / 180 * math.pi for x in constants["arm_pos_scan"]]
 ARM_POS_DROP = [x / 180 * math.pi for x in constants["arm_pos_drop"]]
