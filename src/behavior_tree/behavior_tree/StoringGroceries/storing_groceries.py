@@ -92,7 +92,6 @@ POINT_SHELF_LEFT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), 
                                 point=Point(x=constants["point_shelf_left"]["x"], y=constants["point_shelf_left"]["y"], z=0.0))
 POINT_SHELF_RIGHT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                                     point=Point(x=constants["point_shelf_right"]["x"], y=constants["point_shelf_right"]["y"], z=0.0))
-constants["point_shelf_right"]["x"], y=constants["point_shelf_right"]["y"], z=0.0
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
 ARM_POS_SCAN = [x / 180 * math.pi for x in constants["arm_pos_scan"]]
 ARM_POS_DROP = [x / 180 * math.pi for x in constants["arm_pos_drop"]]

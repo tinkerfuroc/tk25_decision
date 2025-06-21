@@ -573,7 +573,7 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         msg = PanTiltCtrl()
         msg.x = self.x
         msg.y = self.y
-        msg.speed = self.speed
+        msg.speed = self.speed * 1.0  # convert to float, as the message expects a float
 
         self.publisher.publish(msg)
         self.logger.info(f"Publishing PanTiltCtrl with x: {self.x}, y: {self.y}, speed: {self.speed}")
@@ -609,14 +609,11 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
     def __init__(self, name: str,
                  bb_key_persons: str,
                  bb_key_points: str,
-                 bb_key_init_pose: str,
                  target_id: int = 0,
-                 service_name: str = "turn_to_service"
                  ):
-        super().__init__(name, service_name, x=0, y=0, speed = 0)
+        super().__init__(name, x=0, y=0, speed = 0.0)
         self.bb_key_persons = bb_key_persons
         self.bb_key_points = bb_key_points
-        self.bb_key_init_pose = bb_key_init_pose
         self.target_id = target_id
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
@@ -636,7 +633,7 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
             self.response = None
         else:
             point = self.blackboard.points[self.target_id]
-            x = math.atan2(point.y, point.x)
+            x = math.atan2(point.point.y, point.point.x)
             # x = math.atan2(self.blackboard.point.point.y, self.blackboard.point.point.x)
             y = 0.0
             msg = PanTiltCtrl()
@@ -645,3 +642,5 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
             msg.speed = self.speed
             self.publisher.publish(msg)
             self.logger.info(f"Publishing PanTiltCtrl with x: {x}, y: {y}, speed: {self.speed}")
+        self.cnt = 0
+        

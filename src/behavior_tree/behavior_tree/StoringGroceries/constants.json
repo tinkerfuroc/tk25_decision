@@ -1,5 +1,5 @@
 {
-    "pos_table1": {
+    "pose_table1": {
         "point" : {
             "x": 0.0,
             "y": 0.0,
@@ -12,7 +12,7 @@
             "w": 1.0
         }
     },
-    "pos_table2": {
+    "pose_table2": {
         "point" : {
             "x": 0.0,
             "y": 0.0,
@@ -25,7 +25,7 @@
             "w": 1.0
         }
     },
-    "pos_table3": {
+    "pose_table3": {
         "point" : {
             "x": 0.0,
             "y": 0.0,
@@ -38,7 +38,7 @@
             "w": 1.0
         }
     },
-    "pos_shelf" : {
+    "pose_shelf" : {
         "point" : {
             "x": 0.0,
             "y": 0.0,
@@ -56,31 +56,15 @@
         "y": 0.0,
         "z": 0.0
     },
-    "pose_shelf_left": {
-        "point" : {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 0.0
-        },
-        "orientation" :{
-            "x": 0.0,
-            "y": 0.0,
-            "z": 0.0,
-            "w": 1.0
-        }
+    "point_shelf_left": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
     },
-    "pose_shelf_right": {
-        "point" : {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 0.0
-        },
-        "orientation" :{
-            "x": 0.0,
-            "y": 0.0,
-            "z": 0.0,
-            "w": 1.0
-        }
+    "point_shelf_right": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
     },
     "arm_pos_navigating": [
         -87.0, 
@@ -91,7 +75,7 @@
         -86.0, 
         0.0
     ],
-    "arm_pose_scan": [
+    "arm_pos_scan": [
         0.0,
         0.0,
         0.0,

@@ -2,7 +2,7 @@ import py_trees as pytree
 from py_trees.common import Status
 
 # from tinker_decision_msgs.srv import Announce, WaitForStart
-from behavior_tree.messages import TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen
+from behavior_tree.messages import TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest
 
 from .BaseBehaviors import ServiceHandler
 
