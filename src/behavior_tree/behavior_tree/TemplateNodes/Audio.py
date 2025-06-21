@@ -292,3 +292,46 @@ class BtNode_Listen(ServiceHandler):
         else:
             self.feedback_message = "Still listening..."
             return Status.RUNNING
+
+class BtNode_CompareInterest(ServiceHandler):
+    def __init__(self,
+                 name: str,
+                 bb_source_key1: str,
+                 bb_source_key2: str,
+                 service_name = "compare_interest_service",
+                 timeout : float = 5.0
+                 ):
+        super().__init__(name, service_name, CompareInterest)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="first_statement",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key1)
+        )
+        self.blackboard.register_key(
+            key="second_statement",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key2)
+        )
+        self.timeout = timeout
+
+    def initialise(self):
+        request = CompareInterest.Request()
+        request.first_statement = self.blackboard.first_statement
+        request.second_statement = self.blackboard.second_statement
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized Compare Interest"
+    
+    def update(self):
+        self.logger.debug(f"Update compare interest")
+        if self.response.done():
+            if self.response.result().status == 0:
+                self.feedback_message = f"Compare interest result: {self.response.result().result}"
+                return Status.SUCCESS
+            else:
+                self.feedback_message = f"Compare interest failed with error code {self.response.result().status}: {self.response.result().error_message}"
+                return Status.FAILURE
+        else:
+            self.feedback_message = "Still comparing interest..."
+            return Status.RUNNING
+

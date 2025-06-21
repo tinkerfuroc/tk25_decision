@@ -2,7 +2,7 @@ import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation, BtNode_Listen
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation, BtNode_Listen, BtNode_CompareInterest
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection, BtNode_TurnTo
 from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
 
@@ -81,7 +81,8 @@ KEY_HOST_FEATURES = "host_features"
 KEY_GUEST_NAME = "guest_name"
 KEY_GUEST_DRINK = "guest_drink"
 KEY_GUEST_FEATURES = "guest_features"
-KEY_GUEST_INTEREST = "guest_interest"
+KEY_GUEST1_INTEREST = "guest1_interest"
+KEY_GUEST2_INTEREST = "guest2_interest"
 
 KEY_PERSONS = "persons"
 KEY_PERSON_CENTROIDS = "centroids"
@@ -267,6 +268,8 @@ def createSecondIntroductions():
         turn_head_arm4.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
     second_introductions.add_child(turn_head_arm4)
     introduce_sequence4.add_child(BtNode_Introduce(name="introduce second guest to first guest", key_person=KEY_PERSONS, target_id=1, introduced_id=2))
+
+
     return second_introductions
 
 def createToDoor():
@@ -278,7 +281,7 @@ def createToDoor():
         root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
     return root
 
-def createToSofa():
+def createToSofa(interest_key : str):
     root = py_trees.composites.Parallel(name="Go to sofa while chatting", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     navigation_seq = py_trees.composites.Sequence(name="Go to sofa", memory=True)
     navigation_seq.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
@@ -289,8 +292,8 @@ def createToSofa():
     
     get_interest_seq = py_trees.composites.Sequence(name="Get interest", memory=True)
     get_interest_seq.add_child(BtNode_Announce(name="Ask for interest", bb_source=None, message="What are you interested in?"))
-    get_interest_seq.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=KEY_GUEST_INTEREST, timeout=5.0))
-    get_interest_seq.add_child(BtNode_Announce(name="Repeat interest", bb_source=KEY_GUEST_INTEREST))
+    get_interest_seq.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=interest_key, timeout=5.0))
+    get_interest_seq.add_child(BtNode_Announce(name="Repeat interest", bb_source=interest_key))
 
     return root
 
@@ -348,7 +351,7 @@ def createReceptionist():
     # go to living room for introductions
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to living room", KEY_SOFA_POSE), num_failures=10))
     root.add_child(createFindFavoriteDrink(KEY_GUEST_DRINK))
-    root.add_child(createToSofa())
+    root.add_child(createToSofa(KEY_GUEST1_INTEREST))
     root.add_child(createAnnounceAndScanSofa())
 
     # introduce first guest and host to each other, then recommend a seat
@@ -365,7 +368,7 @@ def createReceptionist():
     # go to living room for introductions
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to living room", KEY_SOFA_POSE), num_failures=10))
     root.add_child(createFindFavoriteDrink(KEY_GUEST_DRINK))
-    root.add_child(createToSofa())
+    root.add_child(createToSofa(KEY_GUEST2_INTEREST))
     root.add_child(createAnnounceAndScanSofa())
 
     # introduce second guest
@@ -382,6 +385,7 @@ def createReceptionist():
     root.add_child(BtNode_Announce(name="Task accomplished", bb_source=None, message="Receptionist task accomplished."))
     root.add_child(py_trees.behaviours.Running(name="end"))
 
+    root.add_child(BtNode_CompareInterest(name="Compare interest", bb_source_key1=KEY_GUEST1_INTEREST, bb_source_key2=KEY_GUEST2_INTEREST))
     return root
 
 
