@@ -2,8 +2,8 @@ import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation, BtNode_Listen
-from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation, BtNode_Listen, BtNode_CompareInterest
+from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection, BtNode_TurnTo
 from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
 
 from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm
@@ -14,6 +14,7 @@ import rclpy
 
 import random
 import math
+import json
 
 # POINT_TO_PERSON = False
 TURN_PAN_TILT = True
@@ -24,59 +25,44 @@ DEBUG_NO_GOTO = False
 
 DISABLE_FEATURE_MATCH = False
 
-pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-                        pose=Pose(position=Point(x=2.067663198053498, y=0.3628327496858775, z=0.0), 
-                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.9669836554706895, w=0.2548383998783207))
-                                  )
+# read from `constant.json` in the same directory
+# load file
+try:
+    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/Receptionist/constants.json", "r")
+    constants = json.load(file)
+    file.close()
+except FileNotFoundError:
+    print("ERROR: constants.json not found!")
+    raise FileNotFoundError
+
+pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=constants["pose_door"]["point"]["x"], y=constants["pose_door"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_door"]["orientation"]["x"], 
+                                                            y=constants["pose_door"]["orientation"]["y"], 
+                                                            z=constants["pose_door"]["orientation"]["z"], 
+                                                            w=constants["pose_door"]["orientation"]["w"]))
+                            )
 pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=4.609381420586617, y=1.4040476837582534, z=0.0), 
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.8172785256122609, w=0.5762428407998221))
-                                  )
-
+                        pose=Pose(position=Point(x=constants["pose_sofa"]["point"]["x"], y=constants["pose_sofa"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_sofa"]["orientation"]["x"], 
+                                                            y=constants["pose_sofa"]["orientation"]["y"], 
+                                                            z=constants["pose_sofa"]["orientation"]["z"], 
+                                                            w=constants["pose_sofa"]["orientation"]["w"]))
+                            )
 pose_table = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=3.0, y=1.0, z=0.0), # Example coordinates, please adjust
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)) # Example orientation
-                                  )
+                        pose=Pose(position=Point(x=constants["pose_table"]["point"]["x"], y=constants["pose_table"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_table"]["orientation"]["x"], 
+                                                            y=constants["pose_table"]["orientation"]["y"], 
+                                                            z=constants["pose_table"]["orientation"]["z"], 
+                                                            w=constants["pose_table"]["orientation"]["w"]))
+                            )
+ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
+ARM_POS_POINT_TO = [x / 180 * math.pi for x in constants["arm_pos_point_to"]]
 
-# pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
-#                         pose=Pose(position=Point(x=1.137541651725769, y=0.2027300000190735, z=0.0), 
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=0.9825917466042707, w=0.1857779844469438))
-#                                   )
-# pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=2.9621124267578125, y=1.4416371583938599, z=0.0), 
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.07088878254244042, w=0.9974842256946476))
-#                                   )
-
-ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
-ARM_POS_POINT_TO = [x / 180 * math.pi for x in [-85.0, 0.0, 0.0, 0.0, 0.0, -90.0, 0.0]]
-
-# pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=3.033092265789758, y=1.6798440817252815, z=0.0), 
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.5449234967191887, w=0.8384857677524004))
-#                                   )
-# pose_sofa = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=2.720678909434828, y=1.4040476837582534, z=0.0), 
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=0.8172785256122609, w=0.5762428407998221))
-#                                   )
-
-pose_door_turned = pose_door
-pose_sofa_turned = pose_sofa
-# pose_door_turned = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                                pose=Pose(position=Point(x=4.3053, y=15.9896, z=0.0), 
-#                                          orientation=Quaternion(x=0.0, y=0.0, z=-0.673597350035888, w=0.7390985117185863))
-#                                  )
-# pose_sofa_turned = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                                pose=Pose(position=Point(x=4.9390, y=14.5222, z=0.0),
-#                                          orientation=Quaternion(x=0.0, y=0.0, z=0.8851875996971402, w=0.46523425641542715))
-#                                 )
-
-
-host_name = "host Alex"
-host_drink = "Cola"
-# host_drink = "koala"
-
-names = ["Alex", "Joe", "Cassandra", "Steven", "Ryan", "Michael"]
-drinks = ["ice tea", "Cola", "water", "milk", "big coke", "fanta"]
+host_name = constants["host_name"]
+host_drink = constants["host_drink"]
+drinks = constants["drinks"]
+names = constants["names"]
 
 KEY_ARM_INIT_POSE = "arm_init_pose"
 KEY_ARM_NAVIGATING = "arm_navigating"
@@ -95,7 +81,8 @@ KEY_HOST_FEATURES = "host_features"
 KEY_GUEST_NAME = "guest_name"
 KEY_GUEST_DRINK = "guest_drink"
 KEY_GUEST_FEATURES = "guest_features"
-KEY_GUEST_INTEREST = "guest_interest"
+KEY_GUEST1_INTEREST = "guest1_interest"
+KEY_GUEST2_INTEREST = "guest2_interest"
 
 KEY_PERSONS = "persons"
 KEY_PERSON_CENTROIDS = "centroids"
@@ -108,8 +95,6 @@ arm_service_name = "arm_joint_service"
 
 def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter", memory=True)
-    
-
     root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
     
     if not DEBUG_NO_GOTO:
@@ -132,8 +117,6 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard(name="Wirte sofa location", bb_namespace="", bb_source=None, bb_key=KEY_SOFA_POSE, object=pose_sofa))
     root.add_child(BtNode_WriteToBlackboard(name="Write door location", bb_namespace="", bb_source=None, bb_key=KEY_DOOR_POSE, object=pose_door))
     root.add_child(BtNode_WriteToBlackboard(name="Write sofa location", bb_namespace="", bb_source=None, bb_key=KEY_SOFA_POSE, object=pose_sofa))
-    root.add_child(BtNode_WriteToBlackboard(name="Write door turned location", bb_namespace="", bb_source=None, bb_key=KEY_DOOR_POSE_TURNED, object=pose_door_turned))
-    root.add_child(BtNode_WriteToBlackboard(name="Write sofa turned location", bb_namespace="", bb_source=None, bb_key=KEY_SOFA_POSE_TURNED, object=pose_sofa_turned))
     root.add_child(BtNode_WriteToBlackboard(name="Write host name", bb_namespace="", bb_source=None, bb_key=KEY_HOST_NAME, object=host_name))
     root.add_child(BtNode_WriteToBlackboard(name="Write host drink", bb_namespace="", bb_source=None, bb_key=KEY_HOST_DRINK, object=host_drink))
     root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_PERSONS, object=[]))
@@ -196,12 +179,14 @@ def createFirstIntroductions():
     first_introductions = py_trees.composites.Sequence(name="First introductions", memory=True)
     first_introductions.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=90.0, y=45.0, speed=0.0))
     turn_head_arm = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    # introduce second guest to host
+    
+    # introduce host to first guest
     introduce_sequence = py_trees.composites.Sequence(name="sequence", memory=True)
-    introduce_sequence.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=90.0, y=45.0, speed=0.0))
+    introduce_sequence.add_child(BtNode_TurnPanTilt(name="Turn head to the right, turn to guest1", x=90.0, y=45.0, speed=0.0))
+
     turn_head_arm.add_child(introduce_sequence)
     if not DISABLE_FEATURE_MATCH:
-        # point to guest
+        # point to guest1
         # first_introductions.add_child(BtNode_PointTo(name="Point to host", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=0))
         deco = py_trees.decorators.Retry(name="retry", child=BtNode_PointTo(name="Point to host", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=0), num_failures=3)
         turn_head_arm.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
@@ -209,12 +194,16 @@ def createFirstIntroductions():
     turn_head_arm.add_child(BtNode_Introduce(name="introduce host to guest", key_person=KEY_PERSONS, target_id=1, introduced_id=0))
     
     turn_head_arm2 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    # introduce second guest to host
+    
+    # introduce first guest to host
     introduce_sequence2 = py_trees.composites.Sequence(name="sequence", memory=True)
-    introduce_sequence2.add_child(BtNode_TurnPanTilt(name="Turn head to the front", x=0.0, y=20.0, speed=0.0))
+    # introduce_sequence2.add_child(BtNode_TurnPanTilt(name="Turn head to the front", x=0.0, y=20.0, speed=0.0))
+    introduce_sequence2.add_child(BtNode_TurnTo(name="Turn to host", key_person=KEY_PERSONS, target_id=0))
+    
     turn_head_arm2.add_child(introduce_sequence2)
+
     if not DISABLE_FEATURE_MATCH:
-        # point to guest
+        # point to guest1
         # first_introductions.add_child(BtNode_PointTo(name="Point to guest", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=1))
         deco = py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_INIT_POSE, add_octomap=False), num_failures=3)
         turn_head_arm2.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
@@ -225,12 +214,13 @@ def createFirstIntroductions():
 def createSecondIntroductions():
     second_introductions = py_trees.composites.Sequence(name="Second introductions", memory=True)
     turn_head_arm1 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    # introduce second guest to host
+    # introduce host to second guest
     introduce_sequence = py_trees.composites.Sequence(name="sequence", memory=True)
-    introduce_sequence.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=90.0, y=45.0, speed=0.0))
+    introduce_sequence.add_child(BtNode_TurnPanTilt(name="Turn head to the right, turn to guest2", x=90.0, y=45.0, speed=0.0))
+       
     turn_head_arm1.add_child(introduce_sequence)
     if not DISABLE_FEATURE_MATCH:
-        # point to guest
+        # point to host
         # second_introductions.add_child(BtNode_PointTo(name="Point to host", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=0))
         deco = py_trees.decorators.Retry(name="retry", child=BtNode_PointTo(name="Point to host", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=0), num_failures=3)
         turn_head_arm1.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
@@ -241,31 +231,35 @@ def createSecondIntroductions():
     # introduce second guest to host
     turn_head_arm2 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     introduce_sequence2 = py_trees.composites.Sequence(name="sequence", memory=True)
-    introduce_sequence2.add_child(BtNode_TurnPanTilt(name="Turn head to the front", x=0.0, y=20.0, speed=0.0))
+    introduce_sequence2.add_child(BtNode_TurnTo(name="Turn to host", key_person=KEY_PERSONS, target_id=0))
+    
     turn_head_arm2.add_child(introduce_sequence2)
     if not DISABLE_FEATURE_MATCH:
-        # point to guest
+        # point to guest2
         # first_introductions.add_child(BtNode_PointTo(name="Point to guest", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=1))
-        deco = py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_INIT_POSE, add_octomap=False), num_failures=3)
+        deco = py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle(name="Move arm to nav, point to guest2", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_INIT_POSE, add_octomap=False), num_failures=3)
         turn_head_arm2.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
     second_introductions.add_child(turn_head_arm2)
     introduce_sequence2.add_child(BtNode_Introduce(name="introduce second guest to host", key_person=KEY_PERSONS, target_id=0, introduced_id=2))
     
-    # introduce second guest to first guest
+    # introduce first guest to second guest
     turn_head_arm3 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     introduce_sequence3 = py_trees.composites.Sequence(name="sequence", memory=True)
-    introduce_sequence3.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=90.0, y=45.0, speed=0.0))
+    introduce_sequence3.add_child(BtNode_TurnPanTilt(name="Turn head to the right, turn to guest2", x=90.0, y=45.0, speed=0.0))
+
     turn_head_arm3.add_child(introduce_sequence3)
     if not DISABLE_FEATURE_MATCH:
-        # point to guest
-        deco = py_trees.decorators.Retry(name="retry", child=BtNode_PointTo(name="Point to guest", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=1), num_failures=3)
+        # point to guest1
+        deco = py_trees.decorators.Retry(name="retry", child=BtNode_PointTo(name="Point to guest1", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=1), num_failures=3)
         turn_head_arm3.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
     second_introductions.add_child(turn_head_arm3)
     introduce_sequence3.add_child(BtNode_Introduce(name="introduce first guest to second guest", key_person=KEY_PERSONS, target_id=2, introduced_id=1, describe_introduced=True))
     
+    # introduce second guest to first guest
     turn_head_arm4 = py_trees.composites.Parallel(name="Turn head and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     introduce_sequence4 = py_trees.composites.Sequence(name="sequence", memory=True)
-    introduce_sequence4.add_child(BtNode_TurnPanTilt(name="Turn head to the front", x=0.0, y=20.0, speed=0.0))
+    introduce_sequence4.add_child(BtNode_TurnTo(name="Turn to guest1", key_person=KEY_PERSONS, target_id=1))
+    
     turn_head_arm4.add_child(introduce_sequence4)
     if not DISABLE_FEATURE_MATCH:
         # point to guest
@@ -274,6 +268,8 @@ def createSecondIntroductions():
         turn_head_arm4.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
     second_introductions.add_child(turn_head_arm4)
     introduce_sequence4.add_child(BtNode_Introduce(name="introduce second guest to first guest", key_person=KEY_PERSONS, target_id=1, introduced_id=2))
+
+
     return second_introductions
 
 def createToDoor():
@@ -285,7 +281,7 @@ def createToDoor():
         root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
     return root
 
-def createToSofa():
+def createToSofa(interest_key : str):
     root = py_trees.composites.Parallel(name="Go to sofa while chatting", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     navigation_seq = py_trees.composites.Sequence(name="Go to sofa", memory=True)
     navigation_seq.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
@@ -296,8 +292,8 @@ def createToSofa():
     
     get_interest_seq = py_trees.composites.Sequence(name="Get interest", memory=True)
     get_interest_seq.add_child(BtNode_Announce(name="Ask for interest", bb_source=None, message="What are you interested in?"))
-    get_interest_seq.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=KEY_GUEST_INTEREST, timeout=5.0))
-    get_interest_seq.add_child(BtNode_Announce(name="Repeat interest", bb_source=KEY_GUEST_INTEREST))
+    get_interest_seq.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=interest_key, timeout=5.0))
+    get_interest_seq.add_child(BtNode_Announce(name="Repeat interest", bb_source=interest_key))
 
     return root
 
@@ -355,12 +351,11 @@ def createReceptionist():
     # go to living room for introductions
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to living room", KEY_SOFA_POSE), num_failures=10))
     root.add_child(createFindFavoriteDrink(KEY_GUEST_DRINK))
-    root.add_child(createToSofa())
+    root.add_child(createToSofa(KEY_GUEST1_INTEREST))
     root.add_child(createAnnounceAndScanSofa())
 
     # introduce first guest and host to each other, then recommend a seat
     first_introductions = createFirstIntroductions()
-    # TODO: add turn pan tilt back
     find_seat_recommendation1 = BtNode_SeatRecommend(name="Get seat recommendation", bb_dest_key=KEY_SEAT_RECOMMENDATION, bb_source_key=KEY_PERSONS)
     root.add_child(py_trees.composites.Parallel(name="Get recommendation 1", 
                                                 policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[first_introductions, find_seat_recommendation1]))
@@ -373,7 +368,7 @@ def createReceptionist():
     # go to living room for introductions
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to living room", KEY_SOFA_POSE), num_failures=10))
     root.add_child(createFindFavoriteDrink(KEY_GUEST_DRINK))
-    root.add_child(createToSofa())
+    root.add_child(createToSofa(KEY_GUEST2_INTEREST))
     root.add_child(createAnnounceAndScanSofa())
 
     # introduce second guest
@@ -390,6 +385,7 @@ def createReceptionist():
     root.add_child(BtNode_Announce(name="Task accomplished", bb_source=None, message="Receptionist task accomplished."))
     root.add_child(py_trees.behaviours.Running(name="end"))
 
+    root.add_child(BtNode_CompareInterest(name="Compare interest", bb_source_key1=KEY_GUEST1_INTEREST, bb_source_key2=KEY_GUEST2_INTEREST))
     return root
 
 

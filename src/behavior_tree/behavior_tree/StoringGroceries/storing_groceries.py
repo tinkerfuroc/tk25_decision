@@ -8,10 +8,19 @@ from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveAr
 from .customNodes import BtNode_CategorizeGrocery, BtNode_FindObjTable, BtNode_GraspWithPose
 
 import math
+import json
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import rclpy
+
+try:
+    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/StoringGroceries/constants.json", "r")
+    constants = json.load(file)
+    file.close()
+except FileNotFoundError:
+    print("ERROR: constants.json not found!")
+    raise FileNotFoundError
 
 categories = {"chip": "blue and pink oreo box",
             "biscuit": "yellow chips can",
@@ -42,41 +51,56 @@ DO_NAV = True
 
 #14.949769937531444
 POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=-1.6895215511322021, y=1.108468770980835, z=0.0),
-                                  orientation=Quaternion(x=0.0, y=0.0, z=0.8492025594631408, w=0.5280672428784526))
+                        pose=Pose(position=Point(x=constants["pose_table1"]["point"]["x"], y=constants["pose_table1"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_table1"]["orientation"]["x"], 
+                                                            y=constants["pose_table1"]["orientation"]["y"], 
+                                                            z=constants["pose_table1"]["orientation"]["z"], 
+                                                            w=constants["pose_table1"]["orientation"]["w"]))
+                            )
+POS_TABLE2 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=constants["pose_table2"]["point"]["x"], y=constants["pose_table2"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_table2"]["orientation"]["x"], 
+                                                                y=constants["pose_table2"]["orientation"]["y"], 
+                                                                z=constants["pose_table2"]["orientation"]["z"], 
+                                                                w=constants["pose_table2"]["orientation"]["w"]))
+                            )
+POS_TABLE3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=constants["pose_table3"]["point"]["x"], y=constants["pose_table3"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_table3"]["orientation"]["x"], 
+                                                                y=constants["pose_table3"]["orientation"]["y"], 
+                                                                z=constants["pose_table3"]["orientation"]["z"], 
+                                                                w=constants["pose_table3"]["orientation"]["w"]))
+                            )
+POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=constants["pose_shelf"]["point"]["x"], y=constants["pose_shelf"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_shelf"]["orientation"]["x"], 
+                                                                y=constants["pose_shelf"]["orientation"]["y"], 
+                                                                z=constants["pose_shelf"]["orientation"]["z"], 
+                                                                w=constants["pose_shelf"]["orientation"]["w"]))
+                            )
+POS_TABLE3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=10.8109273910, y=3.56819748, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.546470351326438, w=0.8374784505413614))
                         )
-# POS_TABLE2 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=11.803406715393066, y=3.946284294128, z=0.0),
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.49269899574550025, w=0.8701998044078012))
-#                         )
-# POS_TABLE3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-#                         pose=Pose(position=Point(x=10.8109273910, y=3.56819748, z=0.0),
-#                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.546470351326438, w=0.8374784505413614))
-#                         )
-POS_TABLE3 = POS_TABLE2 = POS_TABLE
 POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                         pose=Pose(position=Point(x=1.4658832550048828, y=-1.2834669351577759, z=0.0),
                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.47666905902949136, w=0.8790828221299397))
                         )
-
 POINT_PLACE = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                          point=Point(x=-0.266, y=1.297, z=0.706))
-POINT_SHELF_RIGHT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                                 point=Point(x=1.2973706722259521, y=-1.860664963722229, z=0.0))
+                            point=Point(x=constants["point_place"]["x"], y=constants["point_place"]["y"], z=constants["point_place"]["z"]))
 POINT_SHELF_LEFT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                                    point=Point(x=2.043041944503784, y=-1.4543347358703613, z=0.0))
+                                point=Point(x=constants["point_shelf_left"]["x"], y=constants["point_shelf_left"]["y"], z=0.0))
+POINT_SHELF_RIGHT = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                                    point=Point(x=constants["point_shelf_right"]["x"], y=constants["point_shelf_right"]["y"], z=0.0))
+constants["point_shelf_right"]["x"], y=constants["point_shelf_right"]["y"], z=0.0
+ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
+ARM_POS_SCAN = [x / 180 * math.pi for x in constants["arm_pos_scan"]]
+ARM_POS_DROP = [x / 180 * math.pi for x in constants["arm_pos_drop"]]
+ARM_POS_PLACING = [x / 180 * math.pi for x in constants["arm_pos_placing"]]
+N_LAYERS = constants["n_layers"]
 
-ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -44.0, 26.0, 20.0, 30.0, -92.0, 0.0]]
-ARM_POS_SCAN_MIDDLE = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 60.0, 30.0, -86.0, 0.0]]
-ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -43.0, 0.0, 45.0, 0.0, 31.0, 0.0]]
-ARM_POS_DROP = [x / 180 * math.pi for x in [-87.0, -5.0, 26.0, 20.0, 30.0, -92.0, 0.0]]
-# ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
-ARM_POS_PLACING = ARM_POS_NAVIGATING
-# ARM_POS_PLACING = [x / 180 * math.pi for x in [-87.6, -18.0, 8.3, 42.4, 1.6, -56.1, -20]]
 GRASP_POSE_DUMMY = Pose(position=Point(x=15.226666017642406, y=-0.4662523345900057, z=0.0),
                         orientation=Quaternion(x=0.707106781, y=0.0, z=0.707106781, w=0.0))
-
-N_LAYERS = 2
 
 KEY_POS_SHELF = "pos_shelf"
 KEY_POS_TABLE = "pos_table"
@@ -87,7 +111,6 @@ KEY_POINT_SHELF_RIGHT = "point_shelf_right"
 
 KEY_ARM_SCAN = "arm_scan"
 KEY_ARM_NAVIGATING = "arm_navigating"
-KEY_ARM_GRASPING_MIDDLE = "arm_placing_middle"
 KEY_ARM_PLACING = "arm_placing"
 KEY_ARM_DROP = "arm_drop"
 
@@ -135,7 +158,6 @@ def createConstantWriter():
     root = py_trees.composites.Sequence("Root", memory=True)
     root.add_child(BtNode_WriteToBlackboard("Write Arm Scan", bb_namespace="", bb_source=None, bb_key=KEY_ARM_SCAN, object=ARM_POS_SCAN))
     root.add_child(BtNode_WriteToBlackboard("Write Arm Navigating", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
-    root.add_child(BtNode_WriteToBlackboard("Write Arm Placing Middle", bb_namespace="", bb_source=None, bb_key=KEY_ARM_GRASPING_MIDDLE, object=ARM_POS_SCAN_MIDDLE))
     root.add_child(BtNode_WriteToBlackboard("Write Arm Placing", bb_namespace="", bb_source=None, bb_key=KEY_ARM_PLACING, object=ARM_POS_PLACING))
     root.add_child(BtNode_WriteToBlackboard("Write Arm drop", bb_namespace="", bb_source=None, bb_key=KEY_ARM_DROP, object=ARM_POS_DROP))
     root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF, object=POS_SHELF))
@@ -153,7 +175,6 @@ def createConstantWriter():
 def createGraspOnce():
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
     root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=20.0))
-    # root.add_child(BtNode_MoveArmSingle("Move arm to find middle", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_GRASPING_MIDDLE, add_octomap=True))
     parallel_move_arm = py_trees.composites.Parallel("Move arm to find object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_move_arm.add_child(BtNode_Announce(name="Announce moving arm", bb_source="", message="Moving arm to find object"))
     parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
