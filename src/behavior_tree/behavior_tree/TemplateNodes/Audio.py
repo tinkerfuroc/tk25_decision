@@ -298,6 +298,7 @@ class BtNode_CompareInterest(ServiceHandler):
                  name: str,
                  bb_source_key1: str,
                  bb_source_key2: str,
+                 bb_dest_key: str,
                  service_name = "compare_interest_service",
                  timeout : float = 5.0
                  ):
@@ -313,12 +314,17 @@ class BtNode_CompareInterest(ServiceHandler):
             access=pytree.common.Access.READ,
             remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key2)
         )
+        self.blackboard.register_key(
+            key="result",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+        )
         self.timeout = timeout
 
     def initialise(self):
         request = CompareInterest.Request()
         request.first_statement = self.blackboard.first_statement
-        request.second_statement = self.blackboard.second_statement
+        request.sec_statement = self.blackboard.second_statement
         self.response = self.client.call_async(request)
         self.feedback_message = f"Initialized Compare Interest"
     
@@ -326,7 +332,9 @@ class BtNode_CompareInterest(ServiceHandler):
         self.logger.debug(f"Update compare interest")
         if self.response.done():
             if self.response.result().status == 0:
-                self.feedback_message = f"Compare interest result: {self.response.result().result}"
+                self.blackboard.result = self.response.result().common_interest
+                self.logger.debug(f"Compare interest result: {self.blackboard.result}")
+                self.feedback_message = f"Compare interest result: {self.response.result().common_interest}"
                 return Status.SUCCESS
             else:
                 self.feedback_message = f"Compare interest failed with error code {self.response.result().status}: {self.response.result().error_message}"

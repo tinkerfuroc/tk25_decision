@@ -633,14 +633,16 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
             self.response = None
         else:
             point = self.blackboard.points[self.target_id]
-            x = math.atan2(point.point.y, point.point.x)
+            self.logger.info(f"Turning to point {point.point} with id {self.target_id} from blackboard {self.bb_key_points}")
+            x = math.atan2(-point.point.y, max(point.point.x-0.25, 0.01)) 
             # x = math.atan2(self.blackboard.point.point.y, self.blackboard.point.point.x)
-            y = 0.0
+            y = 20.0
             msg = PanTiltCtrl()
-            msg.x = x
+            msg.x = x / math.pi * 180.0  # convert to degrees
             msg.y = y
             msg.speed = self.speed
             self.publisher.publish(msg)
             self.logger.info(f"Publishing PanTiltCtrl with x: {x}, y: {y}, speed: {self.speed}")
+            self.feedback_message = f"Initialized TurnTo for point {point.point} with id {self.target_id} and pan tilt angle: x: {msg.x}, y: {msg.y}, speed: {self.speed}"
         self.cnt = 0
         

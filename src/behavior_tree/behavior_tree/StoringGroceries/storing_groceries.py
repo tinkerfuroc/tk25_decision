@@ -7,7 +7,7 @@ from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_DoorDetect
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Place, BtNode_GripperAction
 from .customNodes import BtNode_CategorizeGrocery, BtNode_FindObjTable, BtNode_GraspWithPose
 
-import math
+import math, time
 import json
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
@@ -46,7 +46,7 @@ prompt_list = "bottle . white box . yellow box"
 USE_GRASP_DUMMY = False
 
 TRY_TWICE = False
-DO_PLACE = False
+DO_PLACE = True
 DO_NAV = True
 
 #14.949769937531444
@@ -109,6 +109,7 @@ KEY_POINT_SHELF_LEFT = "point_shelf_left"
 KEY_POINT_SHELF_RIGHT = "point_shelf_right"
 
 KEY_ARM_SCAN = "arm_scan"
+#
 KEY_ARM_NAVIGATING = "arm_navigating"
 KEY_ARM_PLACING = "arm_placing"
 KEY_ARM_DROP = "arm_drop"
@@ -135,7 +136,7 @@ KEY_SCAN_RESULT = "scan_result"
 
 arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
-place_service_name = "place_service"
+place_service_name = "place_action"
 point_target_frame = "base_link"
 
 def createEnterArena():
@@ -260,8 +261,8 @@ def createStoreOnce(KEY_TABLE_POS):
     root.add_child(createGoToTable(KEY_TABLE_POS))
     root.add_child(createGraspOnce())
     root.add_child(createGoToShelf())
+    #time.sleep(30)
     root.add_child(createPlaceOnShelf())
-    # root.add_child(createGoToTable())
     return root
 
 def createStoreGroceries():

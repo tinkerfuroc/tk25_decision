@@ -84,6 +84,7 @@ KEY_GUEST_DRINK = "guest_drink"
 KEY_GUEST_FEATURES = "guest_features"
 KEY_GUEST1_INTEREST = "guest1_interest"
 KEY_GUEST2_INTEREST = "guest2_interest"
+KEY_COMMON_INTEREST = "common_interest"
 
 KEY_PERSONS = "persons"
 KEY_PERSON_CENTROIDS = "centroids"
@@ -246,6 +247,7 @@ def createSecondIntroductions():
 
     # introduce first guest to second guest
     second_introductions.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=90.0, y=45.0, speed=0.0))
+
     
     if not DISABLE_FOLLOW_HEAD:
         head_tracking = py_trees.decorators.Repeat(name="repeat head tracking", child=py_trees.decorators.FailureIsSuccess("f is s", BtNode_HeadTracking(name="Follow guest2 head", service_name="follow_head_service")), num_success = -1)
@@ -294,6 +296,9 @@ def createToSofa(interest_key : str):
     get_interest_seq.add_child(BtNode_Announce(name="Ask for interest", bb_source=None, message="What are you interested in?"))
     get_interest_seq.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=interest_key, timeout=5.0))
     get_interest_seq.add_child(BtNode_Announce(name="Repeat interest", bb_source=interest_key))
+    if (interest_key == KEY_GUEST2_INTEREST):
+        get_interest_seq.add_child(BtNode_CompareInterest(name="Compare interest", bb_source_key1=KEY_GUEST1_INTEREST, bb_source_key2=KEY_GUEST2_INTEREST, bb_dest_key=KEY_COMMON_INTEREST))
+        get_interest_seq.add_child(BtNode_Announce(name="Announce common interest", bb_source=KEY_COMMON_INTEREST, message=None))
     root.add_child(get_interest_seq)
 
     return root
@@ -386,7 +391,6 @@ def createReceptionist():
     root.add_child(BtNode_Announce(name="Task accomplished", bb_source=None, message="Receptionist task accomplished."))
     root.add_child(py_trees.behaviours.Running(name="end"))
 
-    root.add_child(BtNode_CompareInterest(name="Compare interest", bb_source_key1=KEY_GUEST1_INTEREST, bb_source_key2=KEY_GUEST2_INTEREST))
     return root
 
 
