@@ -51,4 +51,6 @@ gnome-terminal --tab -- zsh -c "export ALL_PROXY='' && export all_proxy='' && so
 # gnome-terminal --tab -- zsh -c "export ALL_PROXY='' && export all_proxy='' && source install/setup.zsh && ros2 run kimi_api grocery_categorize; exec zsh"
 ```
 
+最后，运行
+`ros2 run behavior_tree receptionist`
 
