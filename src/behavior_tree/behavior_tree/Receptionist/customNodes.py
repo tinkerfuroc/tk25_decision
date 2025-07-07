@@ -5,6 +5,7 @@ import action_msgs.msg as action_msgs
 from behavior_tree.TemplateNodes.structs import Person
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
+from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.messages import TextToSpeech, FollowHead, FollowHeadAction
 
 class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
@@ -139,7 +140,7 @@ class BtNode_Confirm(BtNode_Announce):
 
         return super().initialise()
     
-class BtNode_HeadTracking():
+class BtNode_HeadTracking(ServiceHandler):
     def __init__(self, 
                  name: str,
                  service_name: str = "follow_head_service",
