@@ -1,14 +1,15 @@
 import py_trees
 import py_trees_ros
 import rclpy
-from behavior_tree.Receptionist.customNodes import BtNode_HeadTracking
+from behavior_tree.Receptionist.customNodes import BtNode_HeadTracking, BtNode_HeadTrackingAction
 
 head_tracking = py_trees.decorators.Repeat(name="repeat head tracking", child=py_trees.decorators.FailureIsSuccess("f is s", BtNode_HeadTracking(name="Follow guest2 head", service_name="follow_head_service")), num_success = -1)
+head_tracking_action = BtNode_HeadTrackingAction(name="Follow guest head action", actionName="follow_head_action")
 
 def main(args=None):
     rclpy.init(args=None)
 
-    root = head_tracking
+    root = head_tracking_action
 
     # make it a ros tree
     tree = py_trees_ros.trees.BehaviourTree(root)
