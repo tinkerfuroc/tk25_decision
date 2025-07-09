@@ -392,5 +392,3 @@ def createReceptionist():
     root.add_child(py_trees.behaviours.Running(name="end"))
 
     return root
-
-
