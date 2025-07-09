@@ -256,8 +256,12 @@ def createHelpMeCarry():
     # root.add_child(py_trees.decorators.Retry("retry", py_trees.decorators.Repeat("repeat", createFollowPerson(), 999), 999))
 
     root.add_child(BtNode_Announce(name="Announce start follow", bb_source=None, message="Starting follow"))
-    follow = createFollowPerson()
+    # follow = createFollowPerson()
+    follow = createFollow()
+    announce_follow_failed = BtNode_Announce(name="Announce follow failed", bb_source=None, message="follow failed, restarting")
+    follow_seq = py_trees.composites.Selector(name="sequence", memory=True, children=[follow, announce_follow_failed])
+    follow_repeat = py_trees.decorators.Repeat(name="Repeat", child=follow_seq, num_success=-1)
     # root.add_child(py_trees.composites.Parallel(name="Parallel", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=follow))
 
-    root.add_child(follow)
+    root.add_child(follow_repeat)
     return root

@@ -177,7 +177,7 @@ def help_me_carry():
     if PRINT_DEBUG:
         py_trees.logging.level = py_trees.logging.Level.DEBUG
     
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
+    tree.tick_tock(period_ms=200.0,post_tick_handler=print_tree)
 
     try:
         rclpy.spin(tree.node)
