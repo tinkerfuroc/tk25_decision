@@ -6,8 +6,7 @@ from behavior_tree.TemplateNodes.structs import Person
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
-from behavior_tree.messages import TextToSpeech, FollowHead
-# , FollowHeadAction
+from behavior_tree.messages import TextToSpeech, FollowHead, FollowHeadAction
 
 class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
     """
@@ -173,38 +172,38 @@ class BtNode_HeadTracking(ServiceHandler):
         else:
             return py_trees.common.Status.RUNNING
 
-# class BtNode_HeadTrackingAction(ActionHandler):
-    # def __init__(self, 
-    #              name: str,
-    #              actionName: str = "follow_head_action"
-    #              ):
-    #     super().__init__(name, FollowHeadAction, actionName, "blank_key")
+class BtNode_HeadTrackingAction(ActionHandler):
+    def __init__(self, 
+                 name: str,
+                 actionName: str = "follow_head_action"
+                 ):
+        super().__init__(name, FollowHeadAction, actionName, "blank_key")
     
-    # def send_goal(self):
-    #     request = FollowHeadAction.Goal()
-    #     request.closest = True
-    #     self.send_goal_request(request)
+    def send_goal(self):
+        request = FollowHeadAction.Goal()
+        request.closest = True
+        self.send_goal_request(request)
     
-    # def feedback_callback(self, msg: Any):
-    #     feedback = msg.feedback
-    #     self.last_feedback_time = time.time()
-    #     pan = feedback.pan
-    #     tilt = feedback.tilt
-    #     self.feedback_message = f"INFO: Current Pan: {pan}, Tilt: {tilt}"
+    def feedback_callback(self, msg: Any):
+        feedback = msg.feedback
+        self.last_feedback_time = time.time()
+        pan = feedback.pan
+        tilt = feedback.tilt
+        self.feedback_message = f"INFO: Current Pan: {pan}, Tilt: {tilt}"
     
-    # def process_result(self):
-    #     if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-    #         self.feedback_message = f"Head tracking action failed with status {self.result_status} and error message {self.result_message.result.message}"
-    #         return py_trees.common.Status.FAILURE
-    #     else:
-    #         if self.result_message.result.success:
-    #             self.feedback_message = f"Head tracking action succeeded"
-    #             return py_trees.common.Status.SUCCESS
-    #         else:
-    #             self.feedback_message = f"Head tracking action failed with error message {self.result_message.result.message}"
-    #             return py_trees.common.Status.FAILURE
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = f"Head tracking action failed with status {self.result_status} and error message {self.result_message.result.message}"
+            return py_trees.common.Status.FAILURE
+        else:
+            if self.result_message.result.success:
+                self.feedback_message = f"Head tracking action succeeded"
+                return py_trees.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Head tracking action failed with error message {self.result_message.result.message}"
+                return py_trees.common.Status.FAILURE
 
-    # # cancel the action when the node is terminated
-    # def terminate(self, new_status: py_trees.common.Status):
-    #     self.send_cancel_request()
-    #     self.logger.info(f"Terminating head tracking action")
+    # cancel the action when the node is terminated
+    def terminate(self, new_status: py_trees.common.Status):
+        self.send_cancel_request()
+        self.logger.info(f"Terminating head tracking action")
