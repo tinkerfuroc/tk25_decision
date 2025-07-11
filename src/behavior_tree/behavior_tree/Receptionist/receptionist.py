@@ -347,7 +347,7 @@ def createReceptionist():
 
     root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
     # announce start and scan host features
-    root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Starting receptionist"))
+    root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Starting receptionist, please reply me after the beep sound."))
     root.add_child(createEnterArena())
     root.add_child(createScanHostFeatures())
 
