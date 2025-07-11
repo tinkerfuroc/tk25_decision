@@ -26,13 +26,13 @@ ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0,
 ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, 0.0, 0.0, 0.0, 0.0, -45.0, 0.0]]
 ARM_POS_SCAN2 = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
 ARM_POS_SCAN3 = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
-ARM_POS_SCAN = [x / 180 * math.pi for x in [-1.0, -23.0, 0.0, 0.0, 0.0, -76.0, 1.0]]
+ARM_POS_SCAN = [x / 180 * math.pi for x in [9999.0, -23.0, 0.0, 0.0, 0.0, -76.0, 1.0]]
 
 
 KEY_POS_START = "pose_start"
 
 MASTER_NAME = "master"
-FOLLOW_DISTANCE = "2.0"  # 跟随距离
+FOLLOW_DISTANCE = 2.0  # 跟随距离
 
 
 # 定义黑板键值
@@ -78,12 +78,16 @@ def createConstantWriter():
 
 def createFollow():
     root = py_trees.composites.Sequence(name="Follow", memory=True)
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
-
+    # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
+    root.add_child(BtNode_TurnPanTilt(name="Move pan tilt", x=0.0, y=45.0, speed=0.0))
     parallel_follow = py_trees.composites.Parallel("Follow", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     
-    parallel_follow.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_HumanFollowingAction(name="human follow", follow_action_name=follow_action_name, num_failures=5)))
-    parallel_follow.add_child(BtNode_GotoAction(name="Goto action", key="master_position", action_name="navigate_to_pose", wait_for_server_timeout_sec=-3))
+    get_master_pos = py_trees.decorators.Retry(name="retry", child=BtNode_HumanFollowingAction(name="human follow", action_name=follow_action_name), num_failures=5)
+    goto_master = py_trees.decorators.Retry("retry", BtNode_GotoAction(name="Goto action", key="master_position", action_name="navigate_to_pose", wait_for_server_timeout_sec=-3), 9999)
+    
+    parallel_follow.add_child(py_trees.decorators.Repeat("repeat", get_master_pos, 9999))
+    parallel_follow.add_child(py_trees.decorators.Repeat("repeat", goto_master, 9999))
+    
     root.add_child(parallel_follow)
     return root
 
@@ -260,8 +264,8 @@ def createHelpMeCarry():
     follow = createFollow()
     announce_follow_failed = BtNode_Announce(name="Announce follow failed", bb_source=None, message="follow failed, restarting")
     follow_seq = py_trees.composites.Selector(name="sequence", memory=True, children=[follow, announce_follow_failed])
-    follow_repeat = py_trees.decorators.Repeat(name="Repeat", child=follow_seq, num_success=-1)
+    # follow_repeat = py_trees.decorators.Repeat(name="Repeat", child=follow_seq, num_success=9999)
     # root.add_child(py_trees.composites.Parallel(name="Parallel", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=follow))
 
-    root.add_child(follow_repeat)
+    root.add_child(follow_seq)
     return root

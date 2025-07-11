@@ -52,6 +52,10 @@ class BtNode_GotoAction(ActionHandler):
         #     transform = None
         try:
             goal = NavigateToPose.Goal()
+            if not self.blackboard.exists("goal"):
+                self.feedback_message = "No goal found in blackboard"
+                self.node.get_logger().warn("No goal found in blackboard, setting to identity pose")
+                return
             if isinstance(self.blackboard.goal, PoseStamped):
                 if self.blackboard.goal.header.frame_id != 'map' and transform is not None:
                     # assert False
@@ -68,7 +72,10 @@ class BtNode_GotoAction(ActionHandler):
                     goal.pose.header.frame_id = 'map'
             else:
                 assert False
-            # goal.header = 
+            if goal.pose.header.frame_id == '':
+                self.feedback_message = "Goal pose header frame_id is empty. INVALID!"
+                self.node.get_logger().warn("Goal pose header frame_id is empty. INVALID!")
+                return
             self.send_goal_request(goal)
             self.goal = goal
             self.feedback_message = "sent goal request"

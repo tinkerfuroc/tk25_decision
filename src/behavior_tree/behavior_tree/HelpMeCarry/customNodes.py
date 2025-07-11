@@ -136,8 +136,8 @@ class BtNode_HumanFollowingAction(ActionHandler):
          
             goal = HumanFollowing.Goal()
             goal.start_following = True
-            goal.master_name = self.bb.get("master_name", default="master")
-            goal.follow_distance = self.bb.get("follow_distance", default=2.0)
+            goal.master_name = self.bb.get("master_name")
+            goal.follow_distance = self.bb.get("follow_distance")
             
             self.send_goal_request(goal)
             self.feedback_message = "Sent human following goal request"
@@ -170,7 +170,7 @@ class BtNode_HumanFollowingAction(ActionHandler):
         if feedback.current_master_pose:
             try:
                 self.bb.set("master_position", feedback.current_master_pose)
-                pos = feedback.current_master_pose.pose.position
-                self.feedback_message = f"Master at ({pos.x:.2f}, {pos.y:.2f})"
+                # pos = feedback.current_master_pose.pose.position
+                self.feedback_message = f"Master at {feedback.current_master_pose}" 
             except Exception as e:
                 self.feedback_message = f"Blackboard error: {str(e)}"
