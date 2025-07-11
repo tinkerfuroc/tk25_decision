@@ -30,10 +30,10 @@ class BtNode_Announce(ServiceHandler):
         # store parameters
         self.bb_source = bb_source
         self.bb_read_client = None
-        self.announce_msg = message
+        self.given_msg = message
         # print(self.announce_msg)
 
-        if self.announce_msg is None:
+        if self.bb_source is not None:
             self.blackboard = self.attach_blackboard_client(name=self.name)
             self.blackboard.register_key(
                 key = "announcement_msg",
@@ -48,22 +48,29 @@ class BtNode_Announce(ServiceHandler):
 
         # print(self.announce_msg, self.name)
         # if no announcement message is given, set up a blackboard client to read from given key
-        if self.announce_msg is None:
+        if self.bb_source is not None:
             # self.bb_read_client = self.attach_blackboard_client(name="Announce Read")
             # self.bb_read_client.register_key("/" + self.bb_source, access=pytree.common.Access.READ)
             self.logger.debug(f"Setup Announce, reading from {self.bb_source}")
         else:
-            self.logger.debug(f"Setup Announce for message {self.announce_msg}")
+            self.logger.debug(f"Setup Announce for message {self.given_msg}")
     
     def initialise(self):
         super().initialise()
 
+        self.announce_msg = self.given_msg
+
         # if no announcement message is given, read from the blackboard and verify the information
-        if not self.announce_msg:
+        if self.bb_source is not None:
             try:
                 # self.announce_msg = self.bb_read_client.get(self.bb_source)
-                self.announce_msg = self.blackboard.announcement_msg
-                assert isinstance(self.announce_msg, str)
+                read_msg = self.blackboard.announcement_msg
+                assert isinstance(read_msg, str)
+                if self.given_msg is not None:
+                    self.announce_msg = self.given_msg + " " + read_msg
+                else:
+                    self.announce_msg = read_msg
+                
             except Exception as e:
                 self.feedback_message = f"Announce reading message failed"
                 raise e

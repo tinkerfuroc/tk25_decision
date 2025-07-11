@@ -146,6 +146,7 @@ def createGetInfo(type:str, storage_key:str):
 
 def createGetNameAndDrink():
     root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
+    root.add_child(BtNode_Announce(name="Reminder of beep", bb_source=None, message="Hi I am Tinker, please speak to me after the beep sound."))
     root.add_child(createGetInfo("name", KEY_GUEST_NAME))
     root.add_child(createGetInfo("favorite drink", KEY_GUEST_DRINK))
     return root
@@ -295,7 +296,7 @@ def createToSofa(interest_key : str):
     get_interest_seq = py_trees.composites.Sequence(name="Get interest", memory=True)
     get_interest_seq.add_child(BtNode_Announce(name="Ask for interest", bb_source=None, message="What are you interested in?"))
     get_interest_seq.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=interest_key, timeout=5.0))
-    get_interest_seq.add_child(BtNode_Announce(name="Repeat interest", bb_source=interest_key))
+    get_interest_seq.add_child(BtNode_Announce(name="Repeat interest", bb_source=interest_key, message="I heard you."))
     if (interest_key == KEY_GUEST2_INTEREST):
         get_interest_seq.add_child(BtNode_CompareInterest(name="Compare interest", bb_source_key1=KEY_GUEST1_INTEREST, bb_source_key2=KEY_GUEST2_INTEREST, bb_dest_key=KEY_COMMON_INTEREST))
         get_interest_seq.add_child(BtNode_Announce(name="Announce common interest", bb_source=KEY_COMMON_INTEREST, message=None))
@@ -355,8 +356,8 @@ def createReceptionist():
     root.add_child(createGreetGuest())
 
     # go to living room for introductions
-    # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to living room", KEY_SOFA_POSE), num_failures=10))
-    root.add_child(createFindFavoriteDrink(KEY_GUEST_DRINK))
+    # TODO: add back find favorite drink module when Tinker has the ability
+    # root.add_child(createFindFavoriteDrink(KEY_GUEST_DRINK))
     root.add_child(createToSofa(KEY_GUEST1_INTEREST))
     root.add_child(createAnnounceAndScanSofa())
 
@@ -372,8 +373,8 @@ def createReceptionist():
     root.add_child(createGreetGuest())
 
     # go to living room for introductions
-    # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to living room", KEY_SOFA_POSE), num_failures=10))
-    root.add_child(createFindFavoriteDrink(KEY_GUEST_DRINK))
+    # TODO: add back find favorite drink module when Tinker has the ability
+    # root.add_child(createFindFavoriteDrink(KEY_GUEST_DRINK))
     root.add_child(createToSofa(KEY_GUEST2_INTEREST))
     root.add_child(createAnnounceAndScanSofa())
 
