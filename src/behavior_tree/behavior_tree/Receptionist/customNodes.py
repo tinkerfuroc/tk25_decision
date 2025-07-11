@@ -181,7 +181,11 @@ class BtNode_HeadTrackingAction(ActionHandler):
     
     def send_goal(self):
         request = FollowHeadAction.Goal()
+<<<<<<< HEAD
         request.start_following = True
+=======
+        request.closest = True
+>>>>>>> 73362ca089b76688e19bb5eac7a74724694bb464
         self.send_goal_request(request)
     
     def feedback_callback(self, msg: Any):

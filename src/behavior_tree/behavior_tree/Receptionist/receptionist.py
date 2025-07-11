@@ -6,7 +6,7 @@ from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtr
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection, BtNode_TurnTo
 from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
 
-from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm, BtNode_HeadTracking
+from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm, BtNode_HeadTracking, BtNode_HeadTrackingAction
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
@@ -184,8 +184,11 @@ def createFirstIntroductions():
     
     # introduce host to first guest
     # follow guest1 head
+    head_tracking = py_trees.behaviours.Running("dummy head track")
+    point_to = py_trees.behaviours.Running("dummy head track")
     if not DISABLE_FOLLOW_HEAD:
-        head_tracking = py_trees.decorators.Repeat(name="repeat head tracking", child=py_trees.decorators.FailureIsSuccess("f is s", BtNode_HeadTracking(name="Follow guest1 head", service_name="follow_head_service")), num_success = -1)
+        head_tracking = BtNode_HeadTrackingAction(name="Follow guest head action", actionName="follow_head_action")
+        # head_tracking = py_trees.decorators.Repeat(name="repeat head tracking", child=py_trees.decorators.FailureIsSuccess("f is s", BtNode_HeadTracking(name="Follow guest1 head", service_name="follow_head_service")), num_success = -1)
     if not DISABLE_FEATURE_MATCH:
         # point to guest1
         # first_introductions.add_child(BtNode_PointTo(name="Point to host", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=0))
@@ -220,8 +223,11 @@ def createSecondIntroductions():
     
     # introduce host to second guest
     # follow guest1 head
+    head_tracking = py_trees.behaviours.Running("dummy head track")
+    point_to = py_trees.behaviours.Running("dummy head track")
     if not DISABLE_FOLLOW_HEAD:
-        head_tracking = py_trees.decorators.Repeat(name="repeat head tracking", child=py_trees.decorators.FailureIsSuccess("f is s", BtNode_HeadTracking(name="Follow guest2 head", service_name="follow_head_service")), num_success = -1)
+        head_tracking = BtNode_HeadTrackingAction(name="Follow guest head action", actionName="follow_head_action")
+        # head_tracking = py_trees.decorators.Repeat(name="repeat head tracking", child=py_trees.decorators.FailureIsSuccess("f is s", BtNode_HeadTracking(name="Follow guest2 head", service_name="follow_head_service")), num_success = -1)
     if not DISABLE_FEATURE_MATCH:
         # point to host
         # second_introductions.add_child(BtNode_PointTo(name="Point to host", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=0))
@@ -249,9 +255,11 @@ def createSecondIntroductions():
     # introduce first guest to second guest
     second_introductions.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=90.0, y=45.0, speed=0.0))
 
-    
+    head_tracking = py_trees.behaviours.Running("dummy head track")
+    point_to = py_trees.behaviours.Running("dummy head track")
     if not DISABLE_FOLLOW_HEAD:
-        head_tracking = py_trees.decorators.Repeat(name="repeat head tracking", child=py_trees.decorators.FailureIsSuccess("f is s", BtNode_HeadTracking(name="Follow guest2 head", service_name="follow_head_service")), num_success = -1)
+        head_tracking = BtNode_HeadTrackingAction(name="Follow guest head action", actionName="follow_head_action")
+        # head_tracking = py_trees.decorators.Repeat(name="repeat head tracking", child=py_trees.decorators.FailureIsSuccess("f is s", BtNode_HeadTracking(name="Follow guest2 head", service_name="follow_head_service")), num_success = -1)
     if not DISABLE_FEATURE_MATCH:
         # point to guest1
         deco = py_trees.decorators.Retry(name="retry", child=BtNode_PointTo(name="Point to guest1", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=1), num_failures=3)
