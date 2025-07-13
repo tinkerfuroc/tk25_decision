@@ -204,20 +204,26 @@ class BtNode_GraspWithPose(BtNode_Grasp):
         )
     
     def process_result(self):
-        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            self.feedback_message = f"Grasp feedback received with status: {self.result_status}"
-            self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
-            return py_trees.common.Status.FAILURE
-        else:
-            result = self.result_message.result
-            if result.success:
-                self.blackboard.pose = result.grasp_pose
-                self.feedback_message = f"Grasp feedback received with success: {result.success}"
-                self.logger.debug(f"Grasp feedback received with success")
-                return py_trees.common.Status.SUCCESS
-            else: 
-                self.feedback_message = f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}"
-                self.logger.debug(f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}")
+        try:
+            if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED and False:
+                self.feedback_message = f"Grasp feedback received with status: {self.result_status}"
+                self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
                 return py_trees.common.Status.FAILURE
+            else:
+                self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
+                result = self.result_message.result
+                if result.success:
+                    self.blackboard.pose = result.grasp_pose
+                    self.feedback_message = f"Grasp feedback received with success: {result.success}"
+                    self.logger.debug(f"Grasp feedback received with success")
+                    return py_trees.common.Status.SUCCESS
+                else: 
+                    self.feedback_message = f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}"
+                    self.logger.debug(f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}")
+                    return py_trees.common.Status.FAILURE
+        except Exception as e:
+            self.feedback_message = f"Failed to process grasp result: {e}"
+            self.logger.debug(f"Failed to process grasp result: {e}")
+            return py_trees.common.Status.FAILURE
 
         

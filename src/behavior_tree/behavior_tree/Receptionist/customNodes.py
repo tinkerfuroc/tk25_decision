@@ -90,6 +90,8 @@ class BtNode_Introduce(BtNode_Announce):
                  describe_introduced=False
                  ):
         super(BtNode_Announce, self).__init__(name, service_name, TextToSpeech)
+        self.bb_source = None #new
+        self.given_msg = None #new
         self.introduced_id = introduced_id
         self.target_id = target_id
         self.describe_introduced = describe_introduced
@@ -123,6 +125,8 @@ class BtNode_Confirm(BtNode_Announce):
                  ):
         super(BtNode_Announce, self).__init__(name=name, service_name=service_name, service_type=TextToSpeech)
         self.type = type
+        self.bb_source = None #new
+        self.given_msg = None #new
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="confirm_target",
@@ -181,11 +185,7 @@ class BtNode_HeadTrackingAction(ActionHandler):
     
     def send_goal(self):
         request = FollowHeadAction.Goal()
-<<<<<<< HEAD
         request.start_following = True
-=======
-        request.closest = True
->>>>>>> 73362ca089b76688e19bb5eac7a74724694bb464
         self.send_goal_request(request)
     
     def feedback_callback(self, msg: Any):
