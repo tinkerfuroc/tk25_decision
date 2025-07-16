@@ -131,13 +131,13 @@ def createConstantWriter():
 def createListenToGuest(bb_dest_key:str, word_list: list[str]):
     root = py_trees.composites.Selector(name="Listen to guest", memory=True)
     root.add_child(BtNode_PhraseExtraction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=7.0))
-    root.add_child(py_trees.decorators.SuccessIsFailure(name="success is failure", child=BtNode_Announce(name="Listen Failed, ask for repeat", bb_source="", message="I'm sorry. Could you please repeat that louder and closer?")))
+    root.add_child(py_trees.decorators.SuccessIsFailure(name="success is failure", child=BtNode_Announce(name="Listen Failed, ask for repeat", bb_source=None, message="I'm sorry. Could you please repeat that louder and closer?")))
     return py_trees.decorators.Retry(name="retry", child=root, num_failures=10)
 
 def createGetInfo(type:str, storage_key:str):
     root = py_trees.composites.Sequence(name=f"Get {type}", memory=True)
     loop = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
-    loop.add_child(BtNode_Announce(name=f"Prompt for {type}", bb_source="", message=f"Speak loudly and tell me your {type}"))
+    loop.add_child(BtNode_Announce(name=f"Prompt for {type}", bb_source=None, message=f"Speak loudly and tell me your {type}"))
     loop.add_child(createListenToGuest(bb_dest_key=storage_key, word_list=names if type == "name" else drinks))
     loop.add_child(BtNode_Confirm(name=f"Confirm {type} prompt", key_confirmed=storage_key, type=type))
     loop.add_child(BtNode_GetConfirmation(name=f"Get {type} confirmation", timeout=5.0))
