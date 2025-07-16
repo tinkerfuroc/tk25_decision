@@ -1,5 +1,6 @@
 from typing import Any
 import py_trees
+import textwrap
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.messages import ObjectDetection, Categorize
@@ -207,17 +208,23 @@ class BtNode_GraspWithPose(BtNode_Grasp):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = f"Grasp feedback received with status: {self.result_status}"
             self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
+            self.logger.debug(textwrap.dedent("""       
+        'STATUS_UNKNOWN': 0,
+        'STATUS_ACCEPTED': 1,
+        'STATUS_EXECUTING': 2,
+        'STATUS_CANCELING': 3,
+        'STATUS_SUCCEEDED': 4,
+        'STATUS_CANCELED': 5,
+        'STATUS_ABORTED': 6,"""))
             return py_trees.common.Status.FAILURE
         else:
             result = self.result_message.result
             if result.success:
                 self.blackboard.pose = result.grasp_pose
-                self.feedback_message = f"Grasp feedback received with success: {result.success}"
-                self.logger.debug(f"Grasp feedback received with success")
+                self.feedback_message = f"Grasp completed received with success: {result.success}"
+                self.logger.debug(f"Grasp completed received with success")
                 return py_trees.common.Status.SUCCESS
             else: 
-                self.feedback_message = f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}"
-                self.logger.debug(f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}")
+                self.feedback_message = f"Grasp completed received with stage: {result.stage} and error message {result.error_msg}"
+                self.logger.debug(f"Grasp completed received with stage: {result.stage} and error message {result.error_msg}")
                 return py_trees.common.Status.FAILURE
-
-        
