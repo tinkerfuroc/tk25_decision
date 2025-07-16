@@ -11,7 +11,7 @@ import action_msgs.msg as action_msgs  # GoalStatus
 from typing import Any
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import Pose, PoseStamped
-from tinker_vision_msgs.action import HumanFollowing
+from behavior_tree.messages import HumanFollowing
 
 class BtNode_FindPointedLuggage(ServiceHandler):
     def __init__(self, 

@@ -177,7 +177,7 @@ def createGraspOnce():
     root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=20.0))
     root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     parallel_move_arm = py_trees.composites.Parallel("Move arm to find object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    parallel_move_arm.add_child(BtNode_Announce(name="Announce moving arm", bb_source="", message="Moving arm to find object"))
+    parallel_move_arm.add_child(BtNode_Announce(name="Announce moving arm", bb_source=None, message="Moving arm to find object"))
     parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     root.add_child(parallel_move_arm)
 
@@ -198,7 +198,7 @@ def createPlaceOnShelf():
     root = py_trees.composites.Sequence(name="Place object", memory=True)
     # move arm to navigating position
     root.add_child(BtNode_MoveArmSingle("Move arm to navigating for easier scanning", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
-    root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=30.0))
+    root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=25.0))
     # move arm to scan position
     scan_parallel = py_trees.composites.Parallel("Scan object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     scan_parallel.add_child(BtNode_Announce(name="Announce scanning", bb_source=None, message="Scanning shelf to determine where to place object"))
@@ -278,10 +278,10 @@ def createStoreGroceries():
     root.add_child(createEnterArena())
     # retry_store = py_trees.decorators.Retry(name=f"retry 5 times", child=createStoreOnce(), num_failures=5)
     # root.add_child(py_trees.decorators.Repeat(name="repeat 5 times", child=retry_store, num_success=5))
-    # root.add_child(BtNode_Announce(name="Announce complete", bb_source=None, message="Storing groceries task complete"))
-    root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_drinks, category="drinks"))
-    root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_food, category="food"))
-    root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_utilities, category="utilities"))
+    # # root.add_child(BtNode_Announce(name="Announce complete", bb_source=None, message="Storing groceries task complete"))
+    # root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_drinks, category="drinks"))
+    # root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_food, category="food"))
+    # root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_utilities, category="utilities"))
     retry_store = py_trees.decorators.Retry(name=f"retry 2 times", child=createStoreOnce(KEY_POS_TABLE), num_failures=2)
     root.add_child(py_trees.decorators.Repeat(name="repeat 1 times", child=retry_store, num_success=1))
     retry_store2 = py_trees.decorators.Retry(name=f"retry 2 times", child=createStoreOnce(KEY_POS_TABLE2), num_failures=2)

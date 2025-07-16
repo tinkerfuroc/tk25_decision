@@ -153,7 +153,6 @@ def createGetNameAndDrink():
 
 def createRegisterFeature():
     root = py_trees.composites.Sequence(name="Register features of person in front", memory=True)
-
     root.add_child(BtNode_Announce(name="Ask to stand in front", bb_source=None, message="Stand one meter in front of me. Thank you"))
     root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_GUEST_FEATURES))
     root.add_child(BtNode_CombinePerson(name="combine person's info", key_dest=KEY_PERSONS, key_name=KEY_GUEST_NAME, key_drink=KEY_GUEST_DRINK, key_features=KEY_GUEST_FEATURES))
@@ -355,7 +354,7 @@ def createReceptionist():
 
     root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
     # announce start and scan host features
-    root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Starting receptionist"))
+    root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Starting receptionist, please reply me after the beep sound."))
     root.add_child(createEnterArena())
     root.add_child(createScanHostFeatures())
 

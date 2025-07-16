@@ -1,0 +1,12 @@
+启动follow
+先确认：12V DC和底盘都开着
+
+进入tk25_ws，以下所有操作都在这个目录下。提到的bash文件（.sh）都在src/tk23_vision/scripts里面，给命令的时候省略的前面的路径，记得加上
+先sudo bash init.sh。
+
+然后：
+起导航：bash navigation.sh
+	在rviz里开启导航
+起视觉：bash vision.sh
+起语音：bash audio.sh
+
