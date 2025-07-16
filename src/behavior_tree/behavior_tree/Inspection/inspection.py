@@ -93,7 +93,8 @@ def createInspection():
     
     # answer three questions (currently just repeats the question without answering)
     # root.add_child(py_trees.decorators.Repeat(name="repeat 3 times", child=createQandA(), num_success=3))
-    
+    root.add_child(BtNode_PressEnterToSucceed())
+
     root.add_child(BtNode_Announce(name="announce leaving", bb_source=None, message="Heading to the exit."))
     root.add_child(createToExit)
     return root
