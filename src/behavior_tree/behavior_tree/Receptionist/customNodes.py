@@ -87,7 +87,8 @@ class BtNode_Introduce(BtNode_Announce):
                  target_id: int,
                  introduced_id: int,
                  service_name: str = "announce",
-                 describe_introduced=False
+                 describe_introduced=False,
+                 walking=False
                  ):
         super(BtNode_Announce, self).__init__(name, service_name, TextToSpeech)
         self.bb_source = None #new
@@ -95,6 +96,7 @@ class BtNode_Introduce(BtNode_Announce):
         self.introduced_id = introduced_id
         self.target_id = target_id
         self.describe_introduced = describe_introduced
+        self.walking = walking
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="persons",
@@ -107,12 +109,15 @@ class BtNode_Introduce(BtNode_Announce):
         return super().setup(**kwargs)
     
     def initialise(self):
-        self.given_msg = "Hello " + self.blackboard.persons[self.target_id].name + ", "
         introduced_person : Person = self.blackboard.persons[self.introduced_id]
-        self.given_msg += "Here is " + introduced_person.name + \
-              " whose favorite drink is " + introduced_person.fav_drink + "."
-        if self.describe_introduced:
-            self.given_msg += " " + introduced_person.features
+        if self.walking:
+            self.given_msg = "You will meet guest " + introduced_person.name + ". " + introduced_person.features
+        else:
+            self.given_msg = "Hello " + self.blackboard.persons[self.target_id].name + ", "
+            self.given_msg += "Here is " + introduced_person.name + \
+                " whose favorite drink is " + introduced_person.fav_drink + "."
+            if self.describe_introduced:
+                self.given_msg += " " + introduced_person.features
 
         return super().initialise()
 
