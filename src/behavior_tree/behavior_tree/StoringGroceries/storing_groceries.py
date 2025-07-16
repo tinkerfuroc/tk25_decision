@@ -22,27 +22,46 @@ except FileNotFoundError:
     print("ERROR: constants.json not found!")
     raise FileNotFoundError
 
-categories = {"chip": "blue and pink oreo box",
-            "biscuit": "yellow chips can",
-            "lays": "red chips can",
-            "cookie": "black and green cookie box",
-            "bread": "white bread",
-            "sprite": "green sprite bottle",
-            "cola": "black cola bottle",
-            "orange juice": "orange bottle",
-            "water": "clear water bottle",
-            "dishsoap": "yellow and blue bottle",
-            "handwash": "white handwash bottle",
-            "shampoo": "blue shampoo bottle",
-            "cereal bowl": "blue bowl"
-            }
+categories = {
+    "kuat": "green cola can",
+    "fanta": "orange fanta can",
+    "milk": "blue and white milk box",
+    "orange juice": "orange juice bottle",
+    "coke": "red cola can",
+    "coffee": "brown and black box",
 
-prompt_drinks = "green sprite bottle . black cola bottle . orange fanta bottle . clear water bottle . white milk box"
-prompt_food = "pink oreo box . yellow chips can . red chips can . white bread"
-prompt_utilities = "blue dishsoap bottle . white handwash bottle . blue shampoo bottle . blue bowl"
+    "lime": "lime fruit",
+    "tangerine": "tangerine fruit",
+    "pear": "pear fruit",
+    "lemon": "lemon fruit",
+    "apple": "apple fruit",
 
-prompt_list = prompt_drinks + " . " + prompt_food + " . " + prompt_utilities
-prompt_list = "bottle . white box . yellow box"
+    "snack bag": "snack bag",
+    "pringles": "chips can",
+    "chocolate": "chocolate bar",
+
+    "ketchup": "red bottle with yellow cap",
+    "oats": "whte cereal box",
+    "mayo": "white bottle with black cap",
+    "tuna": "blue tuna can"
+}
+
+drink_items = ["kuat", "fanta", "milk", "orange juice", "coke", "coffee"]
+fruit_items = ["lime", "tangerine", "pear", "lemon", "apple"]
+snack_items = ["snack bag", "pringles", "chocolate"]
+food_items = ["ketchup", "oats", "mayo", "tuna"]
+
+def build_prompt(items):
+    return " . ".join(categories[item] for item in items)
+
+prompt_drinks = build_prompt(drink_items)
+prompt_foods = build_prompt(food_items)
+prompt_snacks = build_prompt(snack_items)
+prompt_fruits = build_prompt(fruit_items)
+
+# 拼接全部
+prompt_list = " . ".join([prompt_drinks, prompt_foods, prompt_snacks, prompt_fruits])
+# prompt_list = "bottle . white box . yellow box"
 USE_GRASP_DUMMY = False
 
 TRY_TWICE = False

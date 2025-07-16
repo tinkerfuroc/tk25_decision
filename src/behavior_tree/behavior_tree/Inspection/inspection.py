@@ -3,6 +3,8 @@ import py_trees
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_Listen
+from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
+
 
 from .customNodes import BtNode_PressEnterToSucceed
 
@@ -50,6 +52,8 @@ ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]
 KEY_INSPECTION_POSE = "inspection_pose"
 KEY_EXIT_POSE = "exit_pose"
 KEY_LISTEN_RESULT = "listen_result"
+KEY_ARM_NAVIGATING = "arm_navigating"
+
 
 arm_service_name = "arm_joint_service"
 
@@ -58,6 +62,7 @@ def createConstantWriter():
 
     root.add_child(BtNode_WriteToBlackboard(name="Write inspection location", bb_namespace="", bb_source=None, bb_key=KEY_INSPECTION_POSE, object=pose_inspection))
     root.add_child(BtNode_WriteToBlackboard(name="Write exit location", bb_namespace="", bb_source=None, bb_key=KEY_EXIT_POSE, object=pose_exit))
+    root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
     return root
 
 def createToIspection():
@@ -86,14 +91,16 @@ def createInspection():
     root = py_trees.composites.Sequence(name="Inspection Root", memory=True)
     # write all the constants to blackboard first
     root.add_child(createConstantWriter())
-    root.add_child(createToIspection)
+    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+    root.add_child(createToIspection())
 
     root.add_child(BtNode_Announce(name="Announce: I am ready to inspect", bb_source=None, message="I am Tinker, I am ready for inspection. I will briefly introduce myself."))
     root.add_child(BtNode_Announce(name="inrtoduce self", bb_source=None, message=tinker_description))
     
     # answer three questions (currently just repeats the question without answering)
     # root.add_child(py_trees.decorators.Repeat(name="repeat 3 times", child=createQandA(), num_success=3))
-    
+    root.add_child(BtNode_PressEnterToSucceed())
+
     root.add_child(BtNode_Announce(name="announce leaving", bb_source=None, message="Heading to the exit."))
-    root.add_child(createToExit)
+    root.add_child(createToExit())
     return root
