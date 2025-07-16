@@ -82,7 +82,7 @@ def createQandA():
     root.add_child(BtNode_Announce(name="repeat result of listen", bb_source=KEY_LISTEN_RESULT))
     return root
 
-def createReceptionist():
+def createInspection():
     root = py_trees.composites.Sequence(name="Inspection Root", memory=True)
     # write all the constants to blackboard first
     root.add_child(createConstantWriter())
@@ -92,7 +92,7 @@ def createReceptionist():
     root.add_child(BtNode_Announce(name="inrtoduce self", bb_source=None, message=tinker_description))
     
     # answer three questions (currently just repeats the question without answering)
-    root.add_child(py_trees.decorators.Repeat(name="repeat 3 times", child=createQandA(), num_success=3))
+    # root.add_child(py_trees.decorators.Repeat(name="repeat 3 times", child=createQandA(), num_success=3))
     
     root.add_child(BtNode_Announce(name="announce leaving", bb_source=None, message="Heading to the exit."))
     root.add_child(createToExit)
