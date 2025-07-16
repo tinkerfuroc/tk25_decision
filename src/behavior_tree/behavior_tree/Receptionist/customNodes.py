@@ -103,16 +103,16 @@ class BtNode_Introduce(BtNode_Announce):
         )
     
     def setup(self, **kwargs):
-        self.announce_msg = "foo"
+        self.given_msg = "foo"
         return super().setup(**kwargs)
     
     def initialise(self):
-        self.announce_msg = "Hello " + self.blackboard.persons[self.target_id].name + ", "
+        self.given_msg = "Hello " + self.blackboard.persons[self.target_id].name + ", "
         introduced_person : Person = self.blackboard.persons[self.introduced_id]
-        self.announce_msg += "Here is " + introduced_person.name + \
+        self.given_msg += "Here is " + introduced_person.name + \
               " whose favorite drink is " + introduced_person.fav_drink + "."
         if self.describe_introduced:
-            self.announce_msg += " " + introduced_person.features
+            self.given_msg += " " + introduced_person.features
 
         return super().initialise()
 
@@ -135,12 +135,12 @@ class BtNode_Confirm(BtNode_Announce):
         )
     
     def setup(self, **kwargs):
-        self.announce_msg = "foo"
+        self.given_msg = self.given_msg
         return super().setup(**kwargs)
     
     def initialise(self):
-        # self.announce_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ". Am I correct?"
-        self.announce_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ", correct?"
+        # self.given_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ". Am I correct?"
+        self.given_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ", correct?"
 
         return super().initialise()
     
