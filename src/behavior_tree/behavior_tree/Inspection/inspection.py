@@ -4,7 +4,7 @@ from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_Listen
 from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
-
+from behavior_tree.TemplateNodes.Vision import  BtNode_DoorDetection 
 
 from .customNodes import BtNode_PressEnterToSucceed
 
@@ -53,6 +53,7 @@ KEY_INSPECTION_POSE = "inspection_pose"
 KEY_EXIT_POSE = "exit_pose"
 KEY_LISTEN_RESULT = "listen_result"
 KEY_ARM_NAVIGATING = "arm_navigating"
+KEY_DOOR_STATUS = "door_status"
 
 
 arm_service_name = "arm_joint_service"
@@ -92,6 +93,7 @@ def createInspection():
     # write all the constants to blackboard first
     root.add_child(createConstantWriter())
     root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
     root.add_child(createToIspection())
 
     root.add_child(BtNode_Announce(name="Announce: I am ready to inspect", bb_source=None, message="I am Tinker, I am ready for inspection. I will briefly introduce myself."))
