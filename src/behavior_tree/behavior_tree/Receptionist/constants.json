@@ -58,6 +58,7 @@
     ],
     "host_name": "John",
     "host_drink": "coffee",
+    "host_interest": "swimming",
     "drinks": [
         "kuat",
         "fanta",
