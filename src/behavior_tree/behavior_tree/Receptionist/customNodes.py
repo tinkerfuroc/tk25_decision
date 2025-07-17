@@ -132,8 +132,8 @@ class BtNode_Introduce(BtNode_Announce):
                 " whose favorite drink is " + introduced_person.fav_drink + "."
             if self.describe_introduced:
                 self.given_msg += " " + introduced_person.features
-            if self.blackboard.persons[self.target_id].interests:
-                self.given_msg += "Their favorite interest is " + self.blackboard.persons[self.target_id].interests
+            if introduced_person.interests:
+                self.given_msg += "Their interest is " + introduced_person.interests
 
         return super().initialise()
 
