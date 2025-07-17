@@ -171,10 +171,17 @@ def compareInterest(key_interest1, key_interest2):
     root.add_child(BtNode_Announce("announce similarities between interest", KEY_COMMON_INTEREST))
     return root
 
-def createGetDrinkAndSpeak():
+def createGetDrinkAndSpeak(key_interest=None):
     root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
     root.add_child(createGetInfo("favorite drink", KEY_GUEST_DRINK))
-    root.add_child(BtNode_CombinePerson(name="combine person's info", key_dest=KEY_PERSONS, key_name=KEY_GUEST_NAME, key_drink=KEY_GUEST_DRINK, key_features=KEY_GUEST_FEATURES))
+    root.add_child(BtNode_CombinePerson(
+        name="combine person's info", 
+        key_dest=KEY_PERSONS, 
+        key_name=KEY_GUEST_NAME, 
+        key_drink=KEY_GUEST_DRINK, 
+        key_features=KEY_GUEST_FEATURES,
+        key_interest=key_interest
+        ))
     # TODO: add an actual find drink module
     root.add_child(BtNode_Announce(name="announce position of favorite drink", bb_source=None, message="Your favorite drink is in on the left"))
     return root
@@ -486,7 +493,7 @@ def createReceptionist():
         children=[compare_interest,to_drink_area]
     ))
 
-    root.add_child(createGetDrinkAndSpeak())
+    root.add_child(createGetDrinkAndSpeak(KEY_GUEST1_INTEREST))
 
     # go to sofa now
     root.add_child(createToSofa(None))
@@ -497,13 +504,14 @@ def createReceptionist():
 
     root.add_child(BtNode_Announce(name="announce going to greet 1st guest", bb_source=None, message="Greeting guest"))   
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to door", key=KEY_DOOR_POSE), num_failures=5))
+    root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
     root.add_child(createGetName())
-    # root.add_child(createGetInterest(KEY_GUEST2_INTEREST))
+    root.add_child(createGetInterest(KEY_GUEST2_INTEREST))
     root.add_child(createRegisterFeatureOnly())
 
     to_drink_area = py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_TABLE_POSE), num_failures=5)
     root.add_child(to_drink_area)
-    root.add_child(createGetDrinkAndSpeak())
+    root.add_child(createGetDrinkAndSpeak(KEY_GUEST2_INTEREST))
 
     # go to sofa now
     root.add_child(createToSofa(None))
