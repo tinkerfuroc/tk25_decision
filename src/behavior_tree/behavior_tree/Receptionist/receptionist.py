@@ -102,7 +102,7 @@ def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter", memory=True)
     root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
     
-    if not DEBUG_NO_GOTO:
+    if not DEBUG_NO_GOTO and False:
         root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
 
     parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
@@ -180,7 +180,7 @@ def createGetDrinkAndSpeak(key_interest=None):
         key_name=KEY_GUEST_NAME, 
         key_drink=KEY_GUEST_DRINK, 
         key_features=KEY_GUEST_FEATURES,
-        key_interest=key_interest
+        key_intest=key_interest
         ))
     # TODO: add an actual find drink module
     root.add_child(BtNode_Announce(name="announce position of favorite drink", bb_source=None, message="Your favorite drink is in on the left"))
