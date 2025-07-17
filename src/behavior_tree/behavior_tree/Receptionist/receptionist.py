@@ -490,6 +490,7 @@ def createReceptionist():
     ))
 
     root.add_child(createGetDrinkAndSpeak(KEY_GUEST1_INTEREST))
+    root.add_child(BtNode_Introduce(name="describe first guest features", key_person=KEY_PERSONS, target_id=2, introduced_id=1, walking=True))
 
     # go to sofa now
     root.add_child(createToSofa(None))
