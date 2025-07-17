@@ -494,7 +494,6 @@ def createReceptionist():
     ))
 
     root.add_child(createGetDrinkAndSpeak(KEY_GUEST1_INTEREST))
-    root.add_child(BtNode_Introduce(name="describe first guest features", key_person=KEY_PERSONS, target_id=2, introduced_id=1, walking=True))
 
     # go to sofa now
     root.add_child(createToSofa(None))
@@ -509,7 +508,7 @@ def createReceptionist():
     root.add_child(createGetName())
     root.add_child(createGetInterest(KEY_GUEST2_INTEREST))
     root.add_child(createRegisterFeatureOnly())
-
+    
     to_drink_area = py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_TABLE_POSE), num_failures=5)
     root.add_child(to_drink_area)
     root.add_child(createGetDrinkAndSpeak(KEY_GUEST2_INTEREST))
