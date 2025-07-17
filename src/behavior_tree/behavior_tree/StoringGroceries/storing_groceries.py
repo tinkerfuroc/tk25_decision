@@ -53,10 +53,7 @@ categories = {
             "tuna": "blue tuna can"
             }
 
-
-
-
-
+ 
 drink_items = ["kuat", "fanta", "milk", "orange juice", "coke", "coffee"]
 fruit_items = ["lime", "tangerine", "pear", "lemon", "apple"]
 snack_items = ["snack bag", "pringles", "chocolate"]
