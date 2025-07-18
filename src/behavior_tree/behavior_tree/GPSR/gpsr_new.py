@@ -9,11 +9,24 @@ from behavior_tree.StoringGroceries.customNodes import BtNode_FindObjTable, BtNo
 
 from .node_test import DecideNextAction, CheckAndWriteAction, WriteActionSuccessful
 from .custom_nodes import BtNode_QA, BtNode_ScanForWavingPerson
+from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
+from std_msgs.msg import Header
+import py_trees_ros
+import rclpy
 
 import json
 import math
 
 ANNOUNCE_REASONING = True
+
+def parsePoseStamped(json_dict: dict):
+    point = json_dict["point"]
+    orientation = json_dict["orientation"]
+    return PoseStamped(
+        header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+        pose=Pose(position=Point(x=point["x"], y=point["y"], z=0.0),
+        orientation=Quaternion(x=orientation['x'], y=orientation['y'], z=orientation['z'], w=orientation['w']))                
+    )
 
 # TODO: read from json file, fill in arms poses, and poses and object dictionary,
 try:
@@ -23,6 +36,12 @@ try:
 except FileNotFoundError:
     print("ERROR: constants.json not found!")
     raise FileNotFoundError
+
+possible_poses = constants["possible_poses"]
+for key, value in possible_poses.items():
+    possible_poses[key] = parsePoseStamped(value)
+possible_objects = constants["possible_objects"]
+pose_command = parsePoseStamped(constants["pose_command"])
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
 ARM_POS_SCAN = [x / 180 * math.pi for x in constants["arm_pos_scan"]]
@@ -47,6 +66,8 @@ KEY_GRASP_ANNOUNCEMENT = "grasp_announcement"
 KEY_ARM_NAVIGATING = "arm_navigating"
 KEY_ARM_SCAN = "arm_scan"
 KEY_GRASP_POSE = "grasp_pose"
+KEY_DOOR_STATUS = "door_status"
+KEY_POSE_COMMAND = "pose_command"
 
 KEY_QA_ANSWER = "qa_answer"
 KEY_POSE_WAVING_PERSON = "waving_person"
@@ -55,10 +76,22 @@ arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
 point_target_frame = "base_link"
 
+def createEnterArena():
+    root = py_trees.composites.Sequence(name="Enter arena", memory=True)
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
+    parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_enter_arena.add_child(BtNode_Announce(name="Announce entering arena", bb_source=None, message="Entering arena"))
+    parallel_enter_arena.add_child(BtNode_TurnPanTilt(name="Turn pan tile", x=0.0, y=20.0, speed=0.0))
+    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_POSE_COMMAND), num_failures=5))
+    root.add_child(parallel_enter_arena)
+    return root
+
 def createConstantWriter():
     root = py_trees.composites.Sequence("Root", memory=True)
     root.add_child(BtNode_WriteToBlackboard("Write Arm Scan", bb_namespace="", bb_source=None, bb_key=KEY_ARM_SCAN, object=ARM_POS_SCAN))
     root.add_child(BtNode_WriteToBlackboard("Write Arm Navigating", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
+    root.add_child(BtNode_WriteToBlackboard("Write Pose Command", bb_namespace="", bb_source=None, bb_key=KEY_POSE_COMMAND, object=pose_command))
     return root
 
 def createGoto():
@@ -109,7 +142,7 @@ def createQA():
     return root
 
 
-def createExecuteAction():
+def createExecuteInstruction():
     execute_one_step = py_trees.composites.Sequence("Root", True)
 
     decide_node = DecideNextAction()
@@ -179,3 +212,77 @@ def createExecuteAction():
 
     execute_action = py_trees.decorators.Retry("Retry until success", execute_one_step, num_failures=10)
     return execute_action
+
+def createCompleteOneCommand():
+    root = py_trees.composites.Sequence("complete one command", True)
+
+    get_command = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
+    get_command.add_child(BtNode_Announce(name=f"Prompt for getting command", bb_source="", message=f"Please speak to me after the beep sound. Tell me your command."))
+    get_command.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
+    get_command.add_child(BtNode_Announce(name=f"ask to confirm command", bb_source=KEY_INSTRUCTION, message=f"Am I correct, you command is "))
+    get_command.add_child(BtNode_GetConfirmation("confirm instruction"))
+    get_command.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="Starting execution."))
+    
+    root.add_child(py_trees.decorators.Retry("retry", get_command, 100))
+
+    root.add_child(createExecuteInstruction())
+
+    return root
+
+def createGPSR():
+    root = py_trees.composites.Sequence("GPSR", True)
+    root.add_child(createConstantWriter())
+    root.add_child(createEnterArena())
+
+    return_to_instruction_point = py_trees.composites.Parallel("return to instruction point", py_trees.common.ParallelPolicy.SuccessOnAll())
+    return_to_instruction_point.add_child(BtNode_Announce("announce returning", bb_source=None, message="Returning to instruction point"))
+    return_to_instruction_point.add_child(
+        py_trees.decorators.Retry("retry", BtNode_GotoAction("goto instruction point", KEY_POSE_COMMAND), 5)
+    )
+    complete_instruction = py_trees.composites.Sequence(
+        "complete on instruction and return",
+        True,
+        [createCompleteOneCommand(), return_to_instruction_point]
+    )
+    
+    safe_guarded = py_trees.composites.Selector(
+        "complete and return safeguard",
+        True,
+        [complete_instruction,
+         py_trees.decorators.Retry("retry", BtNode_GotoAction("goto instruction point", KEY_POSE_COMMAND), 5)
+         ]
+    )
+    root.add_child(
+        py_trees.decorators.Repeat("repeat", safe_guarded, 5)
+    )
+
+    return root
+
+def main():
+    rclpy.init()
+    # Setup blackboard values
+
+    root = py_trees.composites.Sequence("Root", True)
+    gpsr = createGPSR()
+    root.add_children([
+        gpsr,
+        BtNode_Announce("announce finished", bb_source=None, message="GPSR accomplished"),
+        py_trees.behaviours.Running("running")
+    ])
+
+    print("=== Running Behavior Tree ===")
+    # Wrap the tree in a ROS-friendly interface
+    tree = py_trees_ros.trees.BehaviourTree(
+        root=root,
+    )
+
+    # Setup and spin
+    tree.setup(timeout=15, node_name="root_node")
+    def print_tree(tree):
+        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
+        # print(py_trees.display.unicode_blackboard())
+    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
+
+    rclpy.spin(tree.node)
+
+    rclpy.shutdown()

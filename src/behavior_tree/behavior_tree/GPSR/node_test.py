@@ -61,11 +61,14 @@ Prior knowledge:
 """
 
 class DecideNextAction(py_trees.behaviour.Behaviour):
-    def __init__(self, name="DecideNextAction"):
+    def __init__(self, 
+                 possible_locations:list=["kitchen", "living_room", "storage_cabinet"],
+                 possible_objects:list=["cola", "milk"],
+                 name="DecideNextAction"):
         super().__init__(name)
         self.blackboard = py_trees.blackboard.Client(name=name)
         self.blackboard.register_key("instruction", access=py_trees.common.Access.READ)
-        self.blackboard.register_key("task_status", access=py_trees.common.Access.READ)
+        self.blackboard.register_key("task_status", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key("past_actions", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key("next_action", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key("next_action_parameters", access=py_trees.common.Access.WRITE)
@@ -81,16 +84,73 @@ class DecideNextAction(py_trees.behaviour.Behaviour):
         self.thread = None
         self.response = None
         self.failed = False
+        self.previous_instruction = None
+        self.possible_locations = possible_locations
+        self.possible_objects = possible_objects
+        self.prompt = f"""You are the decision-making module of a household robot.
+
+Your job is to decide the robot’s next action based on:
+- A natural language instruction from the user
+- The current task completion status
+- The list of actions the robot can perform
+- Known prior knowledge, including locations and objects
+
+You must output a JSON object containing:
+{{
+  "reasoning": (string explaining your decision),
+  "action": (name of the next action to take),
+  "parameters": (the parameter to use for that action, if any)
+}}
+
+Available actions:
+1. qa()
+   - Input: None
+   - Behavior: Prompt the user to ask a question, listen, then answer
+
+2. announce(message)
+   - Input: message (string) – the message to speak aloud
+   - Behavior: Speak the given message via robot's speaker
+
+3. goto(location)
+   - Input: location (string) – a known location
+   - Behavior: Move the robot to the specified location
+
+4. grasp(target)
+   - Input: target (string) – a known object
+   - Behavior: Use the robot arm to grasp the specified object
+
+5. goto_waving()
+   - Input: None
+   - Behavior: finds and goes to the person waving
+
+6. finished()
+   - Input: None
+   - Behavior: marks this task as finished
+
+Prior knowledge:
+- Known locations: {possible_locations}
+- Known objects: {possible_objects}
+"""
 
     def initialise(self):
         self.logger.info("Initialising async OpenAI call...")
         self.failed = False
         self.response = None
 
-        if getattr(self.blackboard, "past_actions", None) is None:
+        instruction = self.blackboard.instruction
+
+        # clear blackboard if new instruction is received
+        if not self.previous_instruction:
+            self.previous_instruction = instruction
+            self.blackboard.task_status = "no action taken yet"
+            self.blackboard.past_actions = []
+        if not self.previous_instruction == instruction:
+            self.blackboard.task_status = "no action taken yet"
             self.blackboard.past_actions = []
 
-        instruction = self.blackboard.instruction
+        # extra safeguard just in case
+        if getattr(self.blackboard, "past_actions", None) is None:
+            self.blackboard.past_actions = []
         status = self.blackboard.task_status
         past = self.blackboard.past_actions
 
@@ -188,9 +248,15 @@ def main():
 POSE_DICT = {}
 
 class CheckAndWriteAction(py_trees.behaviour.Behaviour):
-    def __init__(self, expected_action: str, name=None):
+    def __init__(self, 
+                 expected_action: str, 
+                 possible_poses: dict={"kitchen":None, "living_room":None, "storage_cabinet":None},
+                 possible_objects: dict={"cola":"something", "milk":"something"},
+                 name=None):
         super().__init__(name or f"CheckAndWrite-{expected_action}")
         self.expected_action = expected_action
+        self.possible_poses = possible_poses
+        self.possible_objects = possible_objects
         self.blackboard = py_trees.blackboard.Client(name=self.name)
         self.blackboard.register_key("next_action", access=py_trees.common.Access.READ)
         self.blackboard.register_key("next_action_parameters", access=py_trees.common.Access.READ)
@@ -207,14 +273,18 @@ class CheckAndWriteAction(py_trees.behaviour.Behaviour):
         param = self.blackboard.next_action_parameters
 
         if self.expected_action == "goto":
-            if param in POSE_DICT or True:
-                self.blackboard.pose_target = POSE_DICT.get(param)
+            if param in self.possible_poses:
+                self.blackboard.pose_target = self.possible_poses.get(param)
             else:
                 self.logger.error(f"Unknown location for goto: {param}")
                 return py_trees.common.Status.FAILURE
 
         elif self.expected_action == "grasp":
-            self.blackboard.target_object = param
+            if param in self.possible_objects:
+                self.blackboard.target_object = self.possible_objects.get(param)
+            else:
+                self.logger.error(f"Unknown object for grasp: {param}")
+                return py_trees.common.Status.FAILURE
 
         elif self.expected_action == "announce":
             self.blackboard.announce_text = param

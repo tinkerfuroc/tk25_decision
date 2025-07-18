@@ -31,7 +31,8 @@ setup(
             'serve-breakfast = behavior_tree.main:serve_breakfast',
             'store-groceries = behavior_tree.main:store_groceries',
             'store-groceries-placing-only = behavior_tree.main:store_groceries_placing_only',
-            'GPSR = behavior_tree.main:gpsr',
+            'GPSR-old = behavior_tree.main:gpsr',
+            'GPSR = behavior_tree.GPSR.gpsr_new:main'
             'restaurant = behavior_tree.main:restaurant'
             'help-me-carry = behavior_tree.main:help_me_carry',
             'test_follow_head = behavior_tree.Receptionist.test_follow_head:main',
