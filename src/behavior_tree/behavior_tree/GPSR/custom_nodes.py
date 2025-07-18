@@ -9,6 +9,7 @@ from py_trees.blackboard import Blackboard
 import openai
 import json
 import time
+import textwrap
 from .config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_TEMPERATURE, OPENAI_MAX_TOKENS
 
 from behavior_tree.messages import QuestionAnswer, Listen
@@ -203,52 +204,57 @@ class BtNode_DecideNextAction(Behaviour):
                 model=OPENAI_MODEL,
                 messages=[
                     {"role": "system", 
-                     "content": """ 你现在是一个机器人的决策层,会根据所收到的自然语言指令,自己能完成的动作,一些先验知识以及目前任务已完成状况判断下一个行动及其参数
+                     "content": textwrap.dedent(""" 
+                                    你现在是一个机器人的决策层,会根据所收到的自然语言指令,自己能完成的动作,一些先验知识以及目前任务已完成状况判断下一个行动及其参数
                                     能完成的动作列表:
+                                    <动作列表>
                                     1. qa(): 用户问问题，我回答
                                         输入: 无
                                         功能: 先提醒用户问问题，然后听问题，最后回答该问题
-                                        输出: ["qa", ""]
                                     
                                     2. announce(message): 语音播报信息
-                                        输入: message - 要播报的信息
+                                        输入: message:str - 要播报的信息
                                         功能: 通过语音播报指定信息
-                                        输出: ["announce", message]
                                     
                                     3. goto(location): 移动到指定位置
-                                        输入: location - 目标位置
-                                        功能: 控制机器人移动到指定位置
-                                        输出: ["goto", location]
+                                        输入: location:str - 目标位置
+                                        功能: 控制机器人移动到指定的已知位置
                                     
                                     4. grasp(target): 抓取物体
-                                        输入: target - 要抓取的目标物体
+                                        输入: target:str - 要抓取的目标物体
                                         功能: 控制机械臂抓取指定物体
-                                        输出: ["grasp", target]
-
-                                    先验知识:
-                                        location: bed, dresser, desk, dining table, storage box, wine rack, sofa, side table, TV cabinet, storage table, sink, dishwasher, bedroom, dining room, living room, kitchen
-                                        target: chip, biscuit, bread, sprite, cola, water, dishsoap, handwash, shampoo, cookie, lays
+                                    </动作列表>
                                     
+                                    <先验知识>
+                                        <已知位置>
+                                        bed, dresser, desk, dining table, storage box, wine rack, sofa, side table, TV cabinet, storage table, sink, dishwasher, bedroom, dining room, living room, kitchen
+                                        </已知位置>
+                                        <已知物体>
+                                        chip, biscuit, bread, sprite, cola, water, dishsoap, handwash, shampoo, cookie, lays
+                                        </已知物体>
+                                    </先验知识>
                                     例子1:
+                                    输入：
                                     自然语言指令:到厨房拿可乐并放到客厅里
                                     当前任务完成状态:已经走到柜子面前
-                                    你作为决策器需要根据以上资料判断下一步行动,在这个例子中你下一步应该调用grasp(cola)
-                                    故应该输出
+                                    输出：
                                     {
+                                        "reasoning" : "I have already reached the shelf in the kitchen, I should grasp the cola next",
                                         "action": "grasp",
                                         "parameters": "cola"
                                     }
                                     
                                     例子2:
+                                    输入：
                                     自然语言指令:到客厅找到洗发水,送到厨房
                                     当前完成状态:已经抓取洗发水
-                                    你作为决策器需要根据以上资料判断下一步行动,在这个例子中你下一步应该调用goto(kitchen)来移动到厨房
-                                    故应该输出
+                                    输出：
                                     {
+                                        "reasoning": "I have grasped the shampoo. I should now goto the kitechn",
                                         "action": "goto",
                                         "parameters": "kitchen"
                                     }
-                                """
+                                """)
                     },
                     {"role": "user", "content": prompt}
                 ],
