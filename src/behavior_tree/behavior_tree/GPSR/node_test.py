@@ -245,8 +245,6 @@ def main():
             break
         time.sleep(0.5)
 
-POSE_DICT = {}
-
 class CheckAndWriteAction(py_trees.behaviour.Behaviour):
     def __init__(self, 
                  expected_action: str, 
@@ -262,6 +260,7 @@ class CheckAndWriteAction(py_trees.behaviour.Behaviour):
         self.blackboard.register_key("next_action_parameters", access=py_trees.common.Access.READ)
         self.blackboard.register_key("pose_target", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key("target_object", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key("target_object_name", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key("announce_text", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key("task_status", access=py_trees.common.Access.WRITE)
 
@@ -282,6 +281,7 @@ class CheckAndWriteAction(py_trees.behaviour.Behaviour):
         elif self.expected_action == "grasp":
             if param in self.possible_objects:
                 self.blackboard.target_object = self.possible_objects.get(param)
+                self.blackboard.target_object_name = param
             else:
                 self.logger.error(f"Unknown object for grasp: {param}")
                 return py_trees.common.Status.FAILURE
