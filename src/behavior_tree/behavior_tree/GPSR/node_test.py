@@ -47,9 +47,13 @@ Available actions:
    - Input: target (string) – a known object
    - Behavior: Use the robot arm to grasp the specified object
 
-5. find_waving()
+5. goto_waving()
    - Input: None
    - Behavior: finds and goes to the person waving
+
+6. finished()
+   - Input: None
+   - Behavior: marks this task as finished
 
 Prior knowledge:
 - Known locations: ["bed", "dresser", "desk", "dining table", "storage box", "wine rack", "sofa", "side table", "TV cabinet", "storage table", "sink", "dishwasher", "bedroom", "dining room", "living room", "kitchen"]
@@ -71,7 +75,8 @@ class DecideNextAction(py_trees.behaviour.Behaviour):
             "announce",
             "goto",
             "grasp",
-            "find_waving"
+            "goto_waving",
+            "finished"
         ]
         self.thread = None
         self.response = None
@@ -192,6 +197,7 @@ class CheckAndWriteAction(py_trees.behaviour.Behaviour):
         self.blackboard.register_key("pose_target", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key("target_object", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key("announce_text", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key("task_status", access=py_trees.common.Access.WRITE)
 
     def update(self):
         action = self.blackboard.next_action
@@ -212,12 +218,32 @@ class CheckAndWriteAction(py_trees.behaviour.Behaviour):
 
         elif self.expected_action == "announce":
             self.blackboard.announce_text = param
+        
+        # assume failed. update later if successful
+        self.blackboard.task_status = f'{action}({str(param)}) failed'
 
         return py_trees.common.Status.SUCCESS
 
+class WriteActionSuccessful(py_trees.behaviour.Behaviour):
+    def __init__(self, expected_action: str, name=None):
+        super().__init__(name or f"WriteActionSuccessful-{expected_action}")
+        self.expected_action = expected_action
+        self.blackboard = py_trees.blackboard.Client(name=self.name)
+        self.blackboard.register_key("next_action", access=py_trees.common.Access.READ)
+        self.blackboard.register_key("next_action_parameters", access=py_trees.common.Access.READ)
+        self.blackboard.register_key("task_status", access=py_trees.common.Access.WRITE)
+
+    def update(self):
+        action = self.blackboard.next_action
+        param = self.blackboard.next_action_parameters
+        
+        # update to successful
+        self.blackboard.task_status = f'{action}({str(param)}) successful'
+
+        return py_trees.common.Status.SUCCESS
 
 def create_action_tree():
-    root = py_trees.composites.Sequence("Root", True)
+    execute_one_step = py_trees.composites.Sequence("Root", True)
 
     decide_node = DecideNextAction()
 
@@ -227,15 +253,16 @@ def create_action_tree():
     goto_branch = py_trees.composites.Sequence("Goto", True)
     goto_branch.add_children([
         CheckAndWriteAction("goto"),
-        # BtNode_GotoAction()
-        py_trees.behaviours.Success("goto")
+        py_trees.behaviours.Success("goto"),
+        WriteActionSuccessful("goto")
     ])
 
     # Goto waving
     waving_branch = py_trees.composites.Sequence("GotoWaving", True)
     waving_branch.add_children([
         CheckAndWriteAction("goto_waving"),
-        py_trees.behaviours.Success("goto waving")
+        py_trees.behaviours.Success("goto waving"),
+        WriteActionSuccessful("goto_waving")
         # BtNode_GoToWaving()
     ])
 
@@ -243,7 +270,8 @@ def create_action_tree():
     grasp_branch = py_trees.composites.Sequence("Grasp", True)
     grasp_branch.add_children([
         CheckAndWriteAction("grasp"),
-        py_trees.behaviours.Success("grasp")
+        py_trees.behaviours.Success("grasp"),
+        WriteActionSuccessful("grasp")
         # BtNode_Grasp()
     ])
 
@@ -251,7 +279,8 @@ def create_action_tree():
     announce_branch = py_trees.composites.Sequence("Announce", True)
     announce_branch.add_children([
         CheckAndWriteAction("announce"),
-        py_trees.behaviours.Success("announce")
+        py_trees.behaviours.Success("announce"),
+        WriteActionSuccessful("announce")
         # BtNode_Announce()
     ])
 
@@ -259,7 +288,8 @@ def create_action_tree():
     qa_branch = py_trees.composites.Sequence("QA", True)
     qa_branch.add_children([
         CheckAndWriteAction("qa"),
-        py_trees.behaviours.Success("QA")
+        py_trees.behaviours.Success("QA"),
+        WriteActionSuccessful("qa")
         # BtNode_QA()
     ])
 
@@ -271,10 +301,16 @@ def create_action_tree():
         qa_branch
     ])
 
-    root.add_children([decide_node, action_selector])
-    return root
+    finished_guard = CheckAndWriteAction("finished", name="check if finished")
+    execute_action = py_trees.composites.Selector(
+        "execute action selector", 
+        True, 
+        [py_trees.decorators.SuccessIsFailure("S is F", action_selector), finished_guard]
+        )
 
-
+    execute_one_step.add_children([decide_node, execute_action])
+    execute_action = py_trees.decorators.Retry("Retry until success", execute_one_step, num_failures=10)
+    return execute_action
 
 def main_ros2():
     rclpy.init()
@@ -285,15 +321,20 @@ def main_ros2():
     bb.register_key("past_actions", access=py_trees.common.Access.WRITE)
 
     bb.instruction = "Find the person waving in the living room and answer their question"
-    bb.task_status = "goto('living room') successful"
-    bb.past_actions = []
+    bb.task_status = "goto_waving() successful"
+    bb.past_actions = ["got(living_room)", "goto_waving()"]
 
     # # Build tree
     # root = py_trees.composites.Sequence("Root", True)
     # decider = DecideNextAction()
     # root.add_child(decider)
 
-    root = create_action_tree()
+    root = py_trees.composites.Sequence("Root", True)
+    execute_action = create_action_tree()
+    root.add_children([
+        execute_action,
+        py_trees.behaviours.Running("running")
+    ])
 
     print("=== Running Behavior Tree ===")
     # Wrap the tree in a ROS-friendly interface
