@@ -180,6 +180,102 @@ def main():
             break
         time.sleep(0.5)
 
+POSE_DICT = {}
+
+class CheckAndWriteAction(py_trees.behaviour.Behaviour):
+    def __init__(self, expected_action: str, name=None):
+        super().__init__(name or f"CheckAndWrite-{expected_action}")
+        self.expected_action = expected_action
+        self.blackboard = py_trees.blackboard.Client(name=self.name)
+        self.blackboard.register_key("next_action", access=py_trees.common.Access.READ)
+        self.blackboard.register_key("next_action_parameters", access=py_trees.common.Access.READ)
+        self.blackboard.register_key("pose_target", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key("target_object", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key("announce_text", access=py_trees.common.Access.WRITE)
+
+    def update(self):
+        action = self.blackboard.next_action
+        if action != self.expected_action:
+            return py_trees.common.Status.FAILURE
+
+        param = self.blackboard.next_action_parameters
+
+        if self.expected_action == "goto":
+            if param in POSE_DICT or True:
+                self.blackboard.pose_target = POSE_DICT.get(param)
+            else:
+                self.logger.error(f"Unknown location for goto: {param}")
+                return py_trees.common.Status.FAILURE
+
+        elif self.expected_action == "grasp":
+            self.blackboard.target_object = param
+
+        elif self.expected_action == "announce":
+            self.blackboard.announce_text = param
+
+        return py_trees.common.Status.SUCCESS
+
+
+def create_action_tree():
+    root = py_trees.composites.Sequence("Root", True)
+
+    decide_node = DecideNextAction()
+
+    action_selector = py_trees.composites.Selector("ActionSelector", True)
+
+    # Goto
+    goto_branch = py_trees.composites.Sequence("Goto", True)
+    goto_branch.add_children([
+        CheckAndWriteAction("goto"),
+        # BtNode_GotoAction()
+        py_trees.behaviours.Success("goto")
+    ])
+
+    # Goto waving
+    waving_branch = py_trees.composites.Sequence("GotoWaving", True)
+    waving_branch.add_children([
+        CheckAndWriteAction("goto_waving"),
+        py_trees.behaviours.Success("goto waving")
+        # BtNode_GoToWaving()
+    ])
+
+    # Grasp
+    grasp_branch = py_trees.composites.Sequence("Grasp", True)
+    grasp_branch.add_children([
+        CheckAndWriteAction("grasp"),
+        py_trees.behaviours.Success("grasp")
+        # BtNode_Grasp()
+    ])
+
+    # Announce
+    announce_branch = py_trees.composites.Sequence("Announce", True)
+    announce_branch.add_children([
+        CheckAndWriteAction("announce"),
+        py_trees.behaviours.Success("announce")
+        # BtNode_Announce()
+    ])
+
+    # QA
+    qa_branch = py_trees.composites.Sequence("QA", True)
+    qa_branch.add_children([
+        CheckAndWriteAction("qa"),
+        py_trees.behaviours.Success("QA")
+        # BtNode_QA()
+    ])
+
+    action_selector.add_children([
+        goto_branch,
+        waving_branch,
+        grasp_branch,
+        announce_branch,
+        qa_branch
+    ])
+
+    root.add_children([decide_node, action_selector])
+    return root
+
+
+
 def main_ros2():
     rclpy.init()
     # Setup blackboard values
@@ -192,24 +288,26 @@ def main_ros2():
     bb.task_status = "goto('living room') successful"
     bb.past_actions = []
 
-    # Build tree
-    root = py_trees.composites.Sequence("Root", True)
-    decider = DecideNextAction()
-    root.add_child(decider)
+    # # Build tree
+    # root = py_trees.composites.Sequence("Root", True)
+    # decider = DecideNextAction()
+    # root.add_child(decider)
+
+    root = create_action_tree()
 
     print("=== Running Behavior Tree ===")
     # Wrap the tree in a ROS-friendly interface
     tree = py_trees_ros.trees.BehaviourTree(
         root=root,
         # node=node,
-        unicode_tree_debug=True
+        # unicode_tree_debug=True
     )
 
     # Setup and spin
     tree.setup(timeout=15, node_name="root_node")
     def print_tree(tree):
         print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        print(py_trees.display.unicode_blackboard())
+        # print(py_trees.display.unicode_blackboard())
     tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
 
     rclpy.spin(tree.node)
