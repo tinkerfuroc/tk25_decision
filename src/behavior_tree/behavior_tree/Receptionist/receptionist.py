@@ -186,7 +186,7 @@ def createGetDrinkAndSpeak(key_interest=None):
     root.add_child(BtNode_Announce(name="announce position of favorite drink", bb_source=None, message="Your favorite drink is in on the left"))
     return root
 
-warnings.warn("drink can no longer be asked during entry in Robocup 2025", DeprecationWarning)
+# warnings.warn("drink can no longer be asked during entry in Robocup 2025", DeprecationWarning)
 def createGetNameAndDrink():
     root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
     root.add_child(BtNode_Announce(name="Reminder of beep", bb_source=None, message="Hi I am Tinker, please speak to me after the beep sound."))
@@ -201,7 +201,6 @@ def createRegisterFeatureOnly():
     root.add_child(BtNode_Announce(name="Indicate follow", bb_source=None, message="Follow me"))
     return root
 
-warnings.warn("drink might not have been recorded")
 def createRegisterFeature():
     root = py_trees.composites.Sequence(name="Register features of person in front", memory=True)
     root.add_child(BtNode_Announce(name="Ask to stand in front", bb_source=None, message="Stand one meter in front of me. Thank you"))
@@ -288,7 +287,7 @@ def createSecondIntroductionsSimple():
     root.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
     return root
 
-warnings.warn("deprecated for Robocup 2025", DeprecationWarning)
+# warnings.warn("deprecated for Robocup 2025", DeprecationWarning)
 # def createFirstIntroductions():
 #     first_introductions = py_trees.composites.Sequence(name="First introductions", memory=True)
 #     first_introductions.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=90.0, y=45.0, speed=0.0))
@@ -494,11 +493,14 @@ def createReceptionist():
     ))
 
     root.add_child(createGetDrinkAndSpeak(KEY_GUEST1_INTEREST))
+    
 
     # go to sofa now
     root.add_child(createToSofa(None))
     root.add_child(createAnnounceAndScanSofa())
     root.add_child(createFirstIntroductionsSimple())
+    # root.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=0.0, y=20.0, speed=0.0))
+
 
     ############ first guest completed, now for second guest ###########
 
@@ -508,9 +510,10 @@ def createReceptionist():
     root.add_child(createGetName())
     root.add_child(createGetInterest(KEY_GUEST2_INTEREST))
     root.add_child(createRegisterFeatureOnly())
-    
-    to_drink_area = py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_TABLE_POSE), num_failures=5)
-    root.add_child(to_drink_area)
+    parallel_to_drink_area = py_trees.composites.Parallel("Guess2 going to table", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_to_drink_area.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_TABLE_POSE), num_failures=5))
+    parallel_to_drink_area.add_child(BtNode_Introduce(name="describe first guest features", key_person=KEY_PERSONS, target_id=2, introduced_id=1, walking=True))
+    root.add_child(parallel_to_drink_area)
     root.add_child(createGetDrinkAndSpeak(KEY_GUEST2_INTEREST))
 
     # go to sofa now

@@ -54,6 +54,7 @@ KEY_OBJECT = "object"
 KEY_MASTER_NAME = "master_name"
 KEY_FOLLOW_DISTANCE = "follow_distance"
 KEY_FOLLOW_TARGET_GOAL = "follow_target"
+KEY_MASTER_POSITION = "master_position"
 
 
 
@@ -81,9 +82,9 @@ def createFollow():
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
     root.add_child(BtNode_TurnPanTilt(name="Move pan tilt", x=0.0, y=45.0, speed=0.0))
     parallel_follow = py_trees.composites.Parallel("Follow", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    
-    get_master_pos = py_trees.decorators.Retry(name="retry", child=BtNode_HumanFollowingAction(name="human follow", action_name=follow_action_name), num_failures=5)
-    goto_master = py_trees.decorators.Retry("retry", BtNode_GotoAction(name="Goto action", key="master_position", action_name="navigate_to_pose", wait_for_server_timeout_sec=-3), 9999)
+
+    get_master_pos = py_trees.decorators.Retry(name="retry", child=BtNode_HumanFollowingAction(name="human follow", action_name=follow_action_name, bb_dest=KEY_MASTER_POSITION), num_failures=5)
+    goto_master = py_trees.decorators.Retry("retry", BtNode_GotoAction(name="Goto action", key=KEY_MASTER_POSITION, action_name="navigate_to_pose", wait_for_server_timeout_sec=-3), 9999)
     
     parallel_follow.add_child(py_trees.decorators.Repeat("repeat", get_master_pos, 9999))
     parallel_follow.add_child(py_trees.decorators.Repeat("repeat", goto_master, 9999))

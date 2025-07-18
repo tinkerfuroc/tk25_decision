@@ -9,8 +9,8 @@ from .Receptionist.receptionist import createReceptionist
 from .grasp_intel_demo.grasp_intel import create_demo
 from .grasp_intel_demo.grasp_audio import createGraspAudio
 from .ServeBreakfast.serve_breakfast import createServeBreakfast
-# from .StoringGroceries.storing_groceries import createStoreGroceries
-# from .StoringGroceries.storing_groceries_place_only import createStoreGroceriesPlaceOnly
+from .StoringGroceries.storing_groceries import createStoreGroceries
+from .StoringGroceries.storing_groceries_place_only import createStoreGroceriesPlaceOnly
 from .Inspection.inspection import createInspection
 from .Constants import PRINT_BLACKBOARD, PRINT_DEBUG
 
@@ -20,7 +20,7 @@ def grasp_intel():
     root = create_demo()
     return root
 
-# def store_groceries():
+def store_groceries():
     rclpy.init(args=None)
 
     root = createStoreGroceries()
@@ -359,9 +359,9 @@ def inspection():
 #         tree.shutdown()
 #         rclpy.try_shutdown()
 
-# def draw_follow():
-#     root = createFollowPersonAudio(action=True)
-#     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
+def draw_follow():
+    root = createFollowPerson(action=True)
+    py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
 def draw_receptionist():
     root = createReceptionist()
@@ -371,18 +371,18 @@ def draw_serve_breakfast():
     root = createServeBreakfast()
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
-# def draw_storing_groceries():
+def draw_storing_groceries():
     root = createStoreGroceries()
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
-# def draw_storing_groceries_placing_only():
+def draw_storing_groceries_placing_only():
     root = createStoreGroceriesPlaceOnly()
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
 def main():
-    # draw_follow()
+    draw_follow()
     # draw_receptionist()
-    draw_serve_breakfast()
+    # draw_serve_breakfast()
     # draw_storing_groceries()
     # draw_storing_groceries_placing_only()
 

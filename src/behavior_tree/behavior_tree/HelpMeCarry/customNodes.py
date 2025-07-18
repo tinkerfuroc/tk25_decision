@@ -119,6 +119,7 @@ class BtNode_HumanFollowingAction(ActionHandler):
     def __init__(self, 
                  name: str, 
                  action_name: str = "human_following", 
+                 bb_dest = None,
                  wait_for_server_timeout_sec: float = -3
                  ):
         super().__init__(name, HumanFollowing, action_name, "", wait_for_server_timeout_sec)
@@ -127,7 +128,7 @@ class BtNode_HumanFollowingAction(ActionHandler):
         self.bb = self.attach_blackboard_client(name="HumanFollowingParams")
         self.bb.register_key("master_name", access=py_trees.common.Access.READ)
         self.bb.register_key("follow_distance", access=py_trees.common.Access.READ)
-        self.bb.register_key("master_position", access=py_trees.common.Access.WRITE)
+        self.bb.register_key(bb_dest, access=py_trees.common.Access.WRITE)
         
         self.feedback_message = "Initialized"
 
@@ -169,8 +170,16 @@ class BtNode_HumanFollowingAction(ActionHandler):
         # Write master position to blackboard if available
         if feedback.current_master_pose:
             try:
-                self.bb.set("master_position", feedback.current_master_pose)
-                # pos = feedback.current_master_pose.pose.position
-                self.feedback_message = f"Master at {feedback.current_master_pose}" 
+                if not feedback.current_master_pose.header.frame_id:
+                    feedback.current_master_pose.header.frame_id = "map"  # or "odom" depending on your system
+                
+                self.bb.set(self.bb_dest, feedback.current_master_pose)
+
+                # Optional: log detailed feedback
+                pos = feedback.current_master_pose.pose.position
+                self.feedback_message = (
+                    f"Master at ({pos.x:.2f}, {pos.y:.2f}, {pos.z:.2f}) "
+                    f"in frame [{feedback.current_master_pose.header.frame_id}]"
+                )
             except Exception as e:
                 self.feedback_message = f"Blackboard error: {str(e)}"
