@@ -1,5 +1,6 @@
 from typing import Any
 import py_trees
+import textwrap
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.messages import ObjectDetection, Categorize
@@ -97,6 +98,9 @@ class BtNode_CategorizeGrocery(ActionHandler):
                  bb_target_frame: str,
                  bb_key_result_point: str,
                  bb_key_env_points: str,
+                 bb_key_reason: str,
+                 bb_key_shelf_left: str,
+                 bb_key_shelf_right: str,
                  action_name: str = 'grocery_categorize',
                  wait_for_server_timeout_sec: float = -3
                  ):
@@ -124,6 +128,16 @@ class BtNode_CategorizeGrocery(ActionHandler):
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_target_frame)
         )
         self.blackboard.register_key(
+            key="shelf_left",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_shelf_left)
+        )
+        self.blackboard.register_key(
+            key="shelf_right",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_shelf_right)
+        )
+        self.blackboard.register_key(
             key="env_points",
             access=py_trees.common.Access.WRITE,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_env_points)
@@ -133,6 +147,12 @@ class BtNode_CategorizeGrocery(ActionHandler):
             access=py_trees.common.Access.WRITE,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_result_point)
         )
+        self.blackboard.register_key(
+            key="reason",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_reason)
+        )
+
 
     def send_goal(self):
         try:
@@ -142,6 +162,8 @@ class BtNode_CategorizeGrocery(ActionHandler):
             goal.img_table = self.blackboard.image
             goal.segment_object = self.blackboard.segmentation
             goal.target_frame = self.blackboard.target_frame
+            goal.pt_shelf_left = self.blackboard.shelf_left
+            goal.pt_shelf_right = self.blackboard.shelf_right
             self.send_goal_request(goal)
             self.logger.debug(f"Sent goal to categorize grocery with prompt: {self.blackboard.prompt}")
             self.feedback_message = f"Sent goal to categorize grocery with prompt: {self.blackboard.prompt}"
@@ -158,6 +180,7 @@ class BtNode_CategorizeGrocery(ActionHandler):
             result = self.result_message.result
             self.blackboard.result_point = result.place_point
             self.blackboard.env_points = result.env_points
+            self.blackboard.reason = result.place_reason
             self.feedback_message = f"Categorize grocery succeeded with target layer {result.shelf_layer} and target point {result.place_point}"
             return py_trees.common.Status.SUCCESS
     
@@ -173,26 +196,41 @@ class BtNode_GraspWithPose(BtNode_Grasp):
     def __init__(self, name: str, 
                  bb_key_vision_res: str, 
                  bb_key_pose: str, 
-                 service_name: str = "grasp"):
-        super().__init__(name, bb_key_vision_res, service_name)
-        self.blackboard = self.attach_blackboard_client(name=self.name)
+                 action_name: str = "grasp"):
+        super().__init__(name, bb_key_vision_res, action_name)
         self.blackboard.register_key(
             key="pose",
             access=py_trees.common.Access.WRITE,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_pose)
         )
     
-    def update(self):
-        self.logger.debug(f"Update Grasp")
-        if self.response.done():
-            if self.response.result().success:
-                self.blackboard.pose = self.response.result().grasp_pose
-                self.feedback_message = f"Grasp Successful"
-                return py_trees.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Grasp failed with status {self.response.result().stage}: {self.response.result().error_msg}"
+    def process_result(self):
+        try:
+            if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED and False:
+                self.feedback_message = f"Grasp feedback received with status: {self.result_status}"
+                self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
+                self.logger.debug(textwrap.dedent("""       
+            'STATUS_UNKNOWN': 0,
+            'STATUS_ACCEPTED': 1,
+            'STATUS_EXECUTING': 2,
+            'STATUS_CANCELING': 3,
+            'STATUS_SUCCEEDED': 4,
+            'STATUS_CANCELED': 5,
+            'STATUS_ABORTED': 6,"""))
                 return py_trees.common.Status.FAILURE
-        else:
-            self.feedback_message = "Still grasping..."
-            return py_trees.common.Status.RUNNING
-        
+            else:
+                self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
+                result = self.result_message.result
+                if result.success:
+                    self.blackboard.pose = result.grasp_pose
+                    self.feedback_message = f"Grasp completed received with success: {result.success}"
+                    self.logger.debug(f"Grasp completed received with success")
+                    return py_trees.common.Status.SUCCESS
+                else: 
+                    self.feedback_message = f"Grasp completed received with stage: {result.stage} and error message {result.error_msg}"
+                    self.logger.debug(f"Grasp completed received with stage: {result.stage} and error message {result.error_msg}")
+                    return py_trees.common.Status.FAILURE
+        except Exception as e:
+            self.feedback_message = f"Failed to process grasp result: {e}"
+            self.logger.debug(f"Failed to process grasp result: {e}")
+            return py_trees.common.Status.FAILURE

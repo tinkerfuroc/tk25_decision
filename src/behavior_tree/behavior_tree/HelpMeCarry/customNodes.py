@@ -11,6 +11,7 @@ import action_msgs.msg as action_msgs  # GoalStatus
 from typing import Any
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import Pose, PoseStamped
+from behavior_tree.messages import HumanFollowing
 
 class BtNode_FindPointedLuggage(ServiceHandler):
     def __init__(self, 
@@ -40,7 +41,7 @@ class BtNode_FindPointedLuggage(ServiceHandler):
 
     def initialise(self):
         request = ObjectDetection.Request()
-        request.prompt = "person, luggage"
+        request.prompt = "person , bag"
         request.flags = "find_pointed_object"
         request.camera = "orbbec"
         request.target_frame = "base_link"
@@ -60,14 +61,15 @@ class BtNode_FindPointedLuggage(ServiceHandler):
 
         for obj in result.objects:
             if obj.being_pointed == 1 or obj.being_pointed == 2:
-                self.blackboard.point = PointStamped
+                self.blackboard.point = PointStamped()
                 self.blackboard.point.point = obj.centroid
-                self.blackboard.point.header = result.header
+                self.blackboard.point.header = result.header    
+                self.blackboard.point.point.x -= 0.6
 
                 if obj.being_pointed == 1:
-                    self.blackboard.announce_msg = "You are pointing to your left"
+                    self.blackboard.announce_msg = "You are pointing to the bag on your left"
                 else:
-                    self.blackboard.announce_msg = "You are pointing to your right"
+                    self.blackboard.announce_msg = "You are pointing to the bag on your right"
 
                 self.feedback_message = f"Pointed luggage found and stored in blackboard key '{self.bb_key}'"
                 return py_trees.common.Status.SUCCESS
@@ -113,3 +115,62 @@ class BtNode_GotoAction(ActionHandler):
         self.action_status = 0
         self.process_feedback(feedback)
 
+class BtNode_HumanFollowingAction(ActionHandler):
+    def __init__(self, 
+                 name: str, 
+                 action_name: str = "human_following", 
+                 wait_for_server_timeout_sec: float = -3
+                 ):
+        super().__init__(name, HumanFollowing, action_name, "", wait_for_server_timeout_sec)
+        
+        # Separate keys for each parameter
+        self.bb = self.attach_blackboard_client(name="HumanFollowingParams")
+        self.bb.register_key("master_name", access=py_trees.common.Access.READ)
+        self.bb.register_key("follow_distance", access=py_trees.common.Access.READ)
+        self.bb.register_key("master_position", access=py_trees.common.Access.WRITE)
+        
+        self.feedback_message = "Initialized"
+
+    def send_goal(self):
+        try:
+         
+            goal = HumanFollowing.Goal()
+            goal.start_following = True
+            goal.master_name = self.bb.get("master_name")
+            goal.follow_distance = self.bb.get("follow_distance")
+            
+            self.send_goal_request(goal)
+            self.feedback_message = "Sent human following goal request"
+            return py_trees.common.Status.RUNNING
+        
+        except KeyError as e:
+            self.feedback_message = f"Missing parameter: {str(e)}"
+            return py_trees.common.Status.FAILURE
+
+    def process_result(self):
+        if self.result_status == action_msgs.GoalStatus.STATUS_ABORTED:
+            self.feedback_message = "Human following action aborted"
+            return py_trees.common.Status.FAILURE
+        else:
+            self.feedback_message = "Human following completed successfully"
+            return py_trees.common.Status.SUCCESS
+
+    def feedback_callback(self, msg: Any):
+        feedback = msg.feedback
+        self.last_feedback_time = time.time()
+        
+        # Update feedback message
+        self.feedback_message = (
+            f"State: {feedback.current_state}, "
+            f"Master detected: {feedback.master_detected}, "
+            f"Confidence: {feedback.tracking_confidence:.2f}"
+        )
+        
+        # Write master position to blackboard if available
+        if feedback.current_master_pose:
+            try:
+                self.bb.set("master_position", feedback.current_master_pose)
+                # pos = feedback.current_master_pose.pose.position
+                self.feedback_message = f"Master at {feedback.current_master_pose}" 
+            except Exception as e:
+                self.feedback_message = f"Blackboard error: {str(e)}"

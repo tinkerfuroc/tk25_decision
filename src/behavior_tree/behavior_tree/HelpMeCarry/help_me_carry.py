@@ -1,11 +1,12 @@
 import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
+from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_GoToLuggage
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.Vision import BtNode_FindObj
+from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_TurnPanTilt
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_GripperAction
 from behavior_tree.StoringGroceries.customNodes import BtNode_GraspWithPose
+from behavior_tree.HelpMeCarry.customNodes import BtNode_HumanFollowingAction
 from .customNodes import BtNode_FindPointedLuggage
 from .Track import createFollowPerson
 
@@ -16,18 +17,23 @@ from std_msgs.msg import Header
 import rclpy
 
 POS_START = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=-2.6210129261016846, y=-2.6210129261016846, z=0.0),
-                                  orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0))
+                        pose=Pose(position=Point(x=0.0, y=0.0, z=0.0),
+                                  orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0))
                         )
 
 # 定义机械臂姿态
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
-ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
+ARM_POS_SCAN = [x / 180 * math.pi for x in [0.0, 0.0, 0.0, 0.0, 0.0, -45.0, 0.0]]
 ARM_POS_SCAN2 = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
 ARM_POS_SCAN3 = [x / 180 * math.pi for x in [0.0, -50.0, 0.0, 66.0, 0.0, 55.0, 0.0]]
+ARM_POS_SCAN = [x / 180 * math.pi for x in [9999.0, -23.0, 0.0, 0.0, 0.0, -76.0, 1.0]]
 
 
 KEY_POS_START = "pose_start"
+
+MASTER_NAME = "master"
+FOLLOW_DISTANCE = 2.0  # 跟随距离
+
 
 # 定义黑板键值
 KEY_ARM_SCAN = "arm_scan"
@@ -38,15 +44,24 @@ KEY_ARM_NAVIGATING = "arm_navigating"
 KEY_LUGGAGE_DETECTION = "luggage_detection"
 KEY_PROMPT = "prompt"
 KEY_GOAL = "goal"  # 用于导航的目标位置
+KEY_GOAL_TMP = "goal_tmp"
 
 KEY_ANNOUNCE_MSG = "announce_msg"
 KEY_GRASP_POSE = "grasp_pose"
 KEY_OBJECT = "object"
 
+# 定义follow的目标位置键值
+KEY_MASTER_NAME = "master_name"
+KEY_FOLLOW_DISTANCE = "follow_distance"
+KEY_FOLLOW_TARGET_GOAL = "follow_target"
+
+
+
 # 服务名称
 arm_service_name = "arm_joint_service"
 grasp_service_name = "grasp"
 point_target_frame = "base_link"
+follow_action_name = "human_following"
 
 def createConstantWriter():
     """初始化常量"""
@@ -57,14 +72,33 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard("Write Arm Navigating", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
     root.add_child(BtNode_WriteToBlackboard("Write Prompt", bb_namespace="", bb_source=None, bb_key=KEY_PROMPT, object="green bag"))
     root.add_child(BtNode_WriteToBlackboard("Write starting point", bb_namespace="", bb_source=None, bb_key=KEY_POS_START, object=POS_START))
+    root.add_child(BtNode_WriteToBlackboard("Write Master name", bb_namespace="", bb_source=None, bb_key=KEY_MASTER_NAME, object=MASTER_NAME))
+    root.add_child(BtNode_WriteToBlackboard("Write Follow Distance", bb_namespace="", bb_source=None, bb_key=KEY_FOLLOW_DISTANCE, object=FOLLOW_DISTANCE))
+    return root
+
+def createFollow():
+    root = py_trees.composites.Sequence(name="Follow", memory=True)
+    # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
+    root.add_child(BtNode_TurnPanTilt(name="Move pan tilt", x=0.0, y=45.0, speed=0.0))
+    parallel_follow = py_trees.composites.Parallel("Follow", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    
+    get_master_pos = py_trees.decorators.Retry(name="retry", child=BtNode_HumanFollowingAction(name="human follow", action_name=follow_action_name), num_failures=5)
+    goto_master = py_trees.decorators.Retry("retry", BtNode_GotoAction(name="Goto action", key="master_position", action_name="navigate_to_pose", wait_for_server_timeout_sec=-3), 9999)
+    
+    parallel_follow.add_child(py_trees.decorators.Repeat("repeat", get_master_pos, 9999))
+    parallel_follow.add_child(py_trees.decorators.Repeat("repeat", goto_master, 9999))
+    
+    root.add_child(parallel_follow)
     return root
 
 def createFindPointedLuggage():
     """找到被指向的行李"""
     root = py_trees.composites.Sequence("Find Pointed Luggage", memory=True)
 
-    root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to starting point", KEY_POS_START), num_failures=10))
+    root.add_child(BtNode_TurnPanTilt(name="Move pan tilt", x=0.0, y=20.0, speed=0.0))
+
+    root.add_child(BtNode_MoveArmSingle("Move arm  back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to starting point", KEY_POS_START), num_failures=10))
 
     # 宣布开始找行李
     root.add_child(BtNode_Announce(name="Announce finding luggage", bb_source=None, message="Looking for luggage"))
@@ -79,28 +113,44 @@ def createFindPointedLuggage():
     
     # 宣布找到行李
     root.add_child(BtNode_Announce(name="Announce found luggage", bb_source=KEY_ANNOUNCE_MSG))
+
+    root.add_child(BtNode_MoveArmSingle(name="Move arm to grasp", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
+
+    root.add_child(BtNode_Announce(name="Announce found luggage", bb_source=None, message="Please hand the luggage to me, thank you!"))
+    root.add_child(BtNode_Announce(name="Announce found luggage", bb_source=None, message="Moving arm back"))
+
+    root.add_child(BtNode_MoveArmSingle(name="Move arm to grasp", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=True))
+
+    root.add_child(BtNode_TurnPanTilt(name="Move pan tilt", x=0.0, y=45.0, speed=0.0))
     
     return root
 
-def createNavigateToLuggage():
-    """导航到行李位置 - 整个机器人底盘移动"""
-    root = py_trees.composites.Sequence("Navigate to Luggage", memory=True)
+# def createNavigateToLuggage():
+#     """导航到行李位置 - 整个机器人底盘移动"""
+#     root = py_trees.composites.Sequence("Navigate to Luggage", memory=True)
     
-    # # 宣布开始导航
-    root.add_child(BtNode_Announce(name="Announce navigating", bb_source=None, message="Navigating to pick up luggage now"))
+#     # # 宣布开始导航
+#     root.add_child(BtNode_Announce(name="Announce navigating", bb_source=None, message="Going to pick up luggage"))
     
-    # 导航到行李位置 - 整个机器人底盘移动
-    # 这里使用KEY_GOAL作为目标位置的键值
-    root.add_child(py_trees.decorators.Retry(
-        name="Retry navigation",
-        child=BtNode_GotoAction(name="Go to luggage", key=KEY_GOAL),
-        num_failures=3
-    ))
+#     # 导航到行李位置 - 整个机器人底盘移动
+#     # 这里使用KEY_GOAL作为目标位置的键值
+#     root.add_child(BtNode_GoToLuggage(
+#         name="point frame",
+#         bb_src_key=KEY_GOAL_TMP,
+#         bb_target_key=KEY_GOAL
+#     ))
+
+#     root.add_child(py_trees.decorators.Retry(
+#         name="Retry navigation",
+#         child=BtNode_GotoAction(name="Go to luggage", key=KEY_GOAL),
+#         # child=BtNode_GoToLuggage(name="Go to luggage", bb_key=KEY_GOAL),
+#         num_failures=3
+#     ))
     
-    # 宣布到达目标位置
-    root.add_child(BtNode_Announce(name="Announce arrived", bb_source=None, message="I have arrived at the luggage location"))
+#     # # 宣布到达目标位置
+#     # root.add_child(BtNode_Announce(name="Announce arrived", bb_source=None, message="I have arrived at the luggage location"))
     
-    return root
+#     return root
 
 def createGraspLuggage(arm_pose_key):
     """到达位置后再次查找行李 - 使用FindObj而不是ScanFor"""
@@ -126,7 +176,7 @@ def createGraspLuggage(arm_pose_key):
     # add parallel node to grasp and announcing it is grasping
     parallel_grasp = py_trees.composites.Parallel("Parallel Grasp", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_grasp.add_child(BtNode_Announce(name="Announce grasping", bb_source="", message=f"grasping bag"))
-    parallel_grasp.add_child(BtNode_GraspWithPose(f"Grasp object on table", bb_key_vision_res=KEY_OBJECT, bb_key_pose=KEY_GRASP_POSE, service_name=grasp_service_name))
+    parallel_grasp.add_child(BtNode_GraspWithPose(f"Grasp luggage", bb_key_vision_res=KEY_OBJECT, bb_key_pose=KEY_GRASP_POSE, action_name=grasp_service_name))
     
     # 宣布找到行李
     root.add_child(BtNode_Announce(name="Announce found luggage locally", bb_source=None, message="Grasped."))
@@ -152,7 +202,7 @@ def createGraspLuggage(arm_pose_key):
 #         child=BtNode_Grasp(
 #             name="Grasp luggage",
 #             bb_source=KEY_LUGGAGE_DETECTION,
-#             service_name=grasp_service_name
+#             action_name=grasp_service_name
 #         ),
 #         num_failures=2
 #     ))
@@ -164,6 +214,8 @@ def createGraspLuggage(arm_pose_key):
 #     root.add_child(BtNode_Announce(name="Announce grasp complete", bb_source=None, message="I have successfully grasped the luggage"))
     
 #     return root
+def createReturnToStart():
+    return BtNode_GotoAction(name="ReturnToStart",key=KEY_POS_START,action_name="navigate_to_pose")
 
 def createHelpMeCarry():
     """创建"Help Me Carry"主决策树"""
@@ -171,29 +223,23 @@ def createHelpMeCarry():
     
     # 首先写入常量
     root.add_child(createConstantWriter())
+
+    # root.add_child(BtNode_GotoAction(name="walk forward", key=KEY_POS_START))
     
+    # # 导航到行李位置 - 整个机器人底盘移动
+    # navigate_luggage = py_trees.decorators.Retry(
+    #     name="Retry navigating to luggage",
+    #     child=createNavigateToLuggage(),
+    #     num_failures=2
+    # )
+    # root.add_child(navigate_luggage)
     
-    # 找到被指向的行李 - 不移动机械臂
-    find_luggage = py_trees.decorators.Retry(
-        name="Retry finding luggage",
-        child=createFindPointedLuggage(),
-        num_failures=2
-    )
-    root.add_child(find_luggage)
-    
-    # 导航到行李位置 - 整个机器人底盘移动
-    navigate_luggage = py_trees.decorators.Retry(
-        name="Retry navigating to luggage",
-        child=createNavigateToLuggage(),
-        num_failures=2
-    )
-    root.add_child(navigate_luggage)
-    
-    grasp_luggage = py_trees.composites.Selector(name="selectore", memory=True)
-    grasp_luggage.add_child(createGraspLuggage(KEY_ARM_SCAN))
-    grasp_luggage.add_child(createGraspLuggage(KEY_ARM_SCAN2))
-    grasp_luggage.add_child(createGraspLuggage(KEY_ARM_SCAN3))
-    root.add_child(grasp_luggage)
+    # grasp_luggage = py_trees.composites.Selector(name="selectore", memory=True)
+    # grasp_luggage.add_child(createGraspLuggage(KEY_ARM_SCAN))
+    # grasp_luggage.add_child(createGraspLuggage(KEY_ARM_SCAN2))
+    # grasp_luggage.add_child(createGraspLuggage(KEY_ARM_SCAN3))
+    # root.add_child(grasp_luggage)
+
     # find_at_location = py_trees.decorators.Retry(
     #     name="Retry grasping luggage at location",
     #     child=createGraspLuggage(),
@@ -201,7 +247,7 @@ def createHelpMeCarry():
     # )
     # root.add_child(find_at_location)
     
-    # # 抓取行李 - 现在才移动机械臂
+    # 抓取行李 - 现在才移动机械臂
     # grasp_luggage = py_trees.decorators.Retry(
     #     name="Retry grasping luggage",
     #     child=createGraspLuggage(),
@@ -209,9 +255,17 @@ def createHelpMeCarry():
     # )
     # root.add_child(grasp_luggage)
     
-    root.add_child(BtNode_Announce(name="Announce start follow", bb_source=None, message="I will follow you now"))
-    follow = createFollowPerson()
-    announce = py_trees.decorators.Repeat(name="repeat", child=BtNode_Announce(name="Announcement to walk slowly", bb_source=None, message="Please walk slowly as I am rather slow"), num_success=3)
-    root.add_child(py_trees.composites.Parallel(name="Parallel", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=[follow, announce]))
-    
+    # # 宣布任务完成
+    # root.add_child(BtNode_Announce(name="Announce task complete", bb_source=None, message="Please walk slowly. I will follow you now."))
+    # root.add_child(py_trees.decorators.Retry("retry", py_trees.decorators.Repeat("repeat", createFollowPerson(), 999), 999))
+
+    root.add_child(BtNode_Announce(name="Announce start follow", bb_source=None, message="Starting follow"))
+    # follow = createFollowPerson()
+    follow = createFollow()
+    announce_follow_failed = BtNode_Announce(name="Announce follow failed", bb_source=None, message="follow failed, restarting")
+    follow_seq = py_trees.composites.Selector(name="sequence", memory=True, children=[follow, announce_follow_failed])
+    # follow_repeat = py_trees.decorators.Repeat(name="Repeat", child=follow_seq, num_success=9999)
+    # root.add_child(py_trees.composites.Parallel(name="Parallel", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=follow))
+
+    root.add_child(follow_seq)
     return root

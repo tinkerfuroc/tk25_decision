@@ -42,7 +42,7 @@ def createGraspAudio():
 
     root.add_child(BtNode_MoveArm("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN))
     root.add_child(BtNode_FindObj(name="find object", bb_source=KEY_OBJECT_NAME, bb_namespace=None, bb_key=KEY_OBJECT, object=None))
-    root.add_child(BtNode_Grasp("Grasp object", bb_source=KEY_OBJECT, service_name=grasp_service_name))
+    root.add_child(BtNode_Grasp("Grasp object", bb_source=KEY_OBJECT, action_name=grasp_service_name))
     root.add_child(BtNode_MoveArm("Move arm to hand object", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_HANDING))
     # announce handing object
     root.add_child(BtNode_Announce("Announce object handed", message="Please take the object"))

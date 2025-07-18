@@ -1,6 +1,7 @@
 import asyncio
 import py_trees as pytree
 import time
+import math
 
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
@@ -18,24 +19,24 @@ class BtNode_ScanFor(ServiceHandler):
     def __init__(self, 
                  name: str,
                  bb_source: str,
-                 bb_namespace: str,
                  bb_key:str,
                  service_name : str = "object_detection",
                  object: str = None,
                  use_orbbec = True,
-                 transform_to_map = False
+                 transform_to_map = False,
+                 category = "detected objects"
                  ):
         """
         executed when creating tree diagram, therefor very minimal
         """
         super(BtNode_ScanFor, self).__init__(name, service_name, ObjectDetection)
-        self.bb_namespace = bb_namespace
         self.bb_key = bb_key
         self.bb_source = bb_source
         self.object = object
         self.use_orbbec = use_orbbec
         self.transform_to_map = transform_to_map
         self.read = True
+        self.category = category
         if self.object is not None:
             self.read = False
 
@@ -46,7 +47,7 @@ class BtNode_ScanFor(ServiceHandler):
         """
         ServiceHandler.setup(self, **kwargs)
         # attaches a blackboard (more like a shared memory section with key-value pair references) under the namespace Locations
-        self.bb_write_client = self.attach_blackboard_client(name=f"ScanFor", namespace=self.bb_namespace)
+        self.bb_write_client = self.attach_blackboard_client(name=f"ScanFor")
          # register a key with the name of the object, with this client having write access
         self.bb_write_client.register_key(self.bb_key, access=pytree.common.Access.WRITE)
 
@@ -74,6 +75,7 @@ class BtNode_ScanFor(ServiceHandler):
         request = ObjectDetection.Request()
         request.prompt = self.object
         request.flags = "scan"
+        request.category = self.category
         if self.use_orbbec:
             request.camera = "orbbec"
         else:
@@ -90,7 +92,7 @@ class BtNode_ScanFor(ServiceHandler):
         if self.response.done():
             if self.response.result().status == 0:
                 self.bb_write_client.set(self.bb_key, self.response.result(), overwrite=True)
-                self.feedback_message = f"Found object, stored to blackboard {self.bb_namespace} / {self.bb_key}"
+                self.feedback_message = f"Found object, stored to blackboard / {self.bb_key}"
                 return pytree.common.Status.SUCCESS
             else:
                 self.feedback_message = f"Scanning for {self.object} failed with error code {self.response.result().status}: {self.response.result().error_msg}"
@@ -443,6 +445,12 @@ class BtNode_FeatureMatching(ServiceHandler):
             result : FeatureMatching.Response = self.response.result()
             if result.status == 0:
                 self.blackboard.centroids = result.centroids
+                # for p in self.blackboard.centroids:
+                #     # p.point.z = 1.30
+                #     fac = p.point.x / 0.6
+                #     p.point.x /= (fac + 1e-6)
+                #     p.point.y /= (fac + 1e-6)
+                #     p.point.z = 1.3
                 self.feedback_message = f"Centroids: {result.centroids}"
                 return pytree.common.Status.SUCCESS
             else:
@@ -565,7 +573,7 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         msg = PanTiltCtrl()
         msg.x = self.x
         msg.y = self.y
-        msg.speed = self.speed
+        msg.speed = self.speed * 1.0  # convert to float, as the message expects a float
 
         self.publisher.publish(msg)
         self.logger.info(f"Publishing PanTiltCtrl with x: {self.x}, y: {self.y}, speed: {self.speed}")
@@ -592,3 +600,49 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
     async def wait_seconds(self, seconds):
         await asyncio.sleep(seconds)
         return True
+    
+
+class BtNode_TurnTo(BtNode_TurnPanTilt):
+    """
+    Turn to a specific point relevant to 'base_link'
+    """
+    def __init__(self, name: str,
+                 bb_key_persons: str,
+                 bb_key_points: str,
+                 target_id: int = 0,
+                 ):
+        super().__init__(name, x=0, y=0, speed = 0.0)
+        self.bb_key_persons = bb_key_persons
+        self.bb_key_points = bb_key_points
+        self.target_id = target_id
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="persons",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_persons)
+        )
+        self.blackboard.register_key(
+            key='points',
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_points)
+        )
+    
+    def initialise(self) -> None:
+        if len(self.blackboard.persons) <= self.target_id:
+            self.feedback_message = f"Failed to initialize point_to"
+            self.response = None
+        else:
+            point = self.blackboard.points[self.target_id]
+            self.logger.info(f"Turning to point {point.point} with id {self.target_id} from blackboard {self.bb_key_points}")
+            x = math.atan2(-point.point.y, max(point.point.x-0.25, 0.01)) 
+            # x = math.atan2(self.blackboard.point.point.y, self.blackboard.point.point.x)
+            y = 20.0
+            msg = PanTiltCtrl()
+            msg.x = x / math.pi * 180.0  # convert to degrees
+            msg.y = y
+            msg.speed = self.speed
+            self.publisher.publish(msg)
+            self.logger.info(f"Publishing PanTiltCtrl with x: {x}, y: {y}, speed: {self.speed}")
+            self.feedback_message = f"Initialized TurnTo for point {point.point} with id {self.target_id} and pan tilt angle: x: {msg.x}, y: {msg.y}, speed: {self.speed}"
+        self.cnt = 0
+        

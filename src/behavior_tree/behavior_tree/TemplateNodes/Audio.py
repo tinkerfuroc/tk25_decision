@@ -2,7 +2,7 @@ import py_trees as pytree
 from py_trees.common import Status
 
 # from tinker_decision_msgs.srv import Announce, WaitForStart
-from behavior_tree.messages import TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation
+from behavior_tree.messages import TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest
 
 from .BaseBehaviors import ServiceHandler
 
@@ -30,10 +30,10 @@ class BtNode_Announce(ServiceHandler):
         # store parameters
         self.bb_source = bb_source
         self.bb_read_client = None
-        self.announce_msg = message
+        self.given_msg = message
         # print(self.announce_msg)
 
-        if self.announce_msg is None:
+        if self.bb_source is not None:
             self.blackboard = self.attach_blackboard_client(name=self.name)
             self.blackboard.register_key(
                 key = "announcement_msg",
@@ -48,22 +48,29 @@ class BtNode_Announce(ServiceHandler):
 
         # print(self.announce_msg, self.name)
         # if no announcement message is given, set up a blackboard client to read from given key
-        if self.announce_msg is None:
+        if self.bb_source is not None:
             # self.bb_read_client = self.attach_blackboard_client(name="Announce Read")
             # self.bb_read_client.register_key("/" + self.bb_source, access=pytree.common.Access.READ)
             self.logger.debug(f"Setup Announce, reading from {self.bb_source}")
         else:
-            self.logger.debug(f"Setup Announce for message {self.announce_msg}")
+            self.logger.debug(f"Setup Announce for message {self.given_msg}")
     
     def initialise(self):
         super().initialise()
 
+        self.announce_msg = self.given_msg
+
         # if no announcement message is given, read from the blackboard and verify the information
-        if not self.announce_msg:
+        if self.bb_source is not None:
             try:
                 # self.announce_msg = self.bb_read_client.get(self.bb_source)
-                self.announce_msg = self.blackboard.announcement_msg
-                assert isinstance(self.announce_msg, str)
+                read_msg = self.blackboard.announcement_msg
+                assert isinstance(read_msg, str)
+                if self.given_msg is not None:
+                    self.announce_msg = self.given_msg + " " + read_msg
+                else:
+                    self.announce_msg = read_msg
+                
             except Exception as e:
                 self.feedback_message = f"Announce reading message failed"
                 raise e
@@ -255,5 +262,91 @@ class BtNode_GetConfirmation(ServiceHandler):
         else:
             self.feedback_message = "Still getting confirmation..."
             return pytree.common.Status.RUNNING
+        
 
+class BtNode_Listen(ServiceHandler):
+    def __init__(self,
+                 name: str,
+                 bb_dest_key: str,
+                 service_name = "listen_service",
+                 timeout : float = 5.0
+                 ):
+        super().__init__(name, service_name, Listen)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="message",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+        )
+        self.timeout = timeout
+    
+    def initialise(self):
+        request = Listen.Request()
+        request.timeout = self.timeout
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized listen"
+    
+    def update(self):
+        self.logger.debug(f"Update listen")
+        if self.response.done():
+            if self.response.result().status == 0:
+                self.feedback_message = "got command"
+                self.blackboard.message = self.response.result().message
+                return Status.SUCCESS
+            else:
+                self.feedback_message = f"Listen failed with error code {self.response.result().status}: {self.response.result().error_message}"
+                return Status.FAILURE
+        else:
+            self.feedback_message = "Still listening..."
+            return Status.RUNNING
+
+class BtNode_CompareInterest(ServiceHandler):
+    def __init__(self,
+                 name: str,
+                 bb_source_key1: str,
+                 bb_source_key2: str,
+                 bb_dest_key: str,
+                 service_name = "compare_interest_service",
+                 timeout : float = 5.0
+                 ):
+        super().__init__(name, service_name, CompareInterest)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="first_statement",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key1)
+        )
+        self.blackboard.register_key(
+            key="second_statement",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key2)
+        )
+        self.blackboard.register_key(
+            key="result",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+        )
+        self.timeout = timeout
+
+    def initialise(self):
+        request = CompareInterest.Request()
+        request.first_statement = self.blackboard.first_statement
+        request.sec_statement = self.blackboard.second_statement
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized Compare Interest"
+    
+    def update(self):
+        self.logger.debug(f"Update compare interest")
+        if self.response.done():
+            if self.response.result().status == 0:
+                self.blackboard.result = self.response.result().common_interest
+                self.logger.debug(f"Compare interest result: {self.blackboard.result}")
+                self.feedback_message = f"Compare interest result: {self.response.result().common_interest}"
+                return Status.SUCCESS
+            else:
+                self.feedback_message = f"Compare interest failed with error code {self.response.result().status}: {self.response.result().error_message}"
+                return Status.FAILURE
+        else:
+            self.feedback_message = "Still comparing interest..."
+            return Status.RUNNING
 

@@ -185,3 +185,25 @@ class BtNode_CheckIfEmpty(py_trees.behaviour.Behaviour):
         else:
             self.feedback_message = "{self.bb_source} is empty"
             return py_trees.common.Status.FAILURE
+
+
+class BtNode_WaitTicks(py_trees.behaviour.Behaviour):
+    def __init__(
+            self,
+            name: str,
+            ticks: int
+    ):
+        super().__init__(name)
+        self.n_ticks = ticks
+        self.counter = 0
+    
+    def initialise(self) -> None:
+        self.counter = 0
+    
+    def update(self) -> Status:
+        self.counter += 1
+        
+        if self.counter > self.n_ticks:
+            return py_trees.common.Status.SUCCESS
+        else:
+            return py_trees.common.Status.RUNNING
