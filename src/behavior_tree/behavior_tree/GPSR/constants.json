@@ -85,7 +85,27 @@
         }
     },
     "possible_objects":{
-        "chips": "yello can of chips",
-        "milk": "white and blue milk box"
+        "kuat": "green cola can",
+        "fanta": "orange fanta can",
+        "milk": "blue and white milk box",
+        "orange juice": "orange juice bottle",
+        "coke": "red cola can",
+        "coffee": "brown and black box",
+        "lime": "lime fruit",
+        "tangerine": "tangerine fruit",
+        "pear": "pear fruit",
+        "lemon": "lemon fruit",
+        "apple": "apple fruit",
+        "snack bag": "snack bag",
+        "pringles": "chips can",
+        "chocolate": "chocolate bar",
+        "ketchup": "red bottle with yellow cap",
+        "oats": "whte cereal box",
+        "mayo": "white bottle with black cap",
+        "tuna": "blue tuna can"
     }
 }
+
+
+
+ 

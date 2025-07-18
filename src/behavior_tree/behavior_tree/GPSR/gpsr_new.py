@@ -76,6 +76,43 @@ arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
 point_target_frame = "base_link"
 
+categories = {
+            "kuat": "green cola can",
+            "fanta": "orange fanta can",
+            "milk": "blue and white milk box",
+            "orange juice": "orange juice bottle",
+            "coke": "red cola can",
+            "coffee": "brown and black box",
+            "lime": "lime fruit",
+            "tangerine": "tangerine fruit",
+            "pear": "pear fruit",
+            "lemon": "lemon fruit",
+            "apple": "apple fruit",
+            "snack bag": "snack bag",
+            "pringles": "chips can",
+            "chocolate": "chocolate bar",
+            "ketchup": "red bottle with yellow cap",
+            "oats": "whte cereal box",
+            "mayo": "white bottle with black cap",
+            "tuna": "blue tuna can"
+            }
+
+drink_items = ["kuat", "fanta", "milk", "orange juice", "coke", "coffee"]
+fruit_items = ["lime", "tangerine", "pear", "lemon", "apple"]
+snack_items = ["snack bag", "pringles", "chocolate"]
+food_items = ["ketchup", "oats", "mayo", "tuna"]
+
+def build_prompt(items):
+    return " . ".join(categories[item] for item in items)
+
+prompt_drinks = build_prompt(drink_items)
+prompt_foods = build_prompt(food_items)
+prompt_snacks = build_prompt(snack_items)
+prompt_fruits = build_prompt(fruit_items)
+
+# 拼接全部
+prompt_list = " . ".join([prompt_drinks, prompt_foods, prompt_snacks, prompt_fruits])
+
 def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter arena", memory=True)
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
