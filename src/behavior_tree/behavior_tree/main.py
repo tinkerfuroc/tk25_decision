@@ -11,6 +11,8 @@ from .grasp_intel_demo.grasp_audio import createGraspAudio
 from .ServeBreakfast.serve_breakfast import createServeBreakfast
 from .StoringGroceries.storing_groceries import createStoreGroceries
 from .StoringGroceries.storing_groceries_place_only import createStoreGroceriesPlaceOnly
+from .StoringGroceries.storing_groceries_place_only import createStoreGroceriesPlaceOnly
+from .GPSR.gpsr_new import createGPSR
 from .Inspection.inspection import createInspection
 from .Constants import PRINT_BLACKBOARD, PRINT_DEBUG
 
@@ -405,6 +407,10 @@ def draw_storing_groceries():
 
 def draw_storing_groceries_placing_only():
     root = createStoreGroceriesPlaceOnly()
+    py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
+
+def draw_gpsr():
+    root = draw_gpsr()
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
 def main():
