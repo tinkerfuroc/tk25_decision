@@ -1,10 +1,10 @@
 import py_trees
 
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_Listen
 from behavior_tree.TemplateNodes.Vision import BtNode_DoorDetection, BtNode_TurnPanTilt
-from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
+from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle, BtNode_GripperAction
 from behavior_tree.StoringGroceries.customNodes import BtNode_FindObjTable, BtNode_GraspWithPose
 
 from .node_test import DecideNextAction, CheckAndWriteAction, WriteActionSuccessful
@@ -55,6 +55,7 @@ KEY_NEXT_ACTION_REASONING = "next_action_reasoning"
 KEY_TARGET_POSE = "pose_target"
 KEY_TARGET_OBJECT = "target_object"
 KEY_ANNOUNCE_TEXT = "announce_text"
+KEY_TARGET_OBJECT_NAME = "target_object_name"
 
 KEY_TABLE_IMG = "table_img"
 KEY_OBJ_SEG = "object_segmentation"
@@ -166,8 +167,23 @@ def createGrasp():
 
     root.add_child(find_and_grasp)
     root.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
-    return py_trees.decorators.Retry(name=f"retry 3 times", child=root, num_failures=3)
+    grasp_root = py_trees.decorators.Retry(name=f"retry 3 times", child=root, num_failures=3)
 
+    ex_machina_grasp = py_trees.composites.Sequence("grasp ex machina", True)
+    ex_machina_grasp.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
+    ex_machina_grasp.add_child(BtNode_GripperAction("open gripper", True))
+    ex_machina_grasp.add_child(BtNode_Announce("announce help grasp", bb_source=KEY_TARGET_OBJECT_NAME, message="Dear referee, please help me grasp the "))
+    ex_machina_grasp.add_child(BtNode_Announce("announce help grasp2", bb_source=None, message="Put it in my gripper please. Thank you"))
+    ex_machina_grasp.add_child(BtNode_WaitTicks("wait ticks", 8)) # modify this if needed
+    ex_machina_grasp.add_child(BtNode_Announce("announce", None, message="Thank you"))
+    ex_machina_grasp.add_child(BtNode_GripperAction("close gripper", False))
+    
+    total_grasp = py_trees.composites.Selector(
+        "grasp selector",
+        True,
+        [grasp_root, total_grasp]
+        )
+    return total_grasp
 
 def createAnnounce():
     return BtNode_Announce(name="announce message", bb_source=KEY_ANNOUNCE_TEXT)
