@@ -33,7 +33,8 @@ setup(
             'store-groceries-placing-only = behavior_tree.main:store_groceries_placing_only',
             'help-me-carry = behavior_tree.main:help_me_carry',
             'test_follow_head = behavior_tree.Receptionist.test_follow_head:main',
-            'test-prompt-reached = behavior_tree.main:test_prompt_reached'
+            'test-prompt-reached = behavior_tree.main:test_prompt_reached',
+            'inspection = behavior_tree.main:inspection',
         ],
     },
 )

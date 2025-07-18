@@ -1,80 +1,86 @@
 {
     "pose_door": {
-        "point":{
-            "x": 0.024601559509590316,
-            "y": 0.22977789101336443,
+        "point": {
+            "x": -3.468674848875779,
+            "y": 2.9934023886863295,
             "z": 0.0
         },
-        "orientation":{
+        "orientation": {
             "x": 0.0,
             "y": 0.0,
-            "z": -0.034192071872226656,
-            "w": 0.9994152801618977
+            "z": 0.8974513988079672,
+            "w": 0.44111334912652894
         }
-    },
+    },  
     "pose_sofa": {
-        "point":{
-            "x": -0.518,
-            "y": 0.112,
+        "point": {
+            "x": -2.071052581996928,
+            "y": 2.207079920475558,
             "z": 0.0
         },
-        "orientation":{
+        "orientation": {
             "x": 0.0,
             "y": 0.0,
-            "z": -0.01086752293952879,
-            "w": 0.999940946728935
+            "z": -0.8847737566774735,
+            "w": 0.4660208144437659
         }
-
     },
     "pose_table": {
-        "point":{
-            "x": -0.511,
-            "y": -0.862,
+        "point": {
+            "x": -0.2625051423357435,
+            "y": -2.1323729318267706,
             "z": 0.0
         },
-        "orientation":{
+        "orientation": {
             "x": 0.0,
             "y": 0.0,
-            "z": -0.8459395267361632,
-            "w": 0.5332788361686559
+            "z": 0.07488420394999115,
+            "w": 0.997192236230696
         }
     },
-    "arm_pos_navigating":  [
-        -87.0, 
-        -40.0, 
-        28.0, 
-        0.0, 
-        30.0, 
-        -86.0, 
+    "arm_pos_navigating": [
+        -87.0,
+        -40.0,
+        28.0,
+        0.0,
+        30.0,
+        -86.0,
         0.0
     ],
     "arm_pos_point_to": [
-        -85.0, 
-        0.0, 
-        0.0, 
-        0.0, 
-        0.0, 
-        -90.0, 
+        -85.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -90.0,
         0.0
     ],
     "host_name": "John",
     "host_drink": "coffee",
-    "drinks" : [
-        "water",
-        "coffee",
-        "tea",
-        "juice",
+    "drinks": [
+        "kuat",
+        "fanta",
         "milk",
-        "fanta"
+        "orangejuice",
+        "coke",
+        "coffee"
     ],
     "names": [
-        "Alice",
-        "Bob",
-        "Charlie",
-        "David",
-        "Cassandra",
-        "Steven",
-        "Michael",
-        "Ryan"
+        "Maria",
+        "Ana",
+        "Francisca",
+        "Antonia",
+        "Adriana",
+        "Juliana",
+        "Marcia",
+        "Fernanda",
+        "Patricia",
+        "Aline",
+        "Jose",
+        "Joao",
+        "Antonio",
+        "Francisco",
+        "Carlos"
     ]
 }

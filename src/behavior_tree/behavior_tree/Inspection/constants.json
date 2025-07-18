@@ -24,5 +24,10 @@
             "z": -0.034192071872226656,
             "w": 0.9994152801618977
         }
+<<<<<<< HEAD
     }
+=======
+    },
+    "tinker_description": "I am Tinker, an at home service robot built by students at the Future Robotics Club in T H U. I move around on a four-wheel Agile X tracer mini base. I have one arm with a gripper and Realsense camera attatched. I also have an Orbbec camera mounted on the top of my aluminum framework to see the world better. I navigate using the livox LiDAR attached to my base. All my calculations are made on one laptop, which you can see have multiple cables connected to transfer signals. I was freshly built this January and this is my first time being in an arena with so many other robots."
+>>>>>>> 727fb0988c383536bc7159842367086223960a83
 }
