@@ -269,14 +269,15 @@ def createExecuteInstruction():
 def createCompleteOneCommand():
     root = py_trees.composites.Sequence("complete one command", True)
 
-    get_command = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
-    get_command.add_child(BtNode_Announce(name=f"Prompt for getting command", bb_source=None, message=f"Please speak to me after the beep sound. Tell me your command."))
-    get_command.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=KEY_INSTRUCTION, timeout=10.0))
-    get_command.add_child(BtNode_Announce(name=f"ask to confirm command", bb_source=KEY_INSTRUCTION, message=f"Am I correct, you command is "))
-    get_command.add_child(BtNode_GetConfirmation("confirm instruction"))
-    get_command.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="Starting execution."))
+    # get_command = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
+    # get_command.add_child(BtNode_Announce(name=f"Prompt for getting command", bb_source=None, message=f"Please speak to me after the beep sound. Tell me your command."))
     
-    root.add_child(py_trees.decorators.Retry("retry", get_command, 100))
+    # get_command.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=KEY_INSTRUCTION, timeout=10.0))
+    # get_command.add_child(BtNode_Announce(name=f"ask to confirm command", bb_source=KEY_INSTRUCTION, message=f"Am I correct, you command is "))
+    # get_command.add_child(BtNode_GetConfirmation("confirm instruction"))
+    # get_command.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="Starting execution."))
+    root.add_child(BtNode_WriteToBlackboard("Write Pose Command", bb_namespace="", bb_source=None, bb_key=KEY_INSTRUCTION, object="go to waving person"))
+    # root.add_child(py_trees.decorators.Retry("retry", get_command, 100))
 
     root.add_child(createExecuteInstruction())
 
