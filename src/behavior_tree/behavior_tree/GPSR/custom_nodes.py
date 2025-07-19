@@ -1,6 +1,6 @@
 import asyncio
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
-from behavior_tree.messages import ObjectDetection
+from behavior_tree.messages import ObjectDetection, DetectWaving
 import py_trees
 from py_trees.common import Status, Access
 from py_trees.behaviour import Behaviour
@@ -607,4 +607,55 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
                 return py_trees.common.Status.FAILURE
         else:
             self.feedback_message = "Still scanning..."
+            return py_trees.common.Status.RUNNING
+
+
+class BtNode_ScanForWavingPersonNew(ServiceHandler):
+    def __init__(self,
+                 name: str,
+                 bb_key_all_persons: str,
+                 bb_key_closest_person: str,
+                 threshold_meters: float,
+                 service_name: str = "detect_waving_persons",
+                 target_frame: str = "map"
+                 ):
+        super().__init__(name, service_name, DetectWaving)
+        self.bb_key_all_persons = bb_key_all_persons
+        self.bb_key_closest_person = bb_key_closest_person
+        self.threshold_meters = threshold_meters
+        self.target_frame = target_frame
+        self.bb_write_client = None
+
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+        self.bb_write_client = self.attach_blackboard_client(name=f"ScanForWavingPersonNew")
+        self.bb_write_client.register_key(self.bb_key_all_persons, access=py_trees.common.Access.WRITE)
+        self.bb_write_client.register_key(self.bb_key_closest_person, access=py_trees.common.Access.WRITE)
+        self.logger.debug(f"Setup ScanForWavingPersonNew")
+
+    def initialise(self) -> None:
+        request = DetectWaving.Request()
+        request.threshold_meters = self.threshold_meters
+        request.target_frame = self.target_frame
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized ScanForWavingPersonNew"
+
+    def update(self):
+        self.logger.debug(f"Update ScanForWavingPersonNew")
+        if self.response.done():
+            result = self.response.result()
+            if result.status == 0 and result.waving_persons:
+                self.bb_write_client.set(self.bb_key_all_persons, result.waving_persons)
+                self.bb_write_client.set(self.bb_key_closest_person, result.waving_persons[0])
+                closest_person = result.waving_persons[0]
+                self.feedback_message = f"Found {len(result.waving_persons)} waving person(s). Closest at ({closest_person.point.x:.4f}, {closest_person.point.y:.4f}, {closest_person.point.z:.4f}) in {closest_person.header.frame_id}"
+                return py_trees.common.Status.SUCCESS
+            elif result.status == 0:
+                self.feedback_message = "Service succeeded, but no waving person found."
+                return py_trees.common.Status.FAILURE
+            else:
+                self.feedback_message = f"Service failed with status {result.status}: {result.error_msg}"
+                return py_trees.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still scanning for waving persons..."
             return py_trees.common.Status.RUNNING
