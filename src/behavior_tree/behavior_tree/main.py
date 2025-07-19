@@ -382,7 +382,7 @@ def draw_storing_groceries_placing_only():
     root = createStoreGroceriesPlaceOnly()
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
-# def draw_gpsr():
+def draw_gpsr():
     root = createGPSR()
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
@@ -419,12 +419,12 @@ def draw_restaurant():
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
 def main():
-    # draw_gpsr()
+    draw_gpsr()
     # draw_receptionist()
     # draw_serve_breakfast()
     # draw_storing_groceries()
     # draw_storing_groceries_placing_only()
-    draw_restaurant()
+    # draw_restaurant()
 
 
 if __name__ == "__main__":

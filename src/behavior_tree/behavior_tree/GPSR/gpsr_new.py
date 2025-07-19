@@ -8,7 +8,7 @@ from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle, BtNod
 from behavior_tree.StoringGroceries.customNodes import BtNode_FindObjTable, BtNode_GraspWithPose
 
 from .node_test import DecideNextAction, CheckAndWriteAction, WriteActionSuccessful
-from .custom_nodes import BtNode_QA, BtNode_ScanForWavingPerson
+from .custom_nodes import BtNode_ScanForWavingPerson #BtNode_QA, 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import py_trees_ros
@@ -41,7 +41,7 @@ possible_poses = constants["possible_poses"]
 for key, value in possible_poses.items():
     possible_poses[key] = parsePoseStamped(value)
 possible_objects = constants["possible_objects"]
-# pose_command = parsePoseStamped(constants["pose_command"])
+pose_command = parsePoseStamped(constants["pose_command"])
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
 ARM_POS_SCAN = [x / 180 * math.pi for x in constants["arm_pos_scan"]]
@@ -190,7 +190,7 @@ def createAnnounce():
 
 def createQA():
     root = py_trees.composites.Sequence(name="QA root", memory=True)
-    root.add_child(BtNode_QA("QA node", KEY_QA_ANSWER))
+    # root.add_child(BtNode_QA("QA node", KEY_QA_ANSWER))
     root.add_child(BtNode_Announce("announce answer", KEY_QA_ANSWER))
     return root
 
@@ -270,8 +270,8 @@ def createCompleteOneCommand():
     root = py_trees.composites.Sequence("complete one command", True)
 
     get_command = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
-    get_command.add_child(BtNode_Announce(name=f"Prompt for getting command", bb_source="", message=f"Please speak to me after the beep sound. Tell me your command."))
-    get_command.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
+    get_command.add_child(BtNode_Announce(name=f"Prompt for getting command", bb_source=None, message=f"Please speak to me after the beep sound. Tell me your command."))
+    get_command.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=KEY_INSTRUCTION, timeout=10.0))
     get_command.add_child(BtNode_Announce(name=f"ask to confirm command", bb_source=KEY_INSTRUCTION, message=f"Am I correct, you command is "))
     get_command.add_child(BtNode_GetConfirmation("confirm instruction"))
     get_command.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="Starting execution."))
@@ -287,17 +287,15 @@ def createGPSR():
     root.add_child(createConstantWriter())
     # root.add_child(createEnterArena())
 
-    # return_to_instruction_point = py_trees.composites.Parallel("return to instruction point", py_trees.common.ParallelPolicy.SuccessOnAll())
-    # return_to_instruction_point.add_child(BtNode_Announce("announce returning", bb_source=None, message="Returning to instruction point"))
-    # return_to_instruction_point.add_child(
-    #     py_trees.decorators.Retry("retry", BtNode_GotoAction("goto instruction point", KEY_POSE_COMMAND), 5)
-    # )
+    return_to_instruction_point = py_trees.composites.Parallel("return to instruction point", py_trees.common.ParallelPolicy.SuccessOnAll())
+    return_to_instruction_point.add_child(BtNode_Announce("announce returning", bb_source=None, message="Returning to instruction point"))
+    return_to_instruction_point.add_child(
+        py_trees.decorators.Retry("retry", BtNode_GotoAction("goto instruction point", KEY_POSE_COMMAND), 5)
+    )
     complete_instruction = py_trees.composites.Sequence(
         "complete on instruction and return",
         True,
-        # [createCompleteOneCommand(), return_to_instruction_point]
-        createCompleteOneCommand()
-
+        [createCompleteOneCommand(), return_to_instruction_point]
     )
     
     safe_guarded = py_trees.composites.Selector(

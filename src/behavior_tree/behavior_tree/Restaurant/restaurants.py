@@ -12,12 +12,13 @@ from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirm
 from behavior_tree.TemplateNodes.Vision import BtNode_ScanFor
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle, BtNode_Grasp, BtNode_Place
 from .custumNodes import (
-    BtNode_DetectCallingCustomer,
-    BtNode_TakeOrder,
+    BtNode_DetectCallingCustomer, 
+    BtNode_TakeOrder, 
     BtNode_ConfirmOrder,
     BtNode_CommunicateWithBarman,
     BtNode_DetectTray,
-    BtNode_ServeOrder
+    BtNode_ServeOrder,
+    BtNode_ScanForCallingCustomer
 )
 
 try:
@@ -90,11 +91,24 @@ def createConstantWriter():
 def createDetectAndReachCustomer():
     root = py_trees.composites.Sequence(name="Detect and reach customer", memory=True)
     
-    root.add_child(BtNode_DetectCallingCustomer(
-        name="Detect calling customer",
+    detection_selector = py_trees.composites.Selector(name="Customer detection strategy", memory=False)
+    
+    direct_detection = BtNode_DetectCallingCustomer(
+        name="Direct detect calling customer",
         bb_dest_key=KEY_CUSTOMER_LOCATION,
-        timeout=constants["customer_detection_timeout"]
-    ))
+        timeout=5.0
+    )
+    
+    scan_detection = BtNode_ScanForCallingCustomer(
+        name="Scan for calling customer",
+        bb_dest_key=KEY_CUSTOMER_LOCATION,
+        timeout=30.0
+    )
+    
+    detection_selector.add_child(direct_detection)
+    detection_selector.add_child(scan_detection)
+    
+    root.add_child(detection_selector)
     
     root.add_child(py_trees.decorators.Retry(
         name="retry goto customer",
