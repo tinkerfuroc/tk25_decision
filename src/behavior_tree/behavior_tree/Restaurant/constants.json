@@ -1,0 +1,51 @@
+{
+    "pose_kitchen_bar": {
+        "point":{
+            "x": 1.385890451984504,
+            "y": 1.8146768395738748,
+            "z": 0.0
+        },
+        "orientation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.10262944236511429,
+            "w": 0.9947196577728952
+        }
+    },
+    "arm_pos_navigating": [
+        -87.0,
+        -40.0,
+        28.0,
+        0.0,
+        30.0,
+        -86.0,
+        0.0
+    ],
+    "arm_pos_serving": [
+        -85.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -90.0,
+        0.0
+    ],
+    "standard_objects": [
+        "apple",
+        "banana",
+        "orange",
+        "milk",
+        "coffee",
+        "tea",
+        "water",
+        "juice",
+        "bread",
+        "sandwich",
+        "cake",
+        "cookie"
+    ],
+    "customer_detection_timeout": 10.0,
+    "order_confirmation_timeout": 15.0,
+    "max_objects_per_order": 3,
+    "tray_detection_enabled": true
+}

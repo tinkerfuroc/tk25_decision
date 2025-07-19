@@ -1,0 +1,98 @@
+{
+    "arm_pos_navigating": [
+        -86.0, 
+        -52.0, 
+        18.0, 
+        2.0, 
+        34.0, 
+        -73.0, 
+        -9.0
+    ],
+    "arm_pos_scan": [
+        0.0,
+        -54.0,
+        -1.0,
+        35.0,
+        0.0,
+        47.0,
+        -1.0
+    ],
+    "possible_poses":{
+        "living_room" : {
+            "point": {
+            "x": 3.5102954824679844,
+            "y": 1.927354988172565,
+            "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.947499072239037,
+                "w": 0.3197585152989115
+            }
+        },
+        "kitchen" : {
+            "point":{
+                "x": 3.5102954824679844,
+                "y": 1.927354988172565,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.947499072239037,
+                "w": 0.3197585152989115
+            }
+        },
+        "office" : {
+            "point":{
+                "x": 3.5102954824679844,
+                "y": 1.927354988172565,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.947499072239037,
+                "w": 0.3197585152989115
+            }
+        },
+        "bedroom" : {
+            "point":{
+                "x": 3.5102954824679844,
+                "y": 1.927354988172565,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.947499072239037,
+                "w": 0.3197585152989115
+            }
+        }
+    },
+    "possible_objects":{
+        "kuat": "green cola can",
+        "fanta": "orange fanta can",
+        "milk": "blue and white milk box",
+        "orange juice": "orange juice bottle",
+        "coke": "red cola can",
+        "coffee": "brown and black box",
+        "lime": "lime fruit",
+        "tangerine": "tangerine fruit",
+        "pear": "pear fruit",
+        "lemon": "lemon fruit",
+        "apple": "apple fruit",
+        "snack bag": "snack bag",
+        "pringles": "chips can",
+        "chocolate": "chocolate bar",
+        "ketchup": "red bottle with yellow cap",
+        "oats": "whte cereal box",
+        "mayo": "white bottle with black cap",
+        "tuna": "blue tuna can"
+    }
+}
+
+
+
+ 
