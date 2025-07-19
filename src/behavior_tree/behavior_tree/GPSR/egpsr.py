@@ -5,7 +5,7 @@ from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_Listen
 from behavior_tree.TemplateNodes.Vision import BtNode_DoorDetection, BtNode_TurnPanTilt
 
-from .custom_nodes import BtNode_ScanForWavingPerson
+from .custom_nodes import BtNode_ScanForWavingPerson, BtNode_ScanForWavingPersonNew
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import py_trees_ros
@@ -14,7 +14,13 @@ import rclpy
 import json
 import math
 
+USE_NEW_SCAN_WAVING = True
+TRY_GOTO_GRASP_POSE = True
+if TRY_GOTO_GRASP_POSE:
+    from behavior_tree.TemplateNodes.Navigation import BtNode_ConvertGraspPose
+    KEY_POSE_GRASP_POSE = "grasp_pose"
 DEBUG_GOTO = True
+THRESHOLD_METERS = 6.0
 
 def parsePoseStamped(json_dict: dict):
     point = json_dict["point"]
@@ -45,6 +51,7 @@ KEY_POSE_COMMAND = "pose_command"
 KEY_POSE_WAVING_PERSON = "waving_person"
 
 KEY_DOOR_STATUS = "door_status"
+KEY_ALL_WAVING_PERSONS = "all_waving_persons"
 
 arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
@@ -75,9 +82,16 @@ def createConstantWriter():
 
 def createGotoWaving():
     root = py_trees.composites.Sequence("root of goto_waving", True)
-    root.add_child(BtNode_ScanForWavingPerson("find waving person", KEY_POSE_WAVING_PERSON, use_orbbec=True, target_frame="base_link"))
+    if USE_NEW_SCAN_WAVING:
+        root.add_child(BtNode_ScanForWavingPersonNew("find waving persons", KEY_ALL_WAVING_PERSONS, KEY_POSE_WAVING_PERSON, THRESHOLD_METERS))
+    else:
+        root.add_child(BtNode_ScanForWavingPerson("find waving person", KEY_POSE_WAVING_PERSON, use_orbbec=True, target_frame="base_link"))
     root.add_child(BtNode_Announce("announce found waving person", None, message="Found waving person. Dear person, could you move a little so I can reach you?"))
-    root.add_child(py_trees.decorators.Retry("retry", BtNode_GotoAction("goto instruction point", KEY_POSE_WAVING_PERSON), 5))
+    if TRY_GOTO_GRASP_POSE:
+        root.add_child(BtNode_ConvertGraspPose("convert grasp pose", KEY_POSE_WAVING_PERSON, KEY_POSE_GRASP_POSE))
+        root.add_child(py_trees.decorators.Retry("retry", BtNode_GotoAction("goto instruction point", KEY_POSE_GRASP_POSE), 5))
+    else:
+        root.add_child(py_trees.decorators.Retry("retry", BtNode_GotoAction("goto instruction point", KEY_POSE_WAVING_PERSON), 5))
     return root
 
 def createGetCommand(key_dest, confirmed_message="Starting execution"):

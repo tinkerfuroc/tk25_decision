@@ -10,7 +10,7 @@ from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Quaternion
 # from behavior_tree.messages import Goto, GotoGrasp, ComputeGrasp
 from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateToPose
-from tinker_nav_msgs.srv import SetLuggagePose
+from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp
 
 from tf2_ros.transform_listener import TransformListener
 from tf2_ros.buffer import Buffer
@@ -105,6 +105,57 @@ class BtNode_GotoAction(ActionHandler):
         self.feedback_timeout = 1000
         self.action_status = 0
         self.process_feedback(feedback)  
+
+
+class BtNode_ConvertGraspPose(ServiceHandler):
+    def __init__(self, name: str, bb_source_key: str, bb_dest_key: str, service_name: str = "compute_grasp_pos"):
+        super().__init__(name, service_name, ComputeGrasp)
+        self.bb_source_key = bb_source_key
+        self.bb_dest_key = bb_dest_key
+
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+        self.bb_read_client = self.attach_blackboard_client(name=f"ConvertGraspPoseRead")
+        self.bb_write_client = self.attach_blackboard_client(name=f"ConvertGraspPoseWrite")
+        self.bb_read_client.register_key(
+            "source",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_source_key)
+        )
+        self.bb_write_client.register_key(
+            "dest",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_dest_key)
+        )
+        self.logger.debug(f"Setup ConvertGraspPose")
+
+    def initialise(self) -> None:
+        try:
+            self.source_point = self.bb_read_client.source
+            assert isinstance(self.source_point, PointStamped)
+        except Exception as e:
+            self.feedback_message = f"Failed to read PointStamped from key '{self.bb_source_key}': {e}"
+            raise e
+
+        request = ComputeGrasp.Request()
+        request.target = self.source_point
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Initialized ConvertGraspPose for point in {self.bb_source_key}"
+
+    def update(self):
+        self.logger.debug(f"Update ConvertGraspPose")
+        if self.response.done():
+            result = self.response.result()
+            if result:
+                self.feedback_message = "Successfully converted grasp pose"
+                self.bb_write_client.dest = result.target
+                return py_trees.common.Status.SUCCESS
+            else:
+                self.feedback_message = "Service call to compute_grasp_pos failed"
+                return py_trees.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still computing grasp pose..."
+            return py_trees.common.Status.RUNNING
 
 
 class BtNode_GoToLuggage(ServiceHandler):
