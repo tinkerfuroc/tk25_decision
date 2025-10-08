@@ -26,10 +26,12 @@ class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
         key_name: str,
         key_drink: str,
         key_features: str,
+        key_intest: str = None
     ):
         super().__init__(name=name)
 
         self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.has_interest = False
 
         self.blackboard.register_key(
             key="person_name",
@@ -55,6 +57,14 @@ class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
             # make sure to namespace it if not already
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_dest)
         )
+        if key_intest:
+            self.blackboard.register_key(
+                key="interest",
+                access=py_trees.common.Access.WRITE,
+                # make sure to namespace it if not already
+                remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_intest)
+            )
+            self.has_interest = True
         
     def update(self):
         """
@@ -70,6 +80,10 @@ class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
         new_person.features = self.blackboard.features
         print(new_person.name, new_person.fav_drink, new_person.features)
         self.feedback_message = f"name: {new_person.name}, drink: {new_person.fav_drink}, features: {new_person.features}"
+        if self.has_interest:
+            new_person.interests = self.blackboard.interest
+            self.feedback_message = f"name: {new_person.name}, drink: {new_person.fav_drink}, features: {new_person.features}, interest: {new_person.interests}"
+            
         persons = []
         if self.blackboard.person is not None:
             persons = self.blackboard.person
@@ -118,6 +132,8 @@ class BtNode_Introduce(BtNode_Announce):
                 " whose favorite drink is " + introduced_person.fav_drink + "."
             if self.describe_introduced:
                 self.given_msg += " " + introduced_person.features
+            if introduced_person.interests:
+                self.given_msg += "Their interest is " + introduced_person.interests
 
         return super().initialise()
 

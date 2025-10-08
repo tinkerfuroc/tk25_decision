@@ -1,6 +1,6 @@
 import py_trees
 
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_GoToLuggage
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_TurnPanTilt
@@ -16,6 +16,14 @@ from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import rclpy
 
+try:
+    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/HelpMeCarry/constants.json", "r")
+    constants = json.load(file)
+    file.close()
+except FileNotFoundError:
+    print("ERROR: constants.json not found!")
+    raise FileNotFoundError
+
 POS_START = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                         pose=Pose(position=Point(x=0.0, y=0.0, z=0.0),
                                   orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0))
@@ -30,6 +38,14 @@ ARM_POS_SCAN = [x / 180 * math.pi for x in [9999.0, -23.0, 0.0, 0.0, 0.0, -76.0,
 
 
 KEY_POS_START = "pose_start"
+KEY_POS_FINAL = "pose_final"  # 最终位置
+
+pose_final = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=constants["pose_final"]["point"]["x"], y=constants["pose_final"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_final"]["orientation"]["x"], 
+                                                            y=constants["pose_final"]["orientation"]["y"], 
+                                                            z=constants["pose_final"]["orientation"]["z"], 
+                                                            w=constants["pose_final"]["orientation"]["w"])))
 
 MASTER_NAME = "master"
 FOLLOW_DISTANCE = 2.0  # 跟随距离
@@ -54,6 +70,7 @@ KEY_OBJECT = "object"
 KEY_MASTER_NAME = "master_name"
 KEY_FOLLOW_DISTANCE = "follow_distance"
 KEY_FOLLOW_TARGET_GOAL = "follow_target"
+KEY_MASTER_POSITION = "master_position"
 
 
 
@@ -78,12 +95,12 @@ def createConstantWriter():
 
 def createFollow():
     root = py_trees.composites.Sequence(name="Follow", memory=True)
-    # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
     root.add_child(BtNode_TurnPanTilt(name="Move pan tilt", x=0.0, y=45.0, speed=0.0))
     parallel_follow = py_trees.composites.Parallel("Follow", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    
-    get_master_pos = py_trees.decorators.Retry(name="retry", child=BtNode_HumanFollowingAction(name="human follow", action_name=follow_action_name), num_failures=5)
-    goto_master = py_trees.decorators.Retry("retry", BtNode_GotoAction(name="Goto action", key="master_position", action_name="navigate_to_pose", wait_for_server_timeout_sec=-3), 9999)
+
+    get_master_pos = py_trees.decorators.Retry(name="retry", child=BtNode_HumanFollowingAction(name="human follow", action_name=follow_action_name, bb_dest=KEY_MASTER_POSITION), num_failures=5)
+    goto_master = py_trees.decorators.Retry("retry", BtNode_GotoAction(name="Goto action", key=KEY_MASTER_POSITION, action_name="navigate_to_pose", wait_for_server_timeout_sec=-3), 9999)
     
     parallel_follow.add_child(py_trees.decorators.Repeat("repeat", get_master_pos, 9999))
     parallel_follow.add_child(py_trees.decorators.Repeat("repeat", goto_master, 9999))
@@ -259,13 +276,19 @@ def createHelpMeCarry():
     # root.add_child(BtNode_Announce(name="Announce task complete", bb_source=None, message="Please walk slowly. I will follow you now."))
     # root.add_child(py_trees.decorators.Retry("retry", py_trees.decorators.Repeat("repeat", createFollowPerson(), 999), 999))
 
-    root.add_child(BtNode_Announce(name="Announce start follow", bb_source=None, message="Starting follow"))
+    root.add_child(BtNode_Announce(name="Announce start follow", bb_source=None, message="Starting follow, Please start walking."))
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_POS_FINAL), num_failures=10))
+    # root.add_child(BtNode_WaitTicks("wait for 10 ticks", 240))
+    root.add_child(BtNode_Announce(name="Ending follow", bb_source=None, message="Follow ends"))
+    root.add_child(BtNode_Announce(name="Announcing bag position", bb_source=None, message="THe bag is on my right"))
+
+
+    
     # follow = createFollowPerson()
-    follow = createFollow()
-    announce_follow_failed = BtNode_Announce(name="Announce follow failed", bb_source=None, message="follow failed, restarting")
-    follow_seq = py_trees.composites.Selector(name="sequence", memory=True, children=[follow, announce_follow_failed])
+    # follow = createFollow()
+    # announce_follow_failed = BtNode_Announce(name="Announce follow failed", bb_source=None, message="follow failed, restarting")
+    # follow_seq = py_trees.composites.Selector(name="sequence", memory=True, children=[follow, announce_follow_failed])
     # follow_repeat = py_trees.decorators.Repeat(name="Repeat", child=follow_seq, num_success=9999)
     # root.add_child(py_trees.composites.Parallel(name="Parallel", policy=py_trees.common.ParallelPolicy.SuccessOnAll(), children=follow))
 
-    root.add_child(follow_seq)
     return root

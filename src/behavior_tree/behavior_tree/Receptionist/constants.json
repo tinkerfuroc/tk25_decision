@@ -27,15 +27,15 @@
     },
     "pose_table": {
         "point": {
-            "x": -0.2625051423357435,
-            "y": -2.1323729318267706,
+            "x": -0.39821896042177235,
+            "y": -1.9252790988886317,
             "z": 0.0
         },
         "orientation": {
             "x": 0.0,
             "y": 0.0,
-            "z": 0.07488420394999115,
-            "w": 0.997192236230696
+            "z": 0.07532464755682203,
+            "w": 0.9971590632744811
         }
     },
     "arm_pos_navigating": [
@@ -58,17 +58,19 @@
     ],
     "host_name": "John",
     "host_drink": "coffee",
+    "host_interest": "swimming",
     "drinks": [
         "kuat",
         "fanta",
         "milk",
-        "orangejuice",
+        "orange juice",
         "coke",
         "coffee"
     ],
     "names": [
         "Maria",
         "Ana",
+        "Anna",
         "Francisca",
         "Antonia",
         "Adriana",

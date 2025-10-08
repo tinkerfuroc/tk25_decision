@@ -9,6 +9,7 @@ from .customNodes import BtNode_CategorizeGrocery, BtNode_FindObjTable, BtNode_G
 
 import math, time
 import json
+import os
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
@@ -22,66 +23,74 @@ except FileNotFoundError:
     print("ERROR: constants.json not found!")
     raise FileNotFoundError
 
-categories = {"chip": "blue and pink oreo box",
-            "biscuit": "yellow chips can",
-            "lays": "red chips can",
-            "cookie": "black and green cookie box",
-            "bread": "white bread",
-            "sprite": "green sprite bottle",
-            "cola": "black cola bottle",
-            "orange juice": "orange bottle",
-            "water": "clear water bottle",
-            "dishsoap": "yellow and blue bottle",
-            "handwash": "white handwash bottle",
-            "shampoo": "blue shampoo bottle",
-            "cereal bowl": "blue bowl"
+chosen_json = constants["chosen"]
+chosen = os.getenv('CHOSEN', chosen_json)
+if not type(chosen) == int:
+    print("WARNING: chosen is not of type int!")
+    print(chosen, type(chosen))
+    chosen = int(chosen)
+all_locations = constants["locations"]
+locations = all_locations[chosen]
+
+categories = {
+            "kuat": "green cola can",
+            "fanta": "orange fanta can",
+            "milk": "blue and white milk box",
+            "orange juice": "orange juice bottle",
+            "coke": "red cola can",
+            "coffee": "brown and black box",
+            "lime": "lime fruit",
+            "tangerine": "tangerine fruit",
+            "pear": "pear fruit",
+            "lemon": "lemon fruit",
+            "apple": "apple fruit",
+            "snack bag": "snack bag",
+            "pringles": "chips can",
+            "chocolate": "chocolate bar",
+            "ketchup": "red bottle with yellow cap",
+            "oats": "whte cereal box",
+            "mayo": "white bottle with black cap",
+            "tuna": "blue tuna can"
             }
 
-prompt_drinks = "green sprite bottle . black cola bottle . orange fanta bottle . clear water bottle . white milk box"
-prompt_food = "pink oreo box . yellow chips can . red chips can . white bread"
-prompt_utilities = "blue dishsoap bottle . white handwash bottle . blue shampoo bottle . blue bowl"
+ 
+drink_items = ["kuat", "fanta", "milk", "orange juice", "coke", "coffee"]
+fruit_items = ["lime", "tangerine", "pear", "lemon", "apple"]
+snack_items = ["snack bag", "pringles", "chocolate"]
+food_items = ["ketchup", "oats", "mayo", "tuna"]
 
-prompt_list = prompt_drinks + " . " + prompt_food + " . " + prompt_utilities
-prompt_list = "bottle . white box . yellow box"
+def build_prompt(items):
+    return " . ".join(categories[item] for item in items)
+
+prompt_drinks = build_prompt(drink_items)
+prompt_foods = build_prompt(food_items)
+prompt_snacks = build_prompt(snack_items)
+prompt_fruits = build_prompt(fruit_items)
+
+# 拼接全部
+prompt_list = " . ".join([prompt_drinks, prompt_foods, prompt_snacks, prompt_fruits])
+# prompt_list = "bottle . white box . yellow box"
 USE_GRASP_DUMMY = False
 
 TRY_TWICE = False
 DO_PLACE = True
 DO_NAV = True
 
-#14.949769937531444
-POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=constants["pose_table1"]["point"]["x"], y=constants["pose_table1"]["point"]["y"], z=0.0),
-                                    orientation=Quaternion(x=constants["pose_table1"]["orientation"]["x"], 
-                                                            y=constants["pose_table1"]["orientation"]["y"], 
-                                                            z=constants["pose_table1"]["orientation"]["z"], 
-                                                            w=constants["pose_table1"]["orientation"]["w"]))
+poses = []
+key_poses = []
+counter = 1
+for location in locations:
+    pose = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=location["point"]["x"], y=location["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=location["orientation"]["x"], 
+                                                            y=location["orientation"]["y"], 
+                                                            z=location["orientation"]["z"], 
+                                                            w=location["orientation"]["w"]))
                             )
-POS_TABLE2 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=constants["pose_table2"]["point"]["x"], y=constants["pose_table2"]["point"]["y"], z=0.0),
-                                    orientation=Quaternion(x=constants["pose_table2"]["orientation"]["x"], 
-                                                                y=constants["pose_table2"]["orientation"]["y"], 
-                                                                z=constants["pose_table2"]["orientation"]["z"], 
-                                                                w=constants["pose_table2"]["orientation"]["w"]))
-                            )
-POS_TABLE3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=constants["pose_table3"]["point"]["x"], y=constants["pose_table3"]["point"]["y"], z=0.0),
-                                    orientation=Quaternion(x=constants["pose_table3"]["orientation"]["x"], 
-                                                                y=constants["pose_table3"]["orientation"]["y"], 
-                                                                z=constants["pose_table3"]["orientation"]["z"], 
-                                                                w=constants["pose_table3"]["orientation"]["w"]))
-                            )
-POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=constants["pose_shelf"]["point"]["x"], y=constants["pose_shelf"]["point"]["y"], z=0.0),
-                                    orientation=Quaternion(x=constants["pose_shelf"]["orientation"]["x"], 
-                                                                y=constants["pose_shelf"]["orientation"]["y"], 
-                                                                z=constants["pose_shelf"]["orientation"]["z"], 
-                                                                w=constants["pose_shelf"]["orientation"]["w"]))
-                            )
-POS_TABLE3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=10.8109273910, y=3.56819748, z=0.0),
-                                  orientation=Quaternion(x=0.0, y=0.0, z=-0.546470351326438, w=0.8374784505413614))
-                        )
+    poses.append(pose)
+    key_pose = "pose_table" + str(counter)
+    key_poses.append(key_pose)
+
 POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                         pose=Pose(position=Point(x=1.4658832550048828, y=-1.2834669351577759, z=0.0),
                                   orientation=Quaternion(x=0.0, y=0.0, z=-0.47666905902949136, w=0.8790828221299397))
@@ -143,14 +152,14 @@ def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter arena", memory=True)
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
     if DO_NAV:
-        # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
-        pass
+        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
+        # pass
     parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_enter_arena.add_child(BtNode_Announce(name="Announce entering arena", bb_source=None, message="Entering arena"))
     parallel_enter_arena.add_child(BtNode_TurnPanTilt(name="Turn pan tile", x=0.0, y=20.0, speed=0.0))
     # parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
     if DO_NAV:
-        parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_POS_TABLE), num_failures=5))
+        parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=key_poses[chosen]), num_failures=5))
     root.add_child(parallel_enter_arena)
     return root
 
@@ -161,18 +170,17 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard("Write Arm Placing", bb_namespace="", bb_source=None, bb_key=KEY_ARM_PLACING, object=ARM_POS_PLACING))
     root.add_child(BtNode_WriteToBlackboard("Write Arm drop", bb_namespace="", bb_source=None, bb_key=KEY_ARM_DROP, object=ARM_POS_DROP))
     root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF, object=POS_SHELF))
-    root.add_child(BtNode_WriteToBlackboard("Write Position Table", bb_namespace="", bb_source=None, bb_key=KEY_POS_TABLE, object=POS_TABLE))
-    root.add_child(BtNode_WriteToBlackboard("Write Position Table", bb_namespace="", bb_source=None, bb_key=KEY_POS_TABLE2, object=POS_TABLE2))
-    root.add_child(BtNode_WriteToBlackboard("Write Position Table", bb_namespace="", bb_source=None, bb_key=KEY_POS_TABLE3, object=POS_TABLE3))
     root.add_child(BtNode_WriteToBlackboard("Write Target Frame", bb_namespace="", bb_source=None, bb_key=KEY_TARGET_FRAME, object=point_target_frame))
     root.add_child(BtNode_WriteToBlackboard("Write Prompt", bb_namespace="", bb_source=None, bb_key=KEY_PROMPT, object=prompt_list))
     root.add_child(BtNode_WriteToBlackboard("Write Grasp Pose", bb_namespace="", bb_source=None, bb_key=KEY_GRASP_POSE_DUMMY, object=GRASP_POSE_DUMMY))
     root.add_child(BtNode_WriteToBlackboard("Write Point Place", bb_namespace="", bb_source=None, bb_key=KEY_POINT_PLACE, object=POINT_PLACE))
     root.add_child(BtNode_WriteToBlackboard("Write Point Shelf Left", bb_namespace="", bb_source=None, bb_key=KEY_POINT_SHELF_LEFT, object=POINT_SHELF_LEFT))
     root.add_child(BtNode_WriteToBlackboard("Write Point Shelf Right", bb_namespace="", bb_source=None, bb_key=KEY_POINT_SHELF_RIGHT, object=POINT_SHELF_RIGHT))
+    for key, pose in zip(key_poses, poses):
+        root.add_child(BtNode_WriteToBlackboard(f"Write {key}", bb_namespace="", bb_source=None, bb_key=key, object=pose))
     return root
 
-def createGraspOnce():
+def createGraspOnce(retry_times=5):
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
     root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=20.0))
     root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
@@ -192,7 +200,7 @@ def createGraspOnce():
 
     root.add_child(find_and_grasp)
     root.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
-    return py_trees.decorators.Retry(name="retry 5 times", child=root, num_failures=5)
+    return py_trees.decorators.Retry(name=f"retry {retry_times} times", child=root, num_failures=retry_times)
 
 def createPlaceOnShelf():
     root = py_trees.composites.Sequence(name="Place object", memory=True)
@@ -270,23 +278,49 @@ def createStoreOnce(KEY_TABLE_POS):
     root.add_child(createPlaceOnShelf())
     return root
 
+def createGraspAndDrop():
+    root = py_trees.composites.Sequence(name="grasp and drop", memory=True)
+    root.add_child(py_trees.decorators.Retry("retry",
+                                             BtNode_GripperAction("open gripper", True),
+                                             3))
+    root.add_child(createGraspOnce(5))
+    root.add_child(BtNode_Announce("announce grasp successful", bb_source=None, message="grasp successful."))
+    root.add_child(BtNode_Announce(name="announce unable to reach shelf", bb_source=None, message="Unable to reach shelf. Dropping object in hand."))
+    root.add_child(py_trees.decorators.Retry("retry", 
+                                             BtNode_MoveArmSingle("Move arm to drop", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_DROP, add_octomap=False),
+                                             3))
+    root.add_child(py_trees.decorators.Retry("retry",
+                                             BtNode_GripperAction("open gripper", True),
+                                             3))
+    return root
+
+
+def createGraspAtTableOnce(key_pose:str, grasp_times:int=3):
+    root = py_trees.composites.Sequence(name="grasp once", memory=True)
+    root.add_child(BtNode_Announce(name="announce trying location", bb_source=None, message="attempting to find table"))
+    root.add_child(py_trees.decorators.Retry("retry",BtNode_GotoAction(f"goto table pose",key_pose),3))
+    root.add_child(py_trees.decorators.Repeat(f"repeat {grasp_times}",createGraspAndDrop(),num_success=grasp_times))
+    return root
+    
+
 def createStoreGroceries():
     root = py_trees.composites.Sequence(name="Store groceries", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(BtNode_Announce(name="Announce starting storing groceries", bb_source=None, message="Starting storing groceries"))
     # root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     root.add_child(createEnterArena())
+    root.add_child(BtNode_Announce(name="Announce open door", bb_source=None, message="Please help me to open the cabinet door."))
     # retry_store = py_trees.decorators.Retry(name=f"retry 5 times", child=createStoreOnce(), num_failures=5)
     # root.add_child(py_trees.decorators.Repeat(name="repeat 5 times", child=retry_store, num_success=5))
     # # root.add_child(BtNode_Announce(name="Announce complete", bb_source=None, message="Storing groceries task complete"))
     # root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_drinks, category="drinks"))
     # root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_food, category="food"))
     # root.add_child(BtNode_ScanFor("scan and categorize", None, KEY_SCAN_RESULT, object=prompt_utilities, category="utilities"))
-    retry_store = py_trees.decorators.Retry(name=f"retry 2 times", child=createStoreOnce(KEY_POS_TABLE), num_failures=2)
-    root.add_child(py_trees.decorators.Repeat(name="repeat 1 times", child=retry_store, num_success=1))
-    retry_store2 = py_trees.decorators.Retry(name=f"retry 2 times", child=createStoreOnce(KEY_POS_TABLE2), num_failures=2)
-    root.add_child(py_trees.decorators.Repeat(name="repeat 2 times", child=retry_store2, num_success=2))
-    retry_store3 = py_trees.decorators.Retry(name=f"retry 2 times", child=createStoreOnce(KEY_POS_TABLE3), num_failures=2)
-    root.add_child(py_trees.decorators.Repeat(name="repeat 2 times", child=retry_store3, num_success=2))
+    
+    for key in key_poses:
+        root.add_child(
+            py_trees.decorators.FailureIsSuccess("F is S", createGraspAtTableOnce(key, 5))
+        )
+
     root.add_child(BtNode_Announce(name="Announce complete", bb_source=None, message="Storing groceries task complete"))
     return root
