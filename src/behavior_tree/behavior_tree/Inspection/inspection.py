@@ -2,11 +2,7 @@ import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-<<<<<<< HEAD
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-=======
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_Listen
->>>>>>> 727fb0988c383536bc7159842367086223960a83
 
 from .customNodes import BtNode_PressEnterToSucceed
 
@@ -20,43 +16,6 @@ import json
 import select
 import sys
 
-<<<<<<< HEAD
-# POINT_TO_PERSON = False
-TURN_PAN_TILT = True
-
-MAX_SCAN_DISTANCE = 4.5
-
-DEBUG_NO_GOTO = False
-
-DISABLE_FEATURE_MATCH = False
-DISABLE_FOLLOW_HEAD = False
-
-# read from `constant.json` in the same directory
-# load file
-try:
-    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/Inspection/constants.json", "r")
-    constants = json.load(file)
-    file.close()
-except FileNotFoundError:
-    print("ERROR: constants.json not found!")
-    raise FileNotFoundError
-
-pose_inspection = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=constants["pose_inspection"]["point"]["x"], y=constants["pose_inspection"]["point"]["y"], z=0.0),
-                                    orientation=Quaternion(x=constants["pose_inspection"]["orientation"]["x"], 
-                                                            y=constants["pose_inspection"]["orientation"]["y"], 
-                                                            z=constants["pose_inspection"]["orientation"]["z"], 
-                                                            w=constants["pose_inspection"]["orientation"]["w"]))
-                            )
-pose_exit = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=constants["pose_exit"]["point"]["x"], y=constants["pose_exit"]["point"]["y"], z=0.0),
-                                    orientation=Quaternion(x=constants["pose_exit"]["orientation"]["x"], 
-                                                            y=constants["pose_exit"]["orientation"]["y"], 
-                                                            z=constants["pose_exit"]["orientation"]["z"], 
-                                                            w=constants["pose_exit"]["orientation"]["w"]))
-                            )
-
-=======
 # read from `constant.json` in the same directory
 # load file
 try:
@@ -84,17 +43,13 @@ pose_exit = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id
 
 tinker_description = constants["tinker_description"]
 
->>>>>>> 727fb0988c383536bc7159842367086223960a83
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
 
 
 
 KEY_INSPECTION_POSE = "inspection_pose"
 KEY_EXIT_POSE = "exit_pose"
-<<<<<<< HEAD
-=======
 KEY_LISTEN_RESULT = "listen_result"
->>>>>>> 727fb0988c383536bc7159842367086223960a83
 
 arm_service_name = "arm_joint_service"
 
@@ -115,9 +70,6 @@ def createToExit():
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("Go to exit", KEY_EXIT_POSE), num_failures=10))
     return root
 
-<<<<<<< HEAD
-def createReceptionist():
-=======
 def createQandA():
     # TODO (for audio)
     # audio package should create a new node for general Q & A (just answering questions)
@@ -131,15 +83,10 @@ def createQandA():
     return root
 
 def createInspection():
->>>>>>> 727fb0988c383536bc7159842367086223960a83
     root = py_trees.composites.Sequence(name="Inspection Root", memory=True)
     # write all the constants to blackboard first
     root.add_child(createConstantWriter())
     root.add_child(createToIspection)
-<<<<<<< HEAD
-    root.add_child(BtNode_Announce("Announce: I am ready to inspect", "I am ready to inspect"))
-    root.add_child(BtNode_PressEnterToSucceed(name="Press Enter to start inspection"))
-=======
 
     root.add_child(BtNode_Announce(name="Announce: I am ready to inspect", bb_source=None, message="I am Tinker, I am ready for inspection. I will briefly introduce myself."))
     root.add_child(BtNode_Announce(name="inrtoduce self", bb_source=None, message=tinker_description))
@@ -149,6 +96,5 @@ def createInspection():
     root.add_child(BtNode_PressEnterToSucceed())
 
     root.add_child(BtNode_Announce(name="announce leaving", bb_source=None, message="Heading to the exit."))
->>>>>>> 727fb0988c383536bc7159842367086223960a83
     root.add_child(createToExit)
     return root
