@@ -104,7 +104,7 @@ KEY_POS_TABLE = "pos_table"
 # KEY_POS_TABLE2 = "pos_table2"
 # KEY_POS_TABLE3 = "pos_table3"
 
-KEY_POS_COMMAND = "pos_command"
+KEY_POS_COMMAND = "pos_command" #position to receive command
 KEY_POINT_TABLE_LEFT = "point_table_left"
 KEY_POINT_TABLE_RIGHT = "point_table_right"
 
@@ -154,8 +154,23 @@ def createEnterArena():
     # parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
     
     # root.add_child(BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
-    if not DEBUG_NO_GOTO:
-        parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Heading to received command", key=KEY_POS_COMMAND), num_failures=5))
+    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Heading to received command", key=KEY_POS_COMMAND), num_failures=5))
+    root.add_child(parallel_enter_arena)
+    return root
+
+def createLeaveArena():
+    root = py_trees.composites.Sequence(name="Leave", memory=True)
+    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+    
+    # if not DEBUG_NO_GOTO:
+    #     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
+
+    parallel_enter_arena = py_trees.composites.Parallel("Leave arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_enter_arena.add_child(BtNode_Announce(name="Announce leaving arena", bb_source=None, message="Leaving"))
+    # parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
+    
+    # root.add_child(BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
+    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Leaving to starting point", key=KEY_POS_COMMAND), num_failures=5))
     root.add_child(parallel_enter_arena)
     return root
 
@@ -304,5 +319,6 @@ def createStoreGroceries():
     # root.add_child(py_trees.decorators.Repeat(name="repeat 2 times", child=retry_store2, num_success=2))
     # retry_store3 = py_trees.decorators.Retry(name=f"retry 2 times", child=createStoreOnce(), num_failures=2)
     # root.add_child(py_trees.decorators.Repeat(name="repeat 2 times", child=retry_store3, num_success=2))
-    root.add_child(BtNode_Announce(name="Announce complete", bb_source=None, message="Storing groceries task complete"))
+    root.add_child(BtNode_Announce(name="Announce complete", bb_source=None, message="Picking drugs task complete"))
+    root.add_child(createLeaveArena())
     return root
