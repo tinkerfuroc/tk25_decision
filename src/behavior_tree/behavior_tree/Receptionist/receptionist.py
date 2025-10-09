@@ -1,4 +1,5 @@
 import py_trees
+from typing import List
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
@@ -132,7 +133,7 @@ def createConstantWriter():
 
     return root
 
-def createListenToGuest(bb_dest_key:str, word_list: list[str]):
+def createListenToGuest(bb_dest_key:str, word_list: List[str]):
     root = py_trees.composites.Selector(name="Listen to guest", memory=True)
     root.add_child(BtNode_PhraseExtraction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=7.0))
     root.add_child(py_trees.decorators.SuccessIsFailure(name="success is failure", child=BtNode_Announce(name="Listen Failed, ask for repeat", bb_source=None, message="I'm sorry. Could you please repeat that louder and closer?")))
