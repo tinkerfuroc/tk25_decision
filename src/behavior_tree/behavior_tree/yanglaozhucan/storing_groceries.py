@@ -40,7 +40,7 @@ except FileNotFoundError:
 # prompt_drinks = "green sprite bottle . black cola bottle . orange fanta bottle . clear water bottle . white milk box"
 # prompt_food = "pink oreo box . yellow chips can . red chips can . white bread"
 # prompt_utilities = "blue dishsoap bottle . white handwash bottle . blue shampoo bottle . blue bowl"
-prompt_drugs = constants["drugs"] #depends on the actual drugs provided or appearance of the drugs like "white round pill . red and white capsule . red box" etc
+prompt_drugs = "aspirin box . ibuprofen box . acetaminophen box" # depends on the drugs given
 
 prompt_list = prompt_drugs 
 
