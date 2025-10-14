@@ -1,4 +1,5 @@
 import py_trees
+from typing import List
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
@@ -118,8 +119,8 @@ def createEnterArena():
 def createConstantWriter():
     root = py_trees.composites.Parallel(name="Write constants to blackboard", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
 
-    root.add_child(BtNode_WriteToBlackboard(name="Wirte door location", bb_namespace="", bb_source=None, bb_key=KEY_DOOR_POSE, object=pose_door))
-    root.add_child(BtNode_WriteToBlackboard(name="Wirte sofa location", bb_namespace="", bb_source=None, bb_key=KEY_SOFA_POSE, object=pose_sofa))
+    root.add_child(BtNode_WriteToBlackboard(name="Write door location", bb_namespace="", bb_source=None, bb_key=KEY_DOOR_POSE, object=pose_door))
+    root.add_child(BtNode_WriteToBlackboard(name="Write sofa location", bb_namespace="", bb_source=None, bb_key=KEY_SOFA_POSE, object=pose_sofa))
     root.add_child(BtNode_WriteToBlackboard(name="Write door location", bb_namespace="", bb_source=None, bb_key=KEY_DOOR_POSE, object=pose_door))
     root.add_child(BtNode_WriteToBlackboard(name="Write sofa location", bb_namespace="", bb_source=None, bb_key=KEY_SOFA_POSE, object=pose_sofa))
     root.add_child(BtNode_WriteToBlackboard(name="Write host name", bb_namespace="", bb_source=None, bb_key=KEY_HOST_NAME, object=host_name))
@@ -132,7 +133,7 @@ def createConstantWriter():
 
     return root
 
-def createListenToGuest(bb_dest_key:str, word_list: list[str]):
+def createListenToGuest(bb_dest_key:str, word_list: List[str]):
     root = py_trees.composites.Selector(name="Listen to guest", memory=True)
     root.add_child(BtNode_PhraseExtraction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=7.0))
     root.add_child(py_trees.decorators.SuccessIsFailure(name="success is failure", child=BtNode_Announce(name="Listen Failed, ask for repeat", bb_source=None, message="I'm sorry. Could you please repeat that louder and closer?")))
