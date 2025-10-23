@@ -3,7 +3,7 @@ from typing import List
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_PhraseExtraction
+from behavior_tree.TemplateNodes.Audio import BtNode_TTSCN, BtNode_Announce, BtNode_GetConfirmation, BtNode_PhraseExtraction, BtNode_GraspRequest
 from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_DoorDetection, BtNode_TurnPanTilt, BtNode_ScanFor
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Place, BtNode_GripperAction
 from .customNodes import BtNode_CategorizeGrocery, BtNode_FindObjTable, BtNode_GraspWithPose, BtNode_Confirm
@@ -16,7 +16,7 @@ from std_msgs.msg import Header
 import rclpy
 
 try:
-    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/StoringGroceries/constants.json", "r")
+    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/yanglaozhucan/constants.json", "r")
     constants = json.load(file)
     file.close()
 except FileNotFoundError:
@@ -151,7 +151,7 @@ def createEnterArena():
     #     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
 
     parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    parallel_enter_arena.add_child(BtNode_Announce(name="Announce entering arena", bb_source=None, message="Entering"))
+    parallel_enter_arena.add_child(BtNode_TTSCN(name="Announce entering arena", bb_source=None, message="我要出发咯"))
     # parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
     
     # root.add_child(BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
@@ -167,7 +167,7 @@ def createLeaveArena():
     #     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
 
     parallel_enter_arena = py_trees.composites.Parallel("Leave arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    parallel_enter_arena.add_child(BtNode_Announce(name="Announce leaving arena", bb_source=None, message="Leaving"))
+    parallel_enter_arena.add_child(BtNode_TTSCN(name="Announce leaving arena", bb_source=None, message="离开中"))
     # parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
     
     # root.add_child(BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
@@ -177,8 +177,9 @@ def createLeaveArena():
 
 def createListenToGuest(bb_dest_key:str, word_list: List[str]):
     root = py_trees.composites.Selector(name="Listen to guest", memory=True)
-    root.add_child(BtNode_PhraseExtraction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=7.0))
-    root.add_child(py_trees.decorators.SuccessIsFailure(name="success is failure", child=BtNode_Announce(name="Listen Failed, ask for repeat", bb_source=None, message="I'm sorry. Could you please repeat that louder and closer?")))
+    #root.add_child(BtNode_PhraseExtraction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=7.0))
+    root.add_child(BtNode_GraspRequest(name="Request Grasp from Guest", object_names=word_list, object_codes=word_list, bb_dest_key=bb_dest_key))
+
     return py_trees.decorators.Retry(name="retry", child=root, num_failures=10)
     
 def createGetInfo(storage_key:str):
@@ -243,7 +244,7 @@ def createPlaceOnTable(bb_key_place:str=KEY_POINT_PLACE):
                                             bb_key_image=KEY_TABLE_IMG, bb_key_segment=KEY_OBJ_SEG, 
                                             bb_target_frame=KEY_TARGET_FRAME, bb_key_result_point=bb_key_place, 
                                             bb_key_env_points=KEY_ENV_POINTS, bb_key_reason=KEY_PLACE_REASON,
-                                            bb_key_table_left=KEY_POINT_TABLE_LEFT, bb_key_table_right=KEY_POINT_TABLE_RIGHT))
+                                            bb_key_shelf_left=KEY_POINT_TABLE_LEFT, bb_key_shelf_right=KEY_POINT_TABLE_RIGHT))
     root.add_child(scan_parallel)
     if DO_PLACE:
         root.add_child(BtNode_MoveArmSingle("Move arm to scan", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
@@ -306,7 +307,7 @@ def createStoreOnce():
     root.add_child(createPlaceOnTable())
     return root
 
-def createStoreGroceries():
+def createYanglaozhucan():
     root = py_trees.composites.Sequence(name="Taking drugs", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(BtNode_Announce(name="Announce starting storing drugs", bb_source=None, message="Starting taking drugs"))

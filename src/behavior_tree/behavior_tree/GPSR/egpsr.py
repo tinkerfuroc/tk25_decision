@@ -60,9 +60,9 @@ point_target_frame = "base_link"
 def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter arena", memory=True)
     
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
-    root.add_child(BtNode_Announce(name="announce door opened", bb_source=None, message="Dooor is open."))
-    root.add_child(BtNode_WaitTicks("wait for 4 ticks", 4)) # 2 seconds
+    # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
+    root.add_child(BtNode_Announce(name="announce door opened", bb_source=None, message="Door is open."))
+    root.add_child(BtNode_WaitTicks("wait for 3 second", 12)) # 2 seconds
     parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_enter_arena.add_child(BtNode_Announce(name="Announce entering arena", bb_source=None, message="Entering arena"))
     parallel_enter_arena.add_child(BtNode_TurnPanTilt(name="Turn pan tile", x=0.0, y=20.0, speed=0.0))
@@ -81,15 +81,25 @@ def createConstantWriter():
     return root
 
 def createGotoWaving():
+    
     root = py_trees.composites.Sequence("root of goto_waving", True)
+    root.add_child(BtNode_TurnPanTilt("Turn pan tilt", x=0.0, y=45.0, speed=0.0))
+    root.add_child(BtNode_Announce("announce found waving person", None, message="I'm searching for waving person. Keep your hands above your head."))
+    root.add_child(BtNode_WaitTicks("wait for 1.5 second", 6))
+    root.add_child(BtNode_Announce("announce found waving person", None, message="I'm searching for waving person. Keep your hands above your head."))
+    root.add_child(BtNode_WaitTicks("wait for 1.5 second", 6))
+    root.add_child(BtNode_Announce("announce found waving person", None, message="I'm searching for waving person. Keep your hands above your head."))
+    root.add_child(BtNode_WaitTicks("wait for 1.5 second", 6))
+
+
     if USE_NEW_SCAN_WAVING:
-        root.add_child(BtNode_ScanForWavingPersonNew("find waving persons", KEY_ALL_WAVING_PERSONS, KEY_POSE_WAVING_PERSON, THRESHOLD_METERS))
+        root.add_child(py_trees.decorators.Retry("retry", BtNode_ScanForWavingPersonNew("find waving persons", KEY_ALL_WAVING_PERSONS, KEY_POSE_WAVING_PERSON, THRESHOLD_METERS, target_frame="map"), 5))
     else:
-        root.add_child(BtNode_ScanForWavingPerson("find waving person", KEY_POSE_WAVING_PERSON, use_orbbec=True, target_frame="base_link"))
+        root.add_child(BtNode_ScanForWavingPerson("find waving person", KEY_POSE_WAVING_PERSON, detect_wavinguse_orbbec=True, target_frame="base_link"))
     root.add_child(BtNode_Announce("announce found waving person", None, message="Found waving person. Dear person, could you move a little so I can reach you?"))
     if TRY_GOTO_GRASP_POSE:
         root.add_child(BtNode_ConvertGraspPose("convert grasp pose", KEY_POSE_WAVING_PERSON, KEY_POSE_GRASP_POSE))
-        root.add_child(py_trees.decorators.Retry("retry", BtNode_GotoAction("goto instruction point", KEY_POSE_GRASP_POSE), 5))
+        root.add_child(py_trees.decorators.Retry("retry grasp_pose", BtNode_GotoAction("goto instruction point", KEY_POSE_GRASP_POSE), 5))
     else:
         root.add_child(py_trees.decorators.Retry("retry", BtNode_GotoAction("goto instruction point", KEY_POSE_WAVING_PERSON), 5))
     return root
@@ -97,9 +107,11 @@ def createGotoWaving():
 def createGetCommand(key_dest, confirmed_message="Starting execution"):
     root = py_trees.composites.Sequence("get one command from user", True)
     get_command = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
-    get_command.add_child(BtNode_Announce(name=f"Prompt for getting command", bb_source="", message=f"Please speak to me after the beep sound. Tell me your command."))
-    get_command.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=key_dest, timeout=5.0))
+    get_command.add_child(BtNode_Announce(name=f"Prompt for getting command", bb_source=None, message=f"Please speak to me after the beep sound. Tell me your command."))
+    get_command.add_child(BtNode_WaitTicks("wait for 1.5 second", 6))
+    get_command.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=key_dest, timeout=10.0))
     get_command.add_child(BtNode_Announce(name=f"ask to confirm command", bb_source=key_dest, message=f"Am I correct, you command is "))
+    get_command.add_child(BtNode_WaitTicks("wait for 2.5 second", 10))
     get_command.add_child(BtNode_GetConfirmation("confirm instruction"))
     get_command.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message=confirmed_message))
 
@@ -109,14 +121,15 @@ def createGetCommand(key_dest, confirmed_message="Starting execution"):
 def createGoAndFindPerson(key_pose, do_go=True):
     root = py_trees.composites.Sequence("goto and find waving person to get command", True)
     if do_go:
-        root.add_child(py_trees.decorators.Retry("retry", BtNode_GotoAction("Go to pose", key_pose), 5))
+        root.add_child(py_trees.decorators.Retry("retry go_and_find", BtNode_GotoAction("Go to pose", key_pose), 5))
     root.add_child(createGotoWaving())
-    root.add_child(createGetCommand())
+    root.add_child(createGetCommand("hello", confirmed_message="Command received, I will execute it later."))
     return root
 
 def createEGPSR():
     root = py_trees.composites.Sequence("GPSR", True)
     root.add_child(createConstantWriter())
+    root.add_child(BtNode_TurnPanTilt("Turn pan tilt", x=0.0, y=45.0, speed=0.0))
     root.add_child(createEnterArena())
 
     # scan each room

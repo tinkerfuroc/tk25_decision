@@ -36,8 +36,10 @@ setup(
             'test-prompt-reached = behavior_tree.main:test_prompt_reached',
             'inspection = behavior_tree.main:inspection',
             'GPSR = behavior_tree.GPSR.gpsr_new:main',
-            'EGPSR = behavior_tree.GPSR.egpsr:main'
+            'EGPSR = behavior_tree.GPSR.egpsr:main',
             'restaurant = behavior_tree.main:restaurant',  # 添加这一行
+            'grasp_once = behavior_tree.grasp_intel_demo.grasp:main',
+            'yanglaozhucan = behavior_tree.main:yanglaozhucan',
         ],
     },
 )

@@ -2,20 +2,21 @@ import py_trees
 import py_trees_ros
 import rclpy
 
-from .HelpMeCarry.Track import createFollowPerson
+# from .HelpMeCarry.Track import createFollowPerson
 # from .HelpMeCarry.help_me_carry import createHelpMeCarry
-from .HelpMeCarry.prompt_reached import testPromptReached
-from .Receptionist.receptionist import createReceptionist
-from .grasp_intel_demo.grasp_intel import create_demo
-from .grasp_intel_demo.grasp_audio import createGraspAudio
-from .ServeBreakfast.serve_breakfast import createServeBreakfast
-from .StoringGroceries.storing_groceries import createStoreGroceries
-from .StoringGroceries.storing_groceries_place_only import createStoreGroceriesPlaceOnly
+# from .HelpMeCarry.prompt_reached import testPromptReached
+# from .Receptionist.receptionist import createReceptionist
+# from .grasp_intel_demo.grasp_intel import create_demo
+# from .grasp_intel_demo.grasp_audio import createGraspAudio
+# from .ServeBreakfast.serve_breakfast import createServeBreakfast
+# from .StoringGroceries.storing_groceries import createStoreGroceries
+# from .StoringGroceries.storing_groceries_place_only import createStoreGroceriesPlaceOnly
 
-from .GPSR.gpsr_new import createGPSR
-from .Inspection.inspection import createInspection
-from .Constants import PRINT_BLACKBOARD, PRINT_DEBUG
-from .Restaurant.restaurants import createRestaurantTask  
+# from .GPSR.gpsr_new import createGPSR
+# from .Inspection.inspection import createInspection
+# from .Constants import PRINT_BLACKBOARD, PRINT_DEBUG
+# from .Restaurant.restaurants import createRestaurantTask
+from .yanglaozhucan.yanglaozhucan import createYanglaozhucan  
 
 def grasp_intel():
     rclpy.init(args=None)
@@ -278,6 +279,33 @@ def inspection():
         tree.shutdown()
         rclpy.try_shutdown()    
 
+def yanglaozhucan():
+    rclpy.init(args=None)
+
+    root = createYanglaozhucan()
+
+    # make it a ros tree
+    tree = py_trees_ros.trees.BehaviourTree(root)
+    tree.setup(node_name="root_node", timeout=15)
+
+    # function for display the tree to standard output
+    def print_tree(tree):
+        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
+        if PRINT_BLACKBOARD:
+            print(py_trees.display.unicode_blackboard())
+
+    if PRINT_DEBUG:
+        py_trees.logging.level = py_trees.logging.Level.DEBUG
+    
+    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
+
+    try:
+        rclpy.spin(tree.node)
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    finally:
+        tree.shutdown()
+        rclpy.try_shutdown() 
 # def test_follow_audio():
 #     rclpy.init(args=None)
 
@@ -386,6 +414,14 @@ def draw_gpsr():
     root = createGPSR()
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
+def draw_yanglaozhucan():
+    root = createYanglaozhucan()
+    py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
+
+# def draw_egpsr():
+#     root = createGPSR()
+#     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
+
 def restaurant():
     rclpy.init(args=None)
 
@@ -419,14 +455,14 @@ def draw_restaurant():
     py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
 def main():
-    draw_gpsr()
+    # draw_gpsr()
     # draw_receptionist()
     # draw_serve_breakfast()
     # draw_storing_groceries()
     # draw_storing_groceries_placing_only()
     # draw_restaurant()
 
+    draw_yanglaozhucan()
 
 if __name__ == "__main__":
     main()
-    
