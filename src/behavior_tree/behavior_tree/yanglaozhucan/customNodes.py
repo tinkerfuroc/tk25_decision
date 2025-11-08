@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any,Tuple,List
 import py_trees
 import textwrap
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
@@ -35,8 +35,59 @@ class BtNode_Confirm(BtNode_Announce):
     def initialise(self):
         # self.given_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ". Am I correct?"
         self.given_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ", correct?"
-
         return super().initialise()
+
+##############################################   中关村   #####################################################
+class BtNode_WriteGrid(ActionHandler):
+    def __init__(self,
+                 name: str,
+                 bb_key_dest: str,
+                 action_name: str = "write_grid",
+                 ):
+        super(BtNode_WriteGrid, self).__init__(name=name, action_type=ACTION, action_name=action_name)
+        self.coor = []
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="target_grid",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_dest)
+        )
+
+    def send_goal(self):
+        try:
+            goal = ACTION.Goal()
+            goal.# (set goal parameters if any)
+            self.send_goal_request(goal)
+            self.logger.debug(f"Sent goal to get target grid")
+            self.feedback_message = f"Sent goal to get target grid"
+        except Exception as e:
+            self.feedback_message = f"Failed to send goal: {e}"
+            self.logger.debug(f"Failed to send goal: {e}")
+            return py_trees.common.Status.FAILURE
+    
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = f"Coordinates failed and error message {self.result_message.result.error_msg}"
+            return py_trees.common.Status.FAILURE
+        else:
+            result = self.result_message.result
+            self.coor = result.coor
+            if len(self.coor) > 0: 
+                print( f"Received target grid: {self.coor}, Type of coor: {type(self.coor)}")
+            else:
+                print( f"Received empty target grid.")
+                return py_trees.common.Status.FAILURE
+            self.blackboard.coor = self.coor
+            self.feedback_message = f"Coordinates succeeded with target layer {result.coor}"
+            return py_trees.common.Status.SUCCESS
+    
+    def feedback_callback(self, msg):
+        feedback = msg.feedback
+        if feedback.status != 0:
+            self.feedback_message = f"ERROR:  {feedback.status} - {feedback.message}"
+        else:
+            self.feedback_message = f"INFO:  {feedback.status} - {feedback.message}"
+##############################################   中关村   #####################################################
     
 class BtNode_FindObjTable(ServiceHandler):
     """
