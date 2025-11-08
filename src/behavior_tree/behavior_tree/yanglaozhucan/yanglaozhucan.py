@@ -81,6 +81,7 @@ POS_SHELF = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id
                                                                 w=constants["pose_shelf"]["orientation"]["w"]))
                             )
 
+
 POINT_PLACE = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                             point=Point(x=constants["point_place"]["x"], y=constants["point_place"]["y"], z=constants["point_place"]["z"]))
 # if need to specify left and right point of the table for placing
@@ -155,7 +156,7 @@ def createEnterArena():
     # parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
     
     # root.add_child(BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
-    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Heading to received command", key=KEY_POS_COMMAND), num_failures=5))
+    #parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Heading to received command", key=KEY_POS_SHELF), num_failures=5))
     root.add_child(parallel_enter_arena)
     return root
 
@@ -176,7 +177,7 @@ def createLeaveArena():
     return root
 
 def createListenToGuest(bb_dest_key:str, word_list: List[str]):
-    root = py_trees.composites.Selector(name="Listen to guest", memory=True)
+    root = py_trees.composibacktes.Selector(name="Listen to guest", memory=True)
     #root.add_child(BtNode_PhraseExtraction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=7.0))
     root.add_child(BtNode_GraspRequest(name="Request Grasp from Guest", object_names=word_list, object_codes=word_list, bb_dest_key=bb_dest_key))
 
@@ -185,7 +186,7 @@ def createListenToGuest(bb_dest_key:str, word_list: List[str]):
 def createGetInfo(storage_key:str):
     root = py_trees.composites.Sequence(name=f"Get drugs", memory=True)
     loop = py_trees.composites.Sequence(name=f"get and confirm drugs", memory=True)
-    loop.add_child(BtNode_Announce(name=f"Prompt for drugs", bb_source=None, message=f"Speak loudly and tell me your drugs"))
+    loop.add_child(BtNode_TTSCN(name=f"Prompt for drugs", bb_source=None, message=f"清告诉我需要帮您拿什么药物"))
     loop.add_child(createListenToGuest(bb_dest_key=storage_key, word_list=drugs))
     loop.add_child(BtNode_Confirm(name=f"Confirm drugs prompt", key_confirmed=storage_key, type="drugs"))
     loop.add_child(BtNode_GetConfirmation(name=f"Get drugs confirmation", timeout=5.0))
@@ -210,7 +211,8 @@ def createConstantWriter():
     # root.add_child(BtNode_WriteToBlackboard("Write Point Table Right", bb_namespace="", bb_source=None, bb_key=KEY_POINT_TABLE_RIGHT, object=POINT_SHELF_RIGHT))
     return root
 
-def createGraspOnce():
+def createGraspOnce():parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Heading to received command", key=KEY_POS_SHELF), num_failures=5))
+    
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
     root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=20.0))
     root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
@@ -313,7 +315,7 @@ def createYanglaozhucan():
     root.add_child(BtNode_Announce(name="Announce starting storing drugs", bb_source=None, message="Starting taking drugs"))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     root.add_child(createEnterArena())
-    root.add_child(createGetInfo(KEY_GUEST_DRUGS))
+    #root.add_child(createGetInfo(KEY_GUEST_DRUGS))
     retry_store = py_trees.decorators.Retry(name=f"retry 2 times", child=createStoreOnce(), num_failures=2)
     root.add_child(py_trees.decorators.Repeat(name="repeat 1 times", child=retry_store, num_success=1))
     # if more than 1 item, repeat storing process, give different table positions or different arm positions for each item 

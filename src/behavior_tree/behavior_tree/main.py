@@ -14,9 +14,10 @@ import rclpy
 
 # from .GPSR.gpsr_new import createGPSR
 # from .Inspection.inspection import createInspection
-# from .Constants import PRINT_BLACKBOARD, PRINT_DEBUG
+from .Constants import PRINT_BLACKBOARD, PRINT_DEBUG
 # from .Restaurant.restaurants import createRestaurantTask
 from .yanglaozhucan.yanglaozhucan import createYanglaozhucan  
+
 
 def grasp_intel():
     rclpy.init(args=None)
