@@ -42,6 +42,8 @@ class BtNode_WriteGrid(ActionHandler):
     def __init__(self,
                  name: str,
                  bb_key_dest: str,
+                 bb_key_shelf_left: str,
+                 bb_key_shelf_right: str,
                  action_name: str = "write_grid",
                  ):
         super(BtNode_WriteGrid, self).__init__(name=name, action_type=ACTION, action_name=action_name)
@@ -50,20 +52,31 @@ class BtNode_WriteGrid(ActionHandler):
         self.blackboard.register_key(
             key="target_grid",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_dest)
-        )
+            remap_to=py_trees.blackboard.Blackboard.absolute_name
+        )("/", bb_key_dest)
+        self.blackboard.register_key(
+            key="shelf_left",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name
+        )("/", bb_key_shelf_left)
+        self.blackboard.register_key(
+            key="shelf_right",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name
+        )("/", bb_key_shelf_right)
 
-    # def send_goal(self):
-    #     try:
-    #         goal = ACTION.Goal()
-    #         goal.# (set goal parameters if any)
-    #         self.send_goal_request(goal)
-    #         self.logger.debug(f"Sent goal to get target grid")
-    #         self.feedback_message = f"Sent goal to get target grid"
-    #     except Exception as e:
-    #         self.feedback_message = f"Failed to send goal: {e}"
-    #         self.logger.debug(f"Failed to send goal: {e}")
-    #         return py_trees.common.Status.FAILURE
+    def send_goal(self):
+        try:
+            goal = ACTION.Goal()
+            goal.shelf_left = self.blackboard.shelf_left
+            goal.shelf_right = self.blackboard.shelf_right
+            self.send_goal_request(goal)
+            self.logger.debug(f"Sent goal to get target grid")
+            self.feedback_message = f"Sent goal to get target grid"
+        except Exception as e:
+            self.feedback_message = f"Failed to send goal: {e}"
+            self.logger.debug(f"Failed to send goal: {e}")
+            return py_trees.common.Status.FAILURE
     
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:

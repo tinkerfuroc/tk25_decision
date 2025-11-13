@@ -54,7 +54,7 @@ DO_NAV = True
 
 POS_CHECK_GRID = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                         pose=Pose(position=Point(x=constants["pose_check_grid"]["point"]["x"], y=constants["pose_check_grid"]["point"]["y"], z=0.0),
-                                    orientation=Quaternion(x=constants["pose_check_grid"]["orientation"]["x"], 
+                                    orientation=Quaternion(x=constants["pose_check_grid"]["odrugsrientation"]["x"], 
                                                             y=constants["pose_check_grid"]["orientation"]["y"], 
                                                             z=constants["pose_check_grid"]["orientation"]["z"], 
                                                             w=constants["pose_check_grid"]["orientation"]["w"]))
@@ -105,6 +105,22 @@ POS_SHELF3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_i
                                                                 w=constants["pose_shelf3"]["orientation"]["w"]))
                         )   
 
+POS_SHELF_LEFT = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=constants["pose_shelf_left"]["point"]["x"], y=constants["pose_shelf_left"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_shelf_left"]["orientation"]["x"], 
+                                                                y=constants["pose_shelf_left"]["orientation"]["y"], 
+                                                                z=constants["pose_shelf_left"]["orientation"]["z"], 
+                                                                w=constants["pose_shelf_left"]["orientation"]["w"]))
+                        )  
+
+POS_SHELF_RIGHT = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=constants["pose_shelf_right"]["point"]["x"], y=constants["pose_shelf_right"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_shelf_right"]["orientation"]["x"], 
+                                                                y=constants["pose_shelf_right"]["orientation"]["y"], 
+                                                                z=constants["pose_shelf_right"]["orientation"]["z"], 
+                                                                w=constants["pose_shelf_right"]["orientation"]["w"]))
+                        )  
+
 
 
 POINT_PLACE = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
@@ -137,6 +153,8 @@ drugs = constants["drugs"]
 KEY_POS_SHELF1 = "pos_shelf1"
 KEY_POS_SHELF2 = "pos_shelf2"
 KEY_POS_SHELF3 = "pos_shelf3"
+KEY_POS_SHELF_LEFT = "pos_shelf_left"
+KEY_POS_SHELF_RIGHT = "pos_shelf_right"
 
 KEY_POS_TABLE = "pos_table"
 
@@ -249,6 +267,8 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF1, object=POS_SHELF1))
     root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF2, object=POS_SHELF2))
     root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF3, object=POS_SHELF3))
+    root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF_LEFT, object=POS_SHELF_LEFT))
+    root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF_RIGHT, object=POS_SHELF_RIGHT))
 
     root.add_child(BtNode_WriteToBlackboard("Write Check Grid Position", bb_namespace="", bb_source=None, bb_key=KEY_CHECK_GRID, object=POS_CHECK_GRID))
 
