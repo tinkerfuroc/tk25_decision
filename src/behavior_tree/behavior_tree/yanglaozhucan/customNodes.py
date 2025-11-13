@@ -53,17 +53,17 @@ class BtNode_WriteGrid(ActionHandler):
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_dest)
         )
 
-    def send_goal(self):
-        try:
-            goal = ACTION.Goal()
-            goal.# (set goal parameters if any)
-            self.send_goal_request(goal)
-            self.logger.debug(f"Sent goal to get target grid")
-            self.feedback_message = f"Sent goal to get target grid"
-        except Exception as e:
-            self.feedback_message = f"Failed to send goal: {e}"
-            self.logger.debug(f"Failed to send goal: {e}")
-            return py_trees.common.Status.FAILURE
+    # def send_goal(self):
+    #     try:
+    #         goal = ACTION.Goal()
+    #         goal.# (set goal parameters if any)
+    #         self.send_goal_request(goal)
+    #         self.logger.debug(f"Sent goal to get target grid")
+    #         self.feedback_message = f"Sent goal to get target grid"
+    #     except Exception as e:
+    #         self.feedback_message = f"Failed to send goal: {e}"
+    #         self.logger.debug(f"Failed to send goal: {e}")
+    #         return py_trees.common.Status.FAILURE
     
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:

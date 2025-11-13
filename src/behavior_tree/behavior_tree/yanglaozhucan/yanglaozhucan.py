@@ -53,11 +53,11 @@ DO_NAV = True
 
 
 POS_CHECK_GRID = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=constants["pose_table1"]["point"]["x"], y=constants["pose_check_grid"]["point"]["y"], z=0.0),
-                                    orientation=Quaternion(x=constants["pose_table1"]["orientation"]["x"], 
-                                                            y=constants["pose_table1"]["orientation"]["y"], 
-                                                            z=constants["pose_table1"]["orientation"]["z"], 
-                                                            w=constants["pose_table1"]["orientation"]["w"]))
+                        pose=Pose(position=Point(x=constants["pose_check_grid"]["point"]["x"], y=constants["pose_check_grid"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_check_grid"]["orientation"]["x"], 
+                                                            y=constants["pose_check_grid"]["orientation"]["y"], 
+                                                            z=constants["pose_check_grid"]["orientation"]["z"], 
+                                                            w=constants["pose_check_grid"]["orientation"]["w"]))
                         )
 
 POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
@@ -83,23 +83,23 @@ POS_TABLE = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id
 #                                                                 w=constants["pose_table3"]["orientation"]["w"]))
                             # )
 POS_SHELF1 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=constants["pose_shelf"]["point"]["x"], y=constants["pose_shelf1"]["point"]["y"], z=0.0),
-                                    orientation=Quaternion(x=constants["pose_shelf"]["orientation"]["x"], 
+                        pose=Pose(position=Point(x=constants["pose_shelf1"]["point"]["x"], y=constants["pose_shelf1"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_shelf1"]["orientation"]["x"], 
                                                                 y=constants["pose_shelf1"]["orientation"]["y"], 
                                                                 z=constants["pose_shelf1"]["orientation"]["z"], 
                                                                 w=constants["pose_shelf1"]["orientation"]["w"]))
                         )
 POS_SHELF2 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=constants["pose_shelf"]["point"]["x"], y=constants["pose_shelf2"]["point"]["y"], z=0.0),
-                                    orientation=Quaternion(x=constants["pose_shelf"]["orientation"]["x"], 
+                        pose=Pose(position=Point(x=constants["pose_shelf2"]["point"]["x"], y=constants["pose_shelf2"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_shelf2"]["orientation"]["x"], 
                                                                 y=constants["pose_shelf2"]["orientation"]["y"], 
                                                                 z=constants["pose_shelf2"]["orientation"]["z"], 
                                                                 w=constants["pose_shelf2"]["orientation"]["w"]))
                         )
 
 POS_SHELF3 = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-                        pose=Pose(position=Point(x=constants["pose_shelf"]["point"]["x"], y=constants["pose_shelf3"]["point"]["y"], z=0.0),
-                                    orientation=Quaternion(x=constants["pose_shelf"]["orientation"]["x"], 
+                        pose=Pose(position=Point(x=constants["pose_shelf3"]["point"]["x"], y=constants["pose_shelf3"]["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=constants["pose_shelf3"]["orientation"]["x"], 
                                                                 y=constants["pose_shelf3"]["orientation"]["y"], 
                                                                 z=constants["pose_shelf3"]["orientation"]["z"], 
                                                                 w=constants["pose_shelf3"]["orientation"]["w"]))
@@ -171,6 +171,7 @@ KEY_GRASP_ANNOUNCEMENT = "grasp_announcement"
 
 ################################   OTHERS  ################################
 KEY_COMMAND = "command"
+KEY_CHECK_GRID = "check_grid"
 KEY_GUEST_DRUGS = "drugs"
 
 KEY_DOOR_STATUS = "door_status"
@@ -196,10 +197,9 @@ def createEnterArena():
 
     parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_enter_arena.add_child(BtNode_TTSCN(name="Announce entering arena", bb_source=None, message="我要出发咯"))
-    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_CHECK_GRID, target_frame=point_target_frame)))
+    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_CHECK_GRID)))
     root.add_child(parallel_enter_arena)
 
-    TODO: "wait for vision check target grid"
     root.add_child(BtNode_WriteGrid(name="Check target's grid", bb_key_dest=KEY_TARGET_GRID))
 
     return root
@@ -249,6 +249,9 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF1, object=POS_SHELF1))
     root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF2, object=POS_SHELF2))
     root.add_child(BtNode_WriteToBlackboard("Write Position Shelf", bb_namespace="", bb_source=None, bb_key=KEY_POS_SHELF3, object=POS_SHELF3))
+
+    root.add_child(BtNode_WriteToBlackboard("Write Check Grid Position", bb_namespace="", bb_source=None, bb_key=KEY_CHECK_GRID, object=POS_CHECK_GRID))
+
 
     root.add_child(BtNode_WriteToBlackboard("Write Position Table", bb_namespace="", bb_source=None, bb_key=KEY_POS_TABLE, object=POS_TABLE))
     # root.add_child(BtNode_WriteToBlackboard("Write Position Table2", bb_namespace="", bb_source=None, bb_key=KEY_POS_TABLE2, object=POS_TABLE2))
@@ -365,7 +368,7 @@ def createYanglaozhucan():
     root.add_child(createConstantWriter())
     root.add_child(BtNode_Announce(name="Announce starting storing drugs", bb_source=None, message="Starting taking drugs"))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
-    root.add_child(createGetInfo(KEY_GUEST_DRUGS))
+    #root.add_child(createGetInfo(KEY_GUEST_DRUGS))
     root.add_child(createEnterArena()) # return which grid to go to
 
     trial = 0
