@@ -47,6 +47,8 @@ class BtNode_WriteGrid(ActionHandler):
                  action_name: str = "write_grid",
                  ):
         super(BtNode_WriteGrid, self).__init__(name=name, action_type=ACTION, action_name=action_name)
+        self.x = []
+        self.y = []
         self.coor = []
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
@@ -70,6 +72,8 @@ class BtNode_WriteGrid(ActionHandler):
             goal = ACTION.Goal()
             goal.shelf_left = self.blackboard.shelf_left
             goal.shelf_right = self.blackboard.shelf_right
+            goal.shelf_height = [0.04, 0.33, 0.52, 0.9, 1.19, 1.47]
+            goal.item_ids = ["item_1", "item_2", "item_3", "item_4", "item_5", "item_6"]
             self.send_goal_request(goal)
             self.logger.debug(f"Sent goal to get target grid")
             self.feedback_message = f"Sent goal to get target grid"
@@ -84,7 +88,10 @@ class BtNode_WriteGrid(ActionHandler):
             return py_trees.common.Status.FAILURE
         else:
             result = self.result_message.result
-            self.coor = result.coor
+            for i in range(len(result.item_height_grids)):
+                self.y[i] = int(result.item_height_grids[i]) 
+            self.x = result.item_horizontal_grids
+            self.coor = list(zip(self.x, self.y))
             if len(self.coor) > 0: 
                 print( f"Received target grid: {self.coor}, Type of coor: {type(self.coor)}")
             else:
@@ -115,7 +122,7 @@ class BtNode_FindObjTable(ServiceHandler):
                  bb_key_announcement: str,
                  target_frame: str = "base_link",
                  use_realsense: bool = True,
-                 service_name = "object_detection",
+                 service_name = "object_detection_yolo",
                  service_type = ObjectDetection,
                  ):
         super(BtNode_FindObjTable, self).__init__(name=name,
