@@ -10,6 +10,105 @@ from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 
 import action_msgs.msg as action_msgs
 
+class BtNode_ChangeToNextMedication(py_trees.behaviour.Behaviour):
+    def __init__(self,
+                 name: str,
+                 bb_key_medication_list: str,
+                 bb_key_med_dictionary: str,
+                 bb_key_current_medication: str,
+                 bb_key_current_arm_scan_pos: str):
+        super().__init__(name=name)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="medication_list",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_medication_list)
+        )
+        self.blackboard.register_key(
+            key="med_dictionary",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_med_dictionary)
+        )
+        self.blackboard.register_key(
+            key="current_medication",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_current_medication)
+        )
+        self.blackboard.register_key(
+            key="current_arm_scan_pos",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_current_arm_scan_pos)
+        )
+        self.current_index = -1
+
+    def setup(self, **kwargs):
+        return super().setup(**kwargs)
+
+    def initialise(self):
+        medication_list = self.blackboard.medication_list
+        if not medication_list:
+            self.feedback_message = "Medication list is empty."
+            return
+        self.feedback_message = "Initialized ChangeToNextMedication."
+        return
+
+    def update(self):
+        self.current_index += 1
+        med_dictionary = self.blackboard.med_dictionary
+        medication_list = self.blackboard.medication_list
+        if self.current_index >= len(medication_list):
+            self.feedback_message = "All medications have been processed."
+            self.current_index = len(medication_list) - 1
+            return py_trees.common.Status.FAILURE
+        current_med = medication_list[self.current_index]
+        self.blackboard.current_medication = current_med
+        if current_med in med_dictionary:
+            self.blackboard.current_arm_scan_pos = med_dictionary[current_med]['arm_scan_pos']
+            self.feedback_message = f"Changed to next medication: {current_med}."
+            return py_trees.common.Status.SUCCESS
+        else:
+            self.feedback_message = f"Medication {current_med} not found in dictionary."
+            return py_trees.common.Status.FAILURE
+        
+class BtNode_WriteDropPose(py_trees.behaviour.Behaviour):
+    def __init__(self, 
+                 name: str,
+                 bb_key_idx: str,
+                 bb_key_drop_poses_list: str,
+                 bb_key_drop_pose: str
+    ):
+        super().__init__(name=name)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="idx",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_idx)
+        )
+        self.blackboard.register_key(
+            key="drop_poses",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_drop_poses_list)
+        )
+        self.blackboard.register_key(
+            key="drop_pose",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_drop_pose)
+        )
+    def setup(self, **kwargs):
+        return super().setup(**kwargs)
+    def initialise(self):
+        return super().initialise()
+    def update(self):
+        idx = self.blackboard.idx
+        drop_poses = self.blackboard.drop_poses
+        if idx < 0 or idx >= len(drop_poses):
+            self.feedback_message = f"Index {idx} is out of bounds for drop poses list."
+            return py_trees.common.Status.FAILURE
+        self.blackboard.drop_pose = drop_poses[idx]
+        self.feedback_message = f"Wrote drop pose for index {idx}."
+        return py_trees.common.Status.SUCCESS
+
+
 class BtNode_Confirm(BtNode_Announce):
     def __init__(self,
                  name: str,
