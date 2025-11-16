@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'ZGC = behavior_tree.yanglaozhucan.ZGC2026:main',
             'draw = behavior_tree.main:main',
             'follow = behavior_tree.main:test_follow',
             'follow-audio = behavior_tree.main:test_follow_audio',

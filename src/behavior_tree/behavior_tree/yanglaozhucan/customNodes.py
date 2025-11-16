@@ -6,7 +6,7 @@ from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.messages import ObjectDetection, Categorize, TextToSpeech
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-
+from geometry_msgs.msg import PointStamped
 
 import action_msgs.msg as action_msgs
 
@@ -14,7 +14,7 @@ class BtNode_ChangeToNextMedication(py_trees.behaviour.Behaviour):
     def __init__(self,
                  name: str,
                  bb_key_medication_list: str,
-                 bb_key_med_dictionary: str,
+                 bb_key_medication_dict: str,
                  bb_key_current_medication: str,
                  bb_key_current_arm_scan_pos: str):
         super().__init__(name=name)
@@ -27,7 +27,7 @@ class BtNode_ChangeToNextMedication(py_trees.behaviour.Behaviour):
         self.blackboard.register_key(
             key="med_dictionary",
             access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_med_dictionary)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_medication_dict)
         )
         self.blackboard.register_key(
             key="current_medication",
@@ -108,6 +108,43 @@ class BtNode_WriteDropPose(py_trees.behaviour.Behaviour):
         self.feedback_message = f"Wrote drop pose for index {idx}."
         return py_trees.common.Status.SUCCESS
 
+class BtNode_ProcessTrayPoint(py_trees.behaviour.Behaviour):
+    def __init__(
+            self,
+            name: str,
+            bb_vision_result: str,
+            bb_tray_point: str
+    ):
+        super().__init__(name=name)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="vision_result",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_vision_result)
+        )
+        self.blackboard.register_key(
+            key="tray_point",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_tray_point)
+        )
+    def setup(self, **kwargs):
+        return super().setup(**kwargs)
+    def initialise(self):
+        return super().initialise()
+    def update(self):
+        vision_result = self.blackboard.vision_result
+        if not vision_result or not vision_result.objects:
+            self.feedback_message = "No objects found in vision result."
+            return py_trees.common.Status.FAILURE
+        tray_object = vision_result.objects[0]
+        header = vision_result.header
+        tray = PointStamped()
+        tray.header = header
+        tray.point = tray_object.centroid
+        tray.point.z += 0.10  # Adjust Z coordinate upwards by 10 cm
+        self.blackboard.tray_point = tray
+        self.feedback_message = "Processed tray point from vision result."
+        return py_trees.common.Status.SUCCESS
 
 class BtNode_Confirm(BtNode_Announce):
     def __init__(self,

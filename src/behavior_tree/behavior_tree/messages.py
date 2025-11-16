@@ -5,7 +5,7 @@ from tinker_vision_msgs.srv import ObjectDetection, FeatureExtraction, SeatRecom
 # from tinker_decision_msgs.srv import Drop
 # from tinker_decision_msgs.srv import Grasp
 from tinker_arm_msgs.srv import Drop
-from tinker_arm_msgs.action import Place, Grasp#, Drop
+from tinker_arm_msgs.action import Place, Grasp, JointMove, CartesianMove#, Drop
 # from tinker_decision_msgs.srv import Announce, WaitForStart
 from tinker_audio_msgs.srv import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest,QuestionAnswer, GraspRequest
 
