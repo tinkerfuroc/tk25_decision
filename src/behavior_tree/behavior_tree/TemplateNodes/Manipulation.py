@@ -20,7 +20,7 @@ class BtNode_CartesianMove(ActionHandler):
                  name: str,
                  bb_key_pointcloud: str,
                  bb_key_point: str,
-                 action_name="cartisian_move_action"
+                 action_name="cartesian_move_action"
                  ):
         super().__init__(name, CartesianMove, action_name, None)
         self.blackboard = self.attach_blackboard_client(name)
@@ -72,8 +72,8 @@ class BtNode_MoveArmJointPC(ActionHandler):
                  name: str,
                  bb_key_pointcloud: str,
                  bb_key_arm_pose: str,
-                 action_name : str = "move_arm_joint_pc"):
-        super().__init__(name, PointTo, action_name, None, wait_for_server_timeout_sec=-3)
+                 action_name : str = "joint_move_action"):
+        super().__init__(name, JointMove, action_name, None, wait_for_server_timeout_sec=-3)
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="pointcloud",

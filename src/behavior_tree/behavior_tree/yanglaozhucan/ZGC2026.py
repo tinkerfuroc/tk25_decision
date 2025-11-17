@@ -40,6 +40,7 @@ KEY_DROP_POSES_LIST = "drop_poses_list"
 KEY_PANTILT_ANGLE = "pantilt_angle"
 KEY_POSE_ENDING = "pose_ending"
 KEY_TRAY_PROMPT = "tray_prompt"
+KEY_POSE_GRASP = "pose_grasp"
 
 # These will be initialized in main() after rclpy.init()
 ARM_NAVIGATING = None
@@ -48,6 +49,7 @@ DROP_POSES_LIST = None
 PANTILT_ANGLE = None
 POSE_ENDING = None
 TRAY_PROMPT = None
+POSE_GRASP = None
 
 KEY_DROP_POSE_IDX = "drop_pose"
 DROP_POS_IDX = constants["drop_pose_idx"]
@@ -57,7 +59,7 @@ MEDICATION_LIST = constants["medication_list"]
 
 KEY_POINT_DROP = "point_drop"
 KEY_OBJECT_NAME = "object_name"
-KEY_POSE_GRASP = "pose_grasp"
+
 KEY_POSE_DROP = "pose_drop"
 KEY_ARM_SCAN = "arm_scan"
 KEY_SCAN_TRAY_RESULT = "scan_tray_result"
@@ -78,6 +80,7 @@ def createConstantWriter():
     root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write tray prompt", variable_name=KEY_TRAY_PROMPT, variable_value=TRAY_PROMPT, overwrite=True))
     root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write drop pose idx", variable_name=KEY_DROP_POSE_IDX, variable_value=DROP_POS_IDX, overwrite=True))
     root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write medication list", variable_name=KEY_MEDICATION_LIST, variable_value=MEDICATION_LIST, overwrite=True))
+    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write pose grasp", variable_name=KEY_POSE_GRASP, variable_value=POSE_GRASP, overwrite=True))
     return root
 
 def createGetMedications():
@@ -235,13 +238,14 @@ def main():
     rclpy.init(args=None)
     
     # Initialize constants that require rclpy to be initialized
-    global ARM_NAVIGATING, MEDICATION_DICT, DROP_POSES_LIST, PANTILT_ANGLE, POSE_ENDING, TRAY_PROMPT
+    global ARM_NAVIGATING, MEDICATION_DICT, DROP_POSES_LIST, PANTILT_ANGLE, POSE_ENDING, TRAY_PROMPT, POSE_GRASP
     ARM_NAVIGATING = arm_pose_reader(constants["arm_pos_navigating"])
     MEDICATION_DICT = constants["medication_dict"]
     DROP_POSES_LIST = [pose_reader(pose_dict) for pose_dict in constants["drop_poses_list"]]
     PANTILT_ANGLE = constants["pantilt_angle"]
     POSE_ENDING = pose_reader(constants["pose_ending"])
     TRAY_PROMPT = constants["tray_prompt"]
+    POSE_GRASP = pose_reader(constants["pose_shelf"])
 
     root = createZGC2026()
 
@@ -258,7 +262,7 @@ def main():
     if PRINT_DEBUG:
         py_trees.logging.level = py_trees.logging.Level.DEBUG
     
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
+    tree.tick_tock(period_ms=250.0,post_tick_handler=print_tree)
 
     try:
         rclpy.spin(tree.node)

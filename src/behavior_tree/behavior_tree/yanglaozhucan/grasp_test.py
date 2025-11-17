@@ -34,18 +34,22 @@ def pose_reader(pose_dict):
 def arm_pose_reader(arm_pose_list):
     return [x / 180 * 3.1415926 for x in arm_pose_list]
 
-KEY_ARM_NAVIGATING = "arm_navigating"
+KEY_ARM_NAVIGATING = "arm_pos_navigating"
 KEY_MEDICATION_DICT = "medication_dict"
 KEY_DROP_POSES_LIST = "drop_poses_list"
 KEY_PANTILT_ANGLE = "pantilt_angle"
 KEY_POSE_ENDING = "pose_ending"
 KEY_TRAY_PROMPT = "tray_prompt"
-ARM_NAVIGATING = arm_pose_reader(constants["arm_navigating"])
-MEDICATION_DICT = constants["medication_dict"]
-DROP_POSES_LIST = [pose_reader(pose_dict) for pose_dict in constants["drop_poses_list"]]
-PANTILT_ANGLE = constants["pantilt_angle"]
-POSE_ENDING = pose_reader(constants["pose_ending"])
-TRAY_PROMPT = constants["tray_prompt"]
+KEY_POSE_GRASP = "pose_grasp"
+
+# These will be initialized in main() after rclpy.init()
+ARM_NAVIGATING = None
+MEDICATION_DICT = None
+DROP_POSES_LIST = None
+PANTILT_ANGLE = None
+POSE_ENDING = None
+TRAY_PROMPT = None
+POSE_GRASP = None
 
 KEY_DROP_POSE_IDX = "drop_pose"
 DROP_POS_IDX = constants["drop_pose_idx"]
@@ -55,7 +59,7 @@ MEDICATION_LIST = constants["medication_list"]
 
 KEY_POINT_DROP = "point_drop"
 KEY_OBJECT_NAME = "object_name"
-KEY_POSE_GRASP = "pose_grasp"
+
 KEY_POSE_DROP = "pose_drop"
 KEY_ARM_SCAN = "arm_scan"
 KEY_SCAN_TRAY_RESULT = "scan_tray_result"
@@ -68,14 +72,15 @@ place_service_name = "place_action_service"
 
 def createConstantWriter():
     root = py_trees.composites.Parallel(name="constant writer", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
-    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write arm navigating", variable_name=KEY_ARM_NAVIGATING, variable_value=ARM_NAVIGATING))
-    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write medication dict", variable_name=KEY_MEDICATION_DICT, variable_value=MEDICATION_DICT))
-    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write drop poses list", variable_name=KEY_DROP_POSES_LIST, variable_value=DROP_POSES_LIST))
-    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write pantilt angle", variable_name=KEY_PANTILT_ANGLE, variable_value=PANTILT_ANGLE))
-    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write pose ending", variable_name=KEY_POSE_ENDING, variable_value=POSE_ENDING))
-    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write tray prompt", variable_name=KEY_TRAY_PROMPT, variable_value=TRAY_PROMPT))
-    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write drop pose idx", variable_name=KEY_DROP_POSE_IDX, variable_value=DROP_POS_IDX))
-    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write medication list", variable_name=KEY_MEDICATION_LIST, variable_value=MEDICATION_LIST))
+    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write arm navigating", variable_name=KEY_ARM_NAVIGATING, variable_value=ARM_NAVIGATING, overwrite=True))
+    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write medication dict", variable_name=KEY_MEDICATION_DICT, variable_value=MEDICATION_DICT, overwrite=True))
+    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write drop poses list", variable_name=KEY_DROP_POSES_LIST, variable_value=DROP_POSES_LIST, overwrite=True))
+    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write pantilt angle", variable_name=KEY_PANTILT_ANGLE, variable_value=PANTILT_ANGLE, overwrite=True))
+    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write pose ending", variable_name=KEY_POSE_ENDING, variable_value=POSE_ENDING, overwrite=True))
+    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write tray prompt", variable_name=KEY_TRAY_PROMPT, variable_value=TRAY_PROMPT, overwrite=True))
+    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write drop pose idx", variable_name=KEY_DROP_POSE_IDX, variable_value=DROP_POS_IDX, overwrite=True))
+    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write medication list", variable_name=KEY_MEDICATION_LIST, variable_value=MEDICATION_LIST, overwrite=True))
+    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write pose grasp", variable_name=KEY_POSE_GRASP, variable_value=POSE_GRASP, overwrite=True))
     return root
 
 def createGetMedications():
@@ -84,7 +89,7 @@ def createGetMedications():
         name="Write drop pose",
         bb_key_idx=KEY_DROP_POSE_IDX,
         bb_key_drop_poses_list=KEY_DROP_POSES_LIST,
-        bb_key_current_drop_pose=KEY_POSE_DROP
+        bb_key_drop_pose=KEY_POSE_DROP
     ))
     return root
 
@@ -101,7 +106,7 @@ def createMoveArmWithOctomap(arm_pose_bb_key:str):
     root = py_trees.composites.Sequence(name="Move Arm With Octomap", memory=True)
     root.add_child(BtNode_GetPointCloud(
         name="Get pointcloud",
-        bb_key_pointcloud=KEY_ORBBEC_POINTCLOUD
+        bb_point_cloud_key=KEY_ORBBEC_POINTCLOUD
     ))
     root.add_child(BtNode_MoveArmJointPC(
         name="Move arm with octomap",
@@ -114,7 +119,7 @@ def createDropWithOctomap(key_point:str):
     root = py_trees.composites.Sequence(name="Drop With Octomap", memory=True)
     root.add_child(BtNode_GetPointCloud(
         name="Get pointcloud",
-        bb_key_pointcloud=KEY_ORBBEC_POINTCLOUD
+        bb_point_cloud_key=KEY_ORBBEC_POINTCLOUD
     ))
     root.add_child(BtNode_CartesianMove(
         name="Move arm with octomap",
@@ -135,14 +140,9 @@ def createGraspObject():
         bb_key=KEY_OBJECT,
         service_name="object_detection_yolo"
         ))
-    root.add_child(BtNode_GetPointCloud(
-        name="Get pointcloud",
-        bb_key_pointcloud=KEY_ORBBEC_POINTCLOUD
-    ))
     root.add_child(BtNode_Grasp(
         name="Grasp object",
-        bb_key_object=KEY_OBJECT,
-        bb_key_pointcloud=KEY_ORBBEC_POINTCLOUD,
+        bb_source=KEY_OBJECT,
         action_name=grasp_service_name
     ))
     root.add_child(BtNode_MoveArmSingle(
@@ -183,11 +183,11 @@ def createDropObject():
     ))
     root.add_child(BtNode_ProcessTrayPoint(
         name="Process tray point",
-        bb_source=KEY_SCAN_TRAY_RESULT,
-        bb_key=KEY_POINT_DROP
+        bb_vision_result=KEY_SCAN_TRAY_RESULT,
+        bb_tray_point=KEY_POINT_DROP
     ))
     root.add_child(BtNode_TTSCN("Announce placing medication", bb_source=None, message="正在放置药品"))
-    root.add_child(createDropObject(KEY_POINT_DROP))
+    root.add_child(createDropWithOctomap(KEY_POINT_DROP))
     root.add_child(BtNode_MoveArmSingle(
         name="move arm to navigating",
         service_name=arm_service_name,
@@ -227,6 +227,17 @@ def createZGC2026():
     root = py_trees.composites.Sequence(name="ZGC2026", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(createStartingConfigurations())
+    for i in range(3):
+        get_medication_once = createGetMedicationOnce(i)
+        root.add_child(get_medication_once)
+    root.add_child(returnToEndingPose())
+    root.add_child(BtNode_TTSCN("Announce task completed", bb_source=None, message="任务完成，回到结束位置"))
+    return root
+
+def createZGC2026_test():
+    root = py_trees.composites.Sequence(name="ZGC2026", memory=True)
+    root.add_child(createConstantWriter())
+    root.add_child(createStartingConfigurations())
     root.add_child(createGetMedications())
     root.add_child(BtNode_ChangeToNextMedication(
         name="Change to next medication",
@@ -234,18 +245,30 @@ def createZGC2026():
         bb_key_medication_dict=KEY_MEDICATION_DICT,
         bb_key_current_arm_scan_pos=KEY_ARM_SCAN,
         bb_key_current_medication=KEY_OBJECT_NAME))
-    root.add_child(createGraspObject())
+    # root.add_child(createGraspObject())
+    root.add_child(createMoveArmWithOctomap(KEY_ARM_SCAN))
+    # root.add_child(createDropWithOctomap(KEY_ARM_SCAN))
     # for i in range(3):
     #     get_medication_once = createGetMedicationOnce(i)
     #     root.add_child(get_medication_once)
     # root.add_child(returnToEndingPose())
     # root.add_child(BtNode_TTSCN("Announce task completed", bb_source=None, message="任务完成，回到结束位置"))
-    # return root
+    return root
 
 def main():
     rclpy.init(args=None)
+    
+    # Initialize constants that require rclpy to be initialized
+    global ARM_NAVIGATING, MEDICATION_DICT, DROP_POSES_LIST, PANTILT_ANGLE, POSE_ENDING, TRAY_PROMPT, POSE_GRASP
+    ARM_NAVIGATING = arm_pose_reader(constants["arm_pos_navigating"])
+    MEDICATION_DICT = constants["medication_dict"]
+    DROP_POSES_LIST = [pose_reader(pose_dict) for pose_dict in constants["drop_poses_list"]]
+    PANTILT_ANGLE = constants["pantilt_angle"]
+    POSE_ENDING = pose_reader(constants["pose_ending"])
+    TRAY_PROMPT = constants["tray_prompt"]
+    POSE_GRASP = pose_reader(constants["pose_shelf"])
 
-    root = createZGC2026()
+    root = createZGC2026_test()
 
     # make it a ros tree
     tree = py_trees_ros.trees.BehaviourTree(root)
@@ -260,7 +283,7 @@ def main():
     if PRINT_DEBUG:
         py_trees.logging.level = py_trees.logging.Level.DEBUG
     
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
+    tree.tick_tock(period_ms=250.0,post_tick_handler=print_tree)
 
     try:
         rclpy.spin(tree.node)

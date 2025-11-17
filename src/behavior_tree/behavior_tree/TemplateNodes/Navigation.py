@@ -71,6 +71,7 @@ class BtNode_GotoAction(ActionHandler):
                     goal.pose.pose = tf2_geometry_msgs.do_transform_pose(goal.pose.pose, transform)
                     goal.pose.header.frame_id = 'map'
             else:
+                print("Unknown goal type for navigation")
                 assert False
             if goal.pose.header.frame_id == '':
                 self.feedback_message = "Goal pose header frame_id is empty. INVALID!"
@@ -81,7 +82,7 @@ class BtNode_GotoAction(ActionHandler):
             self.feedback_message = "sent goal request"
             print('goal = ', str(self.goal))
         except KeyError:
-            pass  # self.send_goal_future will be None, check on that
+            self.node.get_logger().warn("Send goal failed!")
     
     def process_result(self):
         # for navigation only, where the action can return all sorts of results while it's at it

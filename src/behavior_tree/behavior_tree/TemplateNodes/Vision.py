@@ -20,7 +20,7 @@ class BtNode_ScanFor(ServiceHandler):
                  name: str,
                  bb_source: str,
                  bb_key:str,
-                 service_name : str = "object_detection",
+                 service_name : str = "object_detection_yolo",
                  object: str = None,
                  use_orbbec = True,
                  transform_to_map = False,
