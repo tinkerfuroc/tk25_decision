@@ -27,6 +27,7 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         self.client = None      # service client
     
     def setup(self, **kwargs):
+        print("Setting up service handler %s for node name %s" % (self.service_name, self.name))
         # node should be passed down the tree from the root node
         try:
             self.node : Node = kwargs['node']
@@ -34,12 +35,16 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
             raise KeyError(error_message) from e  # 'direct cause' traceability
 
+        
+
         # create the service client and wait until it connects
         print("Connecting to service %s" % self.service_name)
         self.client = self.node.create_client(self.service_type, self.service_name)
+        print("Created client for service %s" % self.service_name)
         while not self.client.wait_for_service(timeout_sec=1.0):
             self.logger.debug('service not available, waiting again...')
-    
+        print("Finished setting up service handler")
+
     def initialise(self):
         # some debugging info
         self.logger.debug("%s.initialise()" % self.__class__.__name__)

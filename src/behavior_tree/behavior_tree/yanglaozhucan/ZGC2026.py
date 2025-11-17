@@ -222,7 +222,6 @@ def createZGC2026():
     root = py_trees.composites.Sequence(name="ZGC2026", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(createStartingConfigurations())
-    root.add_child(createGetMedications())
     for i in range(3):
         get_medication_once = createGetMedicationOnce(i)
         root.add_child(get_medication_once)
