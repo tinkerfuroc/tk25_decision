@@ -40,12 +40,14 @@ KEY_DROP_POSES_LIST = "drop_poses_list"
 KEY_PANTILT_ANGLE = "pantilt_angle"
 KEY_POSE_ENDING = "pose_ending"
 KEY_TRAY_PROMPT = "tray_prompt"
-ARM_NAVIGATING = arm_pose_reader(constants["arm_navigating"])
-MEDICATION_DICT = constants["medication_dict"]
-DROP_POSES_LIST = [pose_reader(pose_dict) for pose_dict in constants["drop_poses_list"]]
-PANTILT_ANGLE = constants["pantilt_angle"]
-POSE_ENDING = pose_reader(constants["pose_ending"])
-TRAY_PROMPT = constants["tray_prompt"]
+
+# These will be initialized in main() after rclpy.init()
+ARM_NAVIGATING = None
+MEDICATION_DICT = None
+DROP_POSES_LIST = None
+PANTILT_ANGLE = None
+POSE_ENDING = None
+TRAY_PROMPT = None
 
 KEY_DROP_POSE_IDX = "drop_pose"
 DROP_POS_IDX = constants["drop_pose_idx"]
@@ -184,7 +186,7 @@ def createDropObject():
         bb_key=KEY_POINT_DROP
     ))
     root.add_child(BtNode_TTSCN("Announce placing medication", bb_source=None, message="正在放置药品"))
-    root.add_child(createDropObject(KEY_POINT_DROP))
+    root.add_child(createDropWithOctomap(KEY_POINT_DROP))
     root.add_child(BtNode_MoveArmSingle(
         name="move arm to navigating",
         service_name=arm_service_name,
@@ -232,6 +234,15 @@ def createZGC2026():
 
 def main():
     rclpy.init(args=None)
+    
+    # Initialize constants that require rclpy to be initialized
+    global ARM_NAVIGATING, MEDICATION_DICT, DROP_POSES_LIST, PANTILT_ANGLE, POSE_ENDING, TRAY_PROMPT
+    ARM_NAVIGATING = arm_pose_reader(constants["arm_navigating"])
+    MEDICATION_DICT = constants["medication_dict"]
+    DROP_POSES_LIST = [pose_reader(pose_dict) for pose_dict in constants["drop_poses_list"]]
+    PANTILT_ANGLE = constants["pantilt_angle"]
+    POSE_ENDING = pose_reader(constants["pose_ending"])
+    TRAY_PROMPT = constants["tray_prompt"]
 
     root = createZGC2026()
 
