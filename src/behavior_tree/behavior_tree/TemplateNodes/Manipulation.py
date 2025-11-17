@@ -165,6 +165,7 @@ class BtNode_Grasp(ActionHandler):
 
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            
             self.feedback_message = f"Grasp feedback received with status: {self.result_status}"
             self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
             return pytree.common.Status.FAILURE

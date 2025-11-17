@@ -10,6 +10,18 @@ from geometry_msgs.msg import PointStamped
 
 import action_msgs.msg as action_msgs
 
+def arm_pose_reader(arm_pose_list):
+    return [x / 180 * 3.1415926 for x in arm_pose_list]
+
+def pose_reader(pose_dict):
+    return PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=pose_dict["point"]["x"], y=pose_dict["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=pose_dict["orientation"]["x"], 
+                                                            y=pose_dict["orientation"]["y"], 
+                                                            z=pose_dict["orientation"]["z"], 
+                                                            w=pose_dict["orientation"]["w"]))
+                        )
+
 class BtNode_ChangeToNextMedication(py_trees.behaviour.Behaviour):
     def __init__(self,
                  name: str,
@@ -63,7 +75,8 @@ class BtNode_ChangeToNextMedication(py_trees.behaviour.Behaviour):
         current_med = medication_list[self.current_index]
         self.blackboard.current_medication = current_med
         if current_med in med_dictionary:
-            self.blackboard.current_arm_scan_pos = med_dictionary[current_med]['arm_scan_pos']
+            current_arm_scan_pos = med_dictionary[current_med]['arm_scan_pos']
+            self.blackboard.current_arm_scan_pos = arm_pose_reader(current_arm_scan_pos)
             self.feedback_message = f"Changed to next medication: {current_med}."
             return py_trees.common.Status.SUCCESS
         else:
@@ -104,7 +117,7 @@ class BtNode_WriteDropPose(py_trees.behaviour.Behaviour):
         if idx < 0 or idx >= len(drop_poses):
             self.feedback_message = f"Index {idx} is out of bounds for drop poses list."
             return py_trees.common.Status.FAILURE
-        self.blackboard.drop_pose = drop_poses[idx]
+        self.blackboard.drop_pose = pose_reader(drop_poses[idx])
         self.feedback_message = f"Wrote drop pose for index {idx}."
         return py_trees.common.Status.SUCCESS
 

@@ -1,8 +1,8 @@
 {
     "drop_pose_idx": 0,
     "medication_list": [
-        "QingKaiLing",
         "Melatonin",
+        "QingKaiLing",
         "XiaoChaiHu"
     ],
     "pose_shelf": {

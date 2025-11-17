@@ -12,7 +12,7 @@ from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from .customNodes import BtNode_ChangeToNextMedication, BtNode_ProcessTrayPoint, BtNode_WriteDropPose
 
 PRINT_DEBUG = True
-PRINT_BLACKBOARD = True
+PRINT_BLACKBOARD = False
 USE_OCTOMAP = False
 
 try:
