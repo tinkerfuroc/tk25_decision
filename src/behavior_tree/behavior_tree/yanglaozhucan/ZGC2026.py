@@ -237,7 +237,7 @@ def main():
     
     # Initialize constants that require rclpy to be initialized
     global ARM_NAVIGATING, MEDICATION_DICT, DROP_POSES_LIST, PANTILT_ANGLE, POSE_ENDING, TRAY_PROMPT
-    ARM_NAVIGATING = arm_pose_reader(constants["arm_navigating"])
+    ARM_NAVIGATING = arm_pose_reader(constants["arm_pos_navigating"])
     MEDICATION_DICT = constants["medication_dict"]
     DROP_POSES_LIST = [pose_reader(pose_dict) for pose_dict in constants["drop_poses_list"]]
     PANTILT_ANGLE = constants["pantilt_angle"]
