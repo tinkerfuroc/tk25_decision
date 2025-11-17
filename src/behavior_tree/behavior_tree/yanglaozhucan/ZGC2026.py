@@ -13,6 +13,7 @@ from .customNodes import BtNode_ChangeToNextMedication, BtNode_ProcessTrayPoint,
 
 PRINT_DEBUG = True
 PRINT_BLACKBOARD = True
+USE_OCTOMAP = False
 
 try:
     file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/yanglaozhucan/constants.json", "r")
@@ -70,8 +71,6 @@ arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
 place_service_name = "place_action_service"
 
-USE_OCTOMAP = False  # Set to False to disable octomap usage
-
 def createConstantWriter():
     root = py_trees.composites.Parallel(name="constant writer", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write arm navigating", variable_name=KEY_ARM_NAVIGATING, variable_value=ARM_NAVIGATING, overwrite=True))
@@ -115,16 +114,14 @@ def createMoveArmWithOctomap(arm_pose_bb_key:str):
         bb_key_pointcloud=KEY_ORBBEC_POINTCLOUD,
         bb_key_arm_pose=arm_pose_bb_key
     ))
-    return root
+    return py_trees.decorators.Retry("retry", root, 3)
 
 def createMoveArmWithoutOctomap(arm_pose_bb_key:str):
-    root = py_trees.composites.Sequence(name="Move Arm Without Octomap", memory=True)
-    root.add_child(BtNode_MoveArmSingle(
+    root = py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(
         name="Move arm",
         service_name=arm_service_name,
-        arm_pose_bb_key=arm_pose_bb_key,
-        add_octomap=False
-    ))
+        arm_pose_bb_key=arm_pose_bb_key
+    ), 3)
     return root
 
 def createDropWithOctomap(key_point:str):
