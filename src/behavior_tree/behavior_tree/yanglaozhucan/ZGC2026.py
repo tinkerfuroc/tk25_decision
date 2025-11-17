@@ -150,7 +150,7 @@ def createDropWithoutOctomap(key_point:str):
 
 def createGraspObject():
     root = py_trees.composites.Sequence(name="Grasp Object", memory=True)
-    root.add_child(BtNode_TTSCN("Announce grasping medication", bb_source=None, message="正在抓取药物"))
+    root.add_child(BtNode_TTSCN("Announce grasping medication", bb_source=None, message="尝试抓取药物"))
     
     # Use octomap or not based on USE_OCTOMAP flag
     if USE_OCTOMAP:
@@ -175,7 +175,7 @@ def createGraspObject():
         service_name=arm_service_name,
         arm_pose_bb_key=KEY_ARM_NAVIGATING))
     root.add_child(BtNode_TTSCN("Announce grasp completed", bb_source=None, message="药物抓取完成"))
-    return root
+    return py_trees.decorators.Retry("retry", root, 3)
 
 def createGotoGrasp():
     root = py_trees.composites.Sequence(name="Goto Grasp", memory=True)
@@ -227,9 +227,9 @@ def createDropObject():
     ))
     return root
 
-def createGetMedicationOnce(index:int):
+def createGetMedicationOnce():
     root = py_trees.composites.Sequence(name="Get Medication Once", memory=True)
-    root.add_child(BtNode_TTSCN("Announce getting medication", bb_source=None, message=f"开始获取第{index + 1}份药物"))
+    root.add_child(BtNode_TTSCN("Announce getting medication", bb_source=None, message=f"开始获取下一份药物"))
     root.add_child(BtNode_ChangeToNextMedication(
         name="Change to next medication",
         bb_key_medication_list=KEY_MEDICATION_LIST,
@@ -258,9 +258,12 @@ def createZGC2026():
     root = py_trees.composites.Sequence(name="ZGC2026", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(createStartingConfigurations())
-    for i in range(3):
-        get_medication_once = createGetMedicationOnce(i)
-        root.add_child(get_medication_once)
+    get_medication_wrapper = py_trees.decorators.FailureIsSuccess(createGetMedicationOnce())
+    root.add_child(py_trees.decorators.Repeat(
+        name="Repeat Get Medication",
+        child=get_medication_wrapper,
+        num_success=3
+    ))
     root.add_child(returnToEndingPose())
     root.add_child(BtNode_TTSCN("Announce task completed", bb_source=None, message="任务完成，回到结束位置"))
     return root
