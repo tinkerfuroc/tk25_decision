@@ -114,16 +114,14 @@ def createMoveArmWithOctomap(arm_pose_bb_key:str):
         bb_key_pointcloud=KEY_ORBBEC_POINTCLOUD,
         bb_key_arm_pose=arm_pose_bb_key
     ))
-    return root
+    return py_trees.decorators.Retry("retry", root, 3)
 
 def createMoveArmWithoutOctomap(arm_pose_bb_key:str):
-    root = py_trees.composites.Sequence(name="Move Arm Without Octomap", memory=True)
-    root.add_child(BtNode_MoveArmSingle(
+    root = py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(
         name="Move arm",
         service_name=arm_service_name,
-        arm_pose_bb_key=arm_pose_bb_key,
-        add_octomap=False
-    ))
+        arm_pose_bb_key=arm_pose_bb_key
+    ), 3)
     return root
 
 def createDropWithOctomap(key_point:str):
