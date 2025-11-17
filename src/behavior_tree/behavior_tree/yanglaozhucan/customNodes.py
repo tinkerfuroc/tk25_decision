@@ -1,12 +1,14 @@
 from typing import Any,Tuple,List
 import py_trees
 import textwrap
+import rclpy
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.messages import ObjectDetection, Categorize, TextToSpeech
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from geometry_msgs.msg import PointStamped
+from std_msgs.msg import Header
+from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 
 import action_msgs.msg as action_msgs
 
@@ -117,7 +119,7 @@ class BtNode_WriteDropPose(py_trees.behaviour.Behaviour):
         if idx < 0 or idx >= len(drop_poses):
             self.feedback_message = f"Index {idx} is out of bounds for drop poses list."
             return py_trees.common.Status.FAILURE
-        self.blackboard.drop_pose = pose_reader(drop_poses[idx])
+        self.blackboard.drop_pose = drop_poses[idx]
         self.feedback_message = f"Wrote drop pose for index {idx}."
         return py_trees.common.Status.SUCCESS
 

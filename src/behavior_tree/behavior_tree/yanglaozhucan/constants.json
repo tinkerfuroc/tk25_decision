@@ -2,7 +2,18 @@
     "drop_pose_idx": 0,
     "medication_list": [
         "Melatonin",
+        "HuoXiang",
+        "BiYanKang"
+    ],
+    "possible_medication_list": [
         "QingKaiLing",
+        "BanLanGen",
+        "XiaSangJu",
+        "BiYanKang",
+        "Melatonin",
+        "VitaminC",
+        "HuoXiang",
+        "XiTiLiQin",
         "XiaoChaiHu"
     ],
     "pose_shelf": {

@@ -238,16 +238,16 @@ def createZGC2026():
 def createZGC2026_test():
     root = py_trees.composites.Sequence(name="ZGC2026", memory=True)
     root.add_child(createConstantWriter())
-    root.add_child(createStartingConfigurations())
-    root.add_child(createGetMedications())
+    # root.add_child(createStartingConfigurations())
+    # root.add_child(createGetMedications())
     root.add_child(BtNode_ChangeToNextMedication(
         name="Change to next medication",
         bb_key_medication_list=KEY_MEDICATION_LIST,
         bb_key_medication_dict=KEY_MEDICATION_DICT,
         bb_key_current_arm_scan_pos=KEY_ARM_SCAN,
         bb_key_current_medication=KEY_OBJECT_NAME))
-    # root.add_child(createGraspObject())
-    root.add_child(createMoveArmWithOctomap(KEY_ARM_SCAN))
+    root.add_child(createGraspObject())
+    # root.add_child(createMoveArmWithOctomap(KEY_ARM_SCAN))
     # root.add_child(createDropWithOctomap(KEY_ARM_SCAN))
     # for i in range(3):
     #     get_medication_once = createGetMedicationOnce(i)

@@ -79,7 +79,10 @@ class BtNode_GotoAction(ActionHandler):
                 return
             self.send_goal_request(goal)
             self.goal = goal
-            self.feedback_message = "sent goal request"
+            try:
+                self.feedback_message = f"sent goal request for pose {goal.pose.pose.position.x:2f}, {goal.pose.pose.position.y:2f}, {goal.pose.pose.position.z:2f}"
+            except Exception as e:
+                self.feedback_message = "sent goal request"
             print('goal = ', str(self.goal))
         except KeyError:
             self.node.get_logger().warn("Send goal failed!")

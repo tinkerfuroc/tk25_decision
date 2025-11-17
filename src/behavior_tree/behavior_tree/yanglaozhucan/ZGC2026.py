@@ -13,7 +13,7 @@ from .customNodes import BtNode_ChangeToNextMedication, BtNode_ProcessTrayPoint,
 
 PRINT_DEBUG = True
 PRINT_BLACKBOARD = False
-USE_OCTOMAP = False
+USE_OCTOMAP = True
 
 try:
     file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/yanglaozhucan/constants.json", "r")
@@ -97,9 +97,12 @@ def createGetMedications():
 def createStartingConfigurations():
     root = py_trees.composites.Sequence(name="Starting Configurations", memory=True)
     root.add_child(BtNode_TTSCN("Announce start", bb_source=None, message="开始比赛，正在复位"))
-    root.add_child(BtNode_GripperAction("Open gripper", open_gripper=True))
-    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
-    root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=PANTILT_ANGLE))
+    reset_to_start = py_trees.composites.Parallel(name="Reset to Start Parallel", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    reset_to_start.add_child(BtNode_GripperAction("Open gripper", open_gripper=True))
+    reset_to_start.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+    reset_to_start.add_child(BtNode_GripperAction("open gripper", True))
+    reset_to_start.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=PANTILT_ANGLE))
+    root.add_child(reset_to_start)
     root.add_child(BtNode_TTSCN("Announce completed", bb_source=None, message="复位完成，准备就绪"))
     return root
 
@@ -157,7 +160,7 @@ def createGraspObject():
         root.add_child(createMoveArmWithOctomap(KEY_ARM_SCAN))
     else:
         root.add_child(createMoveArmWithoutOctomap(KEY_ARM_SCAN))
-    
+    root.add_child(BtNode_TTSCN("Announce reaching grasp pose", bb_source=None, message="寻找中"))
     root.add_child(BtNode_FindObj(
         name="find medication",
         bb_source=KEY_OBJECT_NAME,
@@ -184,7 +187,7 @@ def createGotoGrasp():
     parallel.add_child(py_trees.decorators.Retry("retry", 
                                                  BtNode_GotoAction(name="Go to shelf grasp point", key=KEY_POSE_GRASP), 
                                                  5))
-    parallel.add_child(BtNode_TTSCN("Announce navigating to grasp", bb_source=None, message="前往药架取药"))
+    parallel.add_child(BtNode_TTSCN("Announce navigating to grasp", bb_source=None, message="前往药架"))
     root.add_child(parallel)
     return root
 
@@ -258,7 +261,8 @@ def createZGC2026():
     root = py_trees.composites.Sequence(name="ZGC2026", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(createStartingConfigurations())
-    get_medication_wrapper = py_trees.decorators.FailureIsSuccess(createGetMedicationOnce())
+    root.add_child(createGetMedications())
+    get_medication_wrapper = py_trees.decorators.FailureIsSuccess("failure is success", createGetMedicationOnce())
     root.add_child(py_trees.decorators.Repeat(
         name="Repeat Get Medication",
         child=get_medication_wrapper,
