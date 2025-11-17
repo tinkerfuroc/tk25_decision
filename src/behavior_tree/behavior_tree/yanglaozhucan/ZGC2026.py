@@ -6,7 +6,7 @@ from std_msgs.msg import Header
 import json
 
 from behavior_tree.TemplateNodes.Audio import BtNode_TTSCN
-from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_GripperAction, BtNode_MoveArmJointPC, BtNode_CartesianMove
+from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_GripperAction, BtNode_MoveArmJointPC, BtNode_CartesianMove, BtNode_Drop
 from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_TurnPanTilt, BtNode_ScanFor, BtNode_GetPointCloud
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from .customNodes import BtNode_ChangeToNextMedication, BtNode_ProcessTrayPoint, BtNode_WriteDropPose
@@ -70,6 +70,8 @@ arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
 place_service_name = "place_action_service"
 
+USE_OCTOMAP = True  # Set to False to disable octomap usage
+
 def createConstantWriter():
     root = py_trees.composites.Parallel(name="constant writer", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write arm navigating", variable_name=KEY_ARM_NAVIGATING, variable_value=ARM_NAVIGATING, overwrite=True))
@@ -115,6 +117,16 @@ def createMoveArmWithOctomap(arm_pose_bb_key:str):
     ))
     return root
 
+def createMoveArmWithoutOctomap(arm_pose_bb_key:str):
+    root = py_trees.composites.Sequence(name="Move Arm Without Octomap", memory=True)
+    root.add_child(BtNode_MoveArmSingle(
+        name="Move arm",
+        service_name=arm_service_name,
+        arm_pose_bb_key=arm_pose_bb_key,
+        add_octomap=False
+    ))
+    return root
+
 def createDropWithOctomap(key_point:str):
     root = py_trees.composites.Sequence(name="Drop With Octomap", memory=True)
     root.add_child(BtNode_GetPointCloud(
@@ -129,10 +141,26 @@ def createDropWithOctomap(key_point:str):
     root.add_child(BtNode_GripperAction("open gripper", True))
     return root
 
+def createDropWithoutOctomap(key_point:str):
+    root = py_trees.composites.Sequence(name="Drop Without Octomap", memory=True)
+    root.add_child(BtNode_Drop(
+        name="Drop object",
+        bb_source=key_point,
+        service_name="drop"
+    ))
+    root.add_child(BtNode_GripperAction("open gripper", True))
+    return root
+
 def createGraspObject():
     root = py_trees.composites.Sequence(name="Grasp Object", memory=True)
     root.add_child(BtNode_TTSCN("Announce grasping medication", bb_source=None, message="正在抓取药物"))
-    root.add_child(createMoveArmWithOctomap(KEY_ARM_SCAN))
+    
+    # Use octomap or not based on USE_OCTOMAP flag
+    if USE_OCTOMAP:
+        root.add_child(createMoveArmWithOctomap(KEY_ARM_SCAN))
+    else:
+        root.add_child(createMoveArmWithoutOctomap(KEY_ARM_SCAN))
+    
     root.add_child(BtNode_FindObj(
         name="find medication",
         bb_source=KEY_OBJECT_NAME,
@@ -187,7 +215,13 @@ def createDropObject():
         bb_tray_point=KEY_POINT_DROP
     ))
     root.add_child(BtNode_TTSCN("Announce placing medication", bb_source=None, message="正在放置药品"))
-    root.add_child(createDropWithOctomap(KEY_POINT_DROP))
+    
+    # Use octomap or not based on USE_OCTOMAP flag
+    if USE_OCTOMAP:
+        root.add_child(createDropWithOctomap(KEY_POINT_DROP))
+    else:
+        root.add_child(createDropWithoutOctomap(KEY_POINT_DROP))
+    
     root.add_child(BtNode_MoveArmSingle(
         name="move arm to navigating",
         service_name=arm_service_name,
