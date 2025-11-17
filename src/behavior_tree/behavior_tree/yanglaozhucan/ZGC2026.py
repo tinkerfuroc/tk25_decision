@@ -13,6 +13,7 @@ from .customNodes import BtNode_ChangeToNextMedication, BtNode_ProcessTrayPoint,
 
 PRINT_DEBUG = True
 PRINT_BLACKBOARD = False
+USE_OCTOMAP = True
 
 try:
     file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/yanglaozhucan/constants.json", "r")
@@ -69,8 +70,6 @@ KEY_OBJECT = "object"
 arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
 place_service_name = "place_action_service"
-
-USE_OCTOMAP = True  # Set to False to disable octomap usage
 
 def createConstantWriter():
     root = py_trees.composites.Parallel(name="constant writer", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
