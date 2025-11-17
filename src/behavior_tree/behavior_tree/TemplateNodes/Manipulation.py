@@ -22,7 +22,7 @@ class BtNode_CartesianMove(ActionHandler):
                  bb_key_point: str,
                  action_name="cartisian_move_action"
                  ):
-        super().__init__(name, CartesianMove, action_name)
+        super().__init__(name, CartesianMove, action_name, None)
         self.blackboard = self.attach_blackboard_client(name)
         self.blackboard.register_key(
             key="pointcloud",

@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'ZGC_grasp_test = behavior_tree.yanglaozhucan.grasp_test:main',
             'ZGC = behavior_tree.yanglaozhucan.ZGC2026:main',
             'draw = behavior_tree.main:main',
             'follow = behavior_tree.main:test_follow',
