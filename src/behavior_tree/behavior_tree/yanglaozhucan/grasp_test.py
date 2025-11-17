@@ -133,6 +133,7 @@ def createGraspObject():
     root = py_trees.composites.Sequence(name="Grasp Object", memory=True)
     root.add_child(BtNode_TTSCN("Announce grasping medication", bb_source=None, message="正在抓取药物"))
     root.add_child(createMoveArmWithOctomap(KEY_ARM_SCAN))
+    root.add_child(BtNode_TTSCN("Announce searching for medication", bb_source=None, message="正在定位药物"))
     root.add_child(BtNode_FindObj(
         name="find medication",
         bb_source=KEY_OBJECT_NAME,
