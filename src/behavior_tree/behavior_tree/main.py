@@ -5,7 +5,7 @@ import rclpy
 # from .HelpMeCarry.Track import createFollowPerson
 # from .HelpMeCarry.help_me_carry import createHelpMeCarry
 # from .HelpMeCarry.prompt_reached import testPromptReached
-# from .Receptionist.receptionist import createReceptionist
+from .Receptionist.receptionist import createReceptionist
 # from .grasp_intel_demo.grasp_intel import create_demo
 # from .grasp_intel_demo.grasp_audio import createGraspAudio
 # from .ServeBreakfast.serve_breakfast import createServeBreakfast
@@ -16,7 +16,7 @@ import rclpy
 # from .Inspection.inspection import createInspection
 from .Constants import PRINT_BLACKBOARD, PRINT_DEBUG
 # from .Restaurant.restaurants import createRestaurantTask
-from .yanglaozhucan.yanglaozhucan import createYanglaozhucan  
+#from .yanglaozhucan.yanglaozhucan import createYanglaozhucan  
 
 
 def grasp_intel():
@@ -457,13 +457,13 @@ def draw_restaurant():
 
 def main():
     # draw_gpsr()
-    # draw_receptionist()
+    draw_receptionist()
     # draw_serve_breakfast()
     # draw_storing_groceries()
     # draw_storing_groceries_placing_only()
     # draw_restaurant()
 
-    draw_yanglaozhucan()
+    #draw_yanglaozhucan()
 
 if __name__ == "__main__":
     main()

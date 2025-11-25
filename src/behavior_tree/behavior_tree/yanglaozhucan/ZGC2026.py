@@ -14,6 +14,7 @@ from .customNodes import BtNode_ChangeToNextMedication, BtNode_ProcessTrayPoint,
 PRINT_DEBUG = True
 PRINT_BLACKBOARD = False
 USE_OCTOMAP = True
+USE_HARD_DROP_POS = True
 
 try:
     file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/yanglaozhucan/constants.json", "r")
@@ -42,6 +43,7 @@ KEY_PANTILT_ANGLE = "pantilt_angle"
 KEY_POSE_ENDING = "pose_ending"
 KEY_TRAY_PROMPT = "tray_prompt"
 KEY_POSE_GRASP = "pose_grasp"
+KEY_ARM_POS_DROPPING = "arm_pos_dropping"
 
 # These will be initialized in main() after rclpy.init()
 ARM_NAVIGATING = None
@@ -51,6 +53,7 @@ PANTILT_ANGLE = None
 POSE_ENDING = None
 TRAY_PROMPT = None
 POSE_GRASP = None
+ARM_POS_DROPPING = None
 
 KEY_DROP_POSE_IDX = "drop_pose"
 DROP_POS_IDX = constants["drop_pose_idx"]
@@ -82,6 +85,7 @@ def createConstantWriter():
     root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write drop pose idx", variable_name=KEY_DROP_POSE_IDX, variable_value=DROP_POS_IDX, overwrite=True))
     root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write medication list", variable_name=KEY_MEDICATION_LIST, variable_value=MEDICATION_LIST, overwrite=True))
     root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write pose grasp", variable_name=KEY_POSE_GRASP, variable_value=POSE_GRASP, overwrite=True))
+    root.add_child(py_trees.behaviours.SetBlackboardVariable(name="Write arm dropping", variable_name=KEY_ARM_POS_DROPPING, variable_value=ARM_POS_DROPPING, overwrite=True))
     return root
 
 def createGetMedications():
@@ -204,24 +208,32 @@ def createGotoDrop():
 
 def createDropObject():
     root = py_trees.composites.Sequence(name="Drop Object", memory=True)
-    root.add_child(BtNode_ScanFor(
-        name="Scan for tray",
-        bb_source=KEY_TRAY_PROMPT,
-        bb_key=KEY_SCAN_TRAY_RESULT
-    ))
-    root.add_child(BtNode_ProcessTrayPoint(
-        name="Process tray point",
-        bb_vision_result=KEY_SCAN_TRAY_RESULT,
-        bb_tray_point=KEY_POINT_DROP
-    ))
-    root.add_child(BtNode_TTSCN("Announce placing medication", bb_source=None, message="正在放置药品"))
-    
-    # Use octomap or not based on USE_OCTOMAP flag
-    if USE_OCTOMAP:
-        root.add_child(createDropWithOctomap(KEY_POINT_DROP))
+    if USE_HARD_DROP_POS:
+        root.add_child(BtNode_TTSCN("Announce placing medication", bb_source=None, message="正在放置药品"))
+        root.add_child(BtNode_MoveArmSingle(
+            name="move arm to dropping pos",
+            service_name=arm_service_name,
+            arm_pose_bb_key=KEY_ARM_POS_DROPPING
+        ))
     else:
-        root.add_child(createDropWithoutOctomap(KEY_POINT_DROP))
-    
+        root.add_child(BtNode_ScanFor(
+            name="Scan for tray",
+            bb_source=KEY_TRAY_PROMPT,
+            bb_key=KEY_SCAN_TRAY_RESULT
+        ))
+        root.add_child(BtNode_ProcessTrayPoint(
+            name="Process tray point",
+            bb_vision_result=KEY_SCAN_TRAY_RESULT,
+            bb_tray_point=KEY_POINT_DROP
+        ))
+        root.add_child(BtNode_TTSCN("Announce placing medication", bb_source=None, message="正在放置药品"))
+        
+        # Use octomap or not based on USE_OCTOMAP flag
+        if USE_OCTOMAP:
+            root.add_child(createDropWithOctomap(KEY_POINT_DROP))
+        else:
+            root.add_child(createDropWithoutOctomap(KEY_POINT_DROP))
+    root.add_child(BtNode_GripperAction("Open gripper", open_gripper=True))
     root.add_child(BtNode_MoveArmSingle(
         name="move arm to navigating",
         service_name=arm_service_name,
@@ -276,7 +288,7 @@ def main():
     rclpy.init(args=None)
     
     # Initialize constants that require rclpy to be initialized
-    global ARM_NAVIGATING, MEDICATION_DICT, DROP_POSES_LIST, PANTILT_ANGLE, POSE_ENDING, TRAY_PROMPT, POSE_GRASP
+    global ARM_NAVIGATING, MEDICATION_DICT, DROP_POSES_LIST, PANTILT_ANGLE, POSE_ENDING, TRAY_PROMPT, POSE_GRASP, ARM_POS_DROPPING
     ARM_NAVIGATING = arm_pose_reader(constants["arm_pos_navigating"])
     MEDICATION_DICT = constants["medication_dict"]
     DROP_POSES_LIST = [pose_reader(pose_dict) for pose_dict in constants["drop_poses_list"]]
@@ -284,6 +296,7 @@ def main():
     POSE_ENDING = pose_reader(constants["pose_ending"])
     TRAY_PROMPT = constants["tray_prompt"]
     POSE_GRASP = pose_reader(constants["pose_shelf"])
+    ARM_POS_DROPPING = arm_pose_reader(constants["arm_pos_dropping"])
 
     root = createZGC2026()
 
