@@ -1,4 +1,6 @@
 {
+    "guest1_drink_position": "left",
+    "guest2_drink_position": "right",
     "pose_door": {
         "point": {
             "x": -1.6556295156478882,
