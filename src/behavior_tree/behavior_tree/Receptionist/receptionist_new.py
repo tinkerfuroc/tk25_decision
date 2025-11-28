@@ -6,6 +6,7 @@ from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation, BtNode_Listen, BtNode_CompareInterest
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection, BtNode_TurnTo
 from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
+import py_trees_ros
 
 from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm, BtNode_HeadTracking, BtNode_HeadTrackingAction
 
@@ -18,6 +19,9 @@ import random
 import math
 import json
 
+PRINT_DEBUG = True
+PRINT_BLACKBOARD = False
+
 # POINT_TO_PERSON = False
 TURN_PAN_TILT = True
 
@@ -26,7 +30,7 @@ MAX_SCAN_DISTANCE = 4.5
 DEBUG_NO_GOTO = False
 
 DISABLE_FEATURE_MATCH = False
-DISABLE_FOLLOW_HEAD = False
+DISABLE_FOLLOW_HEAD = True
 
 # read from `constant.json` in the same directory
 # load file
@@ -48,7 +52,7 @@ def pose_reader(pose_dict):
                         )
 
 def arm_pose_reader(arm_pose_list):
-    return [x / 180 * 3.1415926 for x in arm_pose_list]
+    return [x / 180 * math.pi for x in arm_pose_list]
 
 pose_door = pose_reader(constants["pose_door"])
 pose_sofa = pose_reader(constants["pose_sofa"])
@@ -421,3 +425,31 @@ def createReceptionist():
     root.add_child(py_trees.behaviours.Running(name="end"))
 
     return root
+
+def main():
+    rclpy.init(args=None)
+
+    root = createReceptionist()
+
+    # make it a ros tree
+    tree = py_trees_ros.trees.BehaviourTree(root)
+    tree.setup(node_name="root_node", timeout=15)
+
+    # function for display the tree to standard output
+    def print_tree(tree):
+        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
+        if PRINT_BLACKBOARD:
+            print(py_trees.display.unicode_blackboard())
+
+    if PRINT_DEBUG:
+        py_trees.logging.level = py_trees.logging.Level.DEBUG
+    
+    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
+
+    try:
+        rclpy.spin(tree.node)
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    finally:
+        tree.shutdown()
+        rclpy.try_shutdown()
