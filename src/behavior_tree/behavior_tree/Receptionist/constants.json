@@ -62,17 +62,15 @@
     "host_drink": "coffee",
     "host_interest": "swimming",
     "drinks": [
-        "kuat",
-        "fanta",
-        "milk",
+        "water",
+        "cola",
+        "soft drink",
         "orange juice",
-        "coke",
-        "coffee"
+        "milk"
     ],
     "names": [
         "Maria",
         "Ana",
-        "Anna",
         "Francisca",
         "Antonia",
         "Adriana",

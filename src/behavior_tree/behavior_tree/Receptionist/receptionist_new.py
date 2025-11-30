@@ -29,7 +29,7 @@ MAX_SCAN_DISTANCE = 4.5
 
 DEBUG_NO_GOTO = False
 
-DISABLE_FEATURE_MATCH = False
+DISABLE_FEATURE_MATCH = True
 DISABLE_FOLLOW_HEAD = True
 
 # read from `constant.json` in the same directory
@@ -186,7 +186,7 @@ def createGetDrinkAndSpeak(key_interest=None, idx_guest=1):
         key_features=KEY_GUEST_FEATURES,
         key_intest=key_interest
         ))
-    root.add_child(BtNode_TurnPanTilt(name="Turn head down to scan", x=0.0, y=30.0, speed=0.0))
+    root.add_child(BtNode_TurnPanTilt(name="Turn head down to scan", x=0.0, y=20.0, speed=0.0))
     # TODO: add an actual find drink module
     if idx_guest == 1:
         root.add_child(BtNode_Announce(name="announce position of favorite drink", bb_source=None, message=guest1_drink_broadcast))
@@ -194,6 +194,7 @@ def createGetDrinkAndSpeak(key_interest=None, idx_guest=1):
         root.add_child(BtNode_Announce(name="announce position of favorite drink", bb_source=None, message=guest2_drink_broadcast))
     else:
         root.add_child(BtNode_Announce(name="announce position of favorite drink", bb_source=None, message="Unkown guest, I don't know where your favorite drink is located."))
+    root.add_child(BtNode_TurnPanTilt(name="Turn head up to navigate", x=0.0, y=0.0, speed=0.0))
     return root
 
 # warnings.warn("drink can no longer be asked during entry in Robocup 2025", DeprecationWarning)
@@ -430,6 +431,7 @@ def main():
     rclpy.init(args=None)
 
     root = createReceptionist()
+    py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
     # make it a ros tree
     tree = py_trees_ros.trees.BehaviourTree(root)
