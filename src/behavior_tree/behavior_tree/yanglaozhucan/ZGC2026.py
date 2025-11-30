@@ -299,6 +299,7 @@ def main():
     ARM_POS_DROPPING = arm_pose_reader(constants["arm_pos_dropping"])
 
     root = createZGC2026()
+    py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
     # make it a ros tree
     tree = py_trees_ros.trees.BehaviourTree(root)
