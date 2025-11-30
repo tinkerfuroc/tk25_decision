@@ -293,6 +293,7 @@ def createSecondIntroductionsSimple():
         deco = py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle(name="Move arm to right", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_INIT_POSE, add_octomap=False), num_failures=3)
         introduce_w_followhead2.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
     introductions.add_child(introduce_w_followhead2)
+    root.add_child(introductions)
 
     root.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
     return root
@@ -430,6 +431,7 @@ def main():
     rclpy.init(args=None)
 
     root = createReceptionist()
+    py_trees.display.render_dot_tree(root, with_blackboard_variables=True)
 
     # make it a ros tree
     tree = py_trees_ros.trees.BehaviourTree(root)
