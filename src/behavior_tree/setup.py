@@ -5,7 +5,7 @@ package_name = 'behavior_tree'
 setup(
     name=package_name,
     version='0.0.0',
-    packages=find_packages(exclude=['test']),
+    packages=find_packages(),
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -43,6 +43,11 @@ setup(
             'restaurant = behavior_tree.main:restaurant',  # 添加这一行
             'grasp_once = behavior_tree.grasp_intel_demo.grasp:main',
             'yanglaozhucan = behavior_tree.main:yanglaozhucan',
+            # HelpMeCarry test scripts
+            'hmc-mock-nav = behavior_tree.HelpMeCarry.test.mock_nav_server:main',
+            'hmc-mock-track = behavior_tree.HelpMeCarry.test.mock_track_server:main',
+            'hmc-test-follow = behavior_tree.HelpMeCarry.test.test_follow:main',
+            'hmc-standalone = behavior_tree.HelpMeCarry.test.standalone_test:main',
         ],
     },
 )
