@@ -5,7 +5,7 @@ from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation, BtNode_Listen, BtNode_CompareInterest
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection, BtNode_TurnTo
-from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
+from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle, BtNode_GripperAction
 import py_trees_ros
 
 from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm, BtNode_HeadTracking, BtNode_HeadTrackingAction
@@ -73,6 +73,8 @@ names = constants["names"]
 
 KEY_ARM_INIT_POSE = "arm_init_pose"
 KEY_ARM_NAVIGATING = "arm_navigating"
+KEY_ARM_GRASP_BAG_POSE = "arm_grasp_bag_pose" # new key for bag grasping pose
+KEY_ARM_DROP_BAG_POSE = "arm_drop_bag_pose" # new key for bag dropping pose
 
 KEY_DOOR_POSE = "door_pose"
 KEY_SOFA_POSE = "sofa_pose"
@@ -132,6 +134,10 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_PERSONS, object=[]))
     root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_ARM_INIT_POSE, object=ARM_POS_POINT_TO))
     root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
+    # new addition for bag grasping pose
+    root.add_child(BtNode_WriteToBlackboard(name="Initialize grasp bag pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_GRASP_BAG_POSE, object=ARM_POS_POINT_TO))
+    # new addition for bag dropping pose
+    root.add_child(BtNode_WriteToBlackboard(name="Initialize drop bag pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_DROP_BAG_POSE, object=ARM_POS_NAVIGATING))
     root.add_child(BtNode_WriteToBlackboard(name="Write table location", bb_namespace="", bb_source=None, bb_key=KEY_TABLE_POSE, object=pose_table))
 
     return root
@@ -364,6 +370,73 @@ def createScanHostFeatures():
     root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
     return root
 
+def createGraspAndCarryBag():
+    root = py_trees.composites.Sequence(name="Grasp and carry bag", memory=True)
+    root.add_child(BtNode_Announce(name="Ask guest to fetch his bag", bb_source=None, message="Could you please hand me your bag?"))
+    root.add_child(py_trees.decorators.Retry(
+        name="retry", 
+        child=BtNode_MoveArmSingle(
+            name="Move arm to bag position", 
+            service_name=arm_service_name, 
+            arm_pose_bb_key=KEY_ARM_GRASP_BAG_POSE,
+            add_octomap=False
+        ), 
+        num_failures=3
+    ))
+
+    root.add_child(BtNode_GripperAction(name="Open gripper", open_gripper=True))
+    root.add_child(py_trees.timers.Timer(name="Wait for bag placement", duration=3.0))
+    root.add_child(BtNode_GripperAction(name="Close gripper", open_gripper=False))
+
+    root.add_child(py_trees.decorators.Retry(
+        name="retry", 
+        child=BtNode_MoveArmSingle(
+            name="Move arm to navigation pose", 
+            service_name=arm_service_name, 
+            arm_pose_bb_key=KEY_ARM_NAVIGATING, 
+            add_octomap=False
+        ), 
+        num_failures=3
+    ))
+
+    if not DEBUG_NO_GOTO:
+        root.add_child(py_trees.decorators.Retry(
+            name="retry", 
+            child=BtNode_GotoAction(name="Go to living room", key=KEY_SOFA_POSE), 
+            num_failures=5
+        ))
+
+        root.add_child(py_trees.decorators.Retry(
+            name="retry", 
+            child=BtNode_MoveArmSingle(
+                name="Move arm to drop position", 
+                service_name=arm_service_name, 
+                arm_pose_bb_key=KEY_ARM_DROP_BAG_POSE,
+                add_octomap=False
+            ), 
+            num_failures=3
+        ))
+
+        root.add_child(BtNode_GripperAction(name="Open gripper to drop", open_gripper=True))
+        root.add_child(py_trees.timers.Timer(name="Wait for bag drop", duration=3.0))
+        root.add_child(BtNode_GripperAction(name="Close gripper after drop", open_gripper=False))
+
+        root.add_child(py_trees.decorators.Retry(
+            name="retry", 
+            child=BtNode_MoveArmSingle(
+                name="Move arm to navigation pose after drop", 
+                service_name=arm_service_name, 
+                arm_pose_bb_key=KEY_ARM_NAVIGATING, 
+                add_octomap=False
+            ), 
+            num_failures=3
+        ))
+
+        root.add_child(BtNode_Announce(name="Ask host where to drop the bag", bb_source=None, message="Where should I drop the bag?"))
+        root.add_child(py_trees.timers.Timer(name="Wait for host response", duration=10.0))
+
+    return root
+
 def createReceptionist():
     root = py_trees.composites.Sequence(name="Receptionist Root", memory=True)
     # write all the constants to blackboard first
@@ -421,6 +494,10 @@ def createReceptionist():
     root.add_child(createToSofa(None))
     root.add_child(createAnnounceAndScanSofa())
     root.add_child(createSecondIntroductionsSimple())
+
+    # 2nd call new-added
+    root.add_child(createGraspAndCarryBag())
+    
 
     root.add_child(BtNode_Announce(name="Task accomplished", bb_source=None, message="Receptionist task accomplished."))
     root.add_child(py_trees.behaviours.Running(name="end"))
