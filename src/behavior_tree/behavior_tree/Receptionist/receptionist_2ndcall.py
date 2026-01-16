@@ -134,18 +134,11 @@ def createGetInfo(type:str, storage_key:str):
     root.add_child(py_trees.decorators.Retry(name="retry", child=loop, num_failures=10))
     return root
 
-def createGetName():
-    root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
-    root.add_child(BtNode_Announce(name="Reminder of beep", bb_source=None, message="Hi I am Tinker, please speak to me after the beep sound."))
-    root.add_child(createGetInfo("name", KEY_GUEST_NAME))
-    return root
-
 # warnings.warn("drink can no longer be asked during entry in Robocup 2025", DeprecationWarning)
 def createGetNameAndDrink():
     root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
     root.add_child(BtNode_Announce(name="Reminder of beep", bb_source=None, message="Hi I am Tinker, please speak to me after the beep sound."))
-    # root.add_child(createGetInfo("name", KEY_GUEST_NAME))
-    root.add_child(createGetName())
+    root.add_child(createGetInfo("name", KEY_GUEST_NAME))
     root.add_child(createGetInfo("favorite drink", KEY_GUEST_DRINK))
     return root
 
@@ -318,14 +311,14 @@ def createGraspBag():
 
 def createFollowPerson():
     root = py_trees.composites.Sequence(name="Follow person", memory=True)
-    root.add_child(BtNode_Announce(name="Announce follow", bb_source=None, message="I shall follow you."))
+    root.add_child(BtNode_Announce(name="Announce follow", bb_source=None, message=f"Dear {host_name}, I shall follow you."))
     root.add_child(py_trees.timers.Timer(name="Dummy wait for follow", duration=10.0))
-    root.add_child(BtNode_Announce(name="Announce follow end", bb_source=None, message="I sensed you have arrived."))
+    root.add_child(BtNode_Announce(name="Announce follow end", bb_source=None, message=f"Dear {host_name}, I sensed you have arrived."))
     return root
 
 def createDropBag():
     root = py_trees.composites.Sequence(name="Drop the bag", memory=True)
-    root.add_child(BtNode_Announce(name="Ask host where to drop the bag", bb_source=None, message="Where should I drop the bag?"))
+    root.add_child(BtNode_Announce(name="Ask host where to drop the bag", bb_source=None, message=f"Dear {host_name}, where should I drop the bag?"))
     root.add_child(py_trees.timers.Timer(name="Wait for host response", duration=5.0))
 
     root.add_child(py_trees.decorators.Retry(
@@ -341,16 +334,6 @@ def createDropBag():
 
     root.add_child(BtNode_GripperAction(name="Open gripper to drop", open_gripper=True))
     root.add_child(py_trees.timers.Timer(name="Wait for bag drop", duration=2.0))
-    # root.add_child(py_trees.decorators.Retry(
-    #     name="retry", 
-    #     child=BtNode_MoveArmSingle(
-    #         name="Move arm to navigation pose after drop", 
-    #         service_name=arm_service_name, 
-    #         arm_pose_bb_key=KEY_ARM_NAVIGATING, 
-    #         add_octomap=False
-    #     ), 
-    #     num_failures=3
-    # ))
     return root
 
 def createReceptionist():
@@ -377,15 +360,14 @@ def createReceptionist():
     ############ first guest completed, now for second guest ###########
 
     root.add_child(BtNode_Announce(name="announce going to greet 2nd guest", bb_source=None, message="Greeting guest"))   
-    root.add_child(createGreetGuest())
     root.add_child(createGraspBag())
+    root.add_child(createGreetGuest())
 
     # go to sofa now
     root.add_child(createToSofa())
     root.add_child(createAnnounceAndScanSofa())
     # root.add_child(createFirstIntroductionsSimple())
     root.add_child(createSecondIntroductionsSimple())
-    root.add_child(createGraspBag())
     root.add_child(createFollowPerson())
     root.add_child(createDropBag())
 
