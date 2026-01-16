@@ -385,7 +385,6 @@ def createReceptionist():
     root.add_child(createAnnounceAndScanSofa())
     # root.add_child(createFirstIntroductionsSimple())
     root.add_child(createSecondIntroductionsSimple())
-    root.add_child(createGraspBag())
     root.add_child(createFollowPerson())
     root.add_child(createDropBag())
 
