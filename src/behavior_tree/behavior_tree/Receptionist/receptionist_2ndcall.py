@@ -133,18 +133,11 @@ def createGetInfo(type:str, storage_key:str):
     root.add_child(py_trees.decorators.Retry(name="retry", child=loop, num_failures=10))
     return root
 
-def createGetName():
-    root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
-    root.add_child(BtNode_Announce(name="Reminder of beep", bb_source=None, message="Hi I am Tinker, please speak to me after the beep sound."))
-    root.add_child(createGetInfo("name", KEY_GUEST_NAME))
-    return root
-
 # warnings.warn("drink can no longer be asked during entry in Robocup 2025", DeprecationWarning)
 def createGetNameAndDrink():
     root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
     root.add_child(BtNode_Announce(name="Reminder of beep", bb_source=None, message="Hi I am Tinker, please speak to me after the beep sound."))
-    # root.add_child(createGetInfo("name", KEY_GUEST_NAME))
-    root.add_child(createGetName())
+    root.add_child(createGetInfo("name", KEY_GUEST_NAME))
     root.add_child(createGetInfo("favorite drink", KEY_GUEST_DRINK))
     return root
 
