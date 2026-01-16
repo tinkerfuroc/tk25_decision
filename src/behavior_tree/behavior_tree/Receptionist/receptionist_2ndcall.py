@@ -376,8 +376,8 @@ def createReceptionist():
     ############ first guest completed, now for second guest ###########
 
     root.add_child(BtNode_Announce(name="announce going to greet 2nd guest", bb_source=None, message="Greeting guest"))   
-    root.add_child(createGreetGuest())
     root.add_child(createGraspBag())
+    root.add_child(createGreetGuest())
 
     # go to sofa now
     root.add_child(createToSofa(None))
