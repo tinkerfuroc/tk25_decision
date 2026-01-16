@@ -328,16 +328,16 @@ def createDropBag():
     root.add_child(BtNode_Announce(name="Ask host where to drop the bag", bb_source=None, message="Where should I drop the bag?"))
     root.add_child(py_trees.timers.Timer(name="Wait for host response", duration=5.0))
 
-    # root.add_child(py_trees.decorators.Retry(
-    #     name="retry", 
-    #     child=BtNode_MoveArmSingle(
-    #         name="Move arm to drop position", 
-    #         service_name=arm_service_name, 
-    #         arm_pose_bb_key=KEY_ARM_DROP_BAG_POSE,
-    #         add_octomap=False
-    #     ), 
-    #     num_failures=3
-    # ))
+    root.add_child(py_trees.decorators.Retry(
+        name="retry", 
+        child=BtNode_MoveArmSingle(
+            name="Move arm to drop position", 
+            service_name=arm_service_name, 
+            arm_pose_bb_key=KEY_ARM_DROP_BAG_POSE,
+            add_octomap=False
+        ), 
+        num_failures=3
+    ))
 
     root.add_child(BtNode_GripperAction(name="Open gripper to drop", open_gripper=True))
     root.add_child(py_trees.timers.Timer(name="Wait for bag drop", duration=2.0))
