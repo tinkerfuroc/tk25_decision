@@ -363,7 +363,7 @@ def createReceptionist():
     root.add_child(createGreetGuest())
 
     # go to sofa now
-    root.add_child(createToSofa(None))
+    root.add_child(createToSofa())
     root.add_child(createRecommendSeat())
 
     ############ first guest completed, now for second guest ###########
@@ -373,7 +373,7 @@ def createReceptionist():
     root.add_child(createGreetGuest())
 
     # go to sofa now
-    root.add_child(createToSofa(None))
+    root.add_child(createToSofa())
     root.add_child(createAnnounceAndScanSofa())
     # root.add_child(createFirstIntroductionsSimple())
     root.add_child(createSecondIntroductionsSimple())
