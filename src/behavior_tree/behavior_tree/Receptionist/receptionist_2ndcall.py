@@ -333,16 +333,16 @@ def createDropBag():
 
     root.add_child(BtNode_GripperAction(name="Open gripper to drop", open_gripper=True))
     root.add_child(py_trees.timers.Timer(name="Wait for bag drop", duration=2.0))
-    root.add_child(py_trees.decorators.Retry(
-        name="retry", 
-        child=BtNode_MoveArmSingle(
-            name="Move arm to navigation pose after drop", 
-            service_name=arm_service_name, 
-            arm_pose_bb_key=KEY_ARM_NAVIGATING, 
-            add_octomap=False
-        ), 
-        num_failures=3
-    ))
+    # root.add_child(py_trees.decorators.Retry(
+    #     name="retry", 
+    #     child=BtNode_MoveArmSingle(
+    #         name="Move arm to navigation pose after drop", 
+    #         service_name=arm_service_name, 
+    #         arm_pose_bb_key=KEY_ARM_NAVIGATING, 
+    #         add_octomap=False
+    #     ), 
+    #     num_failures=3
+    # ))
     return root
 
 def createReceptionist():
@@ -352,7 +352,7 @@ def createReceptionist():
 
     root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
     # announce start and scan host features
-    root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Starting receptionist, please reply me after the beep sound and talk to me close to the mic."))
+    root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Starting receptionist."))
     root.add_child(createEnterArena())
     root.add_child(createScanHostFeatures())
 
