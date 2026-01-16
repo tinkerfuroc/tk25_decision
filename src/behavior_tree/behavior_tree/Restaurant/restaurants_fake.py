@@ -28,33 +28,26 @@ except FileNotFoundError:
     print("ERROR: constants.json not found!")
     raise FileNotFoundError
 
-pose_kitchen_bar = PoseStamped(
-    header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-    pose=Pose(
-        position=Point(
-            x=constants["pose_kitchen_bar"]["point"]["x"],
-            y=constants["pose_kitchen_bar"]["point"]["y"],
-            z=0.0
-        ),
-        orientation=Quaternion(
-            x=constants["pose_kitchen_bar"]["orientation"]["x"],
-            y=constants["pose_kitchen_bar"]["orientation"]["y"],
-            z=constants["pose_kitchen_bar"]["orientation"]["z"],
-            w=constants["pose_kitchen_bar"]["orientation"]["w"]
-        )
-    )
-)
+orders = ["", "", ""]
+
+def pose_reader(pose_dict):
+    return PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
+                        pose=Pose(position=Point(x=pose_dict["point"]["x"], y=pose_dict["point"]["y"], z=0.0),
+                                    orientation=Quaternion(x=pose_dict["orientation"]["x"], 
+                                                            y=pose_dict["orientation"]["y"], 
+                                                            z=pose_dict["orientation"]["z"], 
+                                                            w=pose_dict["orientation"]["w"]))
+                        )
+
+
+pose_kitchen_bar = pose_reader(constants["pose_kitchen_bar"])
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
 ARM_POS_SERVING = [x / 180 * math.pi for x in constants["arm_pos_serving"]]
 
 KEY_KITCHEN_BAR_POSE = "kitchen_bar_pose"
-KEY_CUSTOMER_LOCATION = "customer_location"
-KEY_CUSTOMER_ORDER = "customer_order"
-KEY_TRAY_LOCATION = "tray_location"
 KEY_ARM_NAVIGATING = "arm_navigating"
 KEY_ARM_SERVING = "arm_serving"
-KEY_ORDER_OBJECTS = "order_objects"
 
 def createConstantWriter():
     root = py_trees.composites.Parallel(
@@ -233,7 +226,7 @@ def createSingleOrderCycle():
     
     return root
 
-def createSingleOrderCycleFor2ndCall():
+def createSingleOrderCycleFor2ndCall(order:str):
     root = py_trees.composites.Sequence(name="Single order cycle", memory=True)
     root.add_child(BtNode_Announce(
         name="Start announcement",
@@ -264,23 +257,18 @@ def createSingleOrderCycleFor2ndCall():
 
     root.add_child(py_trees.timers.Timer(name="navigating to barman", duration=10.0)) #navigation to barman
 
-    root.add_child(BtNode_CommunicateWithBarman(
-        name="Communicate with barman",
-        bb_order_key=KEY_CUSTOMER_ORDER
-    ))
+    root.add_child(BtNode_Announce(name="give order", bb_source=None, message=f"Hello, I need to place an order: {order}. Please prepare these items."))
     
-    root.add_child(BtNode_Announce(
-        name="wait for order",
-        bb_source=None,
-        message="Please prepare the order. I will wait here."
-    ))
+    root.add_child(py_trees.timers.Timer(name="waiting for order", duration=3.0)) #fake wait
+    
+    root.add_child(BtNode_GripperAction(name="Open gripper to grasp the order", open_gripper=True))
+
     root.add_child(BtNode_Announce(
         name="wait for order",
         bb_source=None,
         message="Please place the order in my claw and the rest in cans on my right side once the order is prepared."
     ))
-    root.add_child(BtNode_GripperAction(name="Open gripper to grasp the order", open_gripper=True))
-    root.add_child(py_trees.timers.Timer(name="wait for order", duration=5.0)) #navigation
+    root.add_child(py_trees.timers.Timer(name="wait for order", duration=4.0)) #navigation
     root.add_child(BtNode_GripperAction(name="Close gripper", open_gripper=False))
     root.add_child(BtNode_Announce(
         name="Order secured announcement",
@@ -303,9 +291,9 @@ def createRestaurantTask():
         message="Restaurant service starting."
     ))
 
-    root.add_child(createSingleOrderCycleFor2ndCall())
-    root.add_child(createSingleOrderCycleFor2ndCall())
-    root.add_child(createSingleOrderCycleFor2ndCall())
+    root.add_child(createSingleOrderCycleFor2ndCall(orders[0]))
+    root.add_child(createSingleOrderCycleFor2ndCall(orders[1]))
+    root.add_child(createSingleOrderCycleFor2ndCall(orders[2]))
 
     return root
 
