@@ -266,8 +266,8 @@ def createAnnounceAndScanSofa():
 def createGreetGuest():
     root = py_trees.composites.Sequence(name="Greet guest", memory=True)
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
-    root.add_child(createToDoor())
     root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
+    root.add_child(createToDoor())
     root.add_child(createGetNameAndDrink())
     root.add_child(createRegisterFeature())
     return root
@@ -317,14 +317,14 @@ def createGraspBag():
 
 def createFollowPerson():
     root = py_trees.composites.Sequence(name="Follow person", memory=True)
-    root.add_child(BtNode_Announce(name="Announce follow", bb_source=None, message="I shall follow you."))
+    root.add_child(BtNode_Announce(name="Announce follow", bb_source=None, message=f"Dear {host_name}, I shall follow you."))
     root.add_child(py_trees.timers.Timer(name="Dummy wait for follow", duration=10.0))
-    root.add_child(BtNode_Announce(name="Announce follow end", bb_source=None, message="I sensed you have arrived."))
+    root.add_child(BtNode_Announce(name="Announce follow end", bb_source=None, message=f"Dear {host_name}, I sensed you have arrived."))
     return root
 
 def createDropBag():
     root = py_trees.composites.Sequence(name="Drop the bag", memory=True)
-    root.add_child(BtNode_Announce(name="Ask host where to drop the bag", bb_source=None, message="Where should I drop the bag?"))
+    root.add_child(BtNode_Announce(name="Ask host where to drop the bag", bb_source=None, message=f"Dear {host_name}, where should I drop the bag?"))
     root.add_child(py_trees.timers.Timer(name="Wait for host response", duration=5.0))
 
     root.add_child(py_trees.decorators.Retry(
@@ -384,7 +384,6 @@ def createReceptionist():
     root.add_child(createAnnounceAndScanSofa())
     # root.add_child(createFirstIntroductionsSimple())
     root.add_child(createSecondIntroductionsSimple())
-    root.add_child(createGraspBag())
     root.add_child(createFollowPerson())
     root.add_child(createDropBag())
 
