@@ -56,18 +56,11 @@ def arm_pose_reader(arm_pose_list):
 
 pose_door = pose_reader(constants["pose_door"])
 pose_sofa = pose_reader(constants["pose_sofa"])
-pose_table = pose_reader(constants["pose_table"])
 ARM_POS_NAVIGATING = arm_pose_reader(constants["arm_pos_navigating"])
 ARM_POS_POINT_TO = arm_pose_reader(constants["arm_pos_point_to"])
 
-guest1_drink_position = constants["guest1_drink_position"]
-guest2_drink_position = constants["guest2_drink_position"]
-guest1_drink_broadcast = "Dear guest, your favorite drink is at the " + guest1_drink_position + " of the shelf."
-guest2_drink_broadcast = "Dear guest, your favorite drink is at the " + guest2_drink_position + " of the shelf."
-
 host_name = constants["host_name"]
 host_drink = constants["host_drink"]
-host_interest = constants["host_interest"]
 drinks = constants["drinks"]
 names = constants["names"]
 
@@ -78,22 +71,14 @@ KEY_ARM_DROP_BAG_POSE = "arm_drop_bag_pose" # new key for bag dropping pose
 
 KEY_DOOR_POSE = "door_pose"
 KEY_SOFA_POSE = "sofa_pose"
-KEY_DOOR_POSE_TURNED = "door_pose_turned"
-KEY_SOFA_POSE_TURNED = "sofa_pose_turned"
-
-KEY_TABLE_POSE = "table_pose"
 
 KEY_HOST_NAME = "host_name"
 KEY_HOST_DRINK = "host_drink"
-KEY_HOST_INTEREST = "host_interest"
 KEY_HOST_FEATURES = "host_features"
 
 KEY_GUEST_NAME = "guest_name"
 KEY_GUEST_DRINK = "guest_drink"
 KEY_GUEST_FEATURES = "guest_features"
-KEY_GUEST1_INTEREST = "guest1_interest"
-KEY_GUEST2_INTEREST = "guest2_interest"
-KEY_COMMON_INTEREST = "common_interest"
 
 KEY_PERSONS = "persons"
 KEY_PERSON_CENTROIDS = "centroids"
@@ -107,15 +92,10 @@ arm_service_name = "arm_joint_service"
 def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter", memory=True)
     root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
-    
-    if not DEBUG_NO_GOTO and False:
-        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
 
     parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_enter_arena.add_child(BtNode_Announce(name="Announce entering arena", bb_source=None, message="Entering"))
-    # parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", service_name="move_base", target_pose=POS_TABLE, target_frame=point_target_frame)))
     
-    # root.add_child(BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     if not DEBUG_NO_GOTO:
         parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to Sofa", key=KEY_SOFA_POSE), num_failures=5))
     root.add_child(parallel_enter_arena)
@@ -126,20 +106,15 @@ def createConstantWriter():
 
     root.add_child(BtNode_WriteToBlackboard(name="Write door location", bb_namespace="", bb_source=None, bb_key=KEY_DOOR_POSE, object=pose_door))
     root.add_child(BtNode_WriteToBlackboard(name="Write sofa location", bb_namespace="", bb_source=None, bb_key=KEY_SOFA_POSE, object=pose_sofa))
-    root.add_child(BtNode_WriteToBlackboard(name="Write door location", bb_namespace="", bb_source=None, bb_key=KEY_DOOR_POSE, object=pose_door))
-    root.add_child(BtNode_WriteToBlackboard(name="Write sofa location", bb_namespace="", bb_source=None, bb_key=KEY_SOFA_POSE, object=pose_sofa))
     root.add_child(BtNode_WriteToBlackboard(name="Write host name", bb_namespace="", bb_source=None, bb_key=KEY_HOST_NAME, object=host_name))
     root.add_child(BtNode_WriteToBlackboard(name="Write host drink", bb_namespace="", bb_source=None, bb_key=KEY_HOST_DRINK, object=host_drink))
-    root.add_child(BtNode_WriteToBlackboard(name="Write host interest", bb_namespace="", bb_source=None, bb_key=KEY_HOST_INTEREST, object=host_interest))
     root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_PERSONS, object=[]))
-    root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_ARM_INIT_POSE, object=ARM_POS_POINT_TO))
-    root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
+    root.add_child(BtNode_WriteToBlackboard(name="Write arm init pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_INIT_POSE, object=ARM_POS_POINT_TO))
+    root.add_child(BtNode_WriteToBlackboard(name="Write arm navigating pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
     # new addition for bag grasping pose
-    root.add_child(BtNode_WriteToBlackboard(name="Initialize grasp bag pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_GRASP_BAG_POSE, object=ARM_POS_POINT_TO))
+    root.add_child(BtNode_WriteToBlackboard(name="Write grasp bag pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_GRASP_BAG_POSE, object=ARM_POS_POINT_TO))
     # new addition for bag dropping pose
-    root.add_child(BtNode_WriteToBlackboard(name="Initialize drop bag pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_DROP_BAG_POSE, object=ARM_POS_NAVIGATING))
-    root.add_child(BtNode_WriteToBlackboard(name="Write table location", bb_namespace="", bb_source=None, bb_key=KEY_TABLE_POSE, object=pose_table))
-
+    root.add_child(BtNode_WriteToBlackboard(name="Write drop bag pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_DROP_BAG_POSE, object=ARM_POS_POINT_TO))
     return root
 
 def createListenToGuest(bb_dest_key:str, word_list: List[str]):
@@ -164,57 +139,13 @@ def createGetName():
     root.add_child(createGetInfo("name", KEY_GUEST_NAME))
     return root
 
-def createGetInterest(key_interest: str):
-    root = py_trees.composites.Sequence("get interest", True)
-    root.add_child(BtNode_Announce(name="Ask for interest", bb_source=None, message="What are you interested in?"))
-    root.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=key_interest, timeout=5.0))
-    root.add_child(BtNode_Announce(name="Repeat interest", bb_source=key_interest, message="I heard you."))
-    return root
-
-def compareInterest(key_interest1, key_interest2):
-    root = py_trees.composites.Sequence("compare interest and announce", True)
-    root.add_child(BtNode_CompareInterest(name="Compare interest", 
-                                          bb_source_key1=key_interest1, 
-                                          bb_source_key2=key_interest2, 
-                                          bb_dest_key=KEY_COMMON_INTEREST
-                                          ))
-    root.add_child(BtNode_Announce("announce similarities between interest", KEY_COMMON_INTEREST))
-    return root
-
-def createGetDrinkAndSpeak(key_interest=None, idx_guest=1):
-    root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
-    root.add_child(createGetInfo("favorite drink", KEY_GUEST_DRINK))
-    root.add_child(BtNode_CombinePerson(
-        name="combine person's info", 
-        key_dest=KEY_PERSONS, 
-        key_name=KEY_GUEST_NAME, 
-        key_drink=KEY_GUEST_DRINK, 
-        key_features=KEY_GUEST_FEATURES,
-        key_intest=key_interest
-        ))
-    root.add_child(BtNode_TurnPanTilt(name="Turn head down to scan", x=0.0, y=30.0, speed=0.0))
-    # TODO: add an actual find drink module
-    if idx_guest == 1:
-        root.add_child(BtNode_Announce(name="announce position of favorite drink", bb_source=None, message=guest1_drink_broadcast))
-    elif idx_guest == 2:
-        root.add_child(BtNode_Announce(name="announce position of favorite drink", bb_source=None, message=guest2_drink_broadcast))
-    else:
-        root.add_child(BtNode_Announce(name="announce position of favorite drink", bb_source=None, message="Unkown guest, I don't know where your favorite drink is located."))
-    return root
-
 # warnings.warn("drink can no longer be asked during entry in Robocup 2025", DeprecationWarning)
 def createGetNameAndDrink():
     root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
     root.add_child(BtNode_Announce(name="Reminder of beep", bb_source=None, message="Hi I am Tinker, please speak to me after the beep sound."))
-    root.add_child(createGetInfo("name", KEY_GUEST_NAME))
-    # root.add_child(createGetInfo("favorite drink", KEY_GUEST_DRINK))
-    return root
-
-def createRegisterFeatureOnly():
-    root = py_trees.composites.Sequence(name="Register features of person in front", memory=True)
-    root.add_child(BtNode_Announce(name="Ask to stand in front", bb_source=None, message="Stand one meter in front of me. Thank you"))
-    root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_GUEST_FEATURES))
-    root.add_child(BtNode_Announce(name="Indicate follow", bb_source=None, message="Follow me"))
+    # root.add_child(createGetInfo("name", KEY_GUEST_NAME))
+    root.add_child(createGetName())
+    root.add_child(createGetInfo("favorite drink", KEY_GUEST_DRINK))
     return root
 
 def createRegisterFeature():
@@ -225,13 +156,11 @@ def createRegisterFeature():
     root.add_child(BtNode_Announce(name="Indicate follow", bb_source=None, message="Follow me"))
     return root
 
-def createFindFavoriteDrink(bb_key_fav_drink : str):
-    root = py_trees.composites.Sequence(name="Find favorite drink", memory=True)
-    # Go to table after greeting first guest
-    if not DEBUG_NO_GOTO:
-        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to table", key=KEY_TABLE_POSE), num_failures=10))
-    root.add_child(createGetDrinkAndSpeak())
-    return root
+def createRecommendSeat():
+    find_and_recommend_seat = py_trees.composites.Sequence(name="find and recommend seat", memory=True)
+    find_and_recommend_seat.add_child(BtNode_SeatRecommend(name="Get seat recommendation", bb_dest_key=KEY_SEAT_RECOMMENDATION, bb_source_key=KEY_PERSONS))
+    find_and_recommend_seat.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
+    return find_and_recommend_seat
 
 def createFirstIntroductionsSimple():
     find_and_recommend_seat = py_trees.composites.Sequence(name="find and recommend seat", memory=True)
@@ -312,31 +241,14 @@ def createToDoor():
         root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
     return root
 
-def createToSofa(interest_key : str):
-    root = py_trees.composites.Parallel(name="Go to sofa while chatting", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+def createToSofa():
+    root = py_trees.composites.Parallel(name="Go to sofa", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     navigation_seq = py_trees.composites.Sequence(name="Go to sofa", memory=True)
     navigation_seq.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
     navigation_seq.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
     if not DEBUG_NO_GOTO:
         navigation_seq.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))
     root.add_child(navigation_seq)
-
-    if interest_key:
-        get_interest_seq = py_trees.composites.Sequence(name="Get interest", memory=True)
-        root.add_child(get_interest_seq)
-        get_interest_seq.add_child(BtNode_Announce(name="Ask for interest", bb_source=None, message="What are you interested in?"))
-        get_interest_seq.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=interest_key, timeout=5.0))
-        get_interest_seq.add_child(BtNode_Announce(name="Repeat interest", bb_source=interest_key, message="I heard you."))
-        if (interest_key == KEY_GUEST2_INTEREST):
-            get_interest_seq.add_child(BtNode_CompareInterest(name="Compare interest", bb_source_key1=KEY_GUEST1_INTEREST, bb_source_key2=KEY_GUEST2_INTEREST, bb_dest_key=KEY_COMMON_INTEREST))
-            get_interest_seq.add_child(BtNode_Announce(name="Announce common interest", bb_source=KEY_COMMON_INTEREST, message=None))
-            root.add_child(BtNode_Introduce(
-                name="describe first guest to second guest while walking", 
-                key_person=KEY_PERSONS, 
-                target_id=1, 
-                introduced_id=0,
-                walking=True
-            ))
     return root
 
 def createAnnounceAndScanSofa():
@@ -373,7 +285,6 @@ def createScanHostFeatures():
 
 def createGraspBag():
     root = py_trees.composites.Sequence(name="Grasp bag", memory=True)
-    root.add_child(BtNode_Announce(name="Ask guest to fetch his bag", bb_source=None, message="Could you please hand me your bag?"))
     root.add_child(py_trees.decorators.Retry(
         name="retry", 
         child=BtNode_MoveArmSingle(
@@ -384,16 +295,37 @@ def createGraspBag():
         ), 
         num_failures=3
     ))
-
     root.add_child(BtNode_GripperAction(name="Open gripper", open_gripper=True))
-    root.add_child(py_trees.timers.Timer(name="Wait for bag placement", duration=3.0))
+
+    root.add_child(BtNode_Announce(name="Ask guest to fetch his bag", bb_source=None, message="Could you please hand me your bag by placing the handle in my gripper?"))
+    
+    root.add_child(py_trees.timers.Timer(name="Wait for bag placement", duration=2.0))
     root.add_child(BtNode_GripperAction(name="Close gripper", open_gripper=False))
+
+    # move arm back to navigating pose
+    root.add_child(py_trees.decorators.Retry(
+        name="retry", 
+        child=BtNode_MoveArmSingle(
+            name="Move arm to navigation pose", 
+            service_name=arm_service_name, 
+            arm_pose_bb_key=KEY_ARM_NAVIGATING, 
+            add_octomap=False
+        ), 
+        num_failures=3
+    ))
+    return root
+
+def createFollowPerson():
+    root = py_trees.composites.Sequence(name="Follow person", memory=True)
+    root.add_child(BtNode_Announce(name="Announce follow", bb_source=None, message="I shall follow you."))
+    root.add_child(py_trees.timers.Timer(name="Dummy wait for follow", duration=10.0))
+    root.add_child(BtNode_Announce(name="Announce follow end", bb_source=None, message="I sensed you have arrived."))
     return root
 
 def createDropBag():
     root = py_trees.composites.Sequence(name="Drop the bag", memory=True)
     root.add_child(BtNode_Announce(name="Ask host where to drop the bag", bb_source=None, message="Where should I drop the bag?"))
-    root.add_child(py_trees.timers.Timer(name="Wait for host response", duration=10.0))
+    root.add_child(py_trees.timers.Timer(name="Wait for host response", duration=5.0))
 
     root.add_child(py_trees.decorators.Retry(
         name="retry", 
@@ -407,9 +339,7 @@ def createDropBag():
     ))
 
     root.add_child(BtNode_GripperAction(name="Open gripper to drop", open_gripper=True))
-    root.add_child(py_trees.timers.Timer(name="Wait for bag drop", duration=3.0))
-    root.add_child(BtNode_GripperAction(name="Close gripper after drop", open_gripper=False))
-
+    root.add_child(py_trees.timers.Timer(name="Wait for bag drop", duration=2.0))
     root.add_child(py_trees.decorators.Retry(
         name="retry", 
         child=BtNode_MoveArmSingle(
@@ -441,9 +371,7 @@ def createReceptionist():
 
     # go to sofa now
     root.add_child(createToSofa(None))
-    root.add_child(createAnnounceAndScanSofa())
-    # root.add_child(BtNode_TurnPanTilt(name="Turn head to the right", x=0.0, y=20.0, speed=0.0))
-
+    root.add_child(createRecommendSeat())
 
     ############ first guest completed, now for second guest ###########
 
@@ -454,12 +382,13 @@ def createReceptionist():
     # go to sofa now
     root.add_child(createToSofa(None))
     root.add_child(createAnnounceAndScanSofa())
-    root.add_child(createFirstIntroductionsSimple())
+    # root.add_child(createFirstIntroductionsSimple())
     root.add_child(createSecondIntroductionsSimple())
+    root.add_child(createGraspBag())
+    root.add_child(createFollowPerson())
     root.add_child(createDropBag())
-    
 
-    root.add_child(BtNode_Announce(name="Task accomplished", bb_source=None, message="Receptionist task accomplished."))
+    root.add_child(BtNode_Announce(name="Task accomplished", bb_source=None, message="HRI task accomplished."))
     root.add_child(py_trees.behaviours.Running(name="end"))
 
     return root
