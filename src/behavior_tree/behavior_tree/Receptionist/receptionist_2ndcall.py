@@ -1,6 +1,7 @@
 import py_trees
 from typing import List
 
+from behavior_tree.TemplateNodes.WaitKeyPress import BtNode_WaitKeyboardPress
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation, BtNode_Listen, BtNode_CompareInterest
@@ -293,7 +294,7 @@ def createGraspBag():
 
     root.add_child(BtNode_Announce(name="Ask guest to fetch his bag", bb_source=None, message="Could you please hand me your bag by placing the handle in my gripper?"))
     
-    root.add_child(py_trees.timers.Timer(name="Wait for bag placement", duration=2.0))
+    root.add_child(BtNode_WaitKeyboardPress("wait for bag placement", 's'))
     root.add_child(BtNode_GripperAction(name="Close gripper", open_gripper=False))
 
     # move arm back to navigating pose
@@ -312,14 +313,14 @@ def createGraspBag():
 def createFollowPerson():
     root = py_trees.composites.Sequence(name="Follow person", memory=True)
     root.add_child(BtNode_Announce(name="Announce follow", bb_source=None, message=f"Dear {host_name}, I shall follow you."))
-    root.add_child(py_trees.timers.Timer(name="Dummy wait for follow", duration=10.0))
+    root.add_child(BtNode_WaitKeyboardPress("Dummy wait for follow", 's'))
     root.add_child(BtNode_Announce(name="Announce follow end", bb_source=None, message=f"Dear {host_name}, I sensed you have arrived."))
     return root
 
 def createDropBag():
     root = py_trees.composites.Sequence(name="Drop the bag", memory=True)
     root.add_child(BtNode_Announce(name="Ask host where to drop the bag", bb_source=None, message=f"Dear {host_name}, where should I drop the bag?"))
-    root.add_child(py_trees.timers.Timer(name="Wait for host response", duration=5.0))
+    root.add_child(py_trees.timers.Timer(name="Wait for host to respond", duration=2.0))
 
     root.add_child(py_trees.decorators.Retry(
         name="retry", 
@@ -368,6 +369,8 @@ def createReceptionist():
     root.add_child(createAnnounceAndScanSofa())
     # root.add_child(createFirstIntroductionsSimple())
     root.add_child(createSecondIntroductionsSimple())
+    root.add_child(BtNode_Announce(name="announce approaching host", bb_source=None, message="Approaching host"))
+    root.add_child(BtNode_WaitKeyboardPress('approach host', 's'))
     root.add_child(createFollowPerson())
     root.add_child(createDropBag())
 

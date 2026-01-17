@@ -6,9 +6,9 @@ import math
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WaitKeyboardPress, BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_Listen
 from behavior_tree.TemplateNodes.Vision import BtNode_ScanFor
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle, BtNode_Grasp, BtNode_Place, BtNode_GripperAction
 from .custumNodes import (
@@ -41,6 +41,8 @@ def pose_reader(pose_dict):
 
 
 pose_kitchen_bar = pose_reader(constants["pose_kitchen_bar"])
+
+KEY_CUSTOMER_ORDER = "customer_order"
 
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
 ARM_POS_SERVING = [x / 180 * math.pi for x in constants["arm_pos_serving"]]
@@ -114,7 +116,7 @@ def createDetectAndReachCustomer():
     
     return root
 
-def createTakeAndConfirmOrder():
+def createTakeAndConfirmOrder(order=''):
     root = py_trees.composites.Sequence(name="Take and confirm order", memory=True)
     
     root.add_child(BtNode_Announce(
@@ -123,27 +125,22 @@ def createTakeAndConfirmOrder():
         message="Hello! I'm Tinker, your service robot. What would you like to order today?"
     ))
     
-    order_loop = py_trees.composites.Sequence(name="Order taking loop", memory=True)
-    order_loop.add_child(BtNode_TakeOrder(
-        name="Take order",
-        bb_dest_key=KEY_CUSTOMER_ORDER,
-        timeout=constants["order_confirmation_timeout"]
+    root.add_child(BtNode_Listen('listen', KEY_CUSTOMER_ORDER, timeout=5.0))
+    root.add_child(BtNode_Announce(
+        name="Repeat order",
+        bb_source=None,
+        message=f"You ordered: {order}. Is that correct?"
     ))
-    order_loop.add_child(BtNode_ConfirmOrder(
-        name="Confirm order",
-        bb_order_key=KEY_CUSTOMER_ORDER
-    ))
-    order_loop.add_child(BtNode_GetConfirmation(
-        name="Get confirmation",
+    root.add_child(BtNode_GetConfirmation(
+        name="Get order confirmation",
+        bb_source=None,
         timeout=5.0
     ))
-    
-    root.add_child(py_trees.decorators.Retry(
-        name="retry order taking",
-        child=order_loop,
-        num_failures=3
+    root.add_child(BtNode_Announce(
+        name="Final confirmation",
+        bb_source=None,
+        message="Thank you for your order!"
     ))
-    
     return root
 
 def createPlaceOrderWithBarman():
@@ -245,22 +242,20 @@ def createSingleOrderCycleFor2ndCall(order:str):
         num_failures=3
     ))
 
+    root.add_child(BtNode_Announce("searching for calling", bb_source=None, message="Scanning for calling customers."))
     root.add_child(py_trees.timers.Timer(name="search for calling/waving", duration=3.0)) #fake wait for customer calling/waving
     root.add_child(BtNode_Announce(
         name="Identified calling customer",
         bb_source=None,
         message="Identified calling customer,planning to take orders"
     ))
-    root.add_child(py_trees.timers.Timer(name="navigating to target customer", duration=10.0)) #navigation
+    root.add_child(BtNode_WaitKeyboardPress("approach customer", 's'))
 
-    root.add_child(createTakeAndConfirmOrder())
+    root.add_child(createTakeAndConfirmOrder(order))
 
-    root.add_child(py_trees.timers.Timer(name="navigating to barman", duration=10.0)) #navigation to barman
+    root.add_child(BtNode_WaitKeyboardPress("approach barman", 's'))
 
     root.add_child(BtNode_Announce(name="give order", bb_source=None, message=f"Hello, I need to place an order: {order}. Please prepare these items."))
-    
-    root.add_child(py_trees.timers.Timer(name="waiting for order", duration=3.0)) #fake wait
-    
     root.add_child(BtNode_GripperAction(name="Open gripper to grasp the order", open_gripper=True))
 
     root.add_child(BtNode_Announce(
@@ -268,7 +263,7 @@ def createSingleOrderCycleFor2ndCall(order:str):
         bb_source=None,
         message="Please place the order in my claw and the rest in cans on my right side once the order is prepared."
     ))
-    root.add_child(py_trees.timers.Timer(name="wait for order", duration=4.0)) #navigation
+    root.add_child(BtNode_WaitKeyboardPress("wait for order", 's'))
     root.add_child(BtNode_GripperAction(name="Close gripper", open_gripper=False))
     root.add_child(BtNode_Announce(
         name="Order secured announcement",
@@ -276,7 +271,7 @@ def createSingleOrderCycleFor2ndCall(order:str):
         message="Order secured,planning to deliver the order to customer."
     ))
 
-    root.add_child(py_trees.timers.Timer(name="navigating to customer", duration=10.0)) #navigation to customer
+    root.add_child(BtNode_WaitKeyboardPress("navigating to customer", 's'))
 
     return root
 
