@@ -1,5 +1,6 @@
 import py_trees
 
+from behavior_tree.TemplateNodes.WaitKeyPress import BtNode_WaitKeyboardPress
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_Listen
 from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
@@ -88,7 +89,7 @@ def createEnterArena():
     root.add_child(BtNode_MoveArmSingle(name="move arm to navigating position", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     root.add_child(BtNode_GripperAction(name="open gripper before navigation", open_gripper=True))
     root.add_child(BtNode_TurnPanTilt(name="turn pan tilt up", y=45.0))
-    root.add_child(py_trees.timers.Timer("go to command point", duration=17.0))
+    root.add_child(BtNode_WaitKeyboardPress(name="wait for start key", key="s"))
     return root
 
 def createGPSR():
@@ -124,46 +125,46 @@ def createGPSR():
     execution1 = py_trees.composites.Sequence("execute first command", True)
     execution1.add_child(BtNode_Announce(name="announce starting first command", bb_source=None, message="Processing first command."))
     execution1.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="I shall go to the sink. Scan for objects. Find the smallest object. Go to command point. Announce the smallest object"))
-    execution1.add_child(BtNode_Announce("starting execution", bb_source=None, message="Starting execution now."))
+    execution1.add_child(BtNode_Announce("starting execution", bb_source=None, message="Starting."))
     execution1.add_child(BtNode_Announce(name="announce going to sink", bb_source=None, message="Going to the sink."))
-    execution1.add_child(py_trees.timers.Timer("dummy for going to sink", duration=40.0))
+    execution1.add_child(BtNode_WaitKeyboardPress(name="wait for start key", key="s"))
     execution1.add_child(BtNode_TurnPanTilt("turn head down for scanning", y=20.0))
     execution1.add_child(BtNode_Announce(name="announce scanning", bb_source=None, message="Scanning objects."))
-    execution1.add_child(py_trees.timers.Timer("wait for scan", duration=3.0))
+    execution1.add_child(py_trees.timers.Timer("wait for scanning", duration=3.0))
     execution1.add_child(BtNode_Announce(name="announce found objects", bb_source=None, message="Found smallest object, returning."))
     execution1.add_child(BtNode_TurnPanTilt("turn head up", y=45.0))
     execution1.add_child(BtNode_Announce(name="announce going to sink", bb_source=None, message="Going to the command point."))
-    execution1.add_child(py_trees.timers.Timer("dummy for returning from sink", duration=40.0))
+    execution1.add_child(BtNode_WaitKeyboardPress(name="wait for start key", key="s"))
     execution1.add_child(BtNode_Announce(name="announce smallest object", bb_source=None, message="Dear person, the smallest object on the sink is a bottle cola."))
     root.add_child(execution1)
 
     execution2 = py_trees.composites.Sequence("execute second command", True)
     execution2.add_child(BtNode_Announce(name="announce starting second command", bb_source=None, message="Processing second command."))
     execution2.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="I shall go to the podium. Scan for waving person. Announce follow me. Go to the office."))
-    execution2.add_child(BtNode_Announce("starting execution", bb_source=None, message="Starting execution now."))
+    execution2.add_child(BtNode_Announce("starting execution", bb_source=None, message="Starting."))
     execution2.add_child(BtNode_Announce(name="announce going to podium", bb_source=None, message="Going to the podium."))
-    execution2.add_child(py_trees.timers.Timer("dummy for going to podium", duration=30.0))
+    execution2.add_child(BtNode_WaitKeyboardPress(name="wait for start key", key="s"))
     execution2.add_child(BtNode_Announce(name="announce scanning", bb_source=None, message="Scanning for the waving person."))
-    execution2.add_child(py_trees.timers.Timer("wait for scan", duration=3.0))
+    execution1.add_child(py_trees.timers.Timer("wait for scanning", duration=3.0))
     # we should have two person here in the scene, one is waving, the other is not
     execution2.add_child(BtNode_Announce(name="announce found waving person", bb_source=None, message="Found waving person, approaching"))
-    execution2.add_child(py_trees.timers.Timer("dummy for going to waving person", duration=20.0))
+    execution2.add_child(BtNode_WaitKeyboardPress(name="wait for start key", key="s"))
     execution2.add_child(BtNode_Announce(name="announce follow me", bb_source=None, message="Please follow me to the office."))
-    execution2.add_child(py_trees.timers.Timer("dummy for going to office", duration=50.0))
+    execution2.add_child(BtNode_WaitKeyboardPress(name="wait for start key", key="s"))
     execution2.add_child(BtNode_Announce(name="announce arrived office", bb_source=None, message="We have arrived at the office. You can stop following me now."))
     root.add_child(execution2)
 
     execution3 = py_trees.composites.Sequence("execute third command", True)
     execution3.add_child(BtNode_Announce(name="announce starting third command", bb_source=None, message="Processing third command."))
     execution3.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="I shall go to the living room. Scan for person raising their right arm. Answer a question."))
-    execution3.add_child(BtNode_Announce("starting execution", bb_source=None, message="Starting execution now."))
+    execution3.add_child(BtNode_Announce("starting execution", bb_source=None, message="Starting."))
     execution3.add_child(BtNode_Announce(name="announce going to living room", bb_source=None, message="Going to the living room."))
-    execution3.add_child(py_trees.timers.Timer("dummy for going to living room", duration=35.0))
+    execution3.add_child(BtNode_WaitKeyboardPress(name="wait for start key", key="s"))
     execution3.add_child(BtNode_Announce(name="announce scanning", bb_source=None, message="Scanning for person raising their right arm."))
-    execution3.add_child(py_trees.timers.Timer("wait for scan", duration=2.0))
+    execution1.add_child(py_trees.timers.Timer("wait for scanning", duration=3.0))
     # we should have two person here in the scene, one is raising hand, the other is not
     execution3.add_child(BtNode_Announce(name="announce found raising person", bb_source=None, message="Found person raising their right arm, approaching."))
-    execution3.add_child(py_trees.timers.Timer("dummy for going to raising person", duration=20.0))
+    execution3.add_child(BtNode_WaitKeyboardPress(name="wait for start key", key="s"))
     execution3.add_child(BtNode_Announce(name="announce question", bb_source=None, message="Please ask your question after the beep sound."))
     execution3.add_child(BtNode_Listen("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
     # the question is "what is 17+25"
