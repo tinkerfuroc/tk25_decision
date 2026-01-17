@@ -28,7 +28,7 @@ TURN_PAN_TILT = True
 
 MAX_SCAN_DISTANCE = 4.5
 
-DEBUG_NO_GOTO = False
+DEBUG_NO_GOTO = True
 
 DISABLE_FEATURE_MATCH = False
 DISABLE_FOLLOW_HEAD = True
@@ -100,6 +100,8 @@ def createEnterArena():
     
     if not DEBUG_NO_GOTO:
         parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to Sofa", key=KEY_SOFA_POSE), num_failures=5))
+    else:
+        parallel_enter_arena.add_child(BtNode_WaitKeyboardPress("arrived at sofa", 's'))
     root.add_child(parallel_enter_arena)
     return root
 
@@ -234,6 +236,8 @@ def createToDoor():
     root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
     if not DEBUG_NO_GOTO:
         root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
+    else:
+        root.add_child(BtNode_WaitKeyboardPress("wait for going to door", 's'))
     return root
 
 def createToSofa():
@@ -243,6 +247,8 @@ def createToSofa():
     navigation_seq.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
     if not DEBUG_NO_GOTO:
         navigation_seq.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))
+    else:
+        navigation_seq.add_child(BtNode_WaitKeyboardPress("wait for going to sofa", 's'))
     root.add_child(navigation_seq)
     return root
 
@@ -272,6 +278,8 @@ def createScanHostFeatures():
     root.add_child(BtNode_TurnPanTilt(name="Turn head down", x=0.0, y=20.0, speed=0.0))
     if not DEBUG_NO_GOTO:
         root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))    
+    else:
+        root.add_child(BtNode_WaitKeyboardPress("wait for going to sofa", 's'))
     root.add_child(BtNode_Announce(name="announce scanning host features", bb_source=None, message="Scanning host"))
     root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_HOST_FEATURES))
     root.add_child(BtNode_CombinePerson(name="combine host's info", key_dest=KEY_PERSONS, key_name=KEY_HOST_NAME, key_drink=KEY_HOST_DRINK, key_features=KEY_HOST_FEATURES))
@@ -294,7 +302,8 @@ def createGraspBag():
 
     root.add_child(BtNode_Announce(name="Ask guest to fetch his bag", bb_source=None, message="Could you please hand me your bag by placing the handle in my gripper?"))
     
-    root.add_child(BtNode_WaitKeyboardPress("wait for bag placement", 's'))
+    # root.add_child(BtNode_WaitKeyboardPress("wait for bag placement", 's'))
+    root.add_child(py_trees.timers.Timer(name="Wait for bag placement", duration=3.0))
     root.add_child(BtNode_GripperAction(name="Close gripper", open_gripper=False))
 
     # move arm back to navigating pose
