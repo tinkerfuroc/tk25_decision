@@ -20,6 +20,9 @@ import random
 import math
 import json
 
+GUEST_IDX = 0
+DEBUG_FIX_SEAT_RECOMMENDATION = False
+
 PRINT_DEBUG = True
 PRINT_BLACKBOARD = False
 
@@ -32,6 +35,12 @@ DEBUG_NO_GOTO = True
 
 DISABLE_FEATURE_MATCH = False
 DISABLE_FOLLOW_HEAD = True
+
+
+seat_recommendations = [
+    "please sit on the dark green sofa to the far right",
+    "please sit on the light green sofa to the far left"
+]
 
 # read from `constant.json` in the same directory
 # load file
@@ -58,6 +67,7 @@ def arm_pose_reader(arm_pose_list):
 pose_door = pose_reader(constants["pose_door"])
 pose_sofa = pose_reader(constants["pose_sofa"])
 ARM_POS_NAVIGATING = arm_pose_reader(constants["arm_pos_navigating"])
+ARM_POS_HANDOVER = arm_pose_reader(constants["arm_pos_handover"])
 ARM_POS_POINT_TO = arm_pose_reader(constants["arm_pos_point_to"])
 ARM_POS_DROP = arm_pose_reader(constants["arm_pos_drop"])
 
@@ -69,6 +79,7 @@ names = constants["names"]
 KEY_ARM_INIT_POSE = "arm_init_pose"
 KEY_ARM_NAVIGATING = "arm_navigating"
 KEY_ARM_POINT_TO = "arm_point_to"
+KEY_ARM_HANDOVER = "arm_handover"  # new key for handover pose
 KEY_ARM_DROP_BAG_POSE = "arm_pos_drop" # new key for bag dropping pose
 
 KEY_DOOR_POSE = "door_pose"
@@ -114,6 +125,7 @@ def createConstantWriter():
     root.add_child(BtNode_WriteToBlackboard(name="Write host drink", bb_namespace="", bb_source=None, bb_key=KEY_HOST_DRINK, object=host_drink))
     root.add_child(BtNode_WriteToBlackboard(name="Initialize persons", bb_namespace="", bb_source=None, bb_key=KEY_PERSONS, object=[]))
     root.add_child(BtNode_WriteToBlackboard(name="Write arm init pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_INIT_POSE, object=ARM_POS_POINT_TO))
+    root.add_child(BtNode_WriteToBlackboard(name="Write arm handover pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_HANDOVER, object=ARM_POS_HANDOVER))
     root.add_child(BtNode_WriteToBlackboard(name="Write arm navigating pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
     # new addition for bag grasping pose
     root.add_child(BtNode_WriteToBlackboard(name="Write grasp bag pose", bb_namespace="", bb_source=None, bb_key=KEY_ARM_POINT_TO, object=ARM_POS_POINT_TO))
@@ -155,8 +167,12 @@ def createRegisterFeature():
 
 def createRecommendSeat():
     find_and_recommend_seat = py_trees.composites.Sequence(name="find and recommend seat", memory=True)
-    find_and_recommend_seat.add_child(BtNode_SeatRecommend(name="Get seat recommendation", bb_dest_key=KEY_SEAT_RECOMMENDATION, bb_source_key=KEY_PERSONS))
-    find_and_recommend_seat.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
+    if ARM_POS_HANDOVER:
+        find_and_recommend_seat.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=None, message=seat_recommendations[GUEST_IDX]))
+        GUEST_IDX += 1
+    else:
+        find_and_recommend_seat.add_child(BtNode_SeatRecommend(name="Get seat recommendation", bb_dest_key=KEY_SEAT_RECOMMENDATION, bb_source_key=KEY_PERSONS))
+        find_and_recommend_seat.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
     return find_and_recommend_seat
 
 def createFirstIntroductionsSimple():
@@ -227,8 +243,6 @@ def createSecondIntroductionsSimple():
     introductions.add_child(introduce_w_followhead2)
     root.add_child(introductions)
 
-    root.add_child(BtNode_TurnPanTilt(name="Turn head forward", x=0.0, y=45.0, speed=0.0))
-
     root.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
     return root
 
@@ -268,10 +282,6 @@ def createAnnounceAndScanSofa():
 
 def createScanHostFeatures():
     root = py_trees.composites.Sequence(name="Scan host features", memory=True)
-    # if not DEBUG_NO_GOTO:
-    #     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))    
-    # else:
-    #     root.add_child(BtNode_WaitKeyboardPress("wait for going to sofa", 's'))
     root.add_child(BtNode_TurnPanTilt(name="Turn head down", x=0.0, y=20.0, speed=0.0))
     root.add_child(BtNode_Announce(name="announce scanning host features", bb_source=None, message="Scanning host"))
     root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_HOST_FEATURES))
@@ -286,7 +296,7 @@ def createGraspBag():
         child=BtNode_MoveArmSingle(
             name="Move arm to bag position", 
             service_name=arm_service_name, 
-            arm_pose_bb_key=KEY_ARM_POINT_TO,
+            arm_pose_bb_key=KEY_ARM_HANDOVER,
             add_octomap=False
         ), 
         num_failures=3
@@ -326,9 +336,7 @@ def createFollowPerson():
 
 def createDropBag():
     root = py_trees.composites.Sequence(name="Drop the bag", memory=True)
-    root.add_child(BtNode_Announce(name="Ask host where to drop the bag", bb_source=None, message=f"Dear {host_name}, where should I drop the bag?"))
-    root.add_child(py_trees.timers.Timer(name="Wait for host to respond", duration=2.0))
-
+    root.add_child(BtNode_Announce(name="Ask host where to drop the bag", bb_source=None, message=f"Dear {host_name}, I shall place the bag in front of you."))
     root.add_child(py_trees.decorators.Retry(
         name="retry", 
         child=BtNode_MoveArmSingle(
