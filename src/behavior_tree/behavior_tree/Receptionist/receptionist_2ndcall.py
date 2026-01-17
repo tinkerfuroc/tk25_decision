@@ -152,7 +152,7 @@ def createGetInfo(type:str, storage_key:str):
 # warnings.warn("drink can no longer be asked during entry in Robocup 2025", DeprecationWarning)
 def createGetNameAndDrink():
     root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
-    root.add_child(BtNode_Announce(name="Reminder of beep", bb_source=None, message="Hi I am Tinker, please speak to me after the beep sound."))
+    root.add_child(BtNode_Announce(name="Reminder of beep", bb_source=None, message="Hi, please speak to me after the beep sound."))
     root.add_child(createGetInfo("name", KEY_GUEST_NAME))
     root.add_child(createGetInfo("favorite drink", KEY_GUEST_DRINK))
     return root
@@ -166,6 +166,7 @@ def createRegisterFeature():
     return root
 
 def createRecommendSeat():
+    global GUEST_IDX
     find_and_recommend_seat = py_trees.composites.Sequence(name="find and recommend seat", memory=True)
     if ARM_POS_HANDOVER:
         find_and_recommend_seat.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=None, message=seat_recommendations[GUEST_IDX]))
@@ -196,8 +197,8 @@ def createFirstIntroductionsSimple():
 
 def createSecondIntroductionsSimple():
     root = py_trees.composites.Sequence(name="second introductions", memory=True)
-    find_and_recommend_seat = py_trees.composites.Sequence(name="find and recommend seat", memory=True)
-    find_and_recommend_seat.add_child(BtNode_SeatRecommend(name="Get seat recommendation", bb_dest_key=KEY_SEAT_RECOMMENDATION, bb_source_key=KEY_PERSONS))
+    # find_and_recommend_seat = py_trees.composites.Sequence(name="find and recommend seat", memory=True)
+    # find_and_recommend_seat.add_child(BtNode_SeatRecommend(name="Get seat recommendation", bb_dest_key=KEY_SEAT_RECOMMENDATION, bb_source_key=KEY_PERSONS))
     
     introductions = py_trees.composites.Sequence(
         name="introduce first guest to second guest",
@@ -243,7 +244,8 @@ def createSecondIntroductionsSimple():
     introductions.add_child(introduce_w_followhead2)
     root.add_child(introductions)
 
-    root.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
+    root.add_child(createRecommendSeat())
+    # root.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
     return root
 
 def createToDoor():
@@ -303,7 +305,7 @@ def createGraspBag():
     ))
     root.add_child(BtNode_GripperAction(name="Open gripper", open_gripper=True))
 
-    root.add_child(BtNode_Announce(name="Ask guest to fetch his bag", bb_source=None, message="Could you please hand me your bag by placing the handle in my gripper?"))
+    root.add_child(BtNode_Announce(name="Ask guest to fetch his bag", bb_source=None, message="Please place your bag in my gripper?"))
     
     # root.add_child(BtNode_WaitKeyboardPress("wait for bag placement", 's'))
     root.add_child(py_trees.timers.Timer(name="Wait for bag placement", duration=3.0))
@@ -394,6 +396,7 @@ def createReceptionist():
     root.add_child(createAnnounceAndScanSofa())
     # root.add_child(createFirstIntroductionsSimple())
     root.add_child(createSecondIntroductionsSimple())
+    root.add_child(BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     root.add_child(BtNode_Announce(name="announce approaching host", bb_source=None, message="Found Host. Approaching host"))
     root.add_child(BtNode_WaitKeyboardPress('approach host', 's'))
     root.add_child(createFollowPerson())
