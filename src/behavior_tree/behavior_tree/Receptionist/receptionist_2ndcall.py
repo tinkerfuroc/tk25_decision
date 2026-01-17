@@ -227,6 +227,8 @@ def createSecondIntroductionsSimple():
     introductions.add_child(introduce_w_followhead2)
     root.add_child(introductions)
 
+    root.add_child(BtNode_TurnPanTilt(name="Turn head forward", x=0.0, y=45.0, speed=0.0))
+
     root.add_child(BtNode_Announce(name="announce seat recommendation", bb_source=KEY_SEAT_RECOMMENDATION))
     return root
 
@@ -262,15 +264,6 @@ def createAnnounceAndScanSofa():
         parallel_matching.add_child(BtNode_Announce(name="Announce feature matching", bb_source=None, message="Scanning seated personnels"))
         root.add_child(parallel_matching)
     root.add_child(BtNode_Announce(name="Tell guest to stand on right", bb_source=None, message="Stand on my right"))
-    return root
-
-def createGreetGuest():
-    root = py_trees.composites.Sequence(name="Greet guest", memory=True)
-    # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
-    root.add_child(createToDoor())
-    root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
-    root.add_child(createGetNameAndDrink())
-    root.add_child(createRegisterFeature())
     return root
 
 def createScanHostFeatures():
@@ -321,6 +314,11 @@ def createGraspBag():
 
 def createFollowPerson():
     root = py_trees.composites.Sequence(name="Follow person", memory=True)
+    parallel_reset = py_trees.composites.Parallel(name="Reset pan tilt and arm", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_reset.add_child(BtNode_TurnPanTilt("turn pan tilt up", y=45.0))
+    parallel_reset.add_child(BtNode_MoveArmSingle("move arm to navigating", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
+
+    root.add_child(parallel_reset)
     root.add_child(BtNode_Announce(name="Announce follow", bb_source=None, message=f"Dear {host_name}, I shall follow you."))
     root.add_child(BtNode_WaitKeyboardPress("Dummy wait for follow", 's'))
     root.add_child(BtNode_Announce(name="Announce follow end", bb_source=None, message=f"Dear {host_name}, I sensed you have arrived."))
@@ -344,6 +342,16 @@ def createDropBag():
 
     root.add_child(BtNode_GripperAction(name="Open gripper to drop", open_gripper=True))
     root.add_child(py_trees.timers.Timer(name="Wait for bag drop", duration=2.0))
+    return root
+
+def createGreetGuest(grasp_bag=False):
+    root = py_trees.composites.Sequence(name="Greet guest", memory=True)
+    root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
+    root.add_child(createToDoor())
+    if grasp_bag:
+        root.add_child(createGraspBag())
+    root.add_child(createGetNameAndDrink())
+    root.add_child(createRegisterFeature())
     return root
 
 def createReceptionist():
@@ -370,15 +378,15 @@ def createReceptionist():
     ############ first guest completed, now for second guest ###########
 
     root.add_child(BtNode_Announce(name="announce going to greet 2nd guest", bb_source=None, message="Greeting guest"))   
-    root.add_child(createGraspBag())
-    root.add_child(createGreetGuest())
+    # root.add_child(createGraspBag())
+    root.add_child(createGreetGuest(True))
 
     # go to sofa now
     root.add_child(createToSofa())
     root.add_child(createAnnounceAndScanSofa())
     # root.add_child(createFirstIntroductionsSimple())
     root.add_child(createSecondIntroductionsSimple())
-    root.add_child(BtNode_Announce(name="announce approaching host", bb_source=None, message="Approaching host"))
+    root.add_child(BtNode_Announce(name="announce approaching host", bb_source=None, message="Found Host. Approaching host"))
     root.add_child(BtNode_WaitKeyboardPress('approach host', 's'))
     root.add_child(createFollowPerson())
     root.add_child(createDropBag())
