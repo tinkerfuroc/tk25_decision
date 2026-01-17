@@ -1,9 +1,8 @@
 import py_trees
 
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_Listen
-from behavior_tree.TemplateNodes.Vision import BtNode_DoorDetection, BtNode_TurnPanTilt
+from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation
+from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle, BtNode_GripperAction
 # from behavior_tree.StoringGroceries.customNodes import BtNode_FindObjTable, BtNode_GraspWithPose
 
@@ -86,7 +85,10 @@ def createConstantWriter():
 def createEnterArena():
     root = py_trees.composites.Sequence("Enter Arena", True)
     root.add_child(BtNode_Announce(name="announce entering arena", bb_source=None, message="Starting GPSR. Entering the arena now."))
-    root.add_child(BtNode_GotoAction("go to command point", KEY_POSE_COMMAND))
+    root.add_child(BtNode_MoveArmSingle(name="move arm to navigating position", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
+    root.add_child(BtNode_GripperAction(name="open gripper before navigation", open_gripper=True))
+    root.add_child(BtNode_TurnPanTilt(name="turn pan tilt up", y=45.0))
+    root.add_child(py_trees.timers.Timer("go to command point", duration=10.0))
     return root
 
 def createGPSR():
@@ -117,39 +119,48 @@ def createGPSR():
 
     # execution
     execution1 = py_trees.composites.Sequence("execute first command", True)
-    execution1.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="The execution procedure for this command is go to the shelf, scan for the objects, find the smallest object, and announce the smallest object. Starting execution."))
-    execution1.add_child(BtNode_GotoAction("go to shelf", KEY_POSE_SHELF))
-    execution1.add_child(BtNode_Announce(name="announce scanning", bb_source=None, message="Scanning for objects on the shelf."))
+    execution1.add_child(BtNode_Announce(name="announce starting first command", bb_source=None, message="Starting execution of first command."))
+    execution1.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="The execution procedure for this command is go to the sink, scan for the objects, find the smallest object, and announce the smallest object. Starting execution."))
+    execution1.add_child(py_trees.timers.Timer("dummy for going to sink", duration=10.0))
+    execution1.add_child(BtNode_TurnPanTilt("turn head down for scanning", y=20.0))
+    execution1.add_child(BtNode_Announce(name="announce scanning", bb_source=None, message="Scanning for objects on the sink."))
     execution1.add_child(py_trees.timers.Timer("wait for scan", duration=1.0))
-    execution1.add_child(BtNode_Announce(name="announce smallest object", bb_source=None, message="The smallest object on the shelf is on the left, it is a cola can."))
+    execution1.add_child(BtNode_Announce(name="announce found objects", bb_source=None, message="Found smallest object, returning."))
+    execution1.add_child(BtNode_TurnPanTilt("turn head up", y=45.0))
+    execution1.add_child(py_trees.timers.Timer("dummy for returning from sink", duration=5.0))
+    execution1.add_child(BtNode_Announce(name="announce smallest object", bb_source=None, message="The smallest object on the sink is a cola can."))
     root.add_child(execution1)
 
     execution2 = py_trees.composites.Sequence("execute second command", True)
+    execution2.add_child(BtNode_Announce(name="announce starting second command", bb_source=None, message="Starting execution of second command."))
     execution2.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="The execution procedure for this command is go to the desk lamp, scan for the waving person, announce follow me, go to the kitchen. Starting execution."))
-    execution2.add_child(BtNode_GotoAction("go to desk lamp", KEY_POSE_LAMP))
+    execution2.add_child(py_trees.timers.Timer("dummy for going to desk lamp", duration=10.0))
     execution2.add_child(BtNode_Announce(name="announce scanning", bb_source=None, message="Scanning for the waving person."))
-    execution2.add_child(py_trees.timers.Timer("wait for scan", duration=1.0))
+    execution2.add_child(py_trees.timers.Timer("wait for scan", duration=3.0))
     # we should have two person here in the scene, one is waving, the other is not
-    execution2.add_child(BtNode_Announce(name="announce found waving person", bb_source=None, message="I have found the waving person. You are the person on the right, please follow me."))
-    execution2.add_child(BtNode_GotoAction("go to kitchen", KEY_POSE_KITCHEN))
+    execution2.add_child(BtNode_Announce(name="announce found waving person", bb_source=None, message="Found waving person, approaching"))
+    execution2.add_child(py_trees.timers.Timer("dummy for going to waving person", duration=5.0))
+    execution2.add_child(BtNode_Announce(name="announce follow me", bb_source=None, message="Hello, please follow me to the kitchen."))
+    execution2.add_child(py_trees.timers.Timer("dummy for going to kitchen", duration=10.0))
     execution2.add_child(BtNode_Announce(name="announce arrived kitchen", bb_source=None, message="We have arrived at the kitchen. You can stop following me now."))
     root.add_child(execution2)
 
     execution3 = py_trees.composites.Sequence("execute third command", True)
-    execution3.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="The execution procedure for this command is to go to the bathroom, scan for the raising person, go to the raising person, announce ask the question, announce the answer. Starting execution."))
-    execution3.add_child(BtNode_GotoAction("go to bathroom", KEY_POSE_BATHROOM))
+    execution3.add_child(BtNode_Announce(name="announce starting third command", bb_source=None, message="Starting execution of third command."))
+    execution3.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="The execution procedure for this command is to go to the bathroom, scan for the raising person, go to the raising person, ask for a question, announce the answer. Starting execution."))
+    execution3.add_child(py_trees.timers.Timer("dummy for going to bathroom", duration=10.0))
     execution3.add_child(BtNode_Announce(name="announce scanning", bb_source=None, message="Scanning for the raising person."))
-    execution3.add_child(py_trees.timers.Timer("wait for scan", duration=1.0))
+    execution3.add_child(py_trees.timers.Timer("wait for scan", duration=2.0))
     # we should have two person here in the scene, one is raising hand, the other is not
-    execution3.add_child(BtNode_Announce(name="announce found raising person", bb_source=None, message="I have found the raising person. Approaching you now."))
-    execution3.add_child(BtNode_GotoAction("approach raising person", KEY_POSE_QA_POINT))
+    execution3.add_child(BtNode_Announce(name="announce found raising person", bb_source=None, message="Found raising person, approaching."))
+    execution3.add_child(py_trees.timers.Timer("dummy for going to raising person", duration=5.0))
     execution3.add_child(BtNode_Announce(name="announce question", bb_source=None, message="Dear person, please ask your question after the beep sound."))
     execution3.add_child(py_trees.timers.Timer("wait before listening", duration=5.0))
     # the question is "what is 17+25"
     execution3.add_child(BtNode_Announce(name="announce answer", bb_source=None, message="The answer to your question is 42."))
     root.add_child(execution3)
 
-    root.add_child(BtNode_Announce(name="announce all commands finished", bb_source=None, message="I have completed all your commands. Thank you for your time. Goodbye!"))
+    root.add_child(BtNode_Announce(name="announce all commands finished", bb_source=None, message="I have completed all three commands."))
 
     return root
 
