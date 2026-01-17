@@ -1,7 +1,7 @@
 import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_Listen
 from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle, BtNode_GripperAction
 # from behavior_tree.StoringGroceries.customNodes import BtNode_FindObjTable, BtNode_GraspWithPose
@@ -103,19 +103,19 @@ def createGPSR():
     
     # ask for the three instructions
     root.add_child(BtNode_Announce(name="Prompt for instruction", bb_source=None, message="Dear person, please give me your first command after the beep sound."))
-    root.add_child(py_trees.timers.Timer("wait before listening", duration=5.0))
+    root.add_child(BtNode_Listen("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
     root.add_child(BtNode_Announce(name=f"ask to confirm instruction", bb_source=None, message=f"Am I correct, your first command is {command1}"))
     root.add_child(BtNode_GetConfirmation("confirm instruction1"))
     root.add_child(BtNode_Announce("say thank you", bb_source=None, message="Thank you, I will remember that."))
 
     root.add_child(BtNode_Announce(name="Prompt for instruction", bb_source=None, message="Dear person, please give me your second command after the beep sound."))
-    root.add_child(py_trees.timers.Timer("wait before listening", duration=5.0))
+    root.add_child(BtNode_Listen("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
     root.add_child(BtNode_Announce(name=f"ask to confirm instruction", bb_source=None, message=f"Am I correct, your second command is {command2}"))
     root.add_child(BtNode_GetConfirmation("confirm instruction2"))
     root.add_child(BtNode_Announce("say thank you", bb_source=None, message="Thank you, I will remember that."))
 
     root.add_child(BtNode_Announce(name="Prompt for instruction", bb_source=None, message="Dear person, please give me your third command after the beep sound."))
-    root.add_child(py_trees.timers.Timer("wait before listening", duration=5.0))
+    root.add_child(BtNode_Listen("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
     root.add_child(BtNode_Announce(name=f"ask to confirm instruction", bb_source=None, message=f"Am I correct, your third command is {command3}"))
     root.add_child(BtNode_GetConfirmation("confirm instruction3"))
     root.add_child(BtNode_Announce("say thank you", bb_source=None, message="Thank you, I will remember that."))
@@ -123,7 +123,8 @@ def createGPSR():
     # execution
     execution1 = py_trees.composites.Sequence("execute first command", True)
     execution1.add_child(BtNode_Announce(name="announce starting first command", bb_source=None, message="Starting execution of first command."))
-    execution1.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="The execution procedure for this command is go to the sink, scan for objects, find the smallest object, and announce the smallest object. Starting execution."))
+    execution1.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="The execution procedure for this command is go to the sink. Scan for objects. Find the smallest object. Announce the smallest object"))
+    execution1.add_child(BtNode_Announce("starting execution", bb_source=None, message="Starting execution now."))
     execution1.add_child(py_trees.timers.Timer("dummy for going to sink", duration=10.0))
     execution1.add_child(BtNode_TurnPanTilt("turn head down for scanning", y=20.0))
     execution1.add_child(BtNode_Announce(name="announce scanning", bb_source=None, message="Scanning objects."))
@@ -136,7 +137,8 @@ def createGPSR():
 
     execution2 = py_trees.composites.Sequence("execute second command", True)
     execution2.add_child(BtNode_Announce(name="announce starting second command", bb_source=None, message="Starting execution of second command."))
-    execution2.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="The execution procedure for this command is go to the podium, scan for waving person, announce follow me, go to the kitchen. Starting execution."))
+    execution2.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="The execution procedure for this command is go to the podium. Scan for waving person. Announce follow me. Go to the kitchen."))
+    execution2.add_child(BtNode_Announce("starting execution", bb_source=None, message="Starting execution now."))
     execution2.add_child(py_trees.timers.Timer("dummy for going to desk lamp", duration=10.0))
     execution2.add_child(BtNode_Announce(name="announce scanning", bb_source=None, message="Scanning for the waving person."))
     execution2.add_child(py_trees.timers.Timer("wait for scan", duration=3.0))
@@ -150,7 +152,8 @@ def createGPSR():
 
     execution3 = py_trees.composites.Sequence("execute third command", True)
     execution3.add_child(BtNode_Announce(name="announce starting third command", bb_source=None, message="Starting execution of third command."))
-    execution3.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="The execution procedure for this command is to go to the living room, scan for person raising their right arm, answer a question. Starting execution."))
+    execution3.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="The execution procedure for this command is to go to the living room. Scan for person raising their right arm. Answer a question."))
+    execution3.add_child(BtNode_Announce("starting execution", bb_source=None, message="Starting execution now."))
     execution3.add_child(py_trees.timers.Timer("dummy for going to bathroom", duration=10.0))
     execution3.add_child(BtNode_Announce(name="announce scanning", bb_source=None, message="Scanning for the raising person."))
     execution3.add_child(py_trees.timers.Timer("wait for scan", duration=2.0))
@@ -158,7 +161,7 @@ def createGPSR():
     execution3.add_child(BtNode_Announce(name="announce found raising person", bb_source=None, message="Found raising person, approaching."))
     execution3.add_child(py_trees.timers.Timer("dummy for going to raising person", duration=5.0))
     execution3.add_child(BtNode_Announce(name="announce question", bb_source=None, message="Dear person, please ask your question after the beep sound."))
-    execution3.add_child(py_trees.timers.Timer("wait before listening", duration=5.0))
+    execution3.add_child(BtNode_Listen("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
     # the question is "what is 17+25"
     execution3.add_child(BtNode_Announce(name="announce answer", bb_source=None, message="The answer to your question is 42."))
     root.add_child(execution3)
