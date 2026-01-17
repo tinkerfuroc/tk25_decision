@@ -71,7 +71,7 @@ grasp_service_name = "start_grasp"
 point_target_frame = "base_link"
 
 def createConstantWriter():
-    root = py_trees.composites.Parallel("Write Constants", memory=True)
+    root = py_trees.composites.Parallel("Write Constants", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     root.add_child(BtNode_WriteToBlackboard("Write Arm Scan", bb_namespace="", bb_source=None, bb_key=KEY_ARM_SCAN, object=ARM_POS_SCAN))
     root.add_child(BtNode_WriteToBlackboard("Write Arm Navigating", bb_namespace="", bb_source=None, bb_key=KEY_ARM_NAVIGATING, object=ARM_POS_NAVIGATING))
     root.add_child(BtNode_WriteToBlackboard("Write command pose", bb_namespace="", bb_source=None, bb_key=KEY_POSE_COMMAND, object=pose_command))
