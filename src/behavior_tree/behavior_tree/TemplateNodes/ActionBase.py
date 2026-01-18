@@ -2,9 +2,12 @@ import py_trees
 from typing import Any
 # from asyncio.tasks import wait_for
 from behavior_tree.messages import action_msgs  # Import from our conditional import system
-from behavior_tree.config import is_mock_mode
+from behavior_tree.config import is_mock_mode, is_node_mocked
 import rclpy.action
 import time
+import sys
+import tty
+import termios
 from py_trees_ros import exceptions
 import sys
 import tty
@@ -27,7 +30,9 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self.action_type = action_type
         self.action_name = action_name
         self.wait_for_server_timeout_sec = wait_for_server_timeout_sec
-        self.mock_mode = is_mock_mode()
+        
+        # Check if this specific node should be mocked
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
         
         # For mock mode keyboard press
         self._mock_pressed = False

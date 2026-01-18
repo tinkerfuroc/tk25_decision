@@ -3,7 +3,7 @@ from py_trees.common import Status
 import threading
 from rclpy.node import Node
 from typing import Any
-from behavior_tree.config import is_mock_mode
+from behavior_tree.config import is_mock_mode, is_node_mocked
 import sys
 import tty
 import termios
@@ -21,7 +21,10 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         super(ServiceHandler, self).__init__(name=name)
         self.service_name = service_name
         self.service_type = service_type
-        self.mock_mode = is_mock_mode()
+        
+        # Check if this specific node should be mocked
+        # Use the class name to determine mock status
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
 
         # guard the data
         self.data_guard = threading.Lock()

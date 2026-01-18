@@ -55,7 +55,7 @@ from geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
 from std_msgs.msg import Header
 
 # Print status on import
-if not all(_config.get_available_dependencies().values()) or _config.mock_mode:
+if _config.is_mock_mode():
     print("\n" + "="*60)
     print("⚠️  Behavior Tree: Running with Mock Messages")
     print("="*60)
