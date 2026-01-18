@@ -1,0 +1,83 @@
+{
+  "description": "Mock mode configuration for behavior tree nodes",
+  "version": "1.0",
+  "mock_mode": {
+    "enabled": true,
+    "auto_detect": true,
+    "subsystems": {
+      "vision": {
+        "enabled": true,
+        "announce_movement": true,
+        "description": "Mock all vision-related nodes (object detection, feature extraction, point cloud, etc.)",
+        "nodes": [
+          "BtNode_ScanFor",
+          "BtNode_TrackPerson",
+          "BtNode_FindObj",
+          "BtNode_FeatureExtraction",
+          "BtNode_SeatRecommend",
+          "BtNode_FeatureMatching",
+          "BtNode_GetPointCloud",
+          "BtNode_DoorDetection",
+          "BtNode_TurnPanTilt"
+        ]
+      },
+      "manipulation": {
+        "enabled": true,
+        "announce_movement": true,
+        "description": "Mock all manipulation nodes (arm movement, grasping, gripper control, etc.)",
+        "nodes": [
+          "BtNode_Grasp",
+          "BtNode_Place",
+          "BtNode_Drop",
+          "BtNode_MoveArmJoint",
+          "BtNode_MoveArmSingle",
+          "BtNode_GripperAction",
+          "BtNode_PointTo"
+        ]
+      },
+      "navigation": {
+        "enabled": true,
+        "announce_movement": true,
+        "description": "Mock all navigation nodes (goto, follow, path planning, etc.)",
+        "nodes": [
+          "BtNode_GoTo",
+          "BtNode_FollowPerson",
+          "BtNode_ConvertGraspPose",
+          "BtNode_GoToLuggage",
+          "BtNode_GotoAction"
+        ]
+      },
+      "audio_input": {
+        "enabled": true,
+        "announce_movement": true,
+        "description": "Mock audio input nodes (speech recognition, listening, phrase extraction, etc.) but NOT announcements",
+        "nodes": [
+          "BtNode_WaitForStart",
+          "BtNode_GraspRequest",
+          "BtNode_PhraseExtraction",
+          "BtNode_TargetExtraction",
+          "BtNode_GetConfirmation",
+          "BtNode_Listen",
+          "BtNode_CompareInterest"
+        ]
+      },
+      "announcement": {
+        "enabled": true,
+        "announce_movement": true,
+        "description": "Mock announcement nodes (TTS in English and Chinese). Set to false to use real TTS when hardware is available. Note: If ROS packages are missing, this will be mocked regardless of this setting.",
+        "nodes": [
+          "BtNode_Announce",
+          "BtNode_TTSCN"
+        ]
+      }
+    }
+  },
+  "keyboard_control": {
+    "enabled": true,
+    "description": "Wait for keyboard press in mock mode before returning success"
+  },
+  "logging": {
+    "print_mock_operations": true,
+    "use_emoji": true
+  }
+}

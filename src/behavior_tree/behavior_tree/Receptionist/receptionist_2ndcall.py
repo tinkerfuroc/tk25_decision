@@ -1,6 +1,7 @@
 import py_trees
 from typing import List
 
+from behavior_tree.config import is_mock_mode, get_config
 from behavior_tree.TemplateNodes.WaitKeyPress import BtNode_WaitKeyboardPress
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
@@ -31,7 +32,9 @@ TURN_PAN_TILT = True
 
 MAX_SCAN_DISTANCE = 4.5
 
-DEBUG_NO_GOTO = True
+# Note: Mock mode is now controlled via mock_config.json
+# Each subsystem (vision, manipulation, navigation, audio_input, announcement) 
+# can be individually configured for mocking
 
 DISABLE_FEATURE_MATCH = False
 DISABLE_FOLLOW_HEAD = True
@@ -45,7 +48,8 @@ seat_recommendations = [
 # read from `constant.json` in the same directory
 # load file
 try:
-    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/Receptionist/constants.json", "r")
+    file = open("/home/cindy/Documents/tk25_ws/tk25_decision/src/behavior_tree/behavior_tree/Receptionist/constants.json", "r")
+    # file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/Receptionist/constants.json", "r")
     constants = json.load(file)
     file.close()
 except FileNotFoundError:
@@ -109,10 +113,9 @@ def createEnterArena():
     parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_enter_arena.add_child(BtNode_Announce(name="Announce entering arena", bb_source=None, message="Entering"))
     
-    if not DEBUG_NO_GOTO:
-        parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to Sofa", key=KEY_SOFA_POSE), num_failures=5))
-    else:
-        parallel_enter_arena.add_child(BtNode_WaitKeyboardPress("arrived at sofa", 's'))
+    # Navigation node will automatically use mock mode based on configuration
+    parallel_enter_arena.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="Go to Sofa", key=KEY_SOFA_POSE), num_failures=5))
+    
     root.add_child(parallel_enter_arena)
     return root
 
@@ -252,10 +255,10 @@ def createToDoor():
     root = py_trees.composites.Sequence(name="Go to door", memory=True)
     root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
     root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
-    if not DEBUG_NO_GOTO:
-        root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
-    else:
-        root.add_child(BtNode_WaitKeyboardPress("wait for going to door", 's'))
+    
+    # Navigation node will automatically use mock mode based on configuration
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
+    
     return root
 
 def createToSofa():
@@ -263,10 +266,10 @@ def createToSofa():
     navigation_seq = py_trees.composites.Sequence(name="Go to sofa", memory=True)
     navigation_seq.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
     navigation_seq.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
-    if not DEBUG_NO_GOTO:
-        navigation_seq.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))
-    else:
-        navigation_seq.add_child(BtNode_WaitKeyboardPress("wait for going to sofa", 's'))
+    
+    # Navigation node will automatically use mock mode based on configuration
+    navigation_seq.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))
+    
     root.add_child(navigation_seq)
     return root
 
@@ -385,7 +388,7 @@ def createReceptionist():
     root.add_child(createToSofa())
     root.add_child(createRecommendSeat())
 
-    ############ first guest completed, now for second guest ###########
+    # ############ first guest completed, now for second guest ###########
 
     root.add_child(BtNode_Announce(name="announce going to greet 2nd guest", bb_source=None, message="Greeting guest"))   
     # root.add_child(createGraspBag())

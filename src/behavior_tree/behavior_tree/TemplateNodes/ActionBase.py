@@ -1,10 +1,17 @@
 import py_trees
 from typing import Any
 # from asyncio.tasks import wait_for
-import action_msgs.msg as action_msgs  # GoalStatus
+from behavior_tree.messages import action_msgs  # Import from our conditional import system
+from behavior_tree.config import is_mock_mode, is_node_mocked, announce_node_action
 import rclpy.action
 import time
+import sys
+import tty
+import termios
 from py_trees_ros import exceptions
+import sys
+import tty
+import termios
 
 class ActionHandler(py_trees.behaviour.Behaviour):
     """
@@ -23,6 +30,14 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self.action_type = action_type
         self.action_name = action_name
         self.wait_for_server_timeout_sec = wait_for_server_timeout_sec
+        
+        # Check if this specific node should be mocked
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
+        
+        # For mock mode keyboard press
+        self._mock_pressed = False
+        self._old_settings = None
+        
         if key is not None:
             self.blackboard = self.attach_blackboard_client(name=self.name)
             self.blackboard.register_key(
@@ -66,6 +81,11 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.qualified_name)
             raise KeyError(error_message) from e  # 'direct cause' traceability
 
+        # Skip creating action client in mock mode
+        if self.mock_mode:
+            print(f"MOCK MODE: Skipping action client creation for {self.action_name}")
+            return
+        
         self.action_client = rclpy.action.ActionClient(
             node=self.node,
             action_type=self.action_type,
@@ -100,6 +120,16 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         """
         child classes should override this funciton to how they wish to process the blackboard variable and send the goal
         """
+        # Handle mock mode
+        if self.mock_mode:
+            self.feedback_message = "MOCK: goal sent (mock mode)"
+            # Create a mock send_goal_future that appears done
+            class MockFuture:
+                def done(self):
+                    return True
+            self.send_goal_future = MockFuture()
+            return
+            
         try:
             self.send_goal_request(self.blackboard.goal)
             self.feedback_message = "sent goal request"
@@ -167,9 +197,59 @@ class ActionHandler(py_trees.behaviour.Behaviour):
 
         self.last_feedback_time = time.time()
         self.feedback_timeout = 10000.0
+        
+        # In mock mode, set result_status to SUCCESS immediately
+        if self.mock_mode:
+            self.result_status = action_msgs.GoalStatus.STATUS_SUCCEEDED
+            self.result_status_string = "MOCK_SUCCESS"
+            # Create a mock result message
+            class MockResultMessage:
+                class Result:
+                    status = 0
+                    error_msg = ""
+                result = Result()
+            self.result_message = MockResultMessage()
+            # Create a mock future
+            class MockFuture:
+                def done(self):
+                    return True
+            self.get_result_future = MockFuture()
+        
         self.send_goal()
 
         self.counter = 0
+    
+    def wait_for_keypress_in_mock(self):
+        """
+        Helper method for mock mode - wait for keyboard press and return status.
+        Returns RUNNING until key is pressed, then returns SUCCESS.
+        """
+        if not self.mock_mode:
+            return None
+        
+        # Announce on first call (when _mock_pressed is False and _old_settings is None)
+        if not self._mock_pressed and self._old_settings is None:
+            announce_node_action(self.name, self.__class__.__name__)
+            
+        if self._mock_pressed:
+            return py_trees.common.Status.SUCCESS
+            
+        # Setup terminal for non-blocking input on first call
+        if self._old_settings is None:
+            self._old_settings = termios.tcgetattr(sys.stdin)
+            tty.setcbreak(sys.stdin.fileno())
+        
+        # Check if key is pressed (non-blocking)
+        import select
+        if select.select([sys.stdin], [], [], 0)[0]:
+            sys.stdin.read(1)
+            self._mock_pressed = True
+            # Restore terminal settings
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
+            self._old_settings = None
+            return py_trees.common.Status.SUCCESS
+        
+        return py_trees.common.Status.RUNNING
 
     def update(self):
         """
@@ -181,6 +261,10 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             :class:`py_trees.common.Status`
         """
         self.logger.debug("{}.update()".format(self.qualified_name))
+        
+        # In mock mode, wait for keyboard press
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
 
         if self.action_timeout_ticks != 0:
             self.counter += 1
@@ -227,6 +311,14 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         Args:
             new_status: the behaviour is transitioning to this new status
         """
+        # Clean up terminal settings if in mock mode
+        if self.mock_mode and self._old_settings is not None:
+            try:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
+                self._old_settings = None
+            except:
+                pass
+        
         self.logger.debug(
             "{}.terminate({})".format(
                 self.qualified_name,
@@ -243,7 +335,9 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         """
         Clean up the action client when shutting down.
         """
-        self.action_client.destroy()
+        # Only destroy if action client exists (not in mock mode)
+        if self.action_client is not None:
+            self.action_client.destroy()
 
     ########################################
     # Action Client Methods

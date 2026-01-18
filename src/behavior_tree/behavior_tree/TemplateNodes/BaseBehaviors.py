@@ -3,6 +3,10 @@ from py_trees.common import Status
 import threading
 from rclpy.node import Node
 from typing import Any
+from behavior_tree.config import is_mock_mode, is_node_mocked, announce_node_action
+import sys
+import tty
+import termios
 
 
 class ServiceHandler(py_trees.behaviour.Behaviour):
@@ -17,6 +21,10 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         super(ServiceHandler, self).__init__(name=name)
         self.service_name = service_name
         self.service_type = service_type
+        
+        # Check if this specific node should be mocked
+        # Use the class name to determine mock status
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
 
         # guard the data
         self.data_guard = threading.Lock()
@@ -25,6 +33,10 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
 
         self.response = None    # Future object for receiving response
         self.client = None      # service client
+        
+        # For mock mode keyboard press
+        self._mock_pressed = False
+        self._old_settings = None
     
     def setup(self, **kwargs):
         print("Setting up service handler %s for node name %s" % (self.service_name, self.name))
@@ -35,7 +47,10 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
             raise KeyError(error_message) from e  # 'direct cause' traceability
 
-        
+        # Skip creating service client in mock mode
+        if self.mock_mode:
+            print(f"MOCK MODE: Skipping service client creation for {self.service_name}")
+            return
 
         # create the service client and wait until it connects
         print("Connecting to service %s" % self.service_name)
@@ -51,8 +66,72 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         # clear data
         with self.data_guard:
             self.msg = None
+            self.response = None  # Clear response for mock mode
             # if self.clearing_policy == py_trees.common.ClearingPolicy.ON_INITIALISE:
             #     self.msg = None
+    
+    def call_service_async(self, request):
+        """
+        Helper method to call service asynchronously.
+        Returns None in mock mode.
+        """
+        if self.mock_mode:
+            return None
+        return self.client.call_async(request)
+    
+    def wait_for_keypress_in_mock(self):
+        """
+        Helper method for mock mode - wait for keyboard press and return status.
+        Returns RUNNING until key is pressed, then returns SUCCESS.
+        """
+        if not self.mock_mode:
+            return None
+        
+        # Announce on first call (when _mock_pressed is False and _old_settings is None)
+        if not self._mock_pressed and self._old_settings is None:
+            announce_node_action(self.name, self.__class__.__name__)
+            
+        if self._mock_pressed:
+            return py_trees.common.Status.SUCCESS
+            
+        # Setup terminal for non-blocking input on first call
+        if self._old_settings is None:
+            self._old_settings = termios.tcgetattr(sys.stdin)
+            tty.setcbreak(sys.stdin.fileno())
+        
+        # Check if key is pressed (non-blocking)
+        import select
+        if select.select([sys.stdin], [], [], 0)[0]:
+            sys.stdin.read(1)
+            self._mock_pressed = True
+            # Restore terminal settings
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
+            self._old_settings = None
+            return py_trees.common.Status.SUCCESS
+        
+        return py_trees.common.Status.RUNNING
+    
+    def terminate(self, new_status):
+        """
+        Clean up terminal settings if in mock mode.
+        """
+        if self.mock_mode and self._old_settings is not None:
+            try:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
+                self._old_settings = None
+            except:
+                pass
+        super().terminate(new_status)
+    
+    def update(self):
+        """
+        Default update for mock mode - return SUCCESS immediately.
+        Override this in subclasses for real behavior.
+        """
+        if self.mock_mode:
+            self.feedback_message = f"MOCK: Service {self.service_name} completed"
+            return py_trees.common.Status.SUCCESS
+        return py_trees.common.Status.RUNNING
 
 
 class BtNode_WriteToBlackboard(py_trees.behaviour.Behaviour):
