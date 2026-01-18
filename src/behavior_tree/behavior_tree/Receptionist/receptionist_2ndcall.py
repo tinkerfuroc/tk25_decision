@@ -390,20 +390,20 @@ def createReceptionist():
 
     # ############ first guest completed, now for second guest ###########
 
-    # root.add_child(BtNode_Announce(name="announce going to greet 2nd guest", bb_source=None, message="Greeting guest"))   
-    # # root.add_child(createGraspBag())
-    # root.add_child(createGreetGuest(True))
+    root.add_child(BtNode_Announce(name="announce going to greet 2nd guest", bb_source=None, message="Greeting guest"))   
+    # root.add_child(createGraspBag())
+    root.add_child(createGreetGuest(True))
 
-    # # go to sofa now
-    # root.add_child(createToSofa())
-    # root.add_child(createAnnounceAndScanSofa())
-    # # root.add_child(createFirstIntroductionsSimple())
-    # root.add_child(createSecondIntroductionsSimple())
-    # root.add_child(BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
-    # root.add_child(BtNode_Announce(name="announce approaching host", bb_source=None, message="Found Host. Approaching host"))
-    # root.add_child(BtNode_WaitKeyboardPress('approach host', 's'))
-    # root.add_child(createFollowPerson())
-    # root.add_child(createDropBag())
+    # go to sofa now
+    root.add_child(createToSofa())
+    root.add_child(createAnnounceAndScanSofa())
+    # root.add_child(createFirstIntroductionsSimple())
+    root.add_child(createSecondIntroductionsSimple())
+    root.add_child(BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
+    root.add_child(BtNode_Announce(name="announce approaching host", bb_source=None, message="Found Host. Approaching host"))
+    root.add_child(BtNode_WaitKeyboardPress('approach host', 's'))
+    root.add_child(createFollowPerson())
+    root.add_child(createDropBag())
 
     root.add_child(BtNode_Announce(name="Task accomplished", bb_source=None, message="HRI task accomplished."))
     root.add_child(py_trees.behaviours.Running(name="end"))
