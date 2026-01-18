@@ -34,6 +34,16 @@ class BtNode_GotoAction(ActionHandler):
         return super().setup(**kwargs)
 
     def send_goal(self):
+        # Handle mock mode - must check before doing any real action
+        if self.mock_mode:
+            self.feedback_message = "MOCK: Navigation goal sent (mock mode)"
+            # Create a mock send_goal_future that appears done
+            class MockFuture:
+                def done(self):
+                    return True
+            self.send_goal_future = MockFuture()
+            return
+        
         transform = None
         # if self.tf_buffer is None:
         #     self.tf_buffer = Buffer()

@@ -7,6 +7,7 @@
     "subsystems": {
       "vision": {
         "enabled": true,
+        "announce_movement": true,
         "description": "Mock all vision-related nodes (object detection, feature extraction, point cloud, etc.)",
         "nodes": [
           "BtNode_ScanFor",
@@ -22,6 +23,7 @@
       },
       "manipulation": {
         "enabled": true,
+        "announce_movement": true,
         "description": "Mock all manipulation nodes (arm movement, grasping, gripper control, etc.)",
         "nodes": [
           "BtNode_Grasp",
@@ -35,16 +37,19 @@
       },
       "navigation": {
         "enabled": true,
+        "announce_movement": true,
         "description": "Mock all navigation nodes (goto, follow, path planning, etc.)",
         "nodes": [
           "BtNode_GoTo",
           "BtNode_FollowPerson",
           "BtNode_ConvertGraspPose",
-          "BtNode_GoToLuggage"
+          "BtNode_GoToLuggage",
+          "BtNode_GotoAction"
         ]
       },
       "audio_input": {
         "enabled": true,
+        "announce_movement": true,
         "description": "Mock audio input nodes (speech recognition, listening, phrase extraction, etc.) but NOT announcements",
         "nodes": [
           "BtNode_WaitForStart",
@@ -58,6 +63,7 @@
       },
       "announcement": {
         "enabled": true,
+        "announce_movement": true,
         "description": "Mock announcement nodes (TTS in English and Chinese). Set to false to use real TTS when hardware is available. Note: If ROS packages are missing, this will be mocked regardless of this setting.",
         "nodes": [
           "BtNode_Announce",

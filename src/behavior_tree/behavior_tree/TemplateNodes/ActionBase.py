@@ -2,7 +2,7 @@ import py_trees
 from typing import Any
 # from asyncio.tasks import wait_for
 from behavior_tree.messages import action_msgs  # Import from our conditional import system
-from behavior_tree.config import is_mock_mode, is_node_mocked
+from behavior_tree.config import is_mock_mode, is_node_mocked, announce_node_action
 import rclpy.action
 import time
 import sys
@@ -226,6 +226,10 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         """
         if not self.mock_mode:
             return None
+        
+        # Announce on first call (when _mock_pressed is False and _old_settings is None)
+        if not self._mock_pressed and self._old_settings is None:
+            announce_node_action(self.name, self.__class__.__name__)
             
         if self._mock_pressed:
             return py_trees.common.Status.SUCCESS

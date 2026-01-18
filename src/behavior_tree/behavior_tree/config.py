@@ -190,6 +190,28 @@ class BehaviorTreeConfig:
         # Default: if not specified, follow global mock mode
         return True
     
+    def should_announce_movement(self, node_class_name: str) -> bool:
+        """
+        Check if node movements should be announced via TTS in mock mode.
+        
+        Args:
+            node_class_name: Name of the node class
+            
+        Returns:
+            True if movements should be announced
+        """
+        if not self.is_mock_mode():
+            return False
+        
+        # Find which subsystem this node belongs to
+        subsystems = self._mock_config.get('mock_mode', {}).get('subsystems', {})
+        for subsystem_name, subsystem_config in subsystems.items():
+            nodes = subsystem_config.get('nodes', [])
+            if node_class_name in nodes:
+                return subsystem_config.get('announce_movement', False)
+        
+        return False
+    
     def should_use_keyboard_control(self) -> bool:
         """Check if keyboard control should be used in mock mode."""
         return self._mock_config.get('keyboard_control', {}).get('enabled', True)
@@ -268,6 +290,55 @@ def is_node_mocked(node_class_name: str) -> bool:
 def should_use_keyboard_control() -> bool:
     """Check if keyboard control should be used in mock mode."""
     return _config.should_use_keyboard_control()
+
+
+def should_announce_movement(node_class_name: str) -> bool:
+    """Check if node movements should be announced via TTS."""
+    return _config.should_announce_movement(node_class_name)
+
+
+# Global TTS engine instance (reused to avoid segfaults)
+_tts_engine = None
+_tts_failed = False
+
+def announce_node_action(node_name: str, node_class_name: str):
+    """
+    Announce node action using pyttsx3 if announce_movement is enabled.
+    
+    Args:
+        node_name: The name of the node instance (e.g., "Move arm to bag position")
+        node_class_name: The class name (e.g., "BtNode_MoveArmSingle")
+    """
+    global _tts_engine, _tts_failed
+    
+    if not should_announce_movement(node_class_name):
+        return
+    
+    # If TTS failed before, just print
+    if _tts_failed:
+        print(f"📢 Mock: {node_name}")
+        return
+    
+    try:
+        # Initialize engine once and reuse it
+        if _tts_engine is None:
+            import pyttsx3
+            _tts_engine = pyttsx3.init()
+            # Set properties for faster, clearer speech
+            _tts_engine.setProperty('rate', 175)  # Speed of speech
+            _tts_engine.setProperty('volume', 0.9)  # Volume (0.0 to 1.0)
+        
+        # Announce the action
+        message = f"Mock: {node_name}"
+        print(f"🔊 Announcing: {message}")
+        _tts_engine.say(message)
+        _tts_engine.runAndWait()
+    except Exception as e:
+        # If pyttsx3 fails, disable it and just print
+        _tts_failed = True
+        _tts_engine = None
+        print(f"⚠️ TTS disabled due to error: {e}")
+        print(f"📢 Mock: {node_name}")
 
 
 # Legacy compatibility functions

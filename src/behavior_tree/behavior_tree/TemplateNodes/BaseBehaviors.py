@@ -3,7 +3,7 @@ from py_trees.common import Status
 import threading
 from rclpy.node import Node
 from typing import Any
-from behavior_tree.config import is_mock_mode, is_node_mocked
+from behavior_tree.config import is_mock_mode, is_node_mocked, announce_node_action
 import sys
 import tty
 import termios
@@ -86,6 +86,10 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         """
         if not self.mock_mode:
             return None
+        
+        # Announce on first call (when _mock_pressed is False and _old_settings is None)
+        if not self._mock_pressed and self._old_settings is None:
+            announce_node_action(self.name, self.__class__.__name__)
             
         if self._mock_pressed:
             return py_trees.common.Status.SUCCESS
