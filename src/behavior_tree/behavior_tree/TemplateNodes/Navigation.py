@@ -9,8 +9,7 @@ from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Quaternion
 
 # from behavior_tree.messages import Goto, GotoGrasp, ComputeGrasp
 from nav_msgs.msg import Odometry
-from nav2_msgs.action import NavigateToPose
-from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp
+from behavior_tree.messages import NavigateToPose, SetLuggagePose, ComputeGrasp
 
 from tf2_ros.transform_listener import TransformListener
 from tf2_ros.buffer import Buffer
@@ -134,6 +133,15 @@ class BtNode_ConvertGraspPose(ServiceHandler):
         self.logger.debug(f"Setup ConvertGraspPose")
 
     def initialise(self) -> None:
+        # Handle mock mode
+        if self.mock_mode:
+            from geometry_msgs.msg import PoseStamped
+            mock_pose = PoseStamped()
+            self.bb_write_client.dest = mock_pose
+            self.feedback_message = "MOCK: Converted grasp pose"
+            print(f"🎯 MOCK CONVERT GRASP POSE: Conversion complete")
+            return
+            
         try:
             self.source_point = self.bb_read_client.source
             assert isinstance(self.source_point, PointStamped)
@@ -143,10 +151,17 @@ class BtNode_ConvertGraspPose(ServiceHandler):
 
         request = ComputeGrasp.Request()
         request.target = self.source_point
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
         self.feedback_message = f"Initialized ConvertGraspPose for point in {self.bb_source_key}"
 
     def update(self):
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return py_trees.common.Status.FAILURE
+            
         self.logger.debug(f"Update ConvertGraspPose")
         if self.response.done():
             result = self.response.result()
@@ -187,6 +202,15 @@ class BtNode_GoToLuggage(ServiceHandler):
         """
         Called when the node is visited
         """
+        # Handle mock mode
+        if self.mock_mode:
+            from geometry_msgs.msg import PoseStamped
+            mock_pose = PoseStamped()
+            self.bb_write_client.target = mock_pose
+            self.feedback_message = "MOCK: Set luggage pose"
+            print(f"🧳 MOCK GO TO LUGGAGE: Luggage pose set")
+            return
+            
         try:
             self.point = self.bb_read_client.source
             assert isinstance(self.point, PointStamped)
@@ -195,12 +219,19 @@ class BtNode_GoToLuggage(ServiceHandler):
 
         request = SetLuggagePose.Request()
         request.point = self.point
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
 
         self.feedback_message = f"Initialized GotoLuggage for {self.point.point.x}, {self.point.point.y}, {self.point.point.z}"
 
 
     def update(self):
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return py_trees.common.Status.FAILURE
+            
         self.logger.debug(f"Update GotoLuggage")
         if self.response.done():
             if self.response.result().status > 0:

@@ -4,8 +4,7 @@ import py_trees as pytree
 # from tinker_decision_msgs.srv import Grasp, Drop
 # from tinker_decision_msgs.srv import ObjectDetection
 from geometry_msgs.msg import PointStamped, Pose, Point
-from behavior_tree.messages import Grasp, ObjectDetection, Drop, ArmJointService, Place, PointTo, JointMove, CartesianMove
-from control_msgs.action import GripperCommand
+from behavior_tree.messages import Grasp, ObjectDetection, Drop, ArmJointService, Place, PointTo, JointMove, CartesianMove, GripperCommand
 from py_trees.common import Status
 from behavior_tree.Constants import SCAN_POSES
 import action_msgs.msg as action_msgs
@@ -232,6 +231,12 @@ class BtNode_Drop(ServiceHandler):
         """
         Called when the node is visited
         """
+        # Handle mock mode
+        if self.mock_mode:
+            self.feedback_message = "MOCK: Dropped object successfully"
+            print(f"📦 MOCK DROP: Object dropped")
+            return
+            
         if self.bin_point is None:
             try:
                 self.bin_point = self.blackboard.drop_point
@@ -245,11 +250,18 @@ class BtNode_Drop(ServiceHandler):
         request = Drop.Request()
         request.bin_point = self.bin_point
         # setup things that needs to be cleared
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
 
         self.feedback_message = f"Initialized Drop"
 
     def update(self):
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return pytree.common.Status.FAILURE
+            
         self.logger.debug(f"Update Drop")
         if self.response.done():
             if self.response.result().status == 0:
@@ -365,6 +377,13 @@ class BtNode_MoveArm(ServiceHandler):
             self.feedback_message = f"MoveArm reading object name failed"
             raise e
 
+        # Handle mock mode
+        if self.mock_mode:
+            self.bb_write_client.set(self.arm_pose_bb_key, self.arm_pose_idx + 1, overwrite=True)
+            self.feedback_message = f"MOCK: Moved arm to pose {self.arm_joint_pose}"
+            print(f"🦾 MOCK MOVE ARM JOINT: Pose {self.arm_pose_idx}")
+            return
+
         request = ArmJointService.Request()
         
         request.joint0 = self.arm_joint_pose[0]
@@ -376,11 +395,18 @@ class BtNode_MoveArm(ServiceHandler):
         request.joint6 = self.arm_joint_pose[6]
         request.add_octomap = False
 
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
 
         self.feedback_message = f"Initialized move arm joint for joints {self.arm_joint_pose}"
     
     def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return pytree.common.Status.FAILURE
+            
         self.logger.debug(f"Update move arm joint")
         if self.response.done():
             # increase counter
@@ -421,6 +447,11 @@ class BtNode_MoveArmSingle(ServiceHandler):
         self.logger.debug(f"Setup MoveArm, reading from {self.arm_pose_bb_key}")
 
     def initialise(self):
+        # Handle mock mode
+        if self.mock_mode:
+            print(f"🤖 MOCK: Moving arm to position")
+            self.feedback_message = "MOCK: Arm movement simulated"
+            return
 
         request = ArmJointService.Request()
         
@@ -433,11 +464,20 @@ class BtNode_MoveArmSingle(ServiceHandler):
         request.joint6 = self.blackboard.arm_joint_pose[6]
         request.add_octomap = self.add_octomap
 
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
 
         self.feedback_message = f"Initialized move arm joint for joints {self.blackboard.arm_joint_pose}"
     
     def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+        
+        # Check if response exists
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+            
         self.logger.debug(f"Update move arm joint")
         if self.response.done():
             if self.response.result().success:
@@ -530,6 +570,12 @@ class BtNode_PointTo(ServiceHandler):
             self.feedback_message = f"Failed to initialize point_to"
             self.response = None
         else:
+            # Handle mock mode
+            if self.mock_mode:
+                self.feedback_message = f"MOCK: Pointed to target {self.target_id}"
+                print(f"👉 MOCK POINT TO: Target {self.target_id}")
+                return
+                
             # request = PointTo.Request()
             point = self.blackboard.points[self.target_id]
             # self.response = self.client.call_async(request)
@@ -547,11 +593,15 @@ class BtNode_PointTo(ServiceHandler):
             self.angle = math.atan2(point.point.y, point.point.x)
             request.add_octomap = False
 
-            self.response = self.client.call_async(request)
+            self.response = self.call_service_async(request)
 
             self.feedback_message = f"Initialized point to for joints {self.angle}"
     
     def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
         self.logger.debug(f"Update point to")
         if self.response is None:
             self.feedback_message = f"Point To failed for joints {self.angle}"

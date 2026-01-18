@@ -56,6 +56,22 @@ class BtNode_TTSCN(ServiceHandler):
 
         self.announce_msg = self.given_msg
 
+        # Handle mock mode
+        if self.mock_mode:
+            if self.bb_source is not None:
+                try:
+                    read_msg = self.blackboard.announcement_msg
+                    if isinstance(read_msg, str):
+                        if self.given_msg is not None:
+                            self.announce_msg = self.given_msg + " " + read_msg
+                        else:
+                            self.announce_msg = read_msg
+                except:
+                    pass
+            self.feedback_message = f"MOCK: TTS_CN announcement '{self.announce_msg}'"
+            print(f"🔊 MOCK TTS_CN: '{self.announce_msg}'")
+            return
+
         # If no announcement message is given, read from the blackboard and verify the information
         if self.bb_source is not None:
             try:
@@ -76,12 +92,19 @@ class BtNode_TTSCN(ServiceHandler):
         request.input_text = self.announce_msg
 
         # Send request to TTS CN service and store the returned Future object
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
 
         # Update feedback message
         self.feedback_message = f"Initialized TTS_CN for message: {self.announce_msg}"
 
     def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return pytree.common.Status.FAILURE
+            
         self.logger.debug(f"Update TTS_CN: {self.announce_msg}")
         
         # If the service call is done, check its status
@@ -169,17 +192,32 @@ class BtNode_Announce(ServiceHandler):
                 self.feedback_message = f"Announce reading message failed"
                 raise e
 
+        # Handle mock mode
+        if self.mock_mode:
+            self.feedback_message = f"MOCK: Would announce '{self.announce_msg}'"
+            print(f"🔊 MOCK ANNOUNCEMENT: {self.announce_msg}")
+            return
+
         # initialize a request and set the annnouncement message
         request = TextToSpeech.Request()
         request.text = self.announce_msg
 
         # send request to service and store the returned Future object
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
 
         # update feedback message
         self.feedback_message = f"Initialized Announce for message {self.announce_msg}"
 
     def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+        
+        # Check if response exists (should always exist in non-mock mode)
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+            
         self.logger.debug(f"Update Announce {self.announce_msg}")
         # if the service is done, check its status
         if self.response.done():
@@ -213,12 +251,25 @@ class BtNode_WaitForStart(ServiceHandler):
         self.logger.debug(f"Setup waiting for start")
     
     def initialise(self):
+        # Handle mock mode
+        if self.mock_mode:
+            self.feedback_message = "MOCK: Wait for start signal received"
+            print(f"🎬 MOCK WAIT FOR START: Signal received")
+            return
+            
         request = WaitForStart.Request()
         request.timeout = 15.0
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
         self.feedback_message = f"Initialized wait for start"
 
     def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return pytree.common.Status.FAILURE
+            
         self.logger.debug(f"Update wait for start")
         if self.response.done():
             if self.response.result().status == 0:
@@ -275,13 +326,22 @@ class BtNode_GraspRequest(ServiceHandler):
         """
         Initializes the grasp request and sends the request to the service.
         """
+        # Handle mock mode
+        if self.mock_mode:
+            import random
+            mock_code = random.choice(self.object_codes) if self.object_codes else "mock_object_001"
+            self.blackboard.matched_object_code = mock_code
+            self.feedback_message = f"MOCK: Grasped object with code {mock_code}"
+            print(f"🎯 MOCK GRASP REQUEST: Selected '{mock_code}' from {self.object_names}")
+            return
+            
         # Create request and populate object names and codes
         request = GraspRequest.Request()
         request.object_names = self.object_names
         request.object_codes = self.object_codes
         
         # Send the request to the service
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
         
         self.feedback_message = f"Initialized grasp request for objects: {', '.join(self.object_names)}"
     
@@ -290,6 +350,13 @@ class BtNode_GraspRequest(ServiceHandler):
         Updates the status of the grasp request.
         Returns SUCCESS once the object is successfully grasped, FAILURE if there is an error.
         """
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return pytree.common.Status.FAILURE
+            
         if self.response.done():
             if self.response.result().status == 0:
                 # Successful grasp
@@ -331,13 +398,32 @@ class BtNode_PhraseExtraction(ServiceHandler):
         self.node = None
     
     def initialise(self):
+        # Handle mock mode
+        if self.mock_mode:
+            # In mock mode, randomly select a word from the wordlist
+            import random
+            mock_result = random.choice(self.wordlist) if self.wordlist else "mock_phrase"
+            self.blackboard.phrase = mock_result
+            self.feedback_message = f"MOCK: Extracted phrase '{mock_result}'"
+            print(f"🎤 MOCK PHRASE EXTRACTION: '{mock_result}' (from wordlist: {self.wordlist[:3]}...)")
+            return
+        
         request = PhraseExtraction.Request()
         request.timeout = self.timeout
         request.wordlist = self.wordlist
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
         self.feedback_message = f"Initialized phrase extraction"
 
     def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+        
+        # Check if response exists
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+            
         self.logger.debug(f"Update phrase extraction")
         if self.response.done():
             if self.response.result().status == 0:
@@ -373,13 +459,28 @@ class BtNode_TargetExtraction(ServiceHandler):
         self.node = None
     
     def initialise(self):
+        # Handle mock mode
+        if self.mock_mode:
+            mock_target = "mock_target_phrase"
+            self.blackboard.target = mock_target
+            self.feedback_message = f"MOCK: Extracted target '{mock_target}'"
+            print(f"🎯 MOCK TARGET EXTRACTION: '{mock_target}'")
+            return
+            
         request = PhraseExtraction.Request()
         request.timeout = self.timeout
         request.wordlist = []
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
         self.feedback_message = f"Initialized target extraction"
 
     def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return pytree.common.Status.FAILURE
+            
         self.logger.debug(f"Update target extraction")
         if self.response.done():
             if self.response.result().status == 0:
@@ -404,6 +505,21 @@ class BtNode_GetConfirmation(ServiceHandler):
                  ):
         super(BtNode_GetConfirmation, self).__init__(name, service_name, GetConfirmation)
         self.timeout = timeout
+        self._mock_pressed = False
+        self._mock_input_thread = None
+        self._mock_stop_thread = False
+        self._mock_old_settings = None
+    
+    def _read_key_thread(self):
+        """Background thread to read keyboard input in mock mode."""
+        import sys
+        while not self._mock_stop_thread and not self._mock_pressed:
+            try:
+                ch = sys.stdin.read(1)
+                if ch:
+                    self._mock_pressed = True
+            except Exception:
+                break
     
     def setup(self, **kwargs):
         super().setup(**kwargs)
@@ -411,12 +527,44 @@ class BtNode_GetConfirmation(ServiceHandler):
         self.logger.debug(f"Setup getting confirmation")
     
     def initialise(self):
+        # Handle mock mode - setup keyboard listener
+        if self.mock_mode:
+            import sys
+            import termios
+            import tty
+            import threading
+            
+            self._mock_pressed = False
+            self._mock_stop_thread = False
+            
+            # Save old terminal settings and set to cbreak mode
+            self._mock_old_settings = termios.tcgetattr(sys.stdin)
+            tty.setcbreak(sys.stdin.fileno())
+            
+            self.feedback_message = f"MOCK: Press any key to confirm"
+            print(f"✅ MOCK GET CONFIRMATION: Press any key to confirm (will return SUCCESS)")
+            
+            # Start background thread to read keyboard input
+            self._mock_input_thread = threading.Thread(target=self._read_key_thread, daemon=True)
+            self._mock_input_thread.start()
+            return
+            
         request = GetConfirmation.Request()
         request.timeout = self.timeout
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
         self.feedback_message = f"Initialized get confirmation"
 
     def update(self) -> Status:
+        # Handle mock mode - wait for keyboard press
+        if self.mock_mode:
+            if self._mock_pressed:
+                return pytree.common.Status.SUCCESS
+            else:
+                return pytree.common.Status.RUNNING
+            
+        if self.response is None:
+            return pytree.common.Status.FAILURE
+            
         self.logger.debug(f"Update get confirmation")
         if self.response.done():
             if self.response.result().status == 0:
@@ -431,6 +579,20 @@ class BtNode_GetConfirmation(ServiceHandler):
         else:
             self.feedback_message = "Still getting confirmation..."
             return pytree.common.Status.RUNNING
+    
+    def terminate(self, new_status: Status) -> None:
+        """Restore terminal settings when behavior terminates in mock mode."""
+        if self.mock_mode:
+            import sys
+            import termios
+            
+            self._mock_stop_thread = True
+            if self._mock_old_settings is not None:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._mock_old_settings)
+                self._mock_old_settings = None
+            if self._mock_input_thread is not None:
+                self._mock_input_thread.join(timeout=0.1)
+                self._mock_input_thread = None
         
 
 class BtNode_Listen(ServiceHandler):
@@ -450,12 +612,27 @@ class BtNode_Listen(ServiceHandler):
         self.timeout = timeout
     
     def initialise(self):
+        # Handle mock mode
+        if self.mock_mode:
+            mock_message = "This is a mock speech input message"
+            self.blackboard.message = mock_message
+            self.feedback_message = f"MOCK: Listened and got '{mock_message}'"
+            print(f"👂 MOCK LISTEN: '{mock_message}'")
+            return
+            
         request = Listen.Request()
         request.timeout = self.timeout
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
         self.feedback_message = f"Initialized listen"
     
     def update(self):
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return Status.FAILURE
+            
         self.logger.debug(f"Update listen")
         if self.response.done():
             if self.response.result().status == 0:
@@ -498,13 +675,28 @@ class BtNode_CompareInterest(ServiceHandler):
         self.timeout = timeout
 
     def initialise(self):
+        # Handle mock mode
+        if self.mock_mode:
+            mock_interest = "robotics and artificial intelligence"
+            self.blackboard.result = mock_interest
+            self.feedback_message = f"MOCK: Common interest is '{mock_interest}'"
+            print(f"🤝 MOCK COMPARE INTEREST: Found '{mock_interest}'")
+            return
+            
         request = CompareInterest.Request()
         request.first_statement = self.blackboard.first_statement
         request.sec_statement = self.blackboard.second_statement
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
         self.feedback_message = f"Initialized Compare Interest"
     
     def update(self):
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return Status.FAILURE
+            
         self.logger.debug(f"Update compare interest")
         if self.response.done():
             if self.response.result().status == 0:

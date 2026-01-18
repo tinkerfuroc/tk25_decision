@@ -45,6 +45,9 @@ setup(
             'restaurant = behavior_tree.main:restaurant',  # 添加这一行
             'grasp_once = behavior_tree.grasp_intel_demo.grasp:main',
             'yanglaozhucan = behavior_tree.main:yanglaozhucan',
+            # Mock mode test scripts
+            'test-mock-mode = behavior_tree.test_mock_mode:main',
+            'test-mockable-wrapper = scripts.test_mockable_wrapper:main',
             # HelpMeCarry test scripts
             'hmc-mock-nav = behavior_tree.HelpMeCarry.test.mock_nav_server:main',
             'hmc-mock-track = behavior_tree.HelpMeCarry.test.mock_track_server:main',
