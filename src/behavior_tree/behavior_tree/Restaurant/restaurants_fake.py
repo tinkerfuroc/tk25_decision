@@ -3,6 +3,7 @@ import py_trees_ros
 import rclpy
 import json
 import math
+import os
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 
@@ -21,14 +22,25 @@ from .custumNodes import (
     BtNode_ScanForCallingCustomer
 )
 
+# Debug flag - set to False to skip keyboard waits
+DEBUG_KEYPRESS = os.environ.get('DEBUG_KEYPRESS', 'false').lower() in ('true', '1', 'yes')
+
 try:
-    with open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/Restaurant/constants.json", "r") as file:
+    with open("/home/cindy/Documents/tk25_ws/tk25_decision/src/behavior_tree/behavior_tree/Restaurant/constants.json", "r") as file:
+    # with open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/Restaurant/constants.json", "r") as file:
         constants = json.load(file)
 except FileNotFoundError:
     print("ERROR: constants.json not found!")
     raise FileNotFoundError
 
-orders = ["", "", ""]
+orders = [{
+                "order": "cola and chips",
+                "objects": "cola and chips"
+            }, 
+          {
+              "order": "water and orange juice",
+              "objects": "water and orange juice"
+          }]
 
 def pose_reader(pose_dict):
     return PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
@@ -50,6 +62,9 @@ ARM_POS_SERVING = [x / 180 * math.pi for x in constants["arm_pos_serving"]]
 KEY_KITCHEN_BAR_POSE = "kitchen_bar_pose"
 KEY_ARM_NAVIGATING = "arm_navigating"
 KEY_ARM_SERVING = "arm_serving"
+
+KEY_CUSTOMER_LOCATION = "customer_location"
+KEY_TRAY_LOCATION = "tray_location"
 
 def createConstantWriter():
     root = py_trees.composites.Parallel(
@@ -120,24 +135,23 @@ def createTakeAndConfirmOrder(order=''):
     root = py_trees.composites.Sequence(name="Take and confirm order", memory=True)
     
     root.add_child(BtNode_Announce(
-        name="Greet customer",
+        name="Hello! I'm Tinker, your service robot. What would you like to order today?",
         bb_source=None,
         message="Hello! I'm Tinker, your service robot. What would you like to order today?"
     ))
     
     root.add_child(BtNode_Listen('listen', KEY_CUSTOMER_ORDER, timeout=5.0))
     root.add_child(BtNode_Announce(
-        name="Repeat order",
+        name=f"You ordered: {order}. Is that correct?",
         bb_source=None,
         message=f"You ordered: {order}. Is that correct?"
     ))
     root.add_child(BtNode_GetConfirmation(
         name="Get order confirmation",
-        bb_source=None,
         timeout=5.0
     ))
     root.add_child(BtNode_Announce(
-        name="Final confirmation",
+        name="Thank you for your order!",
         bb_source=None,
         message="Thank you for your order!"
     ))
@@ -161,7 +175,7 @@ def createPlaceOrderWithBarman():
     ))
     
     root.add_child(BtNode_Announce(
-        name="Wait for order",
+        name="Please prepare the order. I will wait here.",
         bb_source=None,
         message="Please prepare the order. I will wait here."
     ))
@@ -177,7 +191,7 @@ def createOptionalTrayTransport():
         bb_dest_key=KEY_TRAY_LOCATION
     ))
     tray_sequence.add_child(BtNode_Announce(
-        name="Announce tray usage",
+        name="I will use a tray to transport your order.",
         bb_source=None,
         message="I will use a tray to transport your order."
     ))
@@ -185,7 +199,7 @@ def createOptionalTrayTransport():
     root.add_child(tray_sequence)
     
     root.add_child(BtNode_Announce(
-        name="Direct transport",
+        name="I will transport the items directly.",
         bb_source=None,
         message="I will transport the items directly."
     ))
@@ -226,7 +240,7 @@ def createSingleOrderCycle():
 def createSingleOrderCycleFor2ndCall(order:str):
     root = py_trees.composites.Sequence(name="Single order cycle", memory=True)
     root.add_child(BtNode_Announce(
-        name="Start announcement",
+        name="I am ready to take orders.",
         bb_source=None,
         message="I am ready to take orders."
     ))
@@ -242,36 +256,84 @@ def createSingleOrderCycleFor2ndCall(order:str):
         num_failures=3
     ))
 
-    root.add_child(BtNode_Announce("searching for calling", bb_source=None, message="Scanning for calling customers."))
-    root.add_child(py_trees.timers.Timer(name="search for calling/waving", duration=3.0)) #fake wait for customer calling/waving
+    root.add_child(BtNode_GotoAction("Going to scan for waving customers", key=KEY_CUSTOMER_LOCATION))
+
+    root.add_child(BtNode_Announce("Scanning for calling customers.", bb_source=None, message="Scanning for calling customers."))
+
+    # root.add_child(py_trees.timers.Timer(name="search for calling/waving", duration=3.0)) #fake wait for customer calling/waving
     root.add_child(BtNode_Announce(
-        name="Identified calling customer",
+        name="Identified calling customer,planning to take orders",
         bb_source=None,
         message="Identified calling customer,planning to take orders"
     ))
-    root.add_child(BtNode_WaitKeyboardPress("approach customer", 's'))
+    
+    # Navigate to customer
+    if DEBUG_KEYPRESS:
+        root.add_child(BtNode_WaitKeyboardPress("approach customer", 's'))
+    else:
+        root.add_child(py_trees.decorators.Retry(
+            name="retry goto customer",
+            child=BtNode_GotoAction(
+                name="Go to customer table",
+                key=KEY_CUSTOMER_LOCATION
+            ),
+            num_failures=3
+        ))
 
-    root.add_child(createTakeAndConfirmOrder(order))
+    root.add_child(createTakeAndConfirmOrder(order['order']))
 
-    root.add_child(BtNode_WaitKeyboardPress("approach barman", 's'))
+    # Navigate to barman
+    if DEBUG_KEYPRESS:
+        root.add_child(BtNode_WaitKeyboardPress("approach barman", 's'))
+    else:
+        root.add_child(py_trees.decorators.Retry(
+            name="retry goto kitchen bar",
+            child=BtNode_GotoAction(
+                name="Go to kitchen bar",
+                key=KEY_KITCHEN_BAR_POSE
+            ),
+            num_failures=3
+        ))
 
-    root.add_child(BtNode_Announce(name="give order", bb_source=None, message=f"Hello, I need to place an order: {order}. Please prepare these items."))
+    root.add_child(BtNode_Announce(name=f"Hello, I need to place an order: {order['objects']}. Please prepare these items.", bb_source=None, message=f"Hello, I need to place an order: {order['objects']}. Please prepare these items."))
+    root.add_child(BtNode_MoveArmSingle("Move arm to serving pose",
+                                        service_name="arm_joint_service",
+                                        arm_pose_bb_key=KEY_ARM_SERVING,
+                                        add_octomap=False))
     root.add_child(BtNode_GripperAction(name="Open gripper to grasp the order", open_gripper=True))
 
     root.add_child(BtNode_Announce(
-        name="wait for order",
+        name="Please place the order in my claw and the rest in cans on my right side once the order is prepared.",
         bb_source=None,
         message="Please place the order in my claw and the rest in cans on my right side once the order is prepared."
     ))
-    root.add_child(BtNode_WaitKeyboardPress("wait for order", 's'))
+    
+    # Wait for order preparation
+    if DEBUG_KEYPRESS:
+        root.add_child(BtNode_WaitKeyboardPress("wait for order", 's'))
+    else:
+        # Use a timer to simulate order preparation time (e.g., 5 seconds)
+        root.add_child(py_trees.timers.Timer(name="Wait for order preparation", duration=5.0))
+    
     root.add_child(BtNode_GripperAction(name="Close gripper", open_gripper=False))
     root.add_child(BtNode_Announce(
-        name="Order secured announcement",
+        name="Order secured,planning to deliver the order to customer.",
         bb_source=None,
         message="Order secured,planning to deliver the order to customer."
     ))
 
-    root.add_child(BtNode_WaitKeyboardPress("navigating to customer", 's'))
+    # Navigate back to customer
+    if DEBUG_KEYPRESS:
+        root.add_child(BtNode_WaitKeyboardPress("navigating to customer", 's'))
+    else:
+        root.add_child(py_trees.decorators.Retry(
+            name="retry return to customer",
+            child=BtNode_GotoAction(
+                name="Return to customer table",
+                key=KEY_CUSTOMER_LOCATION
+            ),
+            num_failures=3
+        ))
 
     return root
 
@@ -281,19 +343,29 @@ def createRestaurantTask():
     
     root.add_child(createConstantWriter())
     root.add_child(BtNode_Announce(
-        name="Start announcement",
+        name="Restaurant service starting.",
         bb_source=None,
         message="Restaurant service starting."
     ))
 
     root.add_child(createSingleOrderCycleFor2ndCall(orders[0]))
     root.add_child(createSingleOrderCycleFor2ndCall(orders[1]))
-    root.add_child(createSingleOrderCycleFor2ndCall(orders[2]))
+    # root.add_child(createSingleOrderCycleFor2ndCall(orders[2]))
 
     return root
 
-def restaurant():
+def main():
     rclpy.init(args=None)
+    
+    # Print debug status
+    print("="*70)
+    if DEBUG_KEYPRESS:
+        print("🔧 DEBUG_KEYPRESS=True: Manual keyboard control enabled")
+        print("   Press 's' at each wait point to continue")
+    else:
+        print("🚀 DEBUG_KEYPRESS=False: Automatic execution (no keyboard waits)")
+        print("   Set DEBUG_KEYPRESS=true to enable manual control")
+    print("="*70)
     
     root = createRestaurantTask()
     
@@ -307,14 +379,14 @@ def restaurant():
     py_trees.logging.level = py_trees.logging.Level.DEBUG
     
     tree.tick_tock(period_ms=500.0, post_tick_handler=print_tree)
-    
+
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(tree.node)
+
     try:
-        rclpy.spin(tree.node)
+        executor.spin()
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
         tree.shutdown()
         rclpy.try_shutdown()
-
-if __name__ == "__main__":
-    restaurant()

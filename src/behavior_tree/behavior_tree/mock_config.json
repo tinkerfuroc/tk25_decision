@@ -48,7 +48,7 @@
         ]
       },
       "audio_input": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": true,
         "description": "Mock audio input nodes (speech recognition, listening, phrase extraction, etc.) but NOT announcements",
         "nodes": [
@@ -62,7 +62,7 @@
         ]
       },
       "announcement": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": true,
         "description": "Mock announcement nodes (TTS in English and Chinese). Set to false to use real TTS when hardware is available. Note: If ROS packages are missing, this will be mocked regardless of this setting.",
         "nodes": [
@@ -77,7 +77,7 @@
     "description": "Wait for keyboard press in mock mode before returning success"
   },
   "logging": {
-    "print_mock_operations": true,
+    "print_mock_operations": false,
     "use_emoji": true
   }
 }

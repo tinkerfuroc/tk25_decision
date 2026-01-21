@@ -5,7 +5,7 @@ from py_trees.common import Status
 import sys
 import termios
 import tty
-import threading
+import select
 
 
 class BtNode_WaitKeyboardPress(py_trees.behaviour.Behaviour):
@@ -15,57 +15,66 @@ class BtNode_WaitKeyboardPress(py_trees.behaviour.Behaviour):
             key: str = None
     ):
         super().__init__(name)
-        self.key = key
-        self.pressed = False
-        self._input_thread = None
-        self._stop_thread = False
+        self.key = key if key else 's'  # Default to 's' if no key specified
+        self._pressed = False
         self._old_settings = None
     
-    def _read_key_thread(self):
-        """Background thread to read keyboard input."""
-        while not self._stop_thread and not self.pressed:
-            try:
-                ch = sys.stdin.read(1)
-                if ch:
-                    if self.key and ch == self.key:
-                        self.pressed = True
-                    elif not self.key:
-                        self.pressed = True
-            except Exception:
-                break
-    
     def initialise(self) -> None:
-        self.pressed = False
-        self._stop_thread = False
-        
-        # Save old terminal settings and set to cbreak mode
-        self._old_settings = termios.tcgetattr(sys.stdin)
-        tty.setcbreak(sys.stdin.fileno())
-        
-        if self.key:
-            print(f"Press '{self.key}' to continue...")
-        else:
-            print('Press any key to continue...')
-        
-        # Start background thread to read keyboard input
-        self._input_thread = threading.Thread(target=self._read_key_thread, daemon=True)
-        self._input_thread.start()
+        """Initialize the behavior - prepare for keyboard input."""
+        self._pressed = False
+        self._old_settings = None
 
     def update(self) -> Status:
-        if self.pressed:
+        """Check for keyboard input without blocking."""
+        if self._pressed:
             return py_trees.common.Status.SUCCESS
-        else:
-            return py_trees.common.Status.RUNNING
+        
+        # Setup terminal for non-blocking input on first update call
+        if self._old_settings is None:
+            try:
+                self._old_settings = termios.tcgetattr(sys.stdin)
+                tty.setcbreak(sys.stdin.fileno())  # Use cbreak like mock nodes
+                print(f"\n⌨️  Press '{self.key}' to continue...")
+            except Exception as e:
+                print(f"Warning: Could not set terminal mode: {e}")
+                # If terminal setup fails, just succeed immediately
+                return py_trees.common.Status.SUCCESS
+        
+        # Use select to check if input is available (non-blocking)
+        if select.select([sys.stdin], [], [], 0)[0]:
+            try:
+                ch = sys.stdin.read(1)
+                if ch == self.key:
+                    self._pressed = True
+                    print(f"✓ Key '{self.key}' pressed, continuing...\n")
+                    # Restore terminal settings
+                    if self._old_settings is not None:
+                        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
+                        self._old_settings = None
+                    return py_trees.common.Status.SUCCESS
+                elif ch == '\x03':  # Ctrl+C
+                    print("\nCtrl+C detected, exiting...")
+                    if self._old_settings is not None:
+                        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
+                        self._old_settings = None
+                    raise KeyboardInterrupt
+                else:
+                    print(f"Wrong key '{repr(ch)}', press '{self.key}' to continue...")
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                print(f"Error reading input: {e}")
+        
+        return py_trees.common.Status.RUNNING
     
     def terminate(self, new_status: Status) -> None:
         """Restore terminal settings when behavior terminates."""
-        self._stop_thread = True
         if self._old_settings is not None:
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
+            try:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
+            except Exception:
+                pass
             self._old_settings = None
-        if self._input_thread is not None:
-            self._input_thread.join(timeout=0.1)
-            self._input_thread = None
         
 
 if __name__ == '__main__':
