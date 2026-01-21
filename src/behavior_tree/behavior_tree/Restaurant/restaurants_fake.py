@@ -26,8 +26,8 @@ from .custumNodes import (
 DEBUG_KEYPRESS = os.environ.get('DEBUG_KEYPRESS', 'false').lower() in ('true', '1', 'yes')
 
 try:
-    with open("/home/cindy/Documents/tk25_ws/tk25_decision/src/behavior_tree/behavior_tree/Restaurant/constants.json", "r") as file:
-    # with open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/Restaurant/constants.json", "r") as file:
+    # with open("/home/cindy/Documents/tk25_ws/tk25_decision/src/behavior_tree/behavior_tree/Restaurant/constants.json", "r") as file:
+    with open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/Restaurant/constants.json", "r") as file:
         constants = json.load(file)
 except FileNotFoundError:
     print("ERROR: constants.json not found!")

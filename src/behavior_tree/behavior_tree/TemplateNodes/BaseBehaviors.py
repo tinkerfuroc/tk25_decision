@@ -47,6 +47,15 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
             raise KeyError(error_message) from e  # 'direct cause' traceability
 
+        # If the service type originates from our mock_messages module but the node
+        # wasn't explicitly marked as mocked in the config, force mock mode here so
+        # we don't attempt to create a real ROS client for a non-ROS type.
+        if not self.mock_mode:
+            service_mod = getattr(self.service_type, '__module__', '')
+            if isinstance(service_mod, str) and service_mod.startswith('behavior_tree.mock_messages'):
+                print(f"WARNING: Service type for {self.service_name} comes from mock_messages; forcing mock mode to avoid creating client.")
+                self.mock_mode = True
+
         # Skip creating service client in mock mode
         if self.mock_mode:
             print(f"MOCK MODE: Skipping service client creation for {self.service_name}")

@@ -2,7 +2,7 @@
   "description": "Mock mode configuration for behavior tree nodes",
   "version": "1.0",
   "mock_mode": {
-    "enabled": true,
+    "enabled": false,
     "auto_detect": true,
     "subsystems": {
       "vision": {

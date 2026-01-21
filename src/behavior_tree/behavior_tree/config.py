@@ -31,11 +31,12 @@ class BehaviorTreeConfig:
         self._mock_config = None
         
         # List of required packages
+        # Note: Only check modules that actually exist for each package
         self.required_packages = {
-            'tinker_vision_msgs': ['tinker_vision_msgs.srv', 'tinker_vision_msgs.msg'],
-            'tinker_arm_msgs': ['tinker_arm_msgs.srv', 'tinker_arm_msgs.msg'],
-            'tinker_audio_msgs': ['tinker_audio_msgs.srv', 'tinker_audio_msgs.msg'],
-            'tinker_nav_msgs': ['tinker_nav_msgs.srv', 'tinker_nav_msgs.msg'],
+            'tinker_vision_msgs': ['tinker_vision_msgs.srv', 'tinker_vision_msgs.msg', 'tinker_vision_msgs.action'],
+            'tinker_arm_msgs': ['tinker_arm_msgs.srv', 'tinker_arm_msgs.action'],
+            'tinker_audio_msgs': ['tinker_audio_msgs.srv'],  # Only has services, no messages
+            'tinker_nav_msgs': ['tinker_nav_msgs.srv'],  # Only has services
             'control_msgs': ['control_msgs.action'],
             'action_msgs': ['action_msgs.msg'],
             'nav2_msgs': ['nav2_msgs.action'],
@@ -100,10 +101,17 @@ class BehaviorTreeConfig:
         try:
             # Try to find the package
             if package_name in self.required_packages:
-                # Check all submodules
+                # Check all submodules - try actual import for better reliability
                 for submodule in self.required_packages[package_name]:
-                    spec = importlib.util.find_spec(submodule)
-                    if spec is None:
+                    try:
+                        # First try find_spec for quick check
+                        spec = importlib.util.find_spec(submodule)
+                        if spec is None:
+                            self._dependency_cache[package_name] = False
+                            return False
+                        # Then try actual import to be sure (ROS2 packages need this)
+                        __import__(submodule)
+                    except (ImportError, ModuleNotFoundError, ValueError):
                         self._dependency_cache[package_name] = False
                         return False
             else:
