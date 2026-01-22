@@ -264,6 +264,20 @@ def createSingleOrderCycleFor2ndCall(order:str):
 
     root.add_child(BtNode_Announce("Scanning for calling customers.", bb_source=None, message="Scanning for calling customers."))
 
+    # turn and scan
+    if DEBUG_KEYPRESS:
+        root.add_child(BtNode_WaitKeyboardPress("Turn and scan for customers", 's'))
+    else:
+        root.add_child(py_trees.decorators.Retry(
+            name="retry turn and scan",
+            child=BtNode_GotoAction(
+                name="Turn to scan for customers",
+                key=KEY_CUSTOMER_LOCATION
+            ),
+            num_failures=3
+        ))
+
+
     # root.add_child(py_trees.timers.Timer(name="search for calling/waving", duration=3.0)) #fake wait for customer calling/waving
     root.add_child(BtNode_Announce(
         name="Identified calling customer,planning to take orders",
@@ -307,9 +321,9 @@ def createSingleOrderCycleFor2ndCall(order:str):
     root.add_child(BtNode_GripperAction(name="Open gripper to grasp the order", open_gripper=True))
 
     root.add_child(BtNode_Announce(
-        name=f"Please place the {order['in_gripper']} in my gripper. And the {order['on_tinker']} in the can on my right side. Thank you.",
+        name=f"Please place the {order['in_gripper']} in my gripper. Thank you.",
         bb_source=None,
-        message=f"Please place the {order['in_gripper']} in my gripper. And the {order['on_tinker']} in the can on my right side. Thank you."
+        message=f"Please place the {order['in_gripper']} in my gripper. Thank you."
     ))
     
     # Wait for order preparation
@@ -317,13 +331,15 @@ def createSingleOrderCycleFor2ndCall(order:str):
         root.add_child(BtNode_WaitKeyboardPress("wait for order", 's'))
     else:
         # Use a timer to simulate order preparation time (e.g., 5 seconds)
-        root.add_child(py_trees.timers.Timer(name="Wait for order preparation", duration=3.5))
+        root.add_child(py_trees.timers.Timer(name="Wait for order preparation", duration=3.0))
     
     root.add_child(BtNode_GripperAction(name="Close gripper", open_gripper=False))
+    root.add_child(BtNode_Announce("announce place other object", bb_source=None, message= f"Please place the {order['on_tinker']} in the can on my right side. Thank you."))
+    root.add_child(py_trees.timers.Timer(name="wait for placing other object", duration=1.0)) #fake wait for customer to place the other object
     root.add_child(BtNode_Announce(
-        name="Order secured,planning to deliver the order to customer.",
+        name="Order secured, planning to deliver the order to customer.",
         bb_source=None,
-        message="Order secured,planning to deliver the order to customer."
+        message="Order secured, planning to deliver the order to customer."
     ))
 
     # Navigate back to customer
@@ -340,14 +356,15 @@ def createSingleOrderCycleFor2ndCall(order:str):
         ))
 
     root.add_child(BtNode_MoveArmSingle("move arm to serve order", service_name="arm_joint_service", arm_pose_bb_key=KEY_ARM_SERVING))
-    root.add_child(BtNode_Announce("announce serving order", bb_source=None, message="Dear customer, here is your order, please take it"))
-    root.add_child(py_trees.timers.Timer(name="wait for customer to take order", duration=3.0)) #fake wait for customer to take the order
+    root.add_child(BtNode_Announce("announce serving order", bb_source=None, message=f"Dear customer, here is the {order['in_gripper']} you ordered, please take it"))
+    root.add_child(BtNode_Announce("announce countdown", bb_source=None, message="Three. . Two. . One."))
+    # root.add_child(py_trees.timers.Timer(name="wait for customer to take order", duration=3.0)) #fake wait for customer to take the order
     root.add_child(BtNode_GripperAction(name="Open gripper", open_gripper=True))
-    root.add_child(BtNode_Announce("announce rest of order is in cans", bb_source=None, message=f"The {order['on_tinker']} is in cans on my right side. Please take it."))
+    root.add_child(BtNode_Announce("announce rest of order is in cans", bb_source=None, message=f"The {order['on_tinker']} you ordered is in the can on my right side. Please take it."))
     root.add_child(py_trees.timers.Timer(name="wait for customer to take order", duration=3.0)) #fake wait for customer to take the order
     root.add_child(BtNode_Announce("announce order completion", bb_source=None, message="Your order has been completed!"))
     root.add_child(BtNode_MoveArmSingle("Move arm to navigation pose", service_name="arm_joint_service", arm_pose_bb_key=KEY_ARM_NAVIGATING))
-
+    root.add_child(BtNode_GripperAction("close gripper", False))
     return root
 
 
