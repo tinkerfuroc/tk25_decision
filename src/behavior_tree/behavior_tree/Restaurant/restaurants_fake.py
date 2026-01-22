@@ -35,11 +35,13 @@ except FileNotFoundError:
 
 orders = [{
                 "order": "cola and chips",
-                "objects": "cola and chips"
+                "objects": "cola and chips",
+                "on_tinker" : "cola"
             }, 
           {
-              "order": "water and orange juice",
-              "objects": "water and orange juice"
+              "order": "water and can of juice",
+              "objects": "water and can of juice",
+              "on_tinker" : "water"
           }]
 
 def pose_reader(pose_dict):
@@ -334,6 +336,15 @@ def createSingleOrderCycleFor2ndCall(order:str):
             ),
             num_failures=3
         ))
+
+    root.add_child(BtNode_MoveArmSingle("move arm to serve order", service_name="arm_joint_service", arm_pose_bb_key=KEY_ARM_SERVING))
+    root.add_child(BtNode_Announce("announce serving order", bb_source=None, message="Dear customer, here is your order, please take it"))
+    root.add_child(py_trees.timers.Timer(name="wait for customer to take order", duration=2.0)) #fake wait for customer to take the order
+    root.add_child(BtNode_GripperAction(name="Open gripper", open_gripper=True))
+    root.add_child(BtNode_Announce("announce rest of order is in cans", bb_source=None, message=f"The {order['on_tinker']} is in cans on my right side. Please take it."))
+    root.add_child(py_trees.timers.Timer(name="wait for customer to take order", duration=2.0)) #fake wait for customer to take the order
+    root.add_child(BtNode_Announce("announce order completion", bb_source=None, message="Your order has been completed!"))
+    root.add_child(BtNode_MoveArmSingle("Move arm to navigation pose", service_name="arm_joint_service", arm_pose_bb_key=KEY_ARM_NAVIGATING))
 
     return root
 
