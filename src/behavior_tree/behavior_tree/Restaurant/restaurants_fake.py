@@ -331,7 +331,7 @@ def createSingleOrderCycleFor2ndCall(order:str):
         root.add_child(BtNode_WaitKeyboardPress("wait for order", 's'))
     else:
         # Use a timer to simulate order preparation time (e.g., 5 seconds)
-        root.add_child(py_trees.timers.Timer(name="Wait for order preparation", duration=3.0))
+        root.add_child(py_trees.timers.Timer(name="Wait for order preparation", duration=2.0))
     
     root.add_child(BtNode_GripperAction(name="Close gripper", open_gripper=False))
     root.add_child(BtNode_Announce("announce place other object", bb_source=None, message= f"Please place the {order['on_tinker']} in the can on my right side. Thank you."))
@@ -341,6 +341,7 @@ def createSingleOrderCycleFor2ndCall(order:str):
         bb_source=None,
         message="Order secured, planning to deliver the order to customer."
     ))
+    root.add_child(BtNode_MoveArmSingle("Move arm to navigation pose", service_name="arm_joint_service", arm_pose_bb_key=KEY_ARM_NAVIGATING))
 
     # Navigate back to customer
     if DEBUG_KEYPRESS:
@@ -357,7 +358,9 @@ def createSingleOrderCycleFor2ndCall(order:str):
 
     root.add_child(BtNode_MoveArmSingle("move arm to serve order", service_name="arm_joint_service", arm_pose_bb_key=KEY_ARM_SERVING))
     root.add_child(BtNode_Announce("announce serving order", bb_source=None, message=f"Dear customer, here is the {order['in_gripper']} you ordered, please take it"))
-    root.add_child(BtNode_Announce("announce countdown", bb_source=None, message="Three. . Two. . One."))
+    root.add_child(BtNode_Announce("announce countdown", bb_source=None, message="Three."))
+    root.add_child(BtNode_Announce("announce countdown", bb_source=None, message="Two."))
+    root.add_child(BtNode_Announce("announce countdown", bb_source=None, message="Three."))
     # root.add_child(py_trees.timers.Timer(name="wait for customer to take order", duration=3.0)) #fake wait for customer to take the order
     root.add_child(BtNode_GripperAction(name="Open gripper", open_gripper=True))
     root.add_child(BtNode_Announce("announce rest of order is in cans", bb_source=None, message=f"The {order['on_tinker']} you ordered is in the can on my right side. Please take it."))
