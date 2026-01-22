@@ -307,9 +307,9 @@ def createSingleOrderCycleFor2ndCall(order:str):
     root.add_child(BtNode_GripperAction(name="Open gripper to grasp the order", open_gripper=True))
 
     root.add_child(BtNode_Announce(
-        name=f"Please place the {order['in_gripper']} in my claw and the {order['on_tinker']} in the can on my right side. Thank you.",
+        name=f"Please place the {order['in_gripper']} in my gripper. And the {order['on_tinker']} in the can on my right side. Thank you.",
         bb_source=None,
-        message=f"Please place the {order['in_gripper']} in my claw and the {order['on_tinker']} in the can on my right side. Thank you."
+        message=f"Please place the {order['in_gripper']} in my gripper. And the {order['on_tinker']} in the can on my right side. Thank you."
     ))
     
     # Wait for order preparation
@@ -317,7 +317,7 @@ def createSingleOrderCycleFor2ndCall(order:str):
         root.add_child(BtNode_WaitKeyboardPress("wait for order", 's'))
     else:
         # Use a timer to simulate order preparation time (e.g., 5 seconds)
-        root.add_child(py_trees.timers.Timer(name="Wait for order preparation", duration=5.0))
+        root.add_child(py_trees.timers.Timer(name="Wait for order preparation", duration=3.5))
     
     root.add_child(BtNode_GripperAction(name="Close gripper", open_gripper=False))
     root.add_child(BtNode_Announce(
