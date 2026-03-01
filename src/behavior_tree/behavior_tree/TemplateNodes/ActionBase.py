@@ -2,7 +2,12 @@ import py_trees
 from typing import Any
 # from asyncio.tasks import wait_for
 from behavior_tree.messages import action_msgs  # Import from our conditional import system
-from behavior_tree.config import is_mock_mode, is_node_mocked, announce_node_action
+from behavior_tree.config import (
+    is_node_mocked,
+    announce_node_action,
+    get_node_mock_interaction_mode,
+    get_mock_teleop_params,
+)
 import rclpy.action
 import time
 import sys
@@ -33,10 +38,12 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         
         # Check if this specific node should be mocked
         self.mock_mode = is_node_mocked(self.__class__.__name__)
+        self.mock_interaction_mode = get_node_mock_interaction_mode(self.__class__.__name__)
         
         # For mock mode keyboard press
         self._mock_pressed = False
         self._old_settings = None
+        self._mock_teleop_node = None
         
         if key is not None:
             self.blackboard = self.attach_blackboard_client(name=self.name)
@@ -83,6 +90,8 @@ class ActionHandler(py_trees.behaviour.Behaviour):
 
         # Skip creating action client in mock mode
         if self.mock_mode:
+            if self.mock_interaction_mode == "teleop":
+                self._setup_mock_teleop_node()
             print(f"MOCK MODE: Skipping action client creation for {self.action_name}")
             return
         
@@ -182,6 +191,7 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         Reset the internal variables and kick off a new goal request.
         """
         self.logger.debug("{}.initialise()".format(self.qualified_name))
+        self._mock_pressed = False
 
         # initialise some temporary variables
         self.goal_handle = None
@@ -197,6 +207,8 @@ class ActionHandler(py_trees.behaviour.Behaviour):
 
         self.last_feedback_time = time.time()
         self.feedback_timeout = 10000.0
+        if self.mock_mode and self.mock_interaction_mode == "teleop" and self._mock_teleop_node is not None:
+            self._mock_teleop_node.initialise()
         
         # In mock mode, set result_status to SUCCESS immediately
         if self.mock_mode:
@@ -226,6 +238,14 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         """
         if not self.mock_mode:
             return None
+
+        if self.mock_interaction_mode == "teleop" and self._mock_teleop_node is not None:
+            if not self._mock_pressed:
+                announce_node_action(self.name, self.__class__.__name__)
+                self._mock_pressed = True
+            return self._mock_teleop_node.update()
+        if self.mock_interaction_mode == "immediate":
+            return py_trees.common.Status.SUCCESS
         
         # Announce on first call (when _mock_pressed is False and _old_settings is None)
         if not self._mock_pressed and self._old_settings is None:
@@ -250,6 +270,25 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             return py_trees.common.Status.SUCCESS
         
         return py_trees.common.Status.RUNNING
+
+    def _setup_mock_teleop_node(self):
+        try:
+            from behavior_tree.TemplateNodes.TeleopNodes import BtNode_MoveArmTeleop
+
+            teleop_params = get_mock_teleop_params()
+            self._mock_teleop_node = BtNode_MoveArmTeleop(
+                name=f"{self.name}_mock_teleop",
+                **teleop_params,
+            )
+            self._mock_teleop_node.setup(node=self.node)
+            print(f"MOCK MODE: Using teleop interaction for {self.__class__.__name__}")
+        except Exception as exc:
+            self._mock_teleop_node = None
+            self.mock_interaction_mode = "wait_keypress"
+            print(
+                f"WARNING: Failed to initialize teleop mock for {self.__class__.__name__}: {exc}. "
+                "Falling back to wait_keypress."
+            )
 
     def update(self):
         """
@@ -317,6 +356,11 @@ class ActionHandler(py_trees.behaviour.Behaviour):
                 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
                 self._old_settings = None
             except:
+                pass
+        if self.mock_mode and self._mock_teleop_node is not None:
+            try:
+                self._mock_teleop_node.terminate(new_status)
+            except Exception:
                 pass
         
         self.logger.debug(

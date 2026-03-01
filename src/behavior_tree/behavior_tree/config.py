@@ -8,7 +8,24 @@ import os
 import json
 import importlib.util
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
+
+
+NODE_MOCK_MODE_MAP = {
+    "NO_MOCK": "no_mock",
+    "OFF": "no_mock",
+    "NONE": "no_mock",
+    "FALSE": "no_mock",
+    "0": "no_mock",
+    "KEYPRESS": "wait_keypress",
+    "WAIT_KEYPRESS": "wait_keypress",
+    "WAIT": "wait_keypress",
+    "MOCK": "wait_keypress",
+    "TRUE": "wait_keypress",
+    "1": "wait_keypress",
+    "TELEOP": "teleop",
+    "IMMEDIATE": "immediate",
+}
 
 
 class BehaviorTreeConfig:
@@ -74,16 +91,49 @@ class BehaviorTreeConfig:
                 "enabled": True,
                 "auto_detect": True,
                 "subsystems": {
-                    "vision": {"enabled": True},
-                    "manipulation": {"enabled": True},
-                    "navigation": {"enabled": True},
-                    "audio_input": {"enabled": True},
-                    "announcement": {"enabled": False}
+                    "vision": {"enabled": True, "nodes": {}},
+                    "manipulation": {"enabled": True, "nodes": {}},
+                    "navigation": {"enabled": True, "nodes": {}},
+                    "audio_input": {"enabled": True, "nodes": {}},
+                    "announcement": {"enabled": False, "nodes": {}}
                 }
             },
             "keyboard_control": {"enabled": True},
+            "teleop": {
+                "params": {}
+            },
             "logging": {"print_mock_operations": True, "use_emoji": True}
         }
+
+    def _normalize_node_mode(self, mode_value) -> str:
+        """Normalize a configured node mode into internal mode values."""
+        if isinstance(mode_value, str):
+            key = mode_value.strip().upper()
+            return NODE_MOCK_MODE_MAP.get(key, "wait_keypress")
+        if isinstance(mode_value, bool):
+            return "wait_keypress" if mode_value else "no_mock"
+        if isinstance(mode_value, (int, float)):
+            return "wait_keypress" if mode_value else "no_mock"
+        return "wait_keypress"
+
+    def _find_node_subsystem_entry(self, node_class_name: str) -> Tuple[Optional[str], Optional[dict], object]:
+        """
+        Find node entry from subsystem config.
+
+        Returns:
+            (subsystem_name, subsystem_config, raw_mode_value)
+        """
+        subsystems = self._mock_config.get("mock_mode", {}).get("subsystems", {})
+        for subsystem_name, subsystem_config in subsystems.items():
+            nodes_cfg = subsystem_config.get("nodes", {})
+            if isinstance(nodes_cfg, dict):
+                if node_class_name in nodes_cfg:
+                    return subsystem_name, subsystem_config, nodes_cfg[node_class_name]
+            elif isinstance(nodes_cfg, list):
+                # Backward compatibility: list means mocked via keypress
+                if node_class_name in nodes_cfg:
+                    return subsystem_name, subsystem_config, "KEYPRESS"
+        return None, None, None
     
     def has_dependency(self, package_name: str) -> bool:
         """
@@ -188,15 +238,16 @@ class BehaviorTreeConfig:
         if not self.is_mock_mode():
             return False
         
-        # Check each subsystem to see if this node belongs to it
-        subsystems = self._mock_config.get('mock_mode', {}).get('subsystems', {})
-        for subsystem_name, subsystem_config in subsystems.items():
-            nodes = subsystem_config.get('nodes', [])
-            if node_class_name in nodes:
-                return subsystem_config.get('enabled', True)
-        
-        # Default: if not specified, follow global mock mode
-        return True
+        _, subsystem_config, raw_mode = self._find_node_subsystem_entry(node_class_name)
+        if subsystem_config is None:
+            # Explicit listing is required in the new format
+            return False
+
+        if not subsystem_config.get("enabled", True):
+            # Subsystem disabled means ignore node mode values
+            return False
+
+        return self._normalize_node_mode(raw_mode) != "no_mock"
     
     def should_announce_movement(self, node_class_name: str) -> bool:
         """
@@ -211,18 +262,55 @@ class BehaviorTreeConfig:
         if not self.is_mock_mode():
             return False
         
-        # Find which subsystem this node belongs to
-        subsystems = self._mock_config.get('mock_mode', {}).get('subsystems', {})
-        for subsystem_name, subsystem_config in subsystems.items():
-            nodes = subsystem_config.get('nodes', [])
-            if node_class_name in nodes:
-                return subsystem_config.get('announce_movement', False)
-        
-        return False
+        _, subsystem_config, _ = self._find_node_subsystem_entry(node_class_name)
+        if subsystem_config is None:
+            return False
+        if not subsystem_config.get("enabled", True):
+            return False
+        return subsystem_config.get("announce_movement", False)
     
     def should_use_keyboard_control(self) -> bool:
         """Check if keyboard control should be used in mock mode."""
         return self._mock_config.get('keyboard_control', {}).get('enabled', True)
+
+    def get_node_mock_interaction_mode(self, node_class_name: str) -> str:
+        """
+        Get mock interaction mode for a specific node.
+
+        Modes:
+        - 'teleop': use BtNode_MoveArmTeleop as the mock interaction backend
+        - 'wait_keypress': wait for any keypress before succeeding
+        - 'immediate': return success immediately in mock mode
+        """
+        if not self.is_mock_mode():
+            return "no_mock"
+
+        _, subsystem_config, raw_mode = self._find_node_subsystem_entry(node_class_name)
+        if subsystem_config is None:
+            return "no_mock"
+        if not subsystem_config.get("enabled", True):
+            return "no_mock"
+
+        mode = self._normalize_node_mode(raw_mode)
+        if mode == "wait_keypress" and not self.should_use_keyboard_control():
+            return "immediate"
+        return mode
+
+    def get_mock_teleop_params(self) -> Dict:
+        """
+        Get constructor kwargs for BtNode_MoveArmTeleop from config.
+        """
+        # Preferred new location
+        teleop_cfg = self._mock_config.get("teleop", {})
+        params = teleop_cfg.get("params", {})
+        # Backward-compatible fallback
+        if not isinstance(params, dict):
+            interaction = self._mock_config.get("mock_interaction", {})
+            teleop_cfg = interaction.get("teleop", {})
+            params = teleop_cfg.get("params", {})
+        if isinstance(params, dict):
+            return params
+        return {}
     
     def should_print_mock_operations(self) -> bool:
         """Check if mock operations should be printed."""
@@ -254,6 +342,12 @@ class BehaviorTreeConfig:
                 icon = "✓" if (emoji and enabled) else ("✗" if emoji else "-")
                 status_text = "MOCKED" if enabled else "REAL"
                 print(f"  {icon} {name:15s}: {status_text}")
+                if enabled:
+                    nodes_cfg = config.get("nodes", {})
+                    if isinstance(nodes_cfg, dict):
+                        for node_name, mode in nodes_cfg.items():
+                            normalized = self._normalize_node_mode(mode)
+                            print(f"      - {node_name}: {normalized}")
         
         print(f"\nKeyboard Control: {'✓' if self.should_use_keyboard_control() else '✗'}")
         
@@ -298,6 +392,16 @@ def is_node_mocked(node_class_name: str) -> bool:
 def should_use_keyboard_control() -> bool:
     """Check if keyboard control should be used in mock mode."""
     return _config.should_use_keyboard_control()
+
+
+def get_node_mock_interaction_mode(node_class_name: str) -> str:
+    """Get interaction mode for a mocked node."""
+    return _config.get_node_mock_interaction_mode(node_class_name)
+
+
+def get_mock_teleop_params() -> Dict:
+    """Get BtNode_MoveArmTeleop kwargs configured for mock interaction."""
+    return _config.get_mock_teleop_params()
 
 
 def should_announce_movement(node_class_name: str) -> bool:

@@ -23,6 +23,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'test_move_arm = behavior_tree.test_move_arm_teleop:main',
             'restaurant-demo = behavior_tree.Restaurant.restaurants_fake:main',
             'gpsr-demo = behavior_tree.GPSR.gpsr_2ndcall:main',
             'receptionist_new = behavior_tree.Receptionist.receptionist_new:main',
