@@ -1,6 +1,6 @@
 {
   "description": "Mock mode configuration for behavior tree nodes",
-  "version": "1.0",
+  "version": "2.0",
   "mock_mode": {
     "enabled": false,
     "auto_detect": true,
@@ -8,76 +8,88 @@
       "vision": {
         "enabled": true,
         "announce_movement": true,
-        "description": "Mock all vision-related nodes (object detection, feature extraction, point cloud, etc.)",
-        "nodes": [
-          "BtNode_ScanFor",
-          "BtNode_TrackPerson",
-          "BtNode_FindObj",
-          "BtNode_FeatureExtraction",
-          "BtNode_SeatRecommend",
-          "BtNode_FeatureMatching",
-          "BtNode_GetPointCloud",
-          "BtNode_DoorDetection",
-          "BtNode_TurnPanTilt"
-        ]
+        "description": "Per-node mock mode for vision nodes. Allowed values: NO_MOCK, KEYPRESS, TELEOP, IMMEDIATE",
+        "nodes": {
+          "BtNode_ScanFor": "KEYPRESS",
+          "BtNode_TrackPerson": "KEYPRESS",
+          "BtNode_FindObj": "KEYPRESS",
+          "BtNode_FeatureExtraction": "KEYPRESS",
+          "BtNode_SeatRecommend": "KEYPRESS",
+          "BtNode_FeatureMatching": "KEYPRESS",
+          "BtNode_GetPointCloud": "KEYPRESS",
+          "BtNode_DoorDetection": "KEYPRESS",
+          "BtNode_TurnPanTilt": "KEYPRESS"
+        }
       },
       "manipulation": {
         "enabled": true,
         "announce_movement": true,
-        "description": "Mock all manipulation nodes (arm movement, grasping, gripper control, etc.)",
-        "nodes": [
-          "BtNode_Grasp",
-          "BtNode_Place",
-          "BtNode_Drop",
-          "BtNode_MoveArmJoint",
-          "BtNode_MoveArmSingle",
-          "BtNode_GripperAction",
-          "BtNode_PointTo"
-        ]
+        "description": "Per-node mock mode for manipulation nodes. Set TELEOP for interactive arm control.",
+        "nodes": {
+          "BtNode_Grasp": "TELEOP",
+          "BtNode_Place": "TELEOP",
+          "BtNode_Drop": "TELEOP",
+          "BtNode_MoveArmJoint": "TELEOP",
+          "BtNode_MoveArmSingle": "TELEOP",
+          "BtNode_GripperAction": "TELEOP",
+          "BtNode_PointTo": "TELEOP"
+        }
       },
       "navigation": {
         "enabled": true,
         "announce_movement": true,
-        "description": "Mock all navigation nodes (goto, follow, path planning, etc.)",
-        "nodes": [
-          "BtNode_GoTo",
-          "BtNode_FollowPerson",
-          "BtNode_ConvertGraspPose",
-          "BtNode_GoToLuggage",
-          "BtNode_GotoAction"
-        ]
+        "description": "Per-node mock mode for navigation nodes",
+        "nodes": {
+          "BtNode_GoTo": "KEYPRESS",
+          "BtNode_FollowPerson": "KEYPRESS",
+          "BtNode_ConvertGraspPose": "KEYPRESS",
+          "BtNode_GoToLuggage": "KEYPRESS",
+          "BtNode_GotoAction": "KEYPRESS"
+        }
       },
       "audio_input": {
         "enabled": false,
         "announce_movement": true,
-        "description": "Mock audio input nodes (speech recognition, listening, phrase extraction, etc.) but NOT announcements",
-        "nodes": [
-          "BtNode_WaitForStart",
-          "BtNode_GraspRequest",
-          "BtNode_PhraseExtraction",
-          "BtNode_TargetExtraction",
-          "BtNode_GetConfirmation",
-          "BtNode_Listen",
-          "BtNode_CompareInterest"
-        ]
+        "description": "Per-node mock mode for audio input nodes (not announcement)",
+        "nodes": {
+          "BtNode_WaitForStart": "KEYPRESS",
+          "BtNode_GraspRequest": "KEYPRESS",
+          "BtNode_PhraseExtraction": "KEYPRESS",
+          "BtNode_TargetExtraction": "KEYPRESS",
+          "BtNode_GetConfirmation": "KEYPRESS",
+          "BtNode_Listen": "KEYPRESS",
+          "BtNode_CompareInterest": "KEYPRESS"
+        }
       },
       "announcement": {
         "enabled": false,
         "announce_movement": true,
-        "description": "Mock announcement nodes (TTS in English and Chinese). Set to false to use real TTS when hardware is available. Note: If ROS packages are missing, this will be mocked regardless of this setting.",
-        "nodes": [
-          "BtNode_Announce",
-          "BtNode_TTSCN"
-        ]
+        "description": "Per-node mock mode for TTS nodes",
+        "nodes": {
+          "BtNode_Announce": "KEYPRESS",
+          "BtNode_TTSCN": "KEYPRESS"
+        }
       }
     }
   },
   "keyboard_control": {
     "enabled": true,
-    "description": "Wait for keyboard press in mock mode before returning success"
+    "description": "When false, KEYPRESS mode degrades to IMMEDIATE"
+  },
+  "teleop": {
+    "params": {
+      "dof": 7,
+      "cartesian_command_in_topic": "/servo_server/delta_twist_cmds",
+      "joint_command_in_topic": "/servo_server/delta_joint_cmds",
+      "gripper_command_in_topic": "/gripper_servo_cmd",
+      "command_frame": "link_base",
+      "linear_speed": 0.6,
+      "angular_speed": 0.6,
+      "joint_speed": 1.0
+    }
   },
   "logging": {
-    "print_mock_operations": false,
+    "print_mock_operations": true,
     "use_emoji": true
   }
 }

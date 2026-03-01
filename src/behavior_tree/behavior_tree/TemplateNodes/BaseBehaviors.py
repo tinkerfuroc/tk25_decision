@@ -3,7 +3,12 @@ from py_trees.common import Status
 import threading
 from rclpy.node import Node
 from typing import Any
-from behavior_tree.config import is_mock_mode, is_node_mocked, announce_node_action
+from behavior_tree.config import (
+    is_node_mocked,
+    announce_node_action,
+    get_node_mock_interaction_mode,
+    get_mock_teleop_params,
+)
 import sys
 import tty
 import termios
@@ -25,6 +30,7 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         # Check if this specific node should be mocked
         # Use the class name to determine mock status
         self.mock_mode = is_node_mocked(self.__class__.__name__)
+        self.mock_interaction_mode = get_node_mock_interaction_mode(self.__class__.__name__)
 
         # guard the data
         self.data_guard = threading.Lock()
@@ -37,6 +43,7 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         # For mock mode keyboard press
         self._mock_pressed = False
         self._old_settings = None
+        self._mock_teleop_node = None
     
     def setup(self, **kwargs):
         print("Setting up service handler %s for node name %s" % (self.service_name, self.name))
@@ -58,6 +65,8 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
 
         # Skip creating service client in mock mode
         if self.mock_mode:
+            if self.mock_interaction_mode == "teleop":
+                self._setup_mock_teleop_node()
             print(f"MOCK MODE: Skipping service client creation for {self.service_name}")
             return
 
@@ -72,12 +81,15 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
     def initialise(self):
         # some debugging info
         self.logger.debug("%s.initialise()" % self.__class__.__name__)
+        self._mock_pressed = False
         # clear data
         with self.data_guard:
             self.msg = None
             self.response = None  # Clear response for mock mode
             # if self.clearing_policy == py_trees.common.ClearingPolicy.ON_INITIALISE:
             #     self.msg = None
+        if self.mock_mode and self.mock_interaction_mode == "teleop" and self._mock_teleop_node is not None:
+            self._mock_teleop_node.initialise()
     
     def call_service_async(self, request):
         """
@@ -95,6 +107,14 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         """
         if not self.mock_mode:
             return None
+
+        if self.mock_interaction_mode == "teleop" and self._mock_teleop_node is not None:
+            if not self._mock_pressed:
+                announce_node_action(self.name, self.__class__.__name__)
+                self._mock_pressed = True
+            return self._mock_teleop_node.update()
+        if self.mock_interaction_mode == "immediate":
+            return py_trees.common.Status.SUCCESS
         
         # Announce on first call (when _mock_pressed is False and _old_settings is None)
         if not self._mock_pressed and self._old_settings is None:
@@ -119,6 +139,25 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             return py_trees.common.Status.SUCCESS
         
         return py_trees.common.Status.RUNNING
+
+    def _setup_mock_teleop_node(self):
+        try:
+            from behavior_tree.TemplateNodes.TeleopNodes import BtNode_MoveArmTeleop
+
+            teleop_params = get_mock_teleop_params()
+            self._mock_teleop_node = BtNode_MoveArmTeleop(
+                name=f"{self.name}_mock_teleop",
+                **teleop_params,
+            )
+            self._mock_teleop_node.setup(node=self.node)
+            print(f"MOCK MODE: Using teleop interaction for {self.__class__.__name__}")
+        except Exception as exc:
+            self._mock_teleop_node = None
+            self.mock_interaction_mode = "wait_keypress"
+            print(
+                f"WARNING: Failed to initialize teleop mock for {self.__class__.__name__}: {exc}. "
+                "Falling back to wait_keypress."
+            )
     
     def terminate(self, new_status):
         """
@@ -130,6 +169,11 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
                 self._old_settings = None
             except:
                 pass
+        if self.mock_mode and self._mock_teleop_node is not None:
+            try:
+                self._mock_teleop_node.terminate(new_status)
+            except Exception:
+                pass
         super().terminate(new_status)
     
     def update(self):
@@ -138,6 +182,8 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         Override this in subclasses for real behavior.
         """
         if self.mock_mode:
+            if self.mock_interaction_mode in ("wait_keypress", "teleop", "immediate"):
+                return self.wait_for_keypress_in_mock()
             self.feedback_message = f"MOCK: Service {self.service_name} completed"
             return py_trees.common.Status.SUCCESS
         return py_trees.common.Status.RUNNING

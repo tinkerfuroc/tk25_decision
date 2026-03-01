@@ -7,7 +7,7 @@ import math
 # from tinker_vision_msgs.srv import ObjectDetection
 
 from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl
-from behavior_tree.config import is_mock_mode
+from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
 from py_trees.common import Status
 
@@ -728,7 +728,7 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self.y = y
         self.speed = speed
         self.client = None
-        self.mock_mode = is_mock_mode()
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
     
     def setup(self, **kwargs) -> None:
         # node should be passed down the tree from the root node
