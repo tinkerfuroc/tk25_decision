@@ -92,7 +92,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._finished = False
         self._interrupted = False
         self._key_provider = None
-        self._verbose_key_log = bool(cfg.get("verbose_key_log", False))
+        self._verbose_key_log = bool(cfg.get("verbose_key_log", True))
 
     def set_key_provider(self, provider):
         """
@@ -178,6 +178,12 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
                     keys = list(provided)
                 else:
                     keys = [provided]
+                if len(keys) == 0:
+                    # In mock teleop, providers commonly return [] when idle.
+                    # Sleep briefly to avoid busy-spinning and starving other
+                    # threads (mock input router / BT tick thread).
+                    time.sleep(0.001)
+                    continue
             else:
                 if not select.select([sys.stdin], [], [], 0.01)[0]:
                     continue
@@ -203,7 +209,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
                 print("[MoveArmTeleop] key='space' -> stop (zero twist)")
             return
         if key == self.gripper_keymap["open"]:
-            self._publish_gripper(0.7)
+            self._publish_gripper(0.75)
             self.feedback_message = "Gripper open command published"
             if self._verbose_key_log:
                 print(f"[MoveArmTeleop] key='{key}' -> gripper=0.7 (open)")

@@ -44,6 +44,7 @@ class MockInputController:
             ]
         )
         self._dynamic_teleop_reserved_keys = set()
+        self._max_queue_per_subsystem = 8
         self._last_key = None
         self._last_key_source = None
         self._tick_index = 0
@@ -239,20 +240,43 @@ class MockInputController:
         self._event_id += 1
         return self._event_id
 
+    def _is_teleop_motion_key_locked(self, ch: str) -> bool:
+        return ch in self._teleop_reserved_keys or ch in self._dynamic_teleop_reserved_keys
+
+    def _enqueue_forward_key_locked(self, subsystem: str, event_id: int, ch: str, event_tick: int):
+        q = self._queues[subsystem]
+        if self._is_teleop_motion_key_locked(ch):
+            # Keep only non-teleop keys + the latest teleop intent.
+            # This avoids long "tails" from stale motion key backlog.
+            if q:
+                retained = deque(item for item in q if not self._is_teleop_motion_key_locked(item[1]))
+                if len(retained) != len(q):
+                    self._queues[subsystem] = retained
+                    q = retained
+        q.append((event_id, ch, event_tick))
+        # Bound queue growth under burst GUI input.
+        while len(q) > self._max_queue_per_subsystem:
+            q.popleft()
+
     def _loop(self):
         while True:
             with self._lock:
                 if not self._running:
                     return
-            if not select.select([sys.stdin], [], [], 0.01)[0]:
+            if not select.select([sys.stdin], [], [], 0.001)[0]:
                 continue
-            try:
-                ch = sys.stdin.read(1)
-            except Exception:
-                continue
-            if not ch:
-                continue
-            self._handle_key(ch, source="stdin")
+            # Drain all currently buffered chars in one burst so held-key
+            # repeats are forwarded at full rate.
+            while True:
+                try:
+                    ch = sys.stdin.read(1)
+                except Exception:
+                    break
+                if not ch:
+                    break
+                self._handle_key(ch, source="stdin")
+                if not select.select([sys.stdin], [], [], 0.0)[0]:
+                    break
 
     def _handle_key(self, ch: str, source: str = "stdin"):
         with self._lock:
@@ -284,9 +308,9 @@ class MockInputController:
                 event_tick = self._tick_index
                 if self._broadcast_all_subsystems:
                     for subsystem in self._subsystem_start_keys.keys():
-                        self._queues[subsystem].append((event_id, ch, event_tick))
+                        self._enqueue_forward_key_locked(subsystem, event_id, ch, event_tick)
                 elif self._active_subsystem is not None:
-                    self._queues[self._active_subsystem].append((event_id, ch, event_tick))
+                    self._enqueue_forward_key_locked(self._active_subsystem, event_id, ch, event_tick)
 
     def _print_help(self):
         print("")

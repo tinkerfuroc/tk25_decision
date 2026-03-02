@@ -18,6 +18,8 @@ def main():
         gripper_command_in_topic="/gripper_servo_cmd",
         command_frame="link_base",
     )
+
+    # # for testing mock manipulation system to teleop
     # root = BtNode_Drop(
     #     name="TestDrop",
     #     bb_source=None,
