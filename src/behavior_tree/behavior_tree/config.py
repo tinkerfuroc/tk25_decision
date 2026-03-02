@@ -46,6 +46,8 @@ class BehaviorTreeConfig:
         self._initialized = True
         self._dependency_cache = {}
         self._mock_config = None
+        self._config_path = None
+        self._config_mtime = None
         
         # List of required packages
         # Note: Only check modules that actually exist for each package
@@ -62,27 +64,60 @@ class BehaviorTreeConfig:
         # Load mock configuration
         self._load_mock_config()
     
-    def _load_mock_config(self):
+    def _resolve_config_path(self) -> Path:
+        """
+        Resolve mock config path in a user-friendly order:
+        1. `BT_MOCK_CONFIG` env override
+        2. Workspace source path discovered from cwd ancestors
+        3. Package-local default (`behavior_tree/mock_config.json`)
+        """
+        env_config_path = os.environ.get('BT_MOCK_CONFIG')
+        if env_config_path:
+            return Path(env_config_path)
+
+        cwd = Path.cwd().resolve()
+        for parent in [cwd] + list(cwd.parents):
+            candidate = parent / "src" / "behavior_tree" / "behavior_tree" / "mock_config.json"
+            if candidate.exists():
+                return candidate
+
+        return Path(__file__).parent / 'mock_config.json'
+
+    def _load_mock_config(self, force: bool = False):
         """Load mock configuration from JSON file."""
         try:
-            # Find the config file relative to this module
-            config_path = Path(__file__).parent / 'mock_config.json'
-            
-            # Check for user override in environment
-            env_config_path = os.environ.get('BT_MOCK_CONFIG')
-            if env_config_path:
-                config_path = Path(env_config_path)
-            
+            config_path = self._resolve_config_path()
+
+            if (
+                not force
+                and self._config_path is not None
+                and config_path == self._config_path
+                and config_path.exists()
+            ):
+                mtime = config_path.stat().st_mtime
+                if self._config_mtime is not None and mtime == self._config_mtime:
+                    return
+
             if config_path.exists():
                 with open(config_path, 'r') as f:
                     self._mock_config = json.load(f)
+                self._config_path = config_path
+                self._config_mtime = config_path.stat().st_mtime
                 print(f"✓ Loaded mock configuration from {config_path}")
             else:
                 print(f"⚠ Warning: Mock config not found at {config_path}, using defaults")
                 self._mock_config = self._get_default_config()
+                self._config_path = config_path
+                self._config_mtime = None
         except Exception as e:
             print(f"⚠ Error loading mock config: {e}, using defaults")
             self._mock_config = self._get_default_config()
+            self._config_path = None
+            self._config_mtime = None
+
+    def _maybe_reload_config(self):
+        """Reload config if file changed since last read."""
+        self._load_mock_config(force=False)
     
     def _get_default_config(self) -> dict:
         """Return default configuration."""
@@ -186,6 +221,8 @@ class BehaviorTreeConfig:
         Returns:
             True if mock mode should be enabled
         """
+        self._maybe_reload_config()
+
         # Check environment variable first (highest priority)
         env_mock = os.environ.get('BT_MOCK_MODE', '').lower()
         if env_mock in ('true', '1', 'yes'):
@@ -300,6 +337,23 @@ class BehaviorTreeConfig:
         """
         Get constructor kwargs for BtNode_MoveArmTeleop from config.
         """
+        self._maybe_reload_config()
+
+        def _normalize_teleop_params(params: Dict) -> Dict:
+            if not isinstance(params, dict):
+                return {}
+            normalized = dict(params)
+            alias_map = {
+                "linear_velocity": "linear_speed",
+                "angular_velocity": "angular_speed",
+                "joint_velocity": "joint_speed",
+                "frame_id": "command_frame",
+            }
+            for src_key, dst_key in alias_map.items():
+                if src_key in normalized and dst_key not in normalized:
+                    normalized[dst_key] = normalized[src_key]
+            return normalized
+
         # Preferred new location
         teleop_cfg = self._mock_config.get("teleop", {})
         params = teleop_cfg.get("params", {})
@@ -309,7 +363,7 @@ class BehaviorTreeConfig:
             teleop_cfg = interaction.get("teleop", {})
             params = teleop_cfg.get("params", {})
         if isinstance(params, dict):
-            return params
+            return _normalize_teleop_params(params)
         return {}
     
     def should_print_mock_operations(self) -> bool:

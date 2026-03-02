@@ -11,40 +11,56 @@ from control_msgs.msg import JointJog
 from geometry_msgs.msg import TwistStamped
 from std_msgs.msg import Float32
 from std_srvs.srv import Trigger
+from behavior_tree.config import get_mock_teleop_params
 
 
 class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
     def __init__(
         self,
         name: str,
-        dof: int = 7,
-        cartesian_command_in_topic: str = "/servo_server/delta_twist_cmds",
-        joint_command_in_topic: str = "/servo_server/delta_joint_cmds",
-        gripper_command_in_topic: str = "/gripper_servo_cmd",
-        command_frame: str = "link_base",
-        linear_speed: float = 0.6,
-        angular_speed: float = 0.6,
-        joint_speed: float = 1.0,
-        linear_speed_step: float = 0.05,
-        angular_speed_step: float = 0.05,
-        joint_speed_step: float = 0.1,
-        min_speed: float = 0.05,
-        max_speed: float = 3.0,
+        dof: int = None,
+        cartesian_command_in_topic: str = None,
+        joint_command_in_topic: str = None,
+        gripper_command_in_topic: str = None,
+        command_frame: str = None,
+        linear_speed: float = None,
+        angular_speed: float = None,
+        joint_speed: float = None,
+        linear_speed_step: float = None,
+        angular_speed_step: float = None,
+        joint_speed_step: float = None,
+        min_speed: float = None,
+        max_speed: float = None,
     ):
         super().__init__(name=name)
-        self.dof = dof
-        self.cartesian_command_in_topic = cartesian_command_in_topic
-        self.joint_command_in_topic = joint_command_in_topic
-        self.gripper_command_in_topic = gripper_command_in_topic
-        self.command_frame = command_frame
-        self.linear_speed = linear_speed
-        self.angular_speed = angular_speed
-        self.joint_speed = joint_speed
-        self.linear_speed_step = linear_speed_step
-        self.angular_speed_step = angular_speed_step
-        self.joint_speed_step = joint_speed_step
-        self.min_speed = min_speed
-        self.max_speed = max_speed
+        cfg = get_mock_teleop_params()
+
+        def _resolve(value, key, fallback):
+            if value is not None:
+                return value
+            if key in cfg:
+                return cfg[key]
+            return fallback
+
+        self.dof = _resolve(dof, "dof", 7)
+        self.cartesian_command_in_topic = _resolve(
+            cartesian_command_in_topic, "cartesian_command_in_topic", "/servo_server/delta_twist_cmds"
+        )
+        self.joint_command_in_topic = _resolve(
+            joint_command_in_topic, "joint_command_in_topic", "/servo_server/delta_joint_cmds"
+        )
+        self.gripper_command_in_topic = _resolve(
+            gripper_command_in_topic, "gripper_command_in_topic", "/gripper_servo_cmd"
+        )
+        self.command_frame = _resolve(command_frame, "command_frame", "link_base")
+        self.linear_speed = _resolve(linear_speed, "linear_speed", 0.6)
+        self.angular_speed = _resolve(angular_speed, "angular_speed", 0.6)
+        self.joint_speed = _resolve(joint_speed, "joint_speed", 1.0)
+        self.linear_speed_step = _resolve(linear_speed_step, "linear_speed_step", 0.05)
+        self.angular_speed_step = _resolve(angular_speed_step, "angular_speed_step", 0.05)
+        self.joint_speed_step = _resolve(joint_speed_step, "joint_speed_step", 0.1)
+        self.min_speed = _resolve(min_speed, "min_speed", 0.05)
+        self.max_speed = _resolve(max_speed, "max_speed", 3.0)
 
         self.node = None
         self.twist_pub = None
