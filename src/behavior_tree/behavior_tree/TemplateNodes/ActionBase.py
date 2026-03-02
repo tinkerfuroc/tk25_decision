@@ -50,6 +50,9 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self._old_settings = None
         self._mock_teleop_node = None
         self._mock_input_controller = get_mock_input_controller()
+        self._mock_teleop_detailed_feedback = bool(
+            get_mock_teleop_params().get("detailed_feedback", True)
+        )
         
         if key is not None:
             self.blackboard = self.attach_blackboard_client(name=self.name)
@@ -252,7 +255,16 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             if not self._mock_announced:
                 announce_node_action(self.name, self.__class__.__name__)
                 self._mock_announced = True
-            return self._mock_teleop_node.update()
+            status = self._mock_teleop_node.update()
+            teleop_feedback = getattr(self._mock_teleop_node, "feedback_message", "")
+            if self._mock_teleop_detailed_feedback and teleop_feedback:
+                self.feedback_message = f"MOCK: {teleop_feedback}"
+            else:
+                if status == py_trees.common.Status.SUCCESS:
+                    self.feedback_message = "MOCK: Teleop finished (Enter pressed)"
+                else:
+                    self.feedback_message = "MOCK: Teleop active"
+            return status
         
         if not self._mock_announced:
             announce_node_action(self.name, self.__class__.__name__)

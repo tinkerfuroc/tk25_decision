@@ -34,6 +34,7 @@ class MockInputController:
 
         self._input_enabled = False
         self._active_subsystem = None
+        self._broadcast_all_subsystems = False
         self._help_printed = False
         self._teleop_reserved_keys = set(
             [
@@ -43,6 +44,7 @@ class MockInputController:
                 "g", "h", " ", "z", "x", "c", "v", "b", "n",
             ]
         )
+        self._dynamic_teleop_reserved_keys = set()
 
     def configure(self, cfg: Dict):
         with self._lock:
@@ -51,6 +53,11 @@ class MockInputController:
             self._start_input_key = cfg.get("start_input_key", "\\")
             self._stop_input_key = cfg.get("stop_input_key", "/")
             subsystem_keys = cfg.get("subsystem_start_keys", {})
+            dynamic_reserved = cfg.get("teleop_reserved_keys", [])
+            if isinstance(dynamic_reserved, list):
+                self._dynamic_teleop_reserved_keys = set(
+                    [k for k in dynamic_reserved if isinstance(k, str) and len(k) == 1]
+                )
             if isinstance(subsystem_keys, dict):
                 sanitized = self._sanitize_subsystem_keys(subsystem_keys)
                 self._subsystem_start_keys = sanitized
@@ -64,16 +71,17 @@ class MockInputController:
         Ensure subsystem activation keys do not overlap teleop controls and are unique.
         """
         fallback_keys = ["p", ";", "'", "`", "q", "y", ",", ".", "/"]
+        reserved = set(self._teleop_reserved_keys) | set(self._dynamic_teleop_reserved_keys)
         used = set()
         sanitized = {}
         for subsystem, key in subsystem_keys.items():
             if not isinstance(key, str) or len(key) != 1:
                 key = None
-            if key in self._teleop_reserved_keys or key in used or key in (self._start_input_key, self._stop_input_key):
+            if key in reserved or key in used or key in (self._start_input_key, self._stop_input_key):
                 replacement = None
                 for candidate in fallback_keys:
                     if (
-                        candidate not in self._teleop_reserved_keys
+                        candidate not in reserved
                         and candidate not in used
                         and candidate not in (self._start_input_key, self._stop_input_key)
                     ):
@@ -147,22 +155,31 @@ class MockInputController:
         with self._lock:
             if ch == self._start_input_key:
                 self._input_enabled = True
-                print("[MockInput] input forwarding ENABLED")
+                self._broadcast_all_subsystems = True
+                self._active_subsystem = None
+                print("[MockInput] input forwarding ENABLED for ALL subsystems")
                 return
 
             if ch == self._stop_input_key:
                 self._input_enabled = False
-                print("[MockInput] input forwarding DISABLED")
+                self._broadcast_all_subsystems = False
+                self._active_subsystem = None
+                print("[MockInput] input forwarding DISABLED for ALL subsystems")
                 return
 
             if ch in self._inverse_subsystem_start_keys:
                 self._active_subsystem = self._inverse_subsystem_start_keys[ch]
                 self._input_enabled = True
+                self._broadcast_all_subsystems = False
                 print(f"[MockInput] active subsystem -> {self._active_subsystem}")
                 return
 
-            if self._input_enabled and self._active_subsystem is not None:
-                self._queues[self._active_subsystem].append(ch)
+            if self._input_enabled:
+                if self._broadcast_all_subsystems:
+                    for subsystem in self._subsystem_start_keys.keys():
+                        self._queues[subsystem].append(ch)
+                elif self._active_subsystem is not None:
+                    self._queues[self._active_subsystem].append(ch)
 
     def _print_help(self):
         print("")

@@ -31,6 +31,8 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         joint_speed_step: float = None,
         min_speed: float = None,
         max_speed: float = None,
+        twist_keymap: dict = None,
+        joint_keymap: dict = None,
     ):
         super().__init__(name=name)
         cfg = get_mock_teleop_params()
@@ -61,6 +63,12 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self.joint_speed_step = _resolve(joint_speed_step, "joint_speed_step", 0.1)
         self.min_speed = _resolve(min_speed, "min_speed", 0.05)
         self.max_speed = _resolve(max_speed, "max_speed", 3.0)
+        self.twist_keymap = self._build_twist_keymap(
+            twist_keymap if twist_keymap is not None else cfg.get("twist_keymap")
+        )
+        self.joint_keymap = self._build_joint_keymap(
+            joint_keymap if joint_keymap is not None else cfg.get("joint_keymap")
+        )
 
         self.node = None
         self.twist_pub = None
@@ -307,16 +315,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self.twist_pub.publish(msg)
 
     def _joint_command_from_key(self, key: str):
-        joint_pairs = [
-            ("joint1", "1", "2"),
-            ("joint2", "3", "4"),
-            ("joint3", "5", "6"),
-            ("joint4", "7", "8"),
-            ("joint5", "9", "0"),
-            ("joint6", "-", "="),
-            ("joint7", "[", "]"),
-        ]
-        for idx, (joint_name, plus_key, minus_key) in enumerate(joint_pairs):
+        for idx, (joint_name, plus_key, minus_key) in enumerate(self.joint_keymap):
             if idx >= self.dof:
                 break
             if key == plus_key:
@@ -326,33 +325,26 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         return None
 
     def _twist_command_from_key(self, key: str):
-        mapping = {
-            "w": (self.linear_speed, 0.0, 0.0, 0.0, 0.0, 0.0),
-            "s": (-self.linear_speed, 0.0, 0.0, 0.0, 0.0, 0.0),
-            "a": (0.0, self.linear_speed, 0.0, 0.0, 0.0, 0.0),
-            "d": (0.0, -self.linear_speed, 0.0, 0.0, 0.0, 0.0),
-            "r": (0.0, 0.0, self.linear_speed, 0.0, 0.0, 0.0),
-            "f": (0.0, 0.0, -self.linear_speed, 0.0, 0.0, 0.0),
-            "j": (0.0, 0.0, 0.0, -self.angular_speed, 0.0, 0.0),
-            "l": (0.0, 0.0, 0.0, self.angular_speed, 0.0, 0.0),
-            "i": (0.0, 0.0, 0.0, 0.0, self.angular_speed, 0.0),
-            "k": (0.0, 0.0, 0.0, 0.0, -self.angular_speed, 0.0),
-            "u": (0.0, 0.0, 0.0, 0.0, 0.0, self.angular_speed),
-            "o": (0.0, 0.0, 0.0, 0.0, 0.0, -self.angular_speed),
-        }
-        if key not in mapping:
+        if key not in self.twist_keymap:
             return None
-        return mapping[key]
+        cmd = self.twist_keymap[key]
+        return (
+            cmd[0] * self.linear_speed,
+            cmd[1] * self.linear_speed,
+            cmd[2] * self.linear_speed,
+            cmd[3] * self.angular_speed,
+            cmd[4] * self.angular_speed,
+            cmd[5] * self.angular_speed,
+        )
 
     def _print_help(self) -> None:
         if self._printed_help:
             return
         print("")
         print("MoveArmTeleop controls:")
-        print("  Cartesian: w/s(+/-x), a/d(+/-y), r/f(+/-z)")
-        print("  Rotation:  j/l(+/-roll), i/k(+/-pitch), u/o(+/-yaw)")
-        print("  Joints:    1/2(j1 +/-), 3/4(j2 +/-), 5/6(j3 +/-), 7/8(j4 +/-),")
-        print("             9/0(j5 +/-), -/=(j6 +/-), [/](j7 +/-)")
+        print(f"  Twist keys: {', '.join(sorted(self.twist_keymap.keys()))}")
+        joint_pairs = [f"{p}/{n}({j} +/-)" for j, p, n in self.joint_keymap[: self.dof]]
+        print(f"  Joint keys: {', '.join(joint_pairs)}")
         print("  Speeds:    z/x(linear -/+), c/v(angular -/+), b/n(joint -/+)")
         print(
             "             current "
@@ -363,3 +355,69 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         print("  Finish:    Enter")
         print("")
         self._printed_help = True
+
+    def _build_twist_keymap(self, configured):
+        label_map = {
+            "linear_x_pos": (1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            "linear_x_neg": (-1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            "linear_y_pos": (0.0, 1.0, 0.0, 0.0, 0.0, 0.0),
+            "linear_y_neg": (0.0, -1.0, 0.0, 0.0, 0.0, 0.0),
+            "linear_z_pos": (0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
+            "linear_z_neg": (0.0, 0.0, -1.0, 0.0, 0.0, 0.0),
+            "angular_x_pos": (0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+            "angular_x_neg": (0.0, 0.0, 0.0, -1.0, 0.0, 0.0),
+            "angular_y_pos": (0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+            "angular_y_neg": (0.0, 0.0, 0.0, 0.0, -1.0, 0.0),
+            "angular_z_pos": (0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+            "angular_z_neg": (0.0, 0.0, 0.0, 0.0, 0.0, -1.0),
+        }
+        default_map = {
+            "w": "linear_x_pos",
+            "s": "linear_x_neg",
+            "a": "linear_y_pos",
+            "d": "linear_y_neg",
+            "r": "linear_z_pos",
+            "f": "linear_z_neg",
+            "j": "angular_x_neg",
+            "l": "angular_x_pos",
+            "i": "angular_y_pos",
+            "k": "angular_y_neg",
+            "u": "angular_z_pos",
+            "o": "angular_z_neg",
+        }
+        source = configured if isinstance(configured, dict) else default_map
+        output = {}
+        for key, value in source.items():
+            if not isinstance(key, str) or len(key) != 1:
+                continue
+            if isinstance(value, str) and value in label_map:
+                output[key] = label_map[value]
+            elif isinstance(value, (list, tuple)) and len(value) == 6:
+                try:
+                    output[key] = tuple(float(v) for v in value)
+                except Exception:
+                    continue
+        return output if output else {k: label_map[v] for k, v in default_map.items()}
+
+    def _build_joint_keymap(self, configured):
+        default_pairs = [
+            ("joint1", "1", "2"),
+            ("joint2", "3", "4"),
+            ("joint3", "5", "6"),
+            ("joint4", "7", "8"),
+            ("joint5", "9", "0"),
+            ("joint6", "-", "="),
+            ("joint7", "[", "]"),
+        ]
+        if not isinstance(configured, dict):
+            return default_pairs
+        output = []
+        for joint_name in [f"joint{i}" for i in range(1, 8)]:
+            entry = configured.get(joint_name)
+            if not isinstance(entry, dict):
+                continue
+            pos = entry.get("pos")
+            neg = entry.get("neg")
+            if isinstance(pos, str) and len(pos) == 1 and isinstance(neg, str) and len(neg) == 1:
+                output.append((joint_name, pos, neg))
+        return output if output else default_pairs

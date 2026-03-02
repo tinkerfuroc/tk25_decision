@@ -392,11 +392,27 @@ class BehaviorTreeConfig:
         subsystem_keys = cfg.get("subsystem_start_keys", {})
         if not isinstance(subsystem_keys, dict):
             subsystem_keys = {}
+        teleop_params = self.get_mock_teleop_params()
+        reserved_keys = []
+        if isinstance(teleop_params, dict):
+            twist_keymap = teleop_params.get("twist_keymap", {})
+            if isinstance(twist_keymap, dict):
+                reserved_keys.extend([k for k in twist_keymap.keys() if isinstance(k, str) and len(k) == 1])
+            joint_keymap = teleop_params.get("joint_keymap", {})
+            if isinstance(joint_keymap, dict):
+                for _, entry in joint_keymap.items():
+                    if isinstance(entry, dict):
+                        for k in (entry.get("pos"), entry.get("neg")):
+                            if isinstance(k, str) and len(k) == 1:
+                                reserved_keys.append(k)
+            for k in ("z", "x", "c", "v", "b", "n", "g", "h", " "):
+                reserved_keys.append(k)
         return {
             "start_input_key": cfg.get("start_input_key", "\\"),
             "stop_input_key": cfg.get("stop_input_key", "/"),
             "subsystem_start_keys": subsystem_keys,
             "success_key": cfg.get("success_key", "ENTER"),
+            "teleop_reserved_keys": sorted(set(reserved_keys)),
         }
     
     def should_print_mock_operations(self) -> bool:

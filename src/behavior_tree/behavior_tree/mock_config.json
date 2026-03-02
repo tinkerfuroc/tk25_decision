@@ -2,7 +2,7 @@
   "description": "Mock mode configuration for behavior tree nodes",
   "version": "2.0",
   "mock_mode": {
-    "enabled": false,
+    "enabled": true,
     "auto_detect": true,
     "subsystems": {
       "vision": {
@@ -81,15 +81,16 @@
     "start_input_key": "\\",
     "stop_input_key": "/",
     "subsystem_start_keys": {
-      "vision": "p",
-      "manipulation": ";",
-      "navigation": "'",
-      "audio_input": "`",
-      "announcement": "q"
+      "vision": "v",
+      "manipulation": "m",
+      "navigation": "n",
+      "audio_input": "z",
+      "announcement": "x"
     },
     "success_key": "ENTER"
   },
   "teleop": {
+    "detailed_feedback": true,
     "params": {
       "dof": 7,
       "cartesian_command_in_topic": "/servo_server/delta_twist_cmds",
@@ -98,7 +99,51 @@
       "command_frame": "link_base",
       "linear_speed": 0.1,
       "angular_speed": 0.1,
-      "joint_speed": 0.2
+      "joint_speed": 0.2,
+      "twist_keymap": {
+        "w": "linear_x_pos",
+        "s": "linear_x_neg",
+        "a": "linear_y_pos",
+        "d": "linear_y_neg",
+        "q": "linear_z_pos",
+        "e": "linear_z_neg",
+        "j": "angular_x_neg",
+        "l": "angular_x_pos",
+        "i": "angular_y_pos",
+        "k": "angular_y_neg",
+        "u": "angular_z_pos",
+        "o": "angular_z_neg"
+      },
+      "joint_keymap": {
+        "joint1": {
+          "pos": "1",
+          "neg": "2"
+        },
+        "joint2": {
+          "pos": "3",
+          "neg": "4"
+        },
+        "joint3": {
+          "pos": "5",
+          "neg": "6"
+        },
+        "joint4": {
+          "pos": "7",
+          "neg": "8"
+        },
+        "joint5": {
+          "pos": "9",
+          "neg": "0"
+        },
+        "joint6": {
+          "pos": "-",
+          "neg": "="
+        },
+        "joint7": {
+          "pos": "[",
+          "neg": "]"
+        }
+      }
     }
   },
   "logging": {

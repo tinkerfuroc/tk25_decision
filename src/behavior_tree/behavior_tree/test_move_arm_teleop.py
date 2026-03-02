@@ -3,18 +3,24 @@ import py_trees_ros
 import rclpy
 
 from behavior_tree.TemplateNodes.TeleopNodes import BtNode_MoveArmTeleop
-
+from behavior_tree.TemplateNodes.Manipulation import BtNode_Drop
+from geometry_msgs.msg import PointStamped
 
 def main():
     rclpy.init(args=None)
 
-    root = BtNode_MoveArmTeleop(
-        name="TestMoveArmTeleop",
-        dof=7,
-        cartesian_command_in_topic="/servo_server/delta_twist_cmds",
-        joint_command_in_topic="/servo_server/delta_joint_cmds",
-        gripper_command_in_topic="/gripper_servo_cmd",
-        command_frame="link_base",
+    # root = BtNode_MoveArmTeleop(
+    #     name="TestMoveArmTeleop",
+    #     dof=7,
+    #     cartesian_command_in_topic="/servo_server/delta_twist_cmds",
+    #     joint_command_in_topic="/servo_server/delta_joint_cmds",
+    #     gripper_command_in_topic="/gripper_servo_cmd",
+    #     command_frame="link_base",
+    # )
+    root = BtNode_Drop(
+        name="TestDrop",
+        bb_source=None,
+        bin_point=PointStamped()
     )
 
     tree = py_trees_ros.trees.BehaviourTree(root)
