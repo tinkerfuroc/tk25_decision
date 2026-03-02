@@ -42,6 +42,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         joint_keymap: dict = None,
         speed_control_keymap: dict = None,
         gripper_keymap: dict = None,
+        stop_key: str = None,
     ):
         super().__init__(name=name)
         cfg = get_mock_teleop_params()
@@ -84,6 +85,11 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self.gripper_keymap = self._build_gripper_keymap(
             gripper_keymap if gripper_keymap is not None else cfg.get("gripper_keymap")
         )
+        self.stop_key_combo = self._parse_key_combo(
+            _resolve(stop_key, "stop_key", "space")
+        )
+        if not self.stop_key_combo:
+            self.stop_key_combo = self._parse_key_combo("space")
 
         self.node = None
         self.twist_pub = None
@@ -98,7 +104,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._finished = False
         self._interrupted = False
         self._key_provider = None
-        self._verbose_key_log = bool(cfg.get("verbose_key_log", True))
+        self._verbose_key_log = bool(cfg.get("verbose_key_log", False))
         self._mock_input_controller = get_mock_input_controller()
         self._forced_mock_mode = is_node_mocked(self.__class__.__name__)
         self._mock_subsystem = get_node_subsystem_name(self.__class__.__name__) or "mock_controls"
@@ -197,10 +203,16 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             if self._key_provider is not None:
                 provided = self._key_provider()
                 if provided is None:
-                    time.sleep(0.001)
+                    time.sleep(0.003)
                     continue
-                if isinstance(provided, (list, tuple)):
+                # Provider contract:
+                # - list[...]  : batch of events
+                # - tuple/set  : one combo event
+                # - scalar str : one single-key event
+                if isinstance(provided, list):
                     keys = list(provided)
+                elif isinstance(provided, (tuple, set, frozenset)):
+                    keys = [provided]
                 else:
                     keys = [provided]
                 if len(keys) == 0:
@@ -213,26 +225,33 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
                 if not select.select([sys.stdin], [], [], 0.01)[0]:
                     continue
                 keys = [sys.stdin.read(1)]
-
+            # print(f"[MoveArmTeleop] key provider returned: {provided}")
             for key in keys:
-                tokens = self._event_tokens(key)
-                if self._event_has_tokens(tokens, ("enter",)):
-                    self._publish_stop()
-                    self._finished = True
-                    return
-                if self._event_has_tokens(tokens, ("ctrl", "c")):
-                    self._interrupted = True
-                    return
-                self._process_tokens(tokens)
+                try:
+                    tokens = self._event_tokens(key)
+                    if self._event_has_tokens(tokens, ("enter",)):
+                        self._publish_stop()
+                        self._finished = True
+                        return
+                    if self._event_has_tokens(tokens, ("ctrl", "c")):
+                        self._interrupted = True
+                        return
+                    self._process_tokens(tokens)
+                except Exception as exc:
+                    # Keep teleop loop alive on malformed single events.
+                    self.feedback_message = f"Teleop input error: {exc}"
+                    if self._verbose_key_log:
+                        print(f"[MoveArmTeleop] dropped malformed event {key!r}: {exc}")
 
     def _process_tokens(self, tokens: set[str]) -> None:
+        # print(f"Processing tokens: {tokens}")
         if self._handle_speed_tokens(tokens):
             return
-        if self._event_has_tokens(tokens, ("space",)):
+        if self._combo_active(self.stop_key_combo, tokens):
             self._publish_stop()
             self.feedback_message = "Stop command published"
             if self._verbose_key_log:
-                print("[MoveArmTeleop] key='space' -> stop (zero twist)")
+                print(f"[MoveArmTeleop] key='{self._combo_to_str(self.stop_key_combo)}' -> stop (zero twist)")
             return
         if self._combo_active(self.gripper_keymap["open"], tokens):
             self._publish_gripper(0.75)
@@ -435,7 +454,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             f"  Gripper:   {self._combo_to_str(self.gripper_keymap['open'])}(open), "
             f"{self._combo_to_str(self.gripper_keymap['close'])}(close)"
         )
-        print("  Stop:      space")
+        print(f"  Stop:      {self._combo_to_str(self.stop_key_combo)}")
         print("  Finish:    Enter")
         print("")
         self._printed_help = True
@@ -497,7 +516,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             ("joint7", "[", "]"),
         ]
         if not isinstance(configured, dict):
-            return default_pairs
+            return [(name, self._parse_key_combo(pos), self._parse_key_combo(neg)) for name, pos, neg in default_pairs]
         output = []
         for joint_name in [f"joint{i}" for i in range(1, 8)]:
             entry = configured.get(joint_name)
@@ -597,6 +616,10 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         return all(tok in tokens for tok in required)
 
     def _combo_active(self, combo: frozenset, tokens: set[str]) -> bool:
+        if combo is None:
+            return False
+        if not isinstance(combo, frozenset):
+            combo = self._parse_key_combo(combo)
         return bool(combo) and combo.issubset(tokens)
 
     def _combo_to_str(self, combo: frozenset) -> str:

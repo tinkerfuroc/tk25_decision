@@ -49,6 +49,7 @@ class MockInputController:
         self._tick_index = 0
         self._event_id = 0
         self._last_delivered_event = defaultdict(int)
+        self._last_injected_combo: Tuple[str, ...] = ()
 
     def configure(self, cfg: Dict):
         with self._lock:
@@ -200,6 +201,13 @@ class MockInputController:
             return
         self._handle_combo(combo, source=source)
 
+    def clear_active_combo(self):
+        """
+        Clear combo edge-detection state (call on GUI key release/focus out).
+        """
+        with self._lock:
+            self._last_injected_combo = ()
+
     def get_status_snapshot(self) -> Dict:
         """
         Thread-safe current state for diagnostics/visualization.
@@ -254,11 +262,15 @@ class MockInputController:
 
     def _handle_combo(self, combo: Tuple[str, ...], source: str = "gui"):
         with self._lock:
+            repeated_combo = (combo == self._last_injected_combo)
+            self._last_injected_combo = combo
             self._last_key = combo[-1] if combo else None
             self._last_keys = combo
             self._last_key_source = source
             combo_set = frozenset(combo)
             if combo_set == self._start_input_combo:
+                if repeated_combo:
+                    return
                 self._input_enabled = True
                 self._broadcast_all_subsystems = True
                 self._active_subsystem = None
@@ -266,6 +278,8 @@ class MockInputController:
                 return
 
             if combo_set == self._stop_input_combo:
+                if repeated_combo:
+                    return
                 self._input_enabled = False
                 self._broadcast_all_subsystems = False
                 self._active_subsystem = None
@@ -273,6 +287,8 @@ class MockInputController:
                 return
 
             if combo_set in self._inverse_subsystem_start_combos:
+                if repeated_combo:
+                    return
                 self._active_subsystem = self._inverse_subsystem_start_combos[combo_set]
                 self._input_enabled = True
                 self._broadcast_all_subsystems = False

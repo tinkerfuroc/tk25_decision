@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import queue
 import threading
+import time
 import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -83,6 +84,13 @@ class BehaviorTreeStatusGUI:
         self._bb_row_by_key: Dict[str, str] = {}
         self._bb_value_cache: Dict[str, str] = {}
         self._pressed_keys: Dict[str, str] = {}
+        self._pressed_key_down_at: Dict[str, float] = {}
+        self._pressed_key_seen_at: Dict[str, float] = {}
+        self._pending_release_at: Dict[str, float] = {}
+        self._gui_key_repeat_ms = 8
+        self._gui_stuck_key_timeout_s = 0.8
+        self._gui_wait_single_key_timeout_s = 0.6
+        self._gui_release_grace_s = 0.04
 
     def start(self) -> bool:
         if not self.enabled:
@@ -238,6 +246,7 @@ class BehaviorTreeStatusGUI:
 
             self._ready.set()
             self._poll_queue()
+            self._repeat_pressed_keys()
             self._root_window.mainloop()
         except Exception as exc:  # pragma: no cover - runtime UI environment issues
             self._window_error = str(exc)
@@ -248,6 +257,9 @@ class BehaviorTreeStatusGUI:
     def _on_close(self) -> None:
         self._closed.set()
         self._pressed_keys.clear()
+        self._pressed_key_down_at.clear()
+        self._mock_controller.clear_active_combo()
+        self._pending_release_at.clear()
         if self._root_window is not None:
             self._root_window.destroy()
 
@@ -266,6 +278,18 @@ class BehaviorTreeStatusGUI:
             "return": "enter",
             "kp_enter": "enter",
             "space": "space",
+            # Common non-alnum keysyms where KeyRelease often has empty char.
+            "slash": "/",
+            "backslash": "\\",
+            "minus": "-",
+            "equal": "=",
+            "bracketleft": "[",
+            "bracketright": "]",
+            "semicolon": ";",
+            "apostrophe": "'",
+            "comma": ",",
+            "period": ".",
+            "grave": "`",
         }
         if ks in token_map:
             return (ks, token_map[ks])
@@ -280,6 +304,10 @@ class BehaviorTreeStatusGUI:
             if ord(ks) > 127:
                 return None
             return (ks, ks)
+        # Last-resort fallback for unhandled keysyms:
+        # keep a stable id/token so KeyRelease can clear stuck keys.
+        if isinstance(ks, str) and len(ks) > 0:
+            return (ks, ks)
         return None
 
     def _on_keypress(self, event) -> None:
@@ -287,30 +315,93 @@ class BehaviorTreeStatusGUI:
         if not resolved:
             # Defensive clear to recover quickly from IME/dead-key edge cases.
             self._pressed_keys.clear()
+            self._pressed_key_down_at.clear()
+            self._pressed_key_seen_at.clear()
+            self._pending_release_at.clear()
             return
         key_id, token = resolved
         # Preserve copy shortcut behavior without forwarding to mock input.
         if event.state & 0x4 and token == "c":
             return
-        if key_id in self._pressed_keys:
-            return
+        now = time.monotonic()
+        self._pending_release_at.pop(key_id, None)
+        if key_id not in self._pressed_keys:
+            self._pressed_key_down_at[key_id] = now
         self._pressed_keys[key_id] = token
+        self._pressed_key_seen_at[key_id] = now
+        # Keep combo members alive together when OS repeats only one key.
+        for existing_key in list(self._pressed_key_seen_at.keys()):
+            self._pressed_key_seen_at[existing_key] = now
         self._mock_controller.inject_keys(tuple(self._pressed_keys.values()), source="gui")
 
     def _on_keyrelease(self, event) -> None:
         resolved = self._event_to_input(event)
+        # print(f"DEBUG: detected key release {event}, mapped to {resolved}")
         if not resolved:
             self._pressed_keys.clear()
+            self._pressed_key_down_at.clear()
+            self._pressed_key_seen_at.clear()
+            self._pending_release_at.clear()
+            self._mock_controller.clear_active_combo()
             return
-        key_id, _ = resolved
-        self._pressed_keys.pop(key_id, None)
-        # Reflect release immediately instead of waiting for repeat timer.
-        if self._pressed_keys:
-            self._mock_controller.inject_keys(tuple(self._pressed_keys.values()), source="gui")
+        key_id, token = resolved
+        now = time.monotonic()
+        # Key autorepeat on some platforms emits rapid release/press pairs.
+        # Delay actual removal slightly; a following keypress cancels removal.
+        if key_id in self._pressed_keys:
+            self._pending_release_at[key_id] = now + self._gui_release_grace_s
+        else:
+            # Fallback for layout/keysym mismatches: schedule same-token entries.
+            for stale_id, value in list(self._pressed_keys.items()):
+                if value == token:
+                    self._pending_release_at[stale_id] = now + self._gui_release_grace_s
 
     def _on_focus_out(self, _event=None) -> None:
         # Avoid stuck "held keys" if release happens outside this window.
         self._pressed_keys.clear()
+        self._pressed_key_down_at.clear()
+        self._pressed_key_seen_at.clear()
+        self._pending_release_at.clear()
+        self._mock_controller.clear_active_combo()
+
+    def _repeat_pressed_keys(self) -> None:
+        if self._closed.is_set():
+            return
+        now = time.monotonic()
+        if self._pressed_keys:
+            stale_ids = [
+                key_id
+                for key_id, seen_at in self._pressed_key_seen_at.items()
+                if (now - seen_at) > self._gui_stuck_key_timeout_s
+            ]
+            for stale_id in stale_ids:
+                self._pressed_keys.pop(stale_id, None)
+                self._pressed_key_down_at.pop(stale_id, None)
+                self._pressed_key_seen_at.pop(stale_id, None)
+                self._pending_release_at.pop(stale_id, None)
+
+            due_releases = [
+                key_id for key_id, release_at in self._pending_release_at.items() if now >= release_at
+            ]
+            for key_id in due_releases:
+                self._pressed_keys.pop(key_id, None)
+                self._pressed_key_down_at.pop(key_id, None)
+                self._pressed_key_seen_at.pop(key_id, None)
+                self._pending_release_at.pop(key_id, None)
+
+        repeat_tokens = []
+        if self._pressed_keys:
+            for key_id, token in self._pressed_keys.items():
+                down_at = self._pressed_key_down_at.get(key_id, now)
+                if (now - down_at) >= self._gui_wait_single_key_timeout_s:
+                    repeat_tokens.append(token)
+        if repeat_tokens:
+            print(f"repeated: {repeat_tokens}")
+            self._mock_controller.inject_keys(tuple(repeat_tokens), source="gui")
+        else:
+            self._mock_controller.clear_active_combo()
+        if self._root_window is not None:
+            self._root_window.after(self._gui_key_repeat_ms, self._repeat_pressed_keys)
 
     def _on_copy_selection(self, _event=None):
         if self._root_window is None:

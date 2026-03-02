@@ -93,21 +93,21 @@
   },
   "mock_keyboard": {
     "description": "Shared keyboard router for all mock nodes. Select subsystem first, then Enter is success key.",
-    "start_input_key": "\\",
-    "stop_input_key": "/",
+    "start_input_key": "space",
+    "stop_input_key": "shift+space",
     "subsystem_start_keys": {
-      "vision": "v",
-      "manipulation": "m",
-      "navigation": "n",
-      "audio_input": "z",
-      "announcement": "x",
-      "mock_controls": "shift+m"
+      "vision": "shift+v",
+      "manipulation": "shift+m",
+      "navigation": "shift+n",
+      "audio_input": "shift+i",
+      "announcement": "shift+a",
+      "mock_controls": "shift+t"
     },
     "success_key": "ENTER"
   },
   "teleop": {
-    "detailed_feedback": true,
     "params": {
+      "verbose_key_log": true,
       "dof": 7,
       "cartesian_command_in_topic": "/servo_server/delta_twist_cmds",
       "joint_command_in_topic": "/servo_server/delta_joint_cmds",
@@ -116,6 +116,7 @@
       "linear_speed": 0.1,
       "angular_speed": 0.1,
       "joint_speed": 0.2,
+      "stop_key": "p",
       "speed_control_keymap": {
         "linear_dec": "r",
         "linear_inc": "f",
