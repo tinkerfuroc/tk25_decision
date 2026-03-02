@@ -120,12 +120,12 @@
         "d": "linear_y_neg",
         "q": "linear_z_pos",
         "e": "linear_z_neg",
-        "j": "angular_x_neg",
-        "l": "angular_x_pos",
-        "i": "angular_y_pos",
-        "k": "angular_y_neg",
-        "u": "angular_z_pos",
-        "o": "angular_z_neg"
+        "j": "angular_z_neg",
+        "l": "angular_z_pos",
+        "i": "angular_y_neg",
+        "k": "angular_y_pos",
+        "u": "angular_x_pos",
+        "o": "angular_x_neg"
       },
       "joint_keymap": {
         "joint1": {
