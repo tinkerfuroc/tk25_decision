@@ -92,11 +92,12 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._finished = False
         self._interrupted = False
         self._key_provider = None
+        self._verbose_key_log = bool(cfg.get("verbose_key_log", False))
 
     def set_key_provider(self, provider):
         """
         Inject external non-blocking key provider.
-        Provider must return one character or None.
+        Provider may return one character, a list of characters, or None.
         """
         self._key_provider = provider
 
@@ -167,25 +168,30 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
 
     def _input_loop(self) -> None:
         while not self._stop_event.is_set() and not self._finished and not self._interrupted:
-            key = None
+            keys = None
             if self._key_provider is not None:
-                key = self._key_provider()
-                if key is None:
-                    time.sleep(0.005)
+                provided = self._key_provider()
+                if provided is None:
+                    time.sleep(0.001)
                     continue
+                if isinstance(provided, (list, tuple)):
+                    keys = list(provided)
+                else:
+                    keys = [provided]
             else:
                 if not select.select([sys.stdin], [], [], 0.01)[0]:
                     continue
-                key = sys.stdin.read(1)
+                keys = [sys.stdin.read(1)]
 
-            if key in ("\n", "\r"):
-                self._publish_stop()
-                self._finished = True
-                return
-            if key == "\x03":
-                self._interrupted = True
-                return
-            self._process_key(key)
+            for key in keys:
+                if key in ("\n", "\r"):
+                    self._publish_stop()
+                    self._finished = True
+                    return
+                if key == "\x03":
+                    self._interrupted = True
+                    return
+                self._process_key(key)
 
     def _process_key(self, key: str) -> None:
         if self._handle_speed_key(key):
@@ -193,17 +199,20 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         if key == " ":
             self._publish_stop()
             self.feedback_message = "Stop command published"
-            print("[MoveArmTeleop] key='space' -> stop (zero twist)")
+            if self._verbose_key_log:
+                print("[MoveArmTeleop] key='space' -> stop (zero twist)")
             return
         if key == self.gripper_keymap["open"]:
             self._publish_gripper(0.7)
             self.feedback_message = "Gripper open command published"
-            print(f"[MoveArmTeleop] key='{key}' -> gripper=0.7 (open)")
+            if self._verbose_key_log:
+                print(f"[MoveArmTeleop] key='{key}' -> gripper=0.7 (open)")
             return
         if key == self.gripper_keymap["close"]:
             self._publish_gripper(0.0)
             self.feedback_message = "Gripper close command published"
-            print(f"[MoveArmTeleop] key='{key}' -> gripper=0.0 (close)")
+            if self._verbose_key_log:
+                print(f"[MoveArmTeleop] key='{key}' -> gripper=0.0 (close)")
             return
 
         joint_cmd = self._joint_command_from_key(key)
@@ -213,7 +222,8 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             self.feedback_message = (
                 f"Joint command published: key '{key}' -> {joint_name}, velocity={velocity:.3f}"
             )
-            print(f"[MoveArmTeleop] key='{key}' -> {joint_name}, velocity={velocity:.3f}")
+            if self._verbose_key_log:
+                print(f"[MoveArmTeleop] key='{key}' -> {joint_name}, velocity={velocity:.3f}")
             return
 
         twist_cmd = self._twist_command_from_key(key)
@@ -225,11 +235,12 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
                 f"key '{key}' -> linear=({lx:.3f}, {ly:.3f}, {lz:.3f}), "
                 f"angular=({ax:.3f}, {ay:.3f}, {az:.3f})"
             )
-            print(
-                "[MoveArmTeleop] "
-                f"key='{key}' -> linear=({lx:.3f}, {ly:.3f}, {lz:.3f}), "
-                f"angular=({ax:.3f}, {ay:.3f}, {az:.3f})"
-            )
+            if self._verbose_key_log:
+                print(
+                    "[MoveArmTeleop] "
+                    f"key='{key}' -> linear=({lx:.3f}, {ly:.3f}, {lz:.3f}), "
+                    f"angular=({ax:.3f}, {ay:.3f}, {az:.3f})"
+                )
             return
 
         self.feedback_message = f"Ignored key '{repr(key)}'"
@@ -238,34 +249,40 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         if key == self.speed_control_keymap["linear_dec"]:
             self.linear_speed = max(self.min_speed, self.linear_speed - self.linear_speed_step)
             self.feedback_message = f"Linear speed set to {self.linear_speed:.3f}"
-            print(f"[MoveArmTeleop] key='{key}' -> linear_speed={self.linear_speed:.3f}")
+            if self._verbose_key_log:
+                print(f"[MoveArmTeleop] key='{key}' -> linear_speed={self.linear_speed:.3f}")
             return True
         if key == self.speed_control_keymap["linear_inc"]:
             self.linear_speed = min(self.max_speed, self.linear_speed + self.linear_speed_step)
             self.feedback_message = f"Linear speed set to {self.linear_speed:.3f}"
-            print(f"[MoveArmTeleop] key='{key}' -> linear_speed={self.linear_speed:.3f}")
+            if self._verbose_key_log:
+                print(f"[MoveArmTeleop] key='{key}' -> linear_speed={self.linear_speed:.3f}")
             return True
 
         if key == self.speed_control_keymap["angular_dec"]:
             self.angular_speed = max(self.min_speed, self.angular_speed - self.angular_speed_step)
             self.feedback_message = f"Angular speed set to {self.angular_speed:.3f}"
-            print(f"[MoveArmTeleop] key='{key}' -> angular_speed={self.angular_speed:.3f}")
+            if self._verbose_key_log:
+                print(f"[MoveArmTeleop] key='{key}' -> angular_speed={self.angular_speed:.3f}")
             return True
         if key == self.speed_control_keymap["angular_inc"]:
             self.angular_speed = min(self.max_speed, self.angular_speed + self.angular_speed_step)
             self.feedback_message = f"Angular speed set to {self.angular_speed:.3f}"
-            print(f"[MoveArmTeleop] key='{key}' -> angular_speed={self.angular_speed:.3f}")
+            if self._verbose_key_log:
+                print(f"[MoveArmTeleop] key='{key}' -> angular_speed={self.angular_speed:.3f}")
             return True
 
         if key == self.speed_control_keymap["joint_dec"]:
             self.joint_speed = max(self.min_speed, self.joint_speed - self.joint_speed_step)
             self.feedback_message = f"Joint speed set to {self.joint_speed:.3f}"
-            print(f"[MoveArmTeleop] key='{key}' -> joint_speed={self.joint_speed:.3f}")
+            if self._verbose_key_log:
+                print(f"[MoveArmTeleop] key='{key}' -> joint_speed={self.joint_speed:.3f}")
             return True
         if key == self.speed_control_keymap["joint_inc"]:
             self.joint_speed = min(self.max_speed, self.joint_speed + self.joint_speed_step)
             self.feedback_message = f"Joint speed set to {self.joint_speed:.3f}"
-            print(f"[MoveArmTeleop] key='{key}' -> joint_speed={self.joint_speed:.3f}")
+            if self._verbose_key_log:
+                print(f"[MoveArmTeleop] key='{key}' -> joint_speed={self.joint_speed:.3f}")
             return True
 
         return False

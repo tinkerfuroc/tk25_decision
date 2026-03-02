@@ -48,7 +48,7 @@ class MockInputController:
         self._last_key_source = None
         self._tick_index = 0
         self._event_id = 0
-        self._consumed_by_consumer = defaultdict(set)
+        self._last_delivered_event = defaultdict(int)
 
     def configure(self, cfg: Dict):
         with self._lock:
@@ -128,30 +128,64 @@ class MockInputController:
         consumer_start_tick: Optional[int] = None,
         consumer_start_event: Optional[int] = None,
     ):
+        keys = self.pop_keys(
+            subsystem,
+            consumer_id=consumer_id,
+            consumer_start_tick=consumer_start_tick,
+            consumer_start_event=consumer_start_event,
+            max_keys=1,
+        )
+        if keys:
+            return keys[0]
+        return None
+
+    def pop_keys(
+        self,
+        subsystem: Optional[str],
+        consumer_id: Optional[str] = None,
+        consumer_start_tick: Optional[int] = None,
+        consumer_start_event: Optional[int] = None,
+        max_keys: Optional[int] = None,
+    ):
+        """
+        Pop all currently eligible keys for one consumer.
+        This is used by teleop to process burst input within the same tick.
+        """
         if subsystem is None:
-            return None
+            return []
         with self._lock:
             q = self._queues.get(subsystem)
             if not q:
-                return None
+                return []
             if len(q) == 0:
-                return None
+                return []
+
             if consumer_id is None:
                 # Backward compatibility path (single-consumer semantics)
-                _, key_value, _ = q.popleft()
-                return key_value
+                result = []
+                while q and (max_keys is None or len(result) < max_keys):
+                    _, key_value, _ = q.popleft()
+                    result.append(key_value)
+                return result
 
-            consumed = self._consumed_by_consumer[consumer_id]
+            last_event = self._last_delivered_event[consumer_id]
+            min_allowed_event = last_event
+            if consumer_start_event is not None:
+                min_allowed_event = max(min_allowed_event, consumer_start_event)
+
+            selected = []
             for event_id, key_value, event_tick in q:
-                if event_id in consumed:
-                    continue
-                if consumer_start_event is not None and event_id <= consumer_start_event:
+                if event_id <= min_allowed_event:
                     continue
                 if consumer_start_tick is not None and event_tick <= consumer_start_tick:
                     continue
-                consumed.add(event_id)
-                return key_value
-            return None
+                selected.append((event_id, key_value))
+                if max_keys is not None and len(selected) >= max_keys:
+                    break
+
+            if selected:
+                self._last_delivered_event[consumer_id] = selected[-1][0]
+            return [key for _, key in selected]
 
     def inject_key(self, ch: str, source: str = "gui"):
         """
@@ -198,7 +232,7 @@ class MockInputController:
         with self._lock:
             for subsystem in list(self._queues.keys()):
                 self._queues[subsystem].clear()
-            self._consumed_by_consumer.clear()
+            self._last_delivered_event.clear()
             self._tick_index += 1
 
     def _next_event_id_locked(self) -> int:

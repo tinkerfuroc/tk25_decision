@@ -313,11 +313,12 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             )
             self._mock_teleop_node.setup(node=self.node)
             self._mock_teleop_node.set_key_provider(
-                lambda: self._mock_input_controller.pop_key(
+                lambda: self._mock_input_controller.pop_keys(
                     self.mock_subsystem,
                     consumer_id=self._mock_consumer_id,
                     consumer_start_tick=self._mock_start_tick,
                     consumer_start_event=self._mock_start_event,
+                    max_keys=128,
                 )
             )
             print(f"MOCK MODE: Using teleop interaction for {self.__class__.__name__}")

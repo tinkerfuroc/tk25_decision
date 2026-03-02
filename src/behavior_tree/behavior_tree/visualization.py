@@ -71,11 +71,17 @@ class BehaviorTreeStatusGUI:
         self._tree_heading_font = None
         self._mock_body_font = None
         self._node_ids: set[str] = set()
+        self._node_render_cache: Dict[str, Tuple[str, str, str, str]] = {}
         self._state_log_file = None
         self._state_log_path: Optional[Path] = None
+        self._log_queue: "queue.Queue[str]" = queue.Queue(maxsize=4096)
+        self._log_thread: Optional[threading.Thread] = None
+        self._log_stop = threading.Event()
         self._last_node_state: Dict[str, Tuple[str, str]] = {}
         self._last_bb_state: Dict[str, str] = {}
         self._last_mock_runtime: Optional[str] = None
+        self._bb_row_by_key: Dict[str, str] = {}
+        self._bb_value_cache: Dict[str, str] = {}
 
     def start(self) -> bool:
         if not self.enabled:
@@ -91,12 +97,9 @@ class BehaviorTreeStatusGUI:
     def update(self, root: py_trees.behaviour.Behaviour) -> None:
         if not self.enabled or self._closed.is_set():
             return
-        snapshot = self._build_snapshot(root)
         if self._queue.full():
-            try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                pass
+            return
+        snapshot = self._build_snapshot(root)
         self._queue.put_nowait(snapshot)
 
     def shutdown(self) -> None:
@@ -111,6 +114,9 @@ class BehaviorTreeStatusGUI:
         self._queue.put_nowait(None)
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
+        if self._log_thread and self._log_thread.is_alive():
+            self._log_stop.set()
+            self._log_thread.join(timeout=1.0)
         if self._state_log_file is not None:
             try:
                 self._state_log_file.write(f"{self._timestamp()} [INFO] GUI shutdown\n")
@@ -305,7 +311,7 @@ class BehaviorTreeStatusGUI:
             self._render_mock_status()
 
         if self._root_window is not None:
-            self._root_window.after(120, self._poll_queue)
+            self._root_window.after(33, self._poll_queue)
 
     def _render_nodes(self, snapshots: List[_NodeSnapshot]) -> None:
         if self._treeview is None:
@@ -317,6 +323,7 @@ class BehaviorTreeStatusGUI:
             open_state = self._collect_open_state()
             for item in self._treeview.get_children():
                 self._treeview.delete(item)
+            self._node_render_cache = {}
             for snap in snapshots:
                 self._treeview.insert(
                     snap.parent_id,
@@ -327,28 +334,46 @@ class BehaviorTreeStatusGUI:
                     tags=(snap.status,),
                     open=open_state.get(snap.node_id, True),
                 )
+                self._node_render_cache[snap.node_id] = (snap.name, snap.node_type, snap.status, snap.feedback)
             self._node_ids = current_ids
             self._first_node_render = False
             return
 
-        # Fast path: update status/feedback only on an unchanged tree structure.
+        # Fast path: update only changed rows on an unchanged tree structure.
         for snap in snapshots:
-            self._treeview.item(
-                snap.node_id,
-                text=snap.name,
-                values=(snap.node_type, snap.status, snap.feedback),
-                tags=(snap.status,),
-            )
+            new_state = (snap.name, snap.node_type, snap.status, snap.feedback)
+            if self._node_render_cache.get(snap.node_id) == new_state:
+                continue
+            self._treeview.item(snap.node_id, text=snap.name, values=(snap.node_type, snap.status, snap.feedback), tags=(snap.status,))
+            self._node_render_cache[snap.node_id] = new_state
 
     def _render_blackboard(self, bb_data: Dict[str, Any]) -> None:
         if self._bb_table is None:
             return
-        for item in self._bb_table.get_children():
-            self._bb_table.delete(item)
 
-        for key in sorted(bb_data.keys()):
+        current_keys = set(bb_data.keys())
+        existing_keys = set(self._bb_row_by_key.keys())
+        for key in sorted(existing_keys - current_keys):
+            row_id = self._bb_row_by_key.pop(key, None)
+            self._bb_value_cache.pop(key, None)
+            if row_id:
+                try:
+                    self._bb_table.delete(row_id)
+                except Exception:
+                    pass
+
+        for key in sorted(current_keys):
             value_repr = self._format_blackboard_value(bb_data[key])
-            self._bb_table.insert("", tk.END, values=(key, value_repr))
+            previous = self._bb_value_cache.get(key)
+            if previous == value_repr:
+                continue
+            row_id = self._bb_row_by_key.get(key)
+            if row_id is None:
+                row_id = self._bb_table.insert("", tk.END, values=(key, value_repr))
+                self._bb_row_by_key[key] = row_id
+            else:
+                self._bb_table.item(row_id, values=(key, value_repr))
+            self._bb_value_cache[key] = value_repr
 
     def _build_snapshot(self, root: py_trees.behaviour.Behaviour) -> Tuple[List[_NodeSnapshot], Dict[str, Any]]:
         nodes: List[_NodeSnapshot] = []
@@ -495,22 +520,46 @@ class BehaviorTreeStatusGUI:
             log_dir.mkdir(parents=True, exist_ok=True)
             filename = f"bt_gui_state_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
             self._state_log_path = log_dir / filename
-            self._state_log_file = self._state_log_path.open("a", encoding="utf-8")
+            self._state_log_file = self._state_log_path.open("a", encoding="utf-8", buffering=1)
             self._state_log_file.write(f"{self._timestamp()} [INFO] GUI log started: {self._state_log_path}\n")
-            self._state_log_file.flush()
             print(f"[BT GUI] state log: {self._state_log_path}")
+            self._log_stop.clear()
+            self._log_thread = threading.Thread(target=self._log_writer_loop, daemon=True)
+            self._log_thread.start()
         except Exception:
             self._state_log_file = None
             self._state_log_path = None
 
     def _write_log_line(self, level: str, text: str) -> None:
-        if self._state_log_file is None:
+        if self._state_log_file is None or self._log_stop.is_set():
             return
         try:
-            self._state_log_file.write(f"{self._timestamp()} [{level}] {text}\n")
-            self._state_log_file.flush()
+            self._log_queue.put_nowait(f"{self._timestamp()} [{level}] {text}\n")
         except Exception:
             pass
+
+    def _log_writer_loop(self) -> None:
+        while not self._log_stop.is_set():
+            try:
+                line = self._log_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                if self._state_log_file is not None:
+                    self._state_log_file.write(line)
+            except Exception:
+                pass
+        # drain remaining lines on shutdown
+        while True:
+            try:
+                line = self._log_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                if self._state_log_file is not None:
+                    self._state_log_file.write(line)
+            except Exception:
+                pass
 
     def _log_state_changes(self, node_snapshots: List[_NodeSnapshot], blackboard_data: Dict[str, Any]) -> None:
         node_map = {snap.node_id: (snap.status, snap.feedback, snap.name) for snap in node_snapshots}
