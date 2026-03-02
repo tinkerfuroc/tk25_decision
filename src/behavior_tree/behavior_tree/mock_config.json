@@ -100,6 +100,18 @@
       "linear_speed": 0.1,
       "angular_speed": 0.1,
       "joint_speed": 0.2,
+      "speed_control_keymap": {
+        "linear_dec": "r",
+        "linear_inc": "f",
+        "angular_dec": "t",
+        "angular_inc": "g",
+        "joint_dec": "y",
+        "joint_inc": "h"
+      },
+      "gripper_keymap": {
+        "open": "c",
+        "close": "b"
+      },
       "twist_keymap": {
         "w": "linear_x_pos",
         "s": "linear_x_neg",

@@ -411,7 +411,26 @@ class BehaviorTreeConfig:
                         for k in (entry.get("pos"), entry.get("neg")):
                             if isinstance(k, str) and len(k) == 1:
                                 reserved_keys.append(k)
-            for k in ("z", "x", "c", "v", "b", "n", "g", "h", " "):
+            speed_keymap = teleop_params.get("speed_control_keymap", {})
+            if isinstance(speed_keymap, dict):
+                for action_key in (
+                    "linear_dec",
+                    "linear_inc",
+                    "angular_dec",
+                    "angular_inc",
+                    "joint_dec",
+                    "joint_inc",
+                ):
+                    k = speed_keymap.get(action_key)
+                    if isinstance(k, str) and len(k) == 1:
+                        reserved_keys.append(k)
+            gripper_keymap = teleop_params.get("gripper_keymap", {})
+            if isinstance(gripper_keymap, dict):
+                for action_key in ("open", "close"):
+                    k = gripper_keymap.get(action_key)
+                    if isinstance(k, str) and len(k) == 1:
+                        reserved_keys.append(k)
+            for k in (" ",):
                 reserved_keys.append(k)
         return {
             "start_input_key": cfg.get("start_input_key", "\\"),

@@ -33,6 +33,8 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         max_speed: float = None,
         twist_keymap: dict = None,
         joint_keymap: dict = None,
+        speed_control_keymap: dict = None,
+        gripper_keymap: dict = None,
     ):
         super().__init__(name=name)
         cfg = get_mock_teleop_params()
@@ -68,6 +70,12 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         )
         self.joint_keymap = self._build_joint_keymap(
             joint_keymap if joint_keymap is not None else cfg.get("joint_keymap")
+        )
+        self.speed_control_keymap = self._build_speed_control_keymap(
+            speed_control_keymap if speed_control_keymap is not None else cfg.get("speed_control_keymap")
+        )
+        self.gripper_keymap = self._build_gripper_keymap(
+            gripper_keymap if gripper_keymap is not None else cfg.get("gripper_keymap")
         )
 
         self.node = None
@@ -187,15 +195,15 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             self.feedback_message = "Stop command published"
             print("[MoveArmTeleop] key='space' -> stop (zero twist)")
             return
-        if key == "g":
+        if key == self.gripper_keymap["open"]:
             self._publish_gripper(0.7)
             self.feedback_message = "Gripper open command published"
-            print("[MoveArmTeleop] key='g' -> gripper=0.7 (open)")
+            print(f"[MoveArmTeleop] key='{key}' -> gripper=0.7 (open)")
             return
-        if key == "h":
+        if key == self.gripper_keymap["close"]:
             self._publish_gripper(0.0)
             self.feedback_message = "Gripper close command published"
-            print("[MoveArmTeleop] key='h' -> gripper=0.0 (close)")
+            print(f"[MoveArmTeleop] key='{key}' -> gripper=0.0 (close)")
             return
 
         joint_cmd = self._joint_command_from_key(key)
@@ -227,37 +235,37 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self.feedback_message = f"Ignored key '{repr(key)}'"
 
     def _handle_speed_key(self, key: str) -> bool:
-        if key == "z":
+        if key == self.speed_control_keymap["linear_dec"]:
             self.linear_speed = max(self.min_speed, self.linear_speed - self.linear_speed_step)
             self.feedback_message = f"Linear speed set to {self.linear_speed:.3f}"
-            print(f"[MoveArmTeleop] key='z' -> linear_speed={self.linear_speed:.3f}")
+            print(f"[MoveArmTeleop] key='{key}' -> linear_speed={self.linear_speed:.3f}")
             return True
-        if key == "x":
+        if key == self.speed_control_keymap["linear_inc"]:
             self.linear_speed = min(self.max_speed, self.linear_speed + self.linear_speed_step)
             self.feedback_message = f"Linear speed set to {self.linear_speed:.3f}"
-            print(f"[MoveArmTeleop] key='x' -> linear_speed={self.linear_speed:.3f}")
+            print(f"[MoveArmTeleop] key='{key}' -> linear_speed={self.linear_speed:.3f}")
             return True
 
-        if key == "c":
+        if key == self.speed_control_keymap["angular_dec"]:
             self.angular_speed = max(self.min_speed, self.angular_speed - self.angular_speed_step)
             self.feedback_message = f"Angular speed set to {self.angular_speed:.3f}"
-            print(f"[MoveArmTeleop] key='c' -> angular_speed={self.angular_speed:.3f}")
+            print(f"[MoveArmTeleop] key='{key}' -> angular_speed={self.angular_speed:.3f}")
             return True
-        if key == "v":
+        if key == self.speed_control_keymap["angular_inc"]:
             self.angular_speed = min(self.max_speed, self.angular_speed + self.angular_speed_step)
             self.feedback_message = f"Angular speed set to {self.angular_speed:.3f}"
-            print(f"[MoveArmTeleop] key='v' -> angular_speed={self.angular_speed:.3f}")
+            print(f"[MoveArmTeleop] key='{key}' -> angular_speed={self.angular_speed:.3f}")
             return True
 
-        if key == "b":
+        if key == self.speed_control_keymap["joint_dec"]:
             self.joint_speed = max(self.min_speed, self.joint_speed - self.joint_speed_step)
             self.feedback_message = f"Joint speed set to {self.joint_speed:.3f}"
-            print(f"[MoveArmTeleop] key='b' -> joint_speed={self.joint_speed:.3f}")
+            print(f"[MoveArmTeleop] key='{key}' -> joint_speed={self.joint_speed:.3f}")
             return True
-        if key == "n":
+        if key == self.speed_control_keymap["joint_inc"]:
             self.joint_speed = min(self.max_speed, self.joint_speed + self.joint_speed_step)
             self.feedback_message = f"Joint speed set to {self.joint_speed:.3f}"
-            print(f"[MoveArmTeleop] key='n' -> joint_speed={self.joint_speed:.3f}")
+            print(f"[MoveArmTeleop] key='{key}' -> joint_speed={self.joint_speed:.3f}")
             return True
 
         return False
@@ -345,12 +353,17 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         print(f"  Twist keys: {', '.join(sorted(self.twist_keymap.keys()))}")
         joint_pairs = [f"{p}/{n}({j} +/-)" for j, p, n in self.joint_keymap[: self.dof]]
         print(f"  Joint keys: {', '.join(joint_pairs)}")
-        print("  Speeds:    z/x(linear -/+), c/v(angular -/+), b/n(joint -/+)")
+        sk = self.speed_control_keymap
+        print(
+            f"  Speeds:    {sk['linear_dec']}/{sk['linear_inc']}(linear -/+), "
+            f"{sk['angular_dec']}/{sk['angular_inc']}(angular -/+), "
+            f"{sk['joint_dec']}/{sk['joint_inc']}(joint -/+)"
+        )
         print(
             "             current "
             f"linear={self.linear_speed:.3f}, angular={self.angular_speed:.3f}, joint={self.joint_speed:.3f}"
         )
-        print("  Gripper:   g(open), h(close)")
+        print(f"  Gripper:   {self.gripper_keymap['open']}(open), {self.gripper_keymap['close']}(close)")
         print("  Stop:      space")
         print("  Finish:    Enter")
         print("")
@@ -421,3 +434,32 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             if isinstance(pos, str) and len(pos) == 1 and isinstance(neg, str) and len(neg) == 1:
                 output.append((joint_name, pos, neg))
         return output if output else default_pairs
+
+    def _build_speed_control_keymap(self, configured):
+        default_map = {
+            "linear_dec": "z",
+            "linear_inc": "x",
+            "angular_dec": "c",
+            "angular_inc": "v",
+            "joint_dec": "b",
+            "joint_inc": "n",
+        }
+        if not isinstance(configured, dict):
+            return default_map
+        out = dict(default_map)
+        for k in default_map.keys():
+            val = configured.get(k)
+            if isinstance(val, str) and len(val) == 1:
+                out[k] = val
+        return out
+
+    def _build_gripper_keymap(self, configured):
+        default_map = {"open": "g", "close": "h"}
+        if not isinstance(configured, dict):
+            return default_map
+        out = dict(default_map)
+        for k in ("open", "close"):
+            val = configured.get(k)
+            if isinstance(val, str) and len(val) == 1:
+                out[k] = val
+        return out

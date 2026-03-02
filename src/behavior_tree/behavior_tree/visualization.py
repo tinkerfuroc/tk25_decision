@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
 import queue
 import threading
 import warnings
@@ -69,6 +71,11 @@ class BehaviorTreeStatusGUI:
         self._tree_heading_font = None
         self._mock_body_font = None
         self._node_ids: set[str] = set()
+        self._state_log_file = None
+        self._state_log_path: Optional[Path] = None
+        self._last_node_state: Dict[str, Tuple[str, str]] = {}
+        self._last_bb_state: Dict[str, str] = {}
+        self._last_mock_runtime: Optional[str] = None
 
     def start(self) -> bool:
         if not self.enabled:
@@ -104,9 +111,18 @@ class BehaviorTreeStatusGUI:
         self._queue.put_nowait(None)
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
+        if self._state_log_file is not None:
+            try:
+                self._state_log_file.write(f"{self._timestamp()} [INFO] GUI shutdown\n")
+                self._state_log_file.flush()
+                self._state_log_file.close()
+            except Exception:
+                pass
+            self._state_log_file = None
 
     def _run_tk(self) -> None:
         try:
+            self._open_state_log_file()
             self._root_window = tk.Tk()
             self._root_window.title(self.title)
             self._root_window.geometry("1400x780")
@@ -114,6 +130,8 @@ class BehaviorTreeStatusGUI:
             self._root_window.protocol("WM_DELETE_WINDOW", self._on_close)
             self._configure_styles()
             self._root_window.bind("<KeyPress>", self._on_keypress)
+            self._root_window.bind_all("<Control-c>", self._on_copy_selection)
+            self._root_window.bind_all("<Control-C>", self._on_copy_selection)
 
             root_split = ttk.Panedwindow(self._root_window, orient=tk.VERTICAL)
             root_split.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
@@ -141,10 +159,10 @@ class BehaviorTreeStatusGUI:
             self._treeview.heading("type", text="Type")
             self._treeview.heading("status", text="Status")
             self._treeview.heading("feedback", text="Feedback")
-            self._treeview.column("#0", width=380, anchor=tk.W)
-            self._treeview.column("type", width=160, anchor=tk.W)
-            self._treeview.column("status", width=110, anchor=tk.CENTER)
-            self._treeview.column("feedback", width=420, anchor=tk.W)
+            self._treeview.column("#0", width=420, minwidth=220, anchor=tk.W, stretch=False)
+            self._treeview.column("type", width=240, minwidth=120, anchor=tk.W, stretch=False)
+            self._treeview.column("status", width=160, minwidth=100, anchor=tk.CENTER, stretch=False)
+            self._treeview.column("feedback", width=1000, minwidth=320, anchor=tk.W, stretch=False)
             self._treeview.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
             node_scroll_y = ttk.Scrollbar(node_table, orient=tk.VERTICAL, command=self._treeview.yview)
@@ -152,6 +170,7 @@ class BehaviorTreeStatusGUI:
             node_scroll_x = ttk.Scrollbar(node_frame, orient=tk.HORIZONTAL, command=self._treeview.xview)
             node_scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
             self._treeview.configure(yscrollcommand=node_scroll_y.set, xscrollcommand=node_scroll_x.set)
+            self._treeview.bind("<Shift-MouseWheel>", lambda e: self._treeview.xview_scroll(int(-e.delta / 120), "units"))
 
             bb_table_frame = ttk.Frame(bb_frame)
             bb_table_frame.pack(fill=tk.BOTH, expand=True)
@@ -164,8 +183,8 @@ class BehaviorTreeStatusGUI:
             )
             self._bb_table.heading("key", text="Key")
             self._bb_table.heading("value", text="Value")
-            self._bb_table.column("key", width=260, anchor=tk.W)
-            self._bb_table.column("value", width=580, anchor=tk.W)
+            self._bb_table.column("key", width=360, minwidth=180, anchor=tk.W, stretch=False)
+            self._bb_table.column("value", width=1400, minwidth=320, anchor=tk.W, stretch=False)
             self._bb_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
             bb_scroll_y = ttk.Scrollbar(bb_table_frame, orient=tk.VERTICAL, command=self._bb_table.yview)
@@ -173,6 +192,7 @@ class BehaviorTreeStatusGUI:
             bb_scroll_x = ttk.Scrollbar(bb_frame, orient=tk.HORIZONTAL, command=self._bb_table.xview)
             bb_scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
             self._bb_table.configure(yscrollcommand=bb_scroll_y.set, xscrollcommand=bb_scroll_x.set)
+            self._bb_table.bind("<Shift-MouseWheel>", lambda e: self._bb_table.xview_scroll(int(-e.delta / 120), "units"))
 
             mock_split = ttk.Panedwindow(mock_frame, orient=tk.HORIZONTAL)
             mock_split.pack(fill=tk.BOTH, expand=True)
@@ -222,12 +242,46 @@ class BehaviorTreeStatusGUI:
             self._root_window.destroy()
 
     def _on_keypress(self, event) -> None:
+        if event.state & 0x4:  # Ctrl held
+            return
         ch = event.char
         if event.keysym in ("Return", "KP_Enter"):
             ch = "\n"
         if not ch:
             return
         self._mock_controller.inject_key(ch, source="gui")
+
+    def _on_copy_selection(self, _event=None):
+        if self._root_window is None:
+            return "break"
+        widget = self._root_window.focus_get()
+        text_to_copy = ""
+
+        if widget == self._treeview and self._treeview is not None:
+            selected = self._treeview.selection()
+            if selected:
+                item = self._treeview.item(selected[0])
+                values = item.get("values", [])
+                text_to_copy = "\t".join(
+                    [str(item.get("text", ""))]
+                    + [str(v) for v in values]
+                )
+        elif widget == self._bb_table and self._bb_table is not None:
+            selected = self._bb_table.selection()
+            if selected:
+                item = self._bb_table.item(selected[0])
+                values = item.get("values", [])
+                text_to_copy = "\t".join([str(v) for v in values])
+        elif isinstance(widget, tk.Text):
+            try:
+                text_to_copy = widget.get("sel.first", "sel.last")
+            except Exception:
+                text_to_copy = ""
+
+        if text_to_copy:
+            self._root_window.clipboard_clear()
+            self._root_window.clipboard_append(text_to_copy)
+        return "break"
 
     def _poll_queue(self) -> None:
         if self._closed.is_set():
@@ -245,6 +299,7 @@ class BehaviorTreeStatusGUI:
                 return
         else:
             node_snapshots, blackboard_data = latest
+            self._log_state_changes(node_snapshots, blackboard_data)
             self._render_nodes(node_snapshots)
             self._render_blackboard(blackboard_data)
             self._render_mock_status()
@@ -415,8 +470,10 @@ class BehaviorTreeStatusGUI:
         self._mock_static_text.configure(state=tk.DISABLED)
         self._mock_dynamic_text.configure(state=tk.NORMAL)
         self._mock_dynamic_text.delete("1.0", tk.END)
-        self._mock_dynamic_text.insert(tk.END, "\n".join(dynamic_lines))
+        dynamic_text = "\n".join(dynamic_lines)
+        self._mock_dynamic_text.insert(tk.END, dynamic_text)
         self._mock_dynamic_text.configure(state=tk.DISABLED)
+        self._log_mock_runtime_change(dynamic_text)
 
     def _configure_styles(self) -> None:
         if ttk is None or tkfont is None:
@@ -428,6 +485,72 @@ class BehaviorTreeStatusGUI:
         rowheight = max(30, self._tree_body_font.metrics("linespace") + 12)
         style.configure("Treeview", font=self._tree_body_font, rowheight=rowheight)
         style.configure("Treeview.Heading", font=self._tree_heading_font)
+
+    def _timestamp(self) -> str:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+    def _open_state_log_file(self) -> None:
+        try:
+            log_dir = Path.cwd() / "bt_visualization_logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"bt_gui_state_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+            self._state_log_path = log_dir / filename
+            self._state_log_file = self._state_log_path.open("a", encoding="utf-8")
+            self._state_log_file.write(f"{self._timestamp()} [INFO] GUI log started: {self._state_log_path}\n")
+            self._state_log_file.flush()
+            print(f"[BT GUI] state log: {self._state_log_path}")
+        except Exception:
+            self._state_log_file = None
+            self._state_log_path = None
+
+    def _write_log_line(self, level: str, text: str) -> None:
+        if self._state_log_file is None:
+            return
+        try:
+            self._state_log_file.write(f"{self._timestamp()} [{level}] {text}\n")
+            self._state_log_file.flush()
+        except Exception:
+            pass
+
+    def _log_state_changes(self, node_snapshots: List[_NodeSnapshot], blackboard_data: Dict[str, Any]) -> None:
+        node_map = {snap.node_id: (snap.status, snap.feedback, snap.name) for snap in node_snapshots}
+        for node_id, (status, feedback, name) in node_map.items():
+            prev = self._last_node_state.get(node_id)
+            if prev is None:
+                self._write_log_line("NODE", f"ADDED id={node_id} name={name} status={status} feedback={feedback}")
+            elif prev != (status, feedback):
+                self._write_log_line(
+                    "NODE",
+                    (
+                        f"UPDATED id={node_id} name={name} "
+                        f"status={prev[0]}->{status} feedback={prev[1]}->{feedback}"
+                    ),
+                )
+            self._last_node_state[node_id] = (status, feedback)
+        removed_node_ids = set(self._last_node_state.keys()) - set(node_map.keys())
+        for node_id in sorted(removed_node_ids):
+            prev = self._last_node_state.pop(node_id, None)
+            if prev is not None:
+                self._write_log_line("NODE", f"REMOVED id={node_id} status={prev[0]} feedback={prev[1]}")
+
+        bb_map = {key: self._format_blackboard_value(value) for key, value in blackboard_data.items()}
+        for key, value in bb_map.items():
+            prev = self._last_bb_state.get(key)
+            if prev is None:
+                self._write_log_line("BLACKBOARD", f"SET key={key} value={value}")
+            elif prev != value:
+                self._write_log_line("BLACKBOARD", f"UPDATED key={key} value={prev}->{value}")
+            self._last_bb_state[key] = value
+        removed_bb_keys = set(self._last_bb_state.keys()) - set(bb_map.keys())
+        for key in sorted(removed_bb_keys):
+            prev = self._last_bb_state.pop(key, None)
+            if prev is not None:
+                self._write_log_line("BLACKBOARD", f"REMOVED key={key} previous={prev}")
+
+    def _log_mock_runtime_change(self, runtime_text: str) -> None:
+        if runtime_text != self._last_mock_runtime:
+            self._write_log_line("MOCK", runtime_text.replace("\n", " | "))
+            self._last_mock_runtime = runtime_text
 
 
 def create_post_tick_visualizer(
