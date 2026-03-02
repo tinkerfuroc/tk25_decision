@@ -6,6 +6,7 @@ from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation, BtNode_Listen, BtNode_CompareInterest
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection, BtNode_TurnTo
 from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle, BtNode_GripperAction
+from behavior_tree.visualization import create_post_tick_visualizer
 import py_trees_ros
 
 from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm, BtNode_HeadTracking, BtNode_HeadTrackingAction
@@ -13,7 +14,6 @@ from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm,
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import rclpy
-import warnings
 
 import random
 import math
@@ -514,12 +514,10 @@ def main():
     # make it a ros tree
     tree = py_trees_ros.trees.BehaviourTree(root)
     tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
+    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+        title="Receptionist New",
+        print_blackboard=PRINT_BLACKBOARD,
+    )
 
     if PRINT_DEBUG:
         py_trees.logging.level = py_trees.logging.Level.DEBUG
@@ -531,5 +529,6 @@ def main():
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
+        shutdown_visualizer()
         tree.shutdown()
         rclpy.try_shutdown()

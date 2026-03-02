@@ -4,6 +4,7 @@ import rclpy
 
 from behavior_tree.TemplateNodes.TeleopNodes import BtNode_MoveArmTeleop
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Drop
+from behavior_tree.visualization import create_post_tick_visualizer
 from geometry_msgs.msg import PointStamped
 
 def main():
@@ -25,9 +26,9 @@ def main():
 
     tree = py_trees_ros.trees.BehaviourTree(root)
     tree.setup(node_name="test_move_arm_teleop_node", timeout=15)
-
-    def print_tree(bt_tree):
-        print(py_trees.display.unicode_tree(root=bt_tree.root, show_status=True))
+    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+        title="Move Arm Teleop Behavior Tree",
+    )
 
     tree.tick_tock(period_ms=100.0, post_tick_handler=print_tree)
 
@@ -36,6 +37,7 @@ def main():
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
+        shutdown_visualizer()
         tree.shutdown()
         rclpy.try_shutdown()
 

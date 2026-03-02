@@ -7,6 +7,8 @@ Supports fine-grained subsystem-level mock configuration via JSON file.
 import os
 import json
 import importlib.util
+import queue
+import threading
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -60,7 +62,9 @@ class BehaviorTreeConfig:
             'action_msgs': ['action_msgs.msg'],
             'nav2_msgs': ['nav2_msgs.action'],
         }
-        
+
+        self.missing_packages = set()
+
         # Load mock configuration
         self._load_mock_config()
     
@@ -248,14 +252,16 @@ class BehaviorTreeConfig:
             return False
         
         # Check JSON config
-        if not self._mock_config.get('mock_mode', {}).get('enabled', True):
-            return False
+        if self._mock_config.get('mock_mode', {}).get('enabled', False):
+            return True
         
         # Auto-detect if enabled
         if self._mock_config.get('mock_mode', {}).get('auto_detect', True):
             for package_name in self.required_packages.keys():
                 if not self.has_dependency(package_name):
-                    print(f"🔄 Mock mode auto-enabled: {package_name} not found")
+                    if package_name not in self.missing_packages:
+                        print(f"🔄 Mock mode auto-enabled: {package_name} not found")
+                        self.missing_packages.add(package_name)
                     return True
         
         return False
@@ -525,6 +531,44 @@ def should_announce_movement(node_class_name: str) -> bool:
 # Global TTS engine instance (reused to avoid segfaults)
 _tts_engine = None
 _tts_failed = False
+_tts_queue = queue.Queue(maxsize=64)
+_tts_worker = None
+_tts_lock = threading.Lock()
+_tts_speaking = False
+
+
+def _start_tts_worker():
+    global _tts_worker
+    if _tts_worker is not None and _tts_worker.is_alive():
+        return
+    _tts_worker = threading.Thread(target=_tts_worker_loop, daemon=True)
+    _tts_worker.start()
+
+
+def _tts_worker_loop():
+    global _tts_engine, _tts_failed, _tts_speaking
+    while True:
+        message = _tts_queue.get()
+        if message is None:
+            return
+        if _tts_failed:
+            continue
+        try:
+            if _tts_engine is None:
+                import pyttsx3
+                _tts_engine = pyttsx3.init()
+                _tts_engine.setProperty('rate', 175)
+                _tts_engine.setProperty('volume', 0.9)
+            _tts_speaking = True
+            _tts_engine.say(message)
+            _tts_engine.runAndWait()
+        except Exception as e:
+            _tts_failed = True
+            _tts_engine = None
+            print(f"⚠️ TTS disabled due to error: {e}")
+            print(f"📢 {message}")
+        finally:
+            _tts_speaking = False
 
 def announce_node_action(node_name: str, node_class_name: str):
     """
@@ -545,25 +589,27 @@ def announce_node_action(node_name: str, node_class_name: str):
         return
     
     try:
-        # Initialize engine once and reuse it
-        if _tts_engine is None:
-            import pyttsx3
-            _tts_engine = pyttsx3.init()
-            # Set properties for faster, clearer speech
-            _tts_engine.setProperty('rate', 175)  # Speed of speech
-            _tts_engine.setProperty('volume', 0.9)  # Volume (0.0 to 1.0)
-        
-        # Announce the action
         message = f"Mock: {node_name}"
         print(f"🔊 Announcing: {message}")
-        _tts_engine.say(message)
-        _tts_engine.runAndWait()
+        with _tts_lock:
+            _start_tts_worker()
+            if not _tts_queue.full():
+                _tts_queue.put_nowait(message)
+            else:
+                # Keep tick loop non-blocking under heavy announcement bursts.
+                print(f"📢 {message}")
     except Exception as e:
-        # If pyttsx3 fails, disable it and just print
         _tts_failed = True
         _tts_engine = None
         print(f"⚠️ TTS disabled due to error: {e}")
         print(f"📢 Mock: {node_name}")
+
+
+def is_mock_tts_active() -> bool:
+    """
+    True while mock TTS has queued or currently speaking messages.
+    """
+    return _tts_speaking or (not _tts_queue.empty())
 
 
 # Legacy compatibility functions

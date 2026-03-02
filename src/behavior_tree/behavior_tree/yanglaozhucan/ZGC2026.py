@@ -9,6 +9,7 @@ from behavior_tree.TemplateNodes.Audio import BtNode_TTSCN
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_GripperAction, BtNode_MoveArmJointPC, BtNode_CartesianMove, BtNode_Drop
 from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_TurnPanTilt, BtNode_ScanFor, BtNode_GetPointCloud
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
+from behavior_tree.visualization import create_post_tick_visualizer
 from .customNodes import BtNode_ChangeToNextMedication, BtNode_ProcessTrayPoint, BtNode_WriteDropPose
 
 PRINT_DEBUG = True
@@ -304,12 +305,10 @@ def main():
     # make it a ros tree
     tree = py_trees_ros.trees.BehaviourTree(root)
     tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
+    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+        title="ZGC 2026",
+        print_blackboard=PRINT_BLACKBOARD,
+    )
 
     if PRINT_DEBUG:
         py_trees.logging.level = py_trees.logging.Level.DEBUG
@@ -321,6 +320,6 @@ def main():
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
+        shutdown_visualizer()
         tree.shutdown()
         rclpy.try_shutdown() 
-

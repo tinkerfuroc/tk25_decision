@@ -6,6 +6,7 @@ This can run with or without Tinker packages installed.
 import py_trees
 import py_trees_ros
 import rclpy
+from behavior_tree.visualization import create_post_tick_visualizer
 
 from behavior_tree.config import get_config, is_mock_mode
 from behavior_tree.TemplateNodes.WaitKeyPress import BtNode_WaitKeyboardPress
@@ -117,13 +118,9 @@ def main():
     # Create ROS2 behavior tree
     tree = py_trees_ros.trees.BehaviourTree(root)
     tree.setup(node_name="mock_mode_test", timeout=15)
-    
-    # Print function for tree status
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(
-            root=tree.root, 
-            show_status=True
-        ))
+    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+        title="Mock Mode Test",
+    )
     
     # Run the tree
     tree.tick_tock(period_ms=500.0, post_tick_handler=print_tree)
@@ -133,6 +130,7 @@ def main():
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         print("\n\nTest interrupted by user")
     finally:
+        shutdown_visualizer()
         tree.shutdown()
         rclpy.try_shutdown()
         print("\n" + "="*60)

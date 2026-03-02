@@ -143,6 +143,8 @@ class BtNode_ConvertGraspPose(ServiceHandler):
         self.logger.debug(f"Setup ConvertGraspPose")
 
     def initialise(self) -> None:
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             from geometry_msgs.msg import PoseStamped
@@ -212,6 +214,8 @@ class BtNode_GoToLuggage(ServiceHandler):
         """
         Called when the node is visited
         """
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             from geometry_msgs.msg import PoseStamped

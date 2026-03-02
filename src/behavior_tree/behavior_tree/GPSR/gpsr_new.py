@@ -13,6 +13,7 @@ from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import py_trees_ros
 import rclpy
+from behavior_tree.visualization import create_post_tick_visualizer
 
 import json
 import math
@@ -332,11 +333,13 @@ def main():
 
     # Setup and spin
     tree.setup(timeout=15, node_name="root_node")
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        # print(py_trees.display.unicode_blackboard())
+    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+        title="GPSR",
+    )
     tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
 
-    rclpy.spin(tree.node)
-
-    rclpy.shutdown()
+    try:
+        rclpy.spin(tree.node)
+    finally:
+        shutdown_visualizer()
+        rclpy.shutdown()

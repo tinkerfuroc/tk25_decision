@@ -38,13 +38,17 @@ class MockInputController:
         self._help_printed = False
         self._teleop_reserved_keys = set(
             [
-                "w", "s", "a", "d", "r", "f",
+                "w", "s", "a", "d", "q", "e",
                 "j", "l", "i", "k", "u", "o",
                 "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "[", "]",
-                "g", "h", " ", "z", "x", "c", "v", "b", "n",
             ]
         )
         self._dynamic_teleop_reserved_keys = set()
+        self._last_key = None
+        self._last_key_source = None
+        self._tick_index = 0
+        self._event_id = 0
+        self._consumed_by_consumer = defaultdict(set)
 
     def configure(self, cfg: Dict):
         with self._lock:
@@ -68,32 +72,24 @@ class MockInputController:
 
     def _sanitize_subsystem_keys(self, subsystem_keys: Dict) -> Dict:
         """
-        Ensure subsystem activation keys do not overlap teleop controls and are unique.
+        Keep configured subsystem activation keys as-is (from mock_config.json).
+        Only reject invalid/duplicate or global-control-colliding keys.
         """
-        fallback_keys = ["p", ";", "'", "`", "q", "y", ",", ".", "/"]
-        reserved = set(self._teleop_reserved_keys) | set(self._dynamic_teleop_reserved_keys)
         used = set()
         sanitized = {}
         for subsystem, key in subsystem_keys.items():
             if not isinstance(key, str) or len(key) != 1:
-                key = None
-            if key in reserved or key in used or key in (self._start_input_key, self._stop_input_key):
-                replacement = None
-                for candidate in fallback_keys:
-                    if (
-                        candidate not in reserved
-                        and candidate not in used
-                        and candidate not in (self._start_input_key, self._stop_input_key)
-                    ):
-                        replacement = candidate
-                        break
-                if replacement is None:
-                    continue
+                print(f"[MockInput] ignoring invalid subsystem key for '{subsystem}': {key}")
+                continue
+            if key in used:
+                print(f"[MockInput] ignoring duplicate subsystem key '{key}' for '{subsystem}'")
+                continue
+            if key in (self._start_input_key, self._stop_input_key):
                 print(
-                    f"[MockInput] remapped subsystem key for '{subsystem}' "
-                    f"from '{key}' to '{replacement}' (conflict with teleop/unified keys)"
+                    f"[MockInput] ignoring subsystem key '{key}' for '{subsystem}' "
+                    f"because it conflicts with start/stop controls"
                 )
-                key = replacement
+                continue
             sanitized[subsystem] = key
             used.add(key)
         return sanitized
@@ -125,7 +121,13 @@ class MockInputController:
                     pass
                 self._old_settings = None
 
-    def pop_key(self, subsystem: Optional[str]):
+    def pop_key(
+        self,
+        subsystem: Optional[str],
+        consumer_id: Optional[str] = None,
+        consumer_start_tick: Optional[int] = None,
+        consumer_start_event: Optional[int] = None,
+    ):
         if subsystem is None:
             return None
         with self._lock:
@@ -134,7 +136,74 @@ class MockInputController:
                 return None
             if len(q) == 0:
                 return None
-            return q.popleft()
+            if consumer_id is None:
+                # Backward compatibility path (single-consumer semantics)
+                _, key_value, _ = q.popleft()
+                return key_value
+
+            consumed = self._consumed_by_consumer[consumer_id]
+            for event_id, key_value, event_tick in q:
+                if event_id in consumed:
+                    continue
+                if consumer_start_event is not None and event_id <= consumer_start_event:
+                    continue
+                if consumer_start_tick is not None and event_tick <= consumer_start_tick:
+                    continue
+                consumed.add(event_id)
+                return key_value
+            return None
+
+    def inject_key(self, ch: str, source: str = "gui"):
+        """
+        Public API for non-stdin input sources (e.g. GUI) to forward keys.
+        """
+        if not isinstance(ch, str) or len(ch) == 0:
+            return
+        self._handle_key(ch[0], source=source)
+
+    def get_status_snapshot(self) -> Dict:
+        """
+        Thread-safe current state for diagnostics/visualization.
+        """
+        with self._lock:
+            queue_sizes = {subsystem: len(queue) for subsystem, queue in self._queues.items()}
+            return {
+                "running": self._running,
+                "input_enabled": self._input_enabled,
+                "active_subsystem": self._active_subsystem,
+                "broadcast_all_subsystems": self._broadcast_all_subsystems,
+                "start_input_key": self._start_input_key,
+                "stop_input_key": self._stop_input_key,
+                "success_key": self._success_key,
+                "subsystem_start_keys": dict(self._subsystem_start_keys),
+                "queue_sizes": queue_sizes,
+                "last_key": self._last_key,
+                "last_key_source": self._last_key_source,
+                "tick_index": self._tick_index,
+            }
+
+    def get_tick_index(self) -> int:
+        with self._lock:
+            return self._tick_index
+
+    def get_event_index(self) -> int:
+        with self._lock:
+            return self._event_id
+
+    def end_tick_cycle(self):
+        """
+        Called once after each behavior-tree tick.
+        Drops any unconsumed keys so they don't leak into later ticks.
+        """
+        with self._lock:
+            for subsystem in list(self._queues.keys()):
+                self._queues[subsystem].clear()
+            self._consumed_by_consumer.clear()
+            self._tick_index += 1
+
+    def _next_event_id_locked(self) -> int:
+        self._event_id += 1
+        return self._event_id
 
     def _loop(self):
         while True:
@@ -149,10 +218,12 @@ class MockInputController:
                 continue
             if not ch:
                 continue
-            self._handle_key(ch)
+            self._handle_key(ch, source="stdin")
 
-    def _handle_key(self, ch: str):
+    def _handle_key(self, ch: str, source: str = "stdin"):
         with self._lock:
+            self._last_key = ch
+            self._last_key_source = source
             if ch == self._start_input_key:
                 self._input_enabled = True
                 self._broadcast_all_subsystems = True
@@ -175,11 +246,13 @@ class MockInputController:
                 return
 
             if self._input_enabled:
+                event_id = self._next_event_id_locked()
+                event_tick = self._tick_index
                 if self._broadcast_all_subsystems:
                     for subsystem in self._subsystem_start_keys.keys():
-                        self._queues[subsystem].append(ch)
+                        self._queues[subsystem].append((event_id, ch, event_tick))
                 elif self._active_subsystem is not None:
-                    self._queues[self._active_subsystem].append(ch)
+                    self._queues[self._active_subsystem].append((event_id, ch, event_tick))
 
     def _print_help(self):
         print("")

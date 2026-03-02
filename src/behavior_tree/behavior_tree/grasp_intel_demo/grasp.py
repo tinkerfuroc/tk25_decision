@@ -6,6 +6,7 @@ from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_DoorDetection, BtNode_TurnPanTilt, BtNode_ScanFor
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Place, BtNode_GripperAction
+from behavior_tree.visualization import create_post_tick_visualizer
 
 import math, time
 import json
@@ -52,11 +53,9 @@ def main():
     root.add_child(createGraspOnce())
     tree = py_trees_ros.trees.BehaviourTree(root)
     tree.setup(node_name="tree_node", timeout=15)
-        # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        # if PRINT_BLACKBOARD:
-        #     print(py_trees.display.unicode_blackboard())
+    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+        title="Grasp Intel Demo",
+    )
 
     # if PRINT_DEBUG:
     #     py_trees.logging.level = py_trees.logging.Level.DEBUG
@@ -68,5 +67,6 @@ def main():
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
+        shutdown_visualizer()
         tree.shutdown()
         rclpy.try_shutdown()

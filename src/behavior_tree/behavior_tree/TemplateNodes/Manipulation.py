@@ -231,6 +231,8 @@ class BtNode_Drop(ServiceHandler):
         """
         Called when the node is visited
         """
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             self.feedback_message = "MOCK: Dropped object successfully"
@@ -363,6 +365,8 @@ class BtNode_MoveArm(ServiceHandler):
         self.logger.debug(f"Setup MoveArm, reading from {self.arm_pose_bb_key}")
 
     def initialise(self):
+        super().initialise()
+
         try:
             self.arm_pose_idx = self.bb_write_client.get(self.arm_pose_bb_key)
             assert isinstance(self.arm_pose_idx, int)
@@ -447,6 +451,8 @@ class BtNode_MoveArmSingle(ServiceHandler):
         self.logger.debug(f"Setup MoveArm, reading from {self.arm_pose_bb_key}")
 
     def initialise(self):
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             print(f"🤖 MOCK: Moving arm to position")
@@ -566,6 +572,8 @@ class BtNode_PointTo(ServiceHandler):
         self.logger.debug(f"Setup PointTo, reading from {self.bb_key_persons}")
 
     def initialise(self):
+        super().initialise()
+
         if len(self.blackboard.persons) <= self.target_id:
             self.feedback_message = f"Failed to initialize point_to"
             self.response = None

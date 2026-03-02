@@ -251,6 +251,8 @@ class BtNode_WaitForStart(ServiceHandler):
         self.logger.debug(f"Setup waiting for start")
     
     def initialise(self):
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             self.feedback_message = "MOCK: Wait for start signal received"
@@ -326,6 +328,8 @@ class BtNode_GraspRequest(ServiceHandler):
         """
         Initializes the grasp request and sends the request to the service.
         """
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             import random
@@ -398,6 +402,8 @@ class BtNode_PhraseExtraction(ServiceHandler):
         self.node = None
     
     def initialise(self):
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             # In mock mode, randomly select a word from the wordlist
@@ -459,6 +465,8 @@ class BtNode_TargetExtraction(ServiceHandler):
         self.node = None
     
     def initialise(self):
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             mock_target = "mock_target_phrase"
@@ -505,21 +513,6 @@ class BtNode_GetConfirmation(ServiceHandler):
                  ):
         super(BtNode_GetConfirmation, self).__init__(name, service_name, GetConfirmation)
         self.timeout = timeout
-        self._mock_pressed = False
-        self._mock_input_thread = None
-        self._mock_stop_thread = False
-        self._mock_old_settings = None
-    
-    def _read_key_thread(self):
-        """Background thread to read keyboard input in mock mode."""
-        import sys
-        while not self._mock_stop_thread and not self._mock_pressed:
-            try:
-                ch = sys.stdin.read(1)
-                if ch:
-                    self._mock_pressed = True
-            except Exception:
-                break
     
     def setup(self, **kwargs):
         super().setup(**kwargs)
@@ -527,26 +520,12 @@ class BtNode_GetConfirmation(ServiceHandler):
         self.logger.debug(f"Setup getting confirmation")
     
     def initialise(self):
-        # Handle mock mode - setup keyboard listener
+        super().initialise()
+
+        # Handle mock mode via shared input controller
         if self.mock_mode:
-            import sys
-            import termios
-            import tty
-            import threading
-            
-            self._mock_pressed = False
-            self._mock_stop_thread = False
-            
-            # Save old terminal settings and set to cbreak mode
-            self._mock_old_settings = termios.tcgetattr(sys.stdin)
-            tty.setcbreak(sys.stdin.fileno())
-            
-            self.feedback_message = f"MOCK: Press any key to confirm"
-            print(f"✅ MOCK GET CONFIRMATION: Press any key to confirm (will return SUCCESS)")
-            
-            # Start background thread to read keyboard input
-            self._mock_input_thread = threading.Thread(target=self._read_key_thread, daemon=True)
-            self._mock_input_thread.start()
+            self.feedback_message = "MOCK: Press Enter to confirm"
+            print("✅ MOCK GET CONFIRMATION: Press Enter to confirm (will return SUCCESS)")
             return
             
         request = GetConfirmation.Request()
@@ -555,12 +534,9 @@ class BtNode_GetConfirmation(ServiceHandler):
         self.feedback_message = f"Initialized get confirmation"
 
     def update(self) -> Status:
-        # Handle mock mode - wait for keyboard press
+        # Handle mock mode via shared input controller
         if self.mock_mode:
-            if self._mock_pressed:
-                return pytree.common.Status.SUCCESS
-            else:
-                return pytree.common.Status.RUNNING
+            return self.wait_for_keypress_in_mock()
             
         if self.response is None:
             return pytree.common.Status.FAILURE
@@ -581,18 +557,7 @@ class BtNode_GetConfirmation(ServiceHandler):
             return pytree.common.Status.RUNNING
     
     def terminate(self, new_status: Status) -> None:
-        """Restore terminal settings when behavior terminates in mock mode."""
-        if self.mock_mode:
-            import sys
-            import termios
-            
-            self._mock_stop_thread = True
-            if self._mock_old_settings is not None:
-                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._mock_old_settings)
-                self._mock_old_settings = None
-            if self._mock_input_thread is not None:
-                self._mock_input_thread.join(timeout=0.1)
-                self._mock_input_thread = None
+        super().terminate(new_status)
         
 
 class BtNode_Listen(ServiceHandler):
@@ -612,6 +577,8 @@ class BtNode_Listen(ServiceHandler):
         self.timeout = timeout
     
     def initialise(self):
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             mock_message = "This is a mock speech input message"
@@ -675,6 +642,8 @@ class BtNode_CompareInterest(ServiceHandler):
         self.timeout = timeout
 
     def initialise(self):
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             mock_interest = "robotics and artificial intelligence"
@@ -710,4 +679,3 @@ class BtNode_CompareInterest(ServiceHandler):
         else:
             self.feedback_message = "Still comparing interest..."
             return Status.RUNNING
-

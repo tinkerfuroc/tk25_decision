@@ -1,6 +1,7 @@
 import py_trees
 import py_trees_ros
 import rclpy
+from .visualization import create_post_tick_visualizer
 
 # from .HelpMeCarry.Track import createFollowPerson
 # from .HelpMeCarry.help_me_carry import createHelpMeCarry
@@ -25,288 +26,91 @@ def grasp_intel():
     root = create_demo()
     return root
 
-def store_groceries():
-    rclpy.init(args=None)
 
-    root = createStoreGroceries()
-
-    # make it a ros tree
+def _run_tree(root, *, period_ms: float, title: str):
     tree = py_trees_ros.trees.BehaviourTree(root)
     tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
+    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+        title=title,
+        print_blackboard=PRINT_BLACKBOARD,
+    )
 
     if PRINT_DEBUG:
         py_trees.logging.level = py_trees.logging.Level.DEBUG
-    
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
+
+    tree.tick_tock(period_ms=period_ms, post_tick_handler=print_tree)
 
     try:
         rclpy.spin(tree.node)
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
+        shutdown_visualizer()
         tree.shutdown()
-        rclpy.try_shutdown()    
+        rclpy.try_shutdown()
+
+def store_groceries():
+    rclpy.init(args=None)
+
+    root = createStoreGroceries()
+    _run_tree(root, period_ms=500.0, title="Store Groceries")
 
 def store_groceries_placing_only():
     rclpy.init(args=None)
 
     root = createStoreGroceriesPlaceOnly()
-
-    # make it a ros tree
-    tree = py_trees_ros.trees.BehaviourTree(root)
-    tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
-
-    if PRINT_DEBUG:
-        py_trees.logging.level = py_trees.logging.Level.DEBUG
-    
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
-
-    try:
-        rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        tree.shutdown()
-        rclpy.try_shutdown()    
+    _run_tree(root, period_ms=500.0, title="Store Groceries Placing Only")
 
 def serve_breakfast():
     rclpy.init(args=None)
 
     root = createServeBreakfast()
-
-    # make it a ros tree
-    tree = py_trees_ros.trees.BehaviourTree(root)
-    tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
-
-    if PRINT_DEBUG:
-        py_trees.logging.level = py_trees.logging.Level.DEBUG
-    
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
-
-    try:
-        rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        tree.shutdown()
-        rclpy.try_shutdown()
+    _run_tree(root, period_ms=500.0, title="Serve Breakfast")
 
 
 def grasp_audio():
     rclpy.init(args=None)
 
     root = createGraspAudio()
-
-    # make it a ros tree
-    tree = py_trees_ros.trees.BehaviourTree(root)
-    tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
-
-    if PRINT_DEBUG:
-        py_trees.logging.level = py_trees.logging.Level.DEBUG
-    
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
-
-    try:
-        rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        tree.shutdown()
-        rclpy.try_shutdown()
+    _run_tree(root, period_ms=500.0, title="Grasp Audio")
 
 def receptionist():
     rclpy.init(args=None)
 
     root = createReceptionist()
-
-    # make it a ros tree
-    tree = py_trees_ros.trees.BehaviourTree(root)
-    tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
-
-    if PRINT_DEBUG:
-        py_trees.logging.level = py_trees.logging.Level.DEBUG
-    
-    tree.tick_tock(period_ms=250.0,post_tick_handler=print_tree)
-
-    try:
-        rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        tree.shutdown()
-        rclpy.try_shutdown()
+    _run_tree(root, period_ms=250.0, title="Receptionist")
 
 def help_me_carry():
     rclpy.init(args=None)
 
     root = createHelpMeCarry()
-
-    # make it a ros tree
-    tree = py_trees_ros.trees.BehaviourTree(root)
-    tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
-
-    if PRINT_DEBUG:
-        py_trees.logging.level = py_trees.logging.Level.DEBUG
-    
-    tree.tick_tock(period_ms=200.0,post_tick_handler=print_tree)
-
-    try:
-        rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        tree.shutdown()
-        rclpy.try_shutdown()
+    _run_tree(root, period_ms=200.0, title="Help Me Carry")
 
 
 def test_follow():
     rclpy.init(args=None)
 
     root = createFollowPerson()
-
-    # make it a ros tree
-    tree = py_trees_ros.trees.BehaviourTree(root)
-    tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
-
-    if PRINT_DEBUG:
-        py_trees.logging.level = py_trees.logging.Level.DEBUG
-    
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
-
-    try:
-        rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        tree.shutdown()
-        rclpy.try_shutdown()
+    _run_tree(root, period_ms=500.0, title="Follow")
 
 def test_prompt_reached():
     rclpy.init(args=None)
 
     root = testPromptReached()
-
-    # make it a ros tree
-    tree = py_trees_ros.trees.BehaviourTree(root)
-    tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
-
-    if PRINT_DEBUG:
-        py_trees.logging.level = py_trees.logging.Level.DEBUG
-    
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
-
-    try:
-        rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        tree.shutdown()
-        rclpy.try_shutdown()
+    _run_tree(root, period_ms=500.0, title="Prompt Reached")
 
 
 def inspection():
     rclpy.init(args=None)
 
     root = createInspection()
-
-    # make it a ros tree
-    tree = py_trees_ros.trees.BehaviourTree(root)
-    tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
-
-    if PRINT_DEBUG:
-        py_trees.logging.level = py_trees.logging.Level.DEBUG
-    
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
-
-    try:
-        rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        tree.shutdown()
-        rclpy.try_shutdown()    
+    _run_tree(root, period_ms=500.0, title="Inspection")
 
 def yanglaozhucan():
     rclpy.init(args=None)
 
     root = createYanglaozhucan()
-
-    # make it a ros tree
-    tree = py_trees_ros.trees.BehaviourTree(root)
-    tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
-
-    if PRINT_DEBUG:
-        py_trees.logging.level = py_trees.logging.Level.DEBUG
-    
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
-
-    try:
-        rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        tree.shutdown()
-        rclpy.try_shutdown() 
+    _run_tree(root, period_ms=500.0, title="Yanglaozhucan")
 # def test_follow_audio():
 #     rclpy.init(args=None)
 
@@ -427,29 +231,7 @@ def restaurant():
     rclpy.init(args=None)
 
     root = createRestaurantTask()
-
-    # make it a ros tree
-    tree = py_trees_ros.trees.BehaviourTree(root)
-    tree.setup(node_name="root_node", timeout=15)
-
-    # function for display the tree to standard output
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        if PRINT_BLACKBOARD:
-            print(py_trees.display.unicode_blackboard())
-
-    if PRINT_DEBUG:
-        py_trees.logging.level = py_trees.logging.Level.DEBUG
-    
-    tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
-
-    try:
-        rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        tree.shutdown()
-        rclpy.try_shutdown()
+    _run_tree(root, period_ms=500.0, title="Restaurant")
 
 def draw_restaurant():
     root = createRestaurantTask()

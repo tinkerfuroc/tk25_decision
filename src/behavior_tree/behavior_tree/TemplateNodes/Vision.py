@@ -65,6 +65,8 @@ class BtNode_ScanFor(ServiceHandler):
         """
         Called when the node is visited
         """
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             if self.read:
@@ -188,6 +190,8 @@ class BtNode_TrackPerson(ServiceHandler):
         """
         Called when the node is visited
         """
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             if self.person_id is None:
@@ -314,6 +318,8 @@ class BtNode_FindObj(ServiceHandler):
         """
         Called when the node is visited
         """
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             from behavior_tree.messages import ObjectDetection
@@ -395,6 +401,8 @@ class BtNode_FeatureExtraction(ServiceHandler):
         self.node = None
 
     def initialise(self):
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             print(f"👁️  MOCK: Feature extraction from {self.camera}")
@@ -464,6 +472,8 @@ class BtNode_SeatRecommend(ServiceHandler):
         self.node = None
 
     def initialise(self):
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             print(f"💺 MOCK: Seat recommendation from {self.camera}")
@@ -544,6 +554,8 @@ class BtNode_FeatureMatching(ServiceHandler):
         self.node = None
     
     def initialise(self):
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             print(f"🔍 MOCK: Feature matching from {self.camera}")
@@ -623,6 +635,8 @@ class BtNode_GetPointCloud(ServiceHandler):
         self.node = None
     
     def initialise(self):
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             from sensor_msgs.msg import PointCloud2
@@ -682,6 +696,8 @@ class BtNode_DoorDetection(ServiceHandler):
         self.node = None
     
     def initialise(self):
+        super().initialise()
+
         # Handle mock mode
         if self.mock_mode:
             print(f"🚪 MOCK: Door detection from {self.camera}")

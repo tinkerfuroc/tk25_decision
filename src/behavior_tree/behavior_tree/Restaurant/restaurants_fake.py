@@ -12,6 +12,7 @@ from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_Listen
 from behavior_tree.TemplateNodes.Vision import BtNode_ScanFor
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle, BtNode_Grasp, BtNode_Place, BtNode_GripperAction
+from behavior_tree.visualization import create_post_tick_visualizer
 from .custumNodes import (
     BtNode_DetectCallingCustomer, 
     BtNode_TakeOrder, 
@@ -404,12 +405,12 @@ def main():
     
     tree = py_trees_ros.trees.BehaviourTree(root)
     tree.setup(node_name="restaurant_node", timeout=15)
+    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+        title="Restaurant Demo",
+        print_blackboard=True,
+    )
     
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        print(py_trees.display.unicode_blackboard())
-    
-    py_trees.logging.level = py_trees.logging.Level.DEBUG
+    # py_trees.logging.level = py_trees.logging.Level.DEBUG
     
     tree.tick_tock(period_ms=500.0, post_tick_handler=print_tree)
 
@@ -421,5 +422,6 @@ def main():
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
+        shutdown_visualizer()
         tree.shutdown()
         rclpy.try_shutdown()

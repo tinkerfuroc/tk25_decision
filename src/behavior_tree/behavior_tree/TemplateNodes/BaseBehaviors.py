@@ -6,6 +6,8 @@ from typing import Any
 from behavior_tree.config import (
     is_node_mocked,
     announce_node_action,
+    should_announce_movement,
+    is_mock_tts_active,
     get_node_mock_interaction_mode,
     get_mock_teleop_params,
     get_node_subsystem_name,
@@ -53,6 +55,11 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         self._mock_teleop_detailed_feedback = bool(
             get_mock_teleop_params().get("detailed_feedback", True)
         )
+        self._mock_auto_ticks_required = 2
+        self._mock_tick_counter = 0
+        self._mock_consumer_id = f"{self.__class__.__name__}:{id(self)}"
+        self._mock_start_tick = -1
+        self._mock_start_event = -1
     
     def setup(self, **kwargs):
         print("Setting up service handler %s for node name %s" % (self.service_name, self.name))
@@ -94,6 +101,9 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         self.logger.debug("%s.initialise()" % self.__class__.__name__)
         self._mock_pressed = False
         self._mock_announced = False
+        self._mock_tick_counter = 0
+        self._mock_start_tick = self._mock_input_controller.get_tick_index()
+        self._mock_start_event = self._mock_input_controller.get_event_index()
         # clear data
         with self.data_guard:
             self.msg = None
@@ -120,6 +130,17 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         if not self.mock_mode:
             return None
 
+        if self.mock_interaction_mode == "immediate":
+            self._mock_tick_counter += 1
+            if self._mock_tick_counter <= self._mock_auto_ticks_required:
+                self.feedback_message = f"MOCK: auto-completing ({self._mock_tick_counter}/{self._mock_auto_ticks_required})"
+                return py_trees.common.Status.RUNNING
+            if should_announce_movement(self.__class__.__name__) and is_mock_tts_active():
+                self.feedback_message = "MOCK: waiting for TTS broadcast"
+                return py_trees.common.Status.RUNNING
+            self.feedback_message = "MOCK: auto-complete finished"
+            return py_trees.common.Status.SUCCESS
+
         if self.mock_interaction_mode == "teleop" and self._mock_teleop_node is not None:
             if not self._mock_announced:
                 announce_node_action(self.name, self.__class__.__name__)
@@ -139,7 +160,12 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             announce_node_action(self.name, self.__class__.__name__)
             self._mock_announced = True
             
-        key = self._mock_input_controller.pop_key(self.mock_subsystem)
+        key = self._mock_input_controller.pop_key(
+            self.mock_subsystem,
+            consumer_id=self._mock_consumer_id,
+            consumer_start_tick=self._mock_start_tick,
+            consumer_start_event=self._mock_start_event,
+        )
         if key in ("\n", "\r"):
             self._mock_pressed = True
             return py_trees.common.Status.SUCCESS
@@ -156,7 +182,12 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             )
             self._mock_teleop_node.setup(node=self.node)
             self._mock_teleop_node.set_key_provider(
-                lambda: self._mock_input_controller.pop_key(self.mock_subsystem)
+                lambda: self._mock_input_controller.pop_key(
+                    self.mock_subsystem,
+                    consumer_id=self._mock_consumer_id,
+                    consumer_start_tick=self._mock_start_tick,
+                    consumer_start_event=self._mock_start_event,
+                )
             )
             print(f"MOCK MODE: Using teleop interaction for {self.__class__.__name__}")
         except Exception as exc:

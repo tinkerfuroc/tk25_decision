@@ -48,7 +48,7 @@
         }
       },
       "audio_input": {
-        "enabled": false,
+        "enabled": true,
         "announce_movement": true,
         "description": "Per-node mock mode for audio input nodes (not announcement)",
         "nodes": {
@@ -62,7 +62,7 @@
         }
       },
       "announcement": {
-        "enabled": false,
+        "enabled": true,
         "announce_movement": true,
         "description": "Per-node mock mode for TTS nodes",
         "nodes": {
