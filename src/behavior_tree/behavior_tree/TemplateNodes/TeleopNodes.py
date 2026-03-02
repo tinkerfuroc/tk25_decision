@@ -2,6 +2,7 @@ import select
 import sys
 import termios
 import threading
+import time
 import tty
 
 import py_trees as pytree
@@ -132,26 +133,17 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._print_help()
         self.feedback_message = "Teleop active"
 
-        if self._key_provider is None:
-            if self._input_thread is not None and self._input_thread.is_alive():
-                self._stop_event.set()
-                self._input_thread.join(timeout=0.5)
-                self._stop_event.clear()
+        if self._input_thread is not None and self._input_thread.is_alive():
+            self._stop_event.set()
+            self._input_thread.join(timeout=0.5)
+            self._stop_event.clear()
 
-            self._input_thread = threading.Thread(target=self._input_loop, daemon=True)
-            self._input_thread.start()
+        # Always process teleop input on a dedicated thread so key handling
+        # remains responsive even when BT tick periods are large.
+        self._input_thread = threading.Thread(target=self._input_loop, daemon=True)
+        self._input_thread.start()
 
     def update(self) -> Status:
-        if self._key_provider is not None:
-            key = self._key_provider()
-            if key is not None:
-                if key in ("\n", "\r"):
-                    self._publish_stop()
-                    self._finished = True
-                elif key == "\x03":
-                    self._interrupted = True
-                else:
-                    self._process_key(key)
         if self._interrupted:
             raise KeyboardInterrupt
         if self._finished:
@@ -175,9 +167,17 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
 
     def _input_loop(self) -> None:
         while not self._stop_event.is_set() and not self._finished and not self._interrupted:
-            if not select.select([sys.stdin], [], [], 0.1)[0]:
-                continue
-            key = sys.stdin.read(1)
+            key = None
+            if self._key_provider is not None:
+                key = self._key_provider()
+                if key is None:
+                    time.sleep(0.005)
+                    continue
+            else:
+                if not select.select([sys.stdin], [], [], 0.01)[0]:
+                    continue
+                key = sys.stdin.read(1)
+
             if key in ("\n", "\r"):
                 self._publish_stop()
                 self._finished = True

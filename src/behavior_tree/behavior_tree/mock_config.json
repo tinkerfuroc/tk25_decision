@@ -109,6 +109,7 @@
         "joint_inc": "h"
       },
       "gripper_keymap": {
+        "_comment": "due to xarm api issues, open is actually close, and vice versa",
         "open": "c",
         "close": "b"
       },

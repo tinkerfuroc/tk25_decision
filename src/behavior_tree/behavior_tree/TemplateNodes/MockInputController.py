@@ -210,7 +210,7 @@ class MockInputController:
             with self._lock:
                 if not self._running:
                     return
-            if not select.select([sys.stdin], [], [], 0.05)[0]:
+            if not select.select([sys.stdin], [], [], 0.01)[0]:
                 continue
             try:
                 ch = sys.stdin.read(1)
