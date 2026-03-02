@@ -1,6 +1,13 @@
 {
   "description": "Mock mode configuration for behavior tree nodes",
   "version": "2.0",
+  "force_mock_nodes": {
+    "BtNode_MoveArmTeleop": {
+      "mode": "TELEOP",
+      "subsystem": "mock_controls",
+      "announce_movement": false
+    }
+  },
   "mock_mode": {
     "enabled": true,
     "auto_detect": true,
@@ -69,6 +76,14 @@
           "BtNode_Announce": "KEYPRESS",
           "BtNode_TTSCN": "KEYPRESS"
         }
+      },
+      "mock_controls": {
+        "enabled": true,
+        "announce_movement": false,
+        "description": "Special mocked control-only nodes that always use MockInputController",
+        "nodes": {
+          "BtNode_MoveArmTeleop": "TELEOP"
+        }
       }
     }
   },
@@ -85,7 +100,8 @@
       "manipulation": "m",
       "navigation": "n",
       "audio_input": "z",
-      "announcement": "x"
+      "announcement": "x",
+      "mock_controls": "shift+m"
     },
     "success_key": "ENTER"
   },

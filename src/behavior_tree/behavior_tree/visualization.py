@@ -83,7 +83,6 @@ class BehaviorTreeStatusGUI:
         self._bb_row_by_key: Dict[str, str] = {}
         self._bb_value_cache: Dict[str, str] = {}
         self._pressed_keys: Dict[str, str] = {}
-        self._gui_key_repeat_ms = 8
 
     def start(self) -> bool:
         if not self.enabled:
@@ -239,7 +238,6 @@ class BehaviorTreeStatusGUI:
 
             self._ready.set()
             self._poll_queue()
-            self._repeat_pressed_keys()
             self._root_window.mainloop()
         except Exception as exc:  # pragma: no cover - runtime UI environment issues
             self._window_error = str(exc)
@@ -254,48 +252,65 @@ class BehaviorTreeStatusGUI:
             self._root_window.destroy()
 
     def _event_to_input(self, event) -> Optional[Tuple[str, str]]:
-        if event.keysym in ("Return", "KP_Enter"):
-            return ("__enter__", "\n")
-        ch = event.char
+        keysym = getattr(event, "keysym", "")
+        ks = keysym.lower() if isinstance(keysym, str) else ""
+        token_map = {
+            "shift_l": "shift",
+            "shift_r": "shift",
+            "control_l": "ctrl",
+            "control_r": "ctrl",
+            "alt_l": "alt",
+            "alt_r": "alt",
+            "meta_l": "alt",
+            "meta_r": "alt",
+            "return": "enter",
+            "kp_enter": "enter",
+            "space": "space",
+        }
+        if ks in token_map:
+            return (ks, token_map[ks])
+        ch = getattr(event, "char", "")
         if isinstance(ch, str) and len(ch) > 0:
-            return (event.keysym, ch[0])
-        ks = getattr(event, "keysym", "")
+            token = ch[0].lower()
+            # Ignore non-ascii IME/composition characters in control channel.
+            if ord(token) > 127:
+                return None
+            return (ks if ks else token, token)
         if isinstance(ks, str) and len(ks) == 1:
+            if ord(ks) > 127:
+                return None
             return (ks, ks)
         return None
 
     def _on_keypress(self, event) -> None:
-        if event.state & 0x4:  # Ctrl held
-            return
         resolved = self._event_to_input(event)
         if not resolved:
+            # Defensive clear to recover quickly from IME/dead-key edge cases.
+            self._pressed_keys.clear()
             return
-        key_id, ch = resolved
-        if ch == "\n":
-            self._mock_controller.inject_key(ch, source="gui")
+        key_id, token = resolved
+        # Preserve copy shortcut behavior without forwarding to mock input.
+        if event.state & 0x4 and token == "c":
             return
         if key_id in self._pressed_keys:
             return
-        self._pressed_keys[key_id] = ch
-        self._mock_controller.inject_key(ch, source="gui")
+        self._pressed_keys[key_id] = token
+        self._mock_controller.inject_keys(tuple(self._pressed_keys.values()), source="gui")
 
     def _on_keyrelease(self, event) -> None:
-        key_id = getattr(event, "keysym", None)
-        if not key_id:
+        resolved = self._event_to_input(event)
+        if not resolved:
+            self._pressed_keys.clear()
             return
+        key_id, _ = resolved
         self._pressed_keys.pop(key_id, None)
+        # Reflect release immediately instead of waiting for repeat timer.
+        if self._pressed_keys:
+            self._mock_controller.inject_keys(tuple(self._pressed_keys.values()), source="gui")
 
     def _on_focus_out(self, _event=None) -> None:
         # Avoid stuck "held keys" if release happens outside this window.
         self._pressed_keys.clear()
-
-    def _repeat_pressed_keys(self) -> None:
-        if self._closed.is_set():
-            return
-        for ch in tuple(self._pressed_keys.values()):
-            self._mock_controller.inject_key(ch, source="gui")
-        if self._root_window is not None:
-            self._root_window.after(self._gui_key_repeat_ms, self._repeat_pressed_keys)
 
     def _on_copy_selection(self, _event=None):
         if self._root_window is None:

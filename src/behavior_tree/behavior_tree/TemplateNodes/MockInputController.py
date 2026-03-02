@@ -1,11 +1,7 @@
 import atexit
-import select
-import sys
-import termios
 import threading
-import tty
 from collections import defaultdict, deque
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional, Tuple
 
 
 class MockInputController:
@@ -23,14 +19,16 @@ class MockInputController:
         self._lock = threading.Lock()
         self._queues = defaultdict(deque)
         self._running = False
-        self._thread = None
-        self._old_settings = None
 
         self._start_input_key = "\\"
         self._stop_input_key = "/"
+        self._start_input_combo = frozenset({"\\"})
+        self._stop_input_combo = frozenset({"/"})
         self._subsystem_start_keys = {}
-        self._inverse_subsystem_start_keys = {}
+        self._subsystem_start_combos = {}
+        self._inverse_subsystem_start_combos = {}
         self._success_key = "ENTER"
+        self._success_combo = frozenset({"enter"})
 
         self._input_enabled = False
         self._active_subsystem = None
@@ -44,8 +42,9 @@ class MockInputController:
             ]
         )
         self._dynamic_teleop_reserved_keys = set()
-        self._max_queue_per_subsystem = 8
+        self._max_queue_per_subsystem = 512
         self._last_key = None
+        self._last_keys = ()
         self._last_key_source = None
         self._tick_index = 0
         self._event_id = 0
@@ -57,53 +56,59 @@ class MockInputController:
                 return
             self._start_input_key = cfg.get("start_input_key", "\\")
             self._stop_input_key = cfg.get("stop_input_key", "/")
+            self._start_input_combo = self._parse_combo_spec(self._start_input_key, default=frozenset({"\\"}))
+            self._stop_input_combo = self._parse_combo_spec(self._stop_input_key, default=frozenset({"/"}))
             subsystem_keys = cfg.get("subsystem_start_keys", {})
             dynamic_reserved = cfg.get("teleop_reserved_keys", [])
             if isinstance(dynamic_reserved, list):
-                self._dynamic_teleop_reserved_keys = set(
-                    [k for k in dynamic_reserved if isinstance(k, str) and len(k) == 1]
-                )
+                reserved_tokens = set()
+                for spec in dynamic_reserved:
+                    combo = self._parse_combo_spec(spec, default=frozenset())
+                    reserved_tokens.update(combo)
+                self._dynamic_teleop_reserved_keys = reserved_tokens
             if isinstance(subsystem_keys, dict):
-                sanitized = self._sanitize_subsystem_keys(subsystem_keys)
+                sanitized, combos = self._sanitize_subsystem_keys(subsystem_keys)
                 self._subsystem_start_keys = sanitized
-                self._inverse_subsystem_start_keys = {
-                    value: key for key, value in sanitized.items() if isinstance(value, str)
+                self._subsystem_start_combos = combos
+                self._inverse_subsystem_start_combos = {
+                    combo: subsystem for subsystem, combo in combos.items()
                 }
             self._success_key = cfg.get("success_key", "ENTER")
+            self._success_combo = self._parse_combo_spec(self._success_key, default=frozenset({"enter"}))
 
-    def _sanitize_subsystem_keys(self, subsystem_keys: Dict) -> Dict:
+    def _sanitize_subsystem_keys(self, subsystem_keys: Dict) -> Tuple[Dict, Dict]:
         """
         Keep configured subsystem activation keys as-is (from mock_config.json).
         Only reject invalid/duplicate or global-control-colliding keys.
         """
         used = set()
         sanitized = {}
+        combos = {}
         for subsystem, key in subsystem_keys.items():
-            if not isinstance(key, str) or len(key) != 1:
+            combo = self._parse_combo_spec(key, default=frozenset())
+            if not combo:
                 print(f"[MockInput] ignoring invalid subsystem key for '{subsystem}': {key}")
                 continue
-            if key in used:
+            combo_key = tuple(sorted(combo))
+            if combo_key in used:
                 print(f"[MockInput] ignoring duplicate subsystem key '{key}' for '{subsystem}'")
                 continue
-            if key in (self._start_input_key, self._stop_input_key):
+            if combo in (self._start_input_combo, self._stop_input_combo):
                 print(
                     f"[MockInput] ignoring subsystem key '{key}' for '{subsystem}' "
                     f"because it conflicts with start/stop controls"
                 )
                 continue
             sanitized[subsystem] = key
-            used.add(key)
-        return sanitized
+            combos[subsystem] = combo
+            used.add(combo_key)
+        return sanitized, combos
 
     def start(self):
         with self._lock:
             if self._running:
                 return
             self._running = True
-            self._old_settings = termios.tcgetattr(sys.stdin)
-            tty.setcbreak(sys.stdin.fileno())
-            self._thread = threading.Thread(target=self._loop, daemon=True)
-            self._thread.start()
             if not self._help_printed:
                 self._print_help()
                 self._help_printed = True
@@ -111,16 +116,6 @@ class MockInputController:
     def shutdown(self):
         with self._lock:
             self._running = False
-        if self._thread is not None:
-            self._thread.join(timeout=0.5)
-            self._thread = None
-        with self._lock:
-            if self._old_settings is not None:
-                try:
-                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
-                except Exception:
-                    pass
-                self._old_settings = None
 
     def pop_key(
         self,
@@ -190,11 +185,20 @@ class MockInputController:
 
     def inject_key(self, ch: str, source: str = "gui"):
         """
-        Public API for non-stdin input sources (e.g. GUI) to forward keys.
+        Public API for one-key non-stdin input sources (e.g. GUI).
         """
         if not isinstance(ch, str) or len(ch) == 0:
             return
-        self._handle_key(ch[0], source=source)
+        self.inject_keys((ch[0],), source=source)
+
+    def inject_keys(self, keys: Iterable[str], source: str = "gui"):
+        """
+        Public API for key-combo input sources (GUI only).
+        """
+        combo = self._canonicalize_combo(keys)
+        if not combo:
+            return
+        self._handle_combo(combo, source=source)
 
     def get_status_snapshot(self) -> Dict:
         """
@@ -213,6 +217,7 @@ class MockInputController:
                 "subsystem_start_keys": dict(self._subsystem_start_keys),
                 "queue_sizes": queue_sizes,
                 "last_key": self._last_key,
+                "last_keys": self._last_keys,
                 "last_key_source": self._last_key_source,
                 "tick_index": self._tick_index,
             }
@@ -240,64 +245,35 @@ class MockInputController:
         self._event_id += 1
         return self._event_id
 
-    def _is_teleop_motion_key_locked(self, ch: str) -> bool:
-        return ch in self._teleop_reserved_keys or ch in self._dynamic_teleop_reserved_keys
-
-    def _enqueue_forward_key_locked(self, subsystem: str, event_id: int, ch: str, event_tick: int):
+    def _enqueue_forward_key_locked(self, subsystem: str, event_id: int, combo: Tuple[str, ...], event_tick: int):
         q = self._queues[subsystem]
-        if self._is_teleop_motion_key_locked(ch):
-            # Keep only non-teleop keys + the latest teleop intent.
-            # This avoids long "tails" from stale motion key backlog.
-            if q:
-                retained = deque(item for item in q if not self._is_teleop_motion_key_locked(item[1]))
-                if len(retained) != len(q):
-                    self._queues[subsystem] = retained
-                    q = retained
-        q.append((event_id, ch, event_tick))
+        q.append((event_id, combo, event_tick))
         # Bound queue growth under burst GUI input.
         while len(q) > self._max_queue_per_subsystem:
             q.popleft()
 
-    def _loop(self):
-        while True:
-            with self._lock:
-                if not self._running:
-                    return
-            if not select.select([sys.stdin], [], [], 0.001)[0]:
-                continue
-            # Drain all currently buffered chars in one burst so held-key
-            # repeats are forwarded at full rate.
-            while True:
-                try:
-                    ch = sys.stdin.read(1)
-                except Exception:
-                    break
-                if not ch:
-                    break
-                self._handle_key(ch, source="stdin")
-                if not select.select([sys.stdin], [], [], 0.0)[0]:
-                    break
-
-    def _handle_key(self, ch: str, source: str = "stdin"):
+    def _handle_combo(self, combo: Tuple[str, ...], source: str = "gui"):
         with self._lock:
-            self._last_key = ch
+            self._last_key = combo[-1] if combo else None
+            self._last_keys = combo
             self._last_key_source = source
-            if ch == self._start_input_key:
+            combo_set = frozenset(combo)
+            if combo_set == self._start_input_combo:
                 self._input_enabled = True
                 self._broadcast_all_subsystems = True
                 self._active_subsystem = None
                 print("[MockInput] input forwarding ENABLED for ALL subsystems")
                 return
 
-            if ch == self._stop_input_key:
+            if combo_set == self._stop_input_combo:
                 self._input_enabled = False
                 self._broadcast_all_subsystems = False
                 self._active_subsystem = None
                 print("[MockInput] input forwarding DISABLED for ALL subsystems")
                 return
 
-            if ch in self._inverse_subsystem_start_keys:
-                self._active_subsystem = self._inverse_subsystem_start_keys[ch]
+            if combo_set in self._inverse_subsystem_start_combos:
+                self._active_subsystem = self._inverse_subsystem_start_combos[combo_set]
                 self._input_enabled = True
                 self._broadcast_all_subsystems = False
                 print(f"[MockInput] active subsystem -> {self._active_subsystem}")
@@ -308,13 +284,73 @@ class MockInputController:
                 event_tick = self._tick_index
                 if self._broadcast_all_subsystems:
                     for subsystem in self._subsystem_start_keys.keys():
-                        self._enqueue_forward_key_locked(subsystem, event_id, ch, event_tick)
+                        self._enqueue_forward_key_locked(subsystem, event_id, combo, event_tick)
                 elif self._active_subsystem is not None:
-                    self._enqueue_forward_key_locked(self._active_subsystem, event_id, ch, event_tick)
+                    self._enqueue_forward_key_locked(self._active_subsystem, event_id, combo, event_tick)
+
+    def is_success_event(self, event) -> bool:
+        combo = self._coerce_event_to_frozenset(event)
+        return bool(combo) and combo == self._success_combo
+
+    def _coerce_event_to_frozenset(self, event) -> frozenset:
+        if event is None:
+            return frozenset()
+        if isinstance(event, str):
+            return self._parse_combo_spec(event, default=frozenset())
+        if isinstance(event, (tuple, list, set, frozenset)):
+            return frozenset(self._canonicalize_combo(event))
+        return frozenset()
+
+    def _parse_combo_spec(self, spec, default: frozenset) -> frozenset:
+        if isinstance(spec, str):
+            raw = spec.strip()
+            if not raw:
+                return default
+            parts = [p.strip() for p in raw.split("+") if p.strip()]
+            return frozenset(self._normalize_token(p) for p in parts if self._normalize_token(p))
+        if isinstance(spec, (tuple, list, set, frozenset)):
+            normalized = [self._normalize_token(str(p)) for p in spec]
+            normalized = [n for n in normalized if n]
+            return frozenset(normalized) if normalized else default
+        return default
+
+    def _canonicalize_combo(self, keys: Iterable[str]) -> Tuple[str, ...]:
+        normalized = []
+        for token in keys:
+            n = self._normalize_token(token)
+            if n:
+                normalized.append(n)
+        if not normalized:
+            return ()
+        unique = sorted(set(normalized))
+        return tuple(unique)
+
+    def _normalize_token(self, token: str) -> str:
+        if token is None:
+            return ""
+        t = str(token).strip().lower()
+        alias = {
+            "return": "enter",
+            "kp_enter": "enter",
+            "\\n": "enter",
+            "\n": "enter",
+            "\\r": "enter",
+            "\r": "enter",
+            "control": "ctrl",
+            "control_l": "ctrl",
+            "control_r": "ctrl",
+            "shift_l": "shift",
+            "shift_r": "shift",
+            "alt_l": "alt",
+            "alt_r": "alt",
+            "spacebar": "space",
+            " ": "space",
+        }
+        return alias.get(t, t)
 
     def _print_help(self):
         print("")
-        print("[MockInput] controls:")
+        print("[MockInput] controls (GUI input only):")
         print(f"  enable input forwarding: '{self._start_input_key}'")
         print(f"  disable input forwarding: '{self._stop_input_key}'")
         if self._subsystem_start_keys:

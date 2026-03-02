@@ -297,7 +297,7 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             consumer_start_tick=self._mock_start_tick,
             consumer_start_event=self._mock_start_event,
         )
-        if key in ("\n", "\r"):
+        if self._mock_input_controller.is_success_event(key):
             self._mock_pressed = True
             return py_trees.common.Status.SUCCESS
         return py_trees.common.Status.RUNNING

@@ -126,6 +126,7 @@ class BehaviorTreeConfig:
     def _get_default_config(self) -> dict:
         """Return default configuration."""
         return {
+            "force_mock_nodes": {},
             "mock_mode": {
                 "enabled": True,
                 "auto_detect": True,
@@ -134,7 +135,8 @@ class BehaviorTreeConfig:
                     "manipulation": {"enabled": True, "nodes": {}},
                     "navigation": {"enabled": True, "nodes": {}},
                     "audio_input": {"enabled": True, "nodes": {}},
-                    "announcement": {"enabled": False, "nodes": {}}
+                    "announcement": {"enabled": False, "nodes": {}},
+                    "mock_controls": {"enabled": True, "nodes": {}}
                 }
             },
             "keyboard_control": {"enabled": True},
@@ -146,7 +148,8 @@ class BehaviorTreeConfig:
                     "manipulation": ";",
                     "navigation": "'",
                     "audio_input": "`",
-                    "announcement": "q"
+                    "announcement": "q",
+                    "mock_controls": "shift+m"
                 },
                 "success_key": "ENTER"
             },
@@ -160,12 +163,34 @@ class BehaviorTreeConfig:
         """Normalize a configured node mode into internal mode values."""
         if isinstance(mode_value, str):
             key = mode_value.strip().upper()
-            return NODE_MOCK_MODE_MAP.get(key, "wait_keypress")
+        return NODE_MOCK_MODE_MAP.get(key, "wait_keypress")
         if isinstance(mode_value, bool):
             return "wait_keypress" if mode_value else "no_mock"
         if isinstance(mode_value, (int, float)):
             return "wait_keypress" if mode_value else "no_mock"
         return "wait_keypress"
+
+    def _get_forced_node_entry(self, node_class_name: str) -> Tuple[Optional[str], object, bool]:
+        """
+        Returns (subsystem_name, raw_mode_value, announce_movement)
+        for nodes that must be mocked regardless of global settings.
+        """
+        forced = self._mock_config.get("force_mock_nodes", {})
+        if not isinstance(forced, dict):
+            return None, None, False
+        if node_class_name not in forced:
+            return None, None, False
+        entry = forced[node_class_name]
+        if isinstance(entry, dict):
+            subsystem = entry.get("subsystem", "forced_mock")
+            mode = entry.get("mode", "KEYPRESS")
+            announce = bool(entry.get("announce_movement", False))
+            return subsystem, mode, announce
+        if isinstance(entry, str):
+            return "forced_mock", entry, False
+        if isinstance(entry, bool):
+            return "forced_mock", ("KEYPRESS" if entry else "NO_MOCK"), False
+        return "forced_mock", "KEYPRESS", False
 
     def _find_node_subsystem_entry(self, node_class_name: str) -> Tuple[Optional[str], Optional[dict], object]:
         """
@@ -188,6 +213,9 @@ class BehaviorTreeConfig:
 
     def get_node_subsystem_name(self, node_class_name: str) -> Optional[str]:
         """Get subsystem name that owns this node class."""
+        forced_subsystem, forced_mode, _ = self._get_forced_node_entry(node_class_name)
+        if forced_subsystem is not None and self._normalize_node_mode(forced_mode) != "no_mock":
+            return forced_subsystem
         subsystem_name, _, _ = self._find_node_subsystem_entry(node_class_name)
         return subsystem_name
     
@@ -294,7 +322,11 @@ class BehaviorTreeConfig:
         Returns:
             True if the node should be mocked
         """
-        # If global mock mode is off, nothing is mocked
+        forced_subsystem, forced_mode, _ = self._get_forced_node_entry(node_class_name)
+        if forced_subsystem is not None:
+            return self._normalize_node_mode(forced_mode) != "no_mock"
+
+        # If global mock mode is off, nothing else is mocked
         if not self.is_mock_mode():
             return False
         
@@ -319,6 +351,10 @@ class BehaviorTreeConfig:
         Returns:
             True if movements should be announced
         """
+        forced_subsystem, forced_mode, forced_announce = self._get_forced_node_entry(node_class_name)
+        if forced_subsystem is not None and self._normalize_node_mode(forced_mode) != "no_mock":
+            return forced_announce
+
         if not self.is_mock_mode():
             return False
         
@@ -342,6 +378,13 @@ class BehaviorTreeConfig:
         - 'wait_keypress': wait for any keypress before succeeding
         - 'immediate': return success immediately in mock mode
         """
+        forced_subsystem, forced_mode, _ = self._get_forced_node_entry(node_class_name)
+        if forced_subsystem is not None:
+            mode = self._normalize_node_mode(forced_mode)
+            if mode == "wait_keypress" and not self.should_use_keyboard_control():
+                return "immediate"
+            return mode
+
         if not self.is_mock_mode():
             return "no_mock"
 
@@ -403,13 +446,13 @@ class BehaviorTreeConfig:
         if isinstance(teleop_params, dict):
             twist_keymap = teleop_params.get("twist_keymap", {})
             if isinstance(twist_keymap, dict):
-                reserved_keys.extend([k for k in twist_keymap.keys() if isinstance(k, str) and len(k) == 1])
+                reserved_keys.extend([k for k in twist_keymap.keys() if isinstance(k, str)])
             joint_keymap = teleop_params.get("joint_keymap", {})
             if isinstance(joint_keymap, dict):
                 for _, entry in joint_keymap.items():
                     if isinstance(entry, dict):
                         for k in (entry.get("pos"), entry.get("neg")):
-                            if isinstance(k, str) and len(k) == 1:
+                            if isinstance(k, str):
                                 reserved_keys.append(k)
             speed_keymap = teleop_params.get("speed_control_keymap", {})
             if isinstance(speed_keymap, dict):
@@ -422,15 +465,15 @@ class BehaviorTreeConfig:
                     "joint_inc",
                 ):
                     k = speed_keymap.get(action_key)
-                    if isinstance(k, str) and len(k) == 1:
+                    if isinstance(k, str):
                         reserved_keys.append(k)
             gripper_keymap = teleop_params.get("gripper_keymap", {})
             if isinstance(gripper_keymap, dict):
                 for action_key in ("open", "close"):
                     k = gripper_keymap.get(action_key)
-                    if isinstance(k, str) and len(k) == 1:
+                    if isinstance(k, str):
                         reserved_keys.append(k)
-            for k in (" ",):
+            for k in ("space",):
                 reserved_keys.append(k)
         return {
             "start_input_key": cfg.get("start_input_key", "\\"),
