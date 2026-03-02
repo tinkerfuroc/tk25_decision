@@ -7,12 +7,15 @@ from behavior_tree.config import (
     announce_node_action,
     get_node_mock_interaction_mode,
     get_mock_teleop_params,
+    get_node_subsystem_name,
+    get_mock_keyboard_config,
 )
 import rclpy.action
 import time
 import sys
 import tty
 import termios
+from .MockInputController import get_mock_input_controller
 from py_trees_ros import exceptions
 import sys
 import tty
@@ -39,11 +42,14 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         # Check if this specific node should be mocked
         self.mock_mode = is_node_mocked(self.__class__.__name__)
         self.mock_interaction_mode = get_node_mock_interaction_mode(self.__class__.__name__)
+        self.mock_subsystem = get_node_subsystem_name(self.__class__.__name__)
         
         # For mock mode keyboard press
         self._mock_pressed = False
+        self._mock_announced = False
         self._old_settings = None
         self._mock_teleop_node = None
+        self._mock_input_controller = get_mock_input_controller()
         
         if key is not None:
             self.blackboard = self.attach_blackboard_client(name=self.name)
@@ -90,6 +96,8 @@ class ActionHandler(py_trees.behaviour.Behaviour):
 
         # Skip creating action client in mock mode
         if self.mock_mode:
+            self._mock_input_controller.configure(get_mock_keyboard_config())
+            self._mock_input_controller.start()
             if self.mock_interaction_mode == "teleop":
                 self._setup_mock_teleop_node()
             print(f"MOCK MODE: Skipping action client creation for {self.action_name}")
@@ -192,6 +200,7 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         """
         self.logger.debug("{}.initialise()".format(self.qualified_name))
         self._mock_pressed = False
+        self._mock_announced = False
 
         # initialise some temporary variables
         self.goal_handle = None
@@ -240,35 +249,19 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             return None
 
         if self.mock_interaction_mode == "teleop" and self._mock_teleop_node is not None:
-            if not self._mock_pressed:
+            if not self._mock_announced:
                 announce_node_action(self.name, self.__class__.__name__)
-                self._mock_pressed = True
+                self._mock_announced = True
             return self._mock_teleop_node.update()
-        if self.mock_interaction_mode == "immediate":
-            return py_trees.common.Status.SUCCESS
         
-        # Announce on first call (when _mock_pressed is False and _old_settings is None)
-        if not self._mock_pressed and self._old_settings is None:
+        if not self._mock_announced:
             announce_node_action(self.name, self.__class__.__name__)
+            self._mock_announced = True
             
-        if self._mock_pressed:
-            return py_trees.common.Status.SUCCESS
-            
-        # Setup terminal for non-blocking input on first call
-        if self._old_settings is None:
-            self._old_settings = termios.tcgetattr(sys.stdin)
-            tty.setcbreak(sys.stdin.fileno())
-        
-        # Check if key is pressed (non-blocking)
-        import select
-        if select.select([sys.stdin], [], [], 0)[0]:
-            sys.stdin.read(1)
+        key = self._mock_input_controller.pop_key(self.mock_subsystem)
+        if key in ("\n", "\r"):
             self._mock_pressed = True
-            # Restore terminal settings
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
-            self._old_settings = None
             return py_trees.common.Status.SUCCESS
-        
         return py_trees.common.Status.RUNNING
 
     def _setup_mock_teleop_node(self):
@@ -281,6 +274,9 @@ class ActionHandler(py_trees.behaviour.Behaviour):
                 **teleop_params,
             )
             self._mock_teleop_node.setup(node=self.node)
+            self._mock_teleop_node.set_key_provider(
+                lambda: self._mock_input_controller.pop_key(self.mock_subsystem)
+            )
             print(f"MOCK MODE: Using teleop interaction for {self.__class__.__name__}")
         except Exception as exc:
             self._mock_teleop_node = None

@@ -74,6 +74,14 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._stop_event = threading.Event()
         self._finished = False
         self._interrupted = False
+        self._key_provider = None
+
+    def set_key_provider(self, provider):
+        """
+        Inject external non-blocking key provider.
+        Provider must return one character or None.
+        """
+        self._key_provider = provider
 
     def setup(self, **kwargs):
         try:
@@ -100,7 +108,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._interrupted = False
         self._stop_event.clear()
 
-        if self._old_settings is None:
+        if self._key_provider is None and self._old_settings is None:
             self._old_settings = termios.tcgetattr(sys.stdin)
             tty.setcbreak(sys.stdin.fileno())
 
@@ -108,15 +116,26 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._print_help()
         self.feedback_message = "Teleop active"
 
-        if self._input_thread is not None and self._input_thread.is_alive():
-            self._stop_event.set()
-            self._input_thread.join(timeout=0.5)
-            self._stop_event.clear()
+        if self._key_provider is None:
+            if self._input_thread is not None and self._input_thread.is_alive():
+                self._stop_event.set()
+                self._input_thread.join(timeout=0.5)
+                self._stop_event.clear()
 
-        self._input_thread = threading.Thread(target=self._input_loop, daemon=True)
-        self._input_thread.start()
+            self._input_thread = threading.Thread(target=self._input_loop, daemon=True)
+            self._input_thread.start()
 
     def update(self) -> Status:
+        if self._key_provider is not None:
+            key = self._key_provider()
+            if key is not None:
+                if key in ("\n", "\r"):
+                    self._publish_stop()
+                    self._finished = True
+                elif key == "\x03":
+                    self._interrupted = True
+                else:
+                    self._process_key(key)
         if self._interrupted:
             raise KeyboardInterrupt
         if self._finished:

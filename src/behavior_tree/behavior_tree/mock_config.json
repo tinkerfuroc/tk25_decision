@@ -76,6 +76,19 @@
     "enabled": true,
     "description": "When false, KEYPRESS mode degrades to IMMEDIATE"
   },
+  "mock_keyboard": {
+    "description": "Shared keyboard router for all mock nodes. Select subsystem first, then Enter is success key.",
+    "start_input_key": "\\",
+    "stop_input_key": "/",
+    "subsystem_start_keys": {
+      "vision": "p",
+      "manipulation": ";",
+      "navigation": "'",
+      "audio_input": "`",
+      "announcement": "q"
+    },
+    "success_key": "ENTER"
+  },
   "teleop": {
     "params": {
       "dof": 7,
@@ -83,9 +96,9 @@
       "joint_command_in_topic": "/servo_server/delta_joint_cmds",
       "gripper_command_in_topic": "/gripper_servo_cmd",
       "command_frame": "link_base",
-      "linear_speed": 0.6,
-      "angular_speed": 0.6,
-      "joint_speed": 1.0
+      "linear_speed": 0.1,
+      "angular_speed": 0.1,
+      "joint_speed": 0.2
     }
   },
   "logging": {

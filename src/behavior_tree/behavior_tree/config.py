@@ -134,6 +134,18 @@ class BehaviorTreeConfig:
                 }
             },
             "keyboard_control": {"enabled": True},
+            "mock_keyboard": {
+                "start_input_key": "\\",
+                "stop_input_key": "/",
+                "subsystem_start_keys": {
+                    "vision": "p",
+                    "manipulation": ";",
+                    "navigation": "'",
+                    "audio_input": "`",
+                    "announcement": "q"
+                },
+                "success_key": "ENTER"
+            },
             "teleop": {
                 "params": {}
             },
@@ -169,6 +181,11 @@ class BehaviorTreeConfig:
                 if node_class_name in nodes_cfg:
                     return subsystem_name, subsystem_config, "KEYPRESS"
         return None, None, None
+
+    def get_node_subsystem_name(self, node_class_name: str) -> Optional[str]:
+        """Get subsystem name that owns this node class."""
+        subsystem_name, _, _ = self._find_node_subsystem_entry(node_class_name)
+        return subsystem_name
     
     def has_dependency(self, package_name: str) -> bool:
         """
@@ -365,6 +382,22 @@ class BehaviorTreeConfig:
         if isinstance(params, dict):
             return _normalize_teleop_params(params)
         return {}
+
+    def get_mock_keyboard_config(self) -> Dict:
+        """Get keyboard routing config for mock input controller."""
+        self._maybe_reload_config()
+        cfg = self._mock_config.get("mock_keyboard", {})
+        if not isinstance(cfg, dict):
+            return {}
+        subsystem_keys = cfg.get("subsystem_start_keys", {})
+        if not isinstance(subsystem_keys, dict):
+            subsystem_keys = {}
+        return {
+            "start_input_key": cfg.get("start_input_key", "\\"),
+            "stop_input_key": cfg.get("stop_input_key", "/"),
+            "subsystem_start_keys": subsystem_keys,
+            "success_key": cfg.get("success_key", "ENTER"),
+        }
     
     def should_print_mock_operations(self) -> bool:
         """Check if mock operations should be printed."""
@@ -456,6 +489,16 @@ def get_node_mock_interaction_mode(node_class_name: str) -> str:
 def get_mock_teleop_params() -> Dict:
     """Get BtNode_MoveArmTeleop kwargs configured for mock interaction."""
     return _config.get_mock_teleop_params()
+
+
+def get_node_subsystem_name(node_class_name: str) -> Optional[str]:
+    """Get subsystem name for the given node class."""
+    return _config.get_node_subsystem_name(node_class_name)
+
+
+def get_mock_keyboard_config() -> Dict:
+    """Get mock keyboard routing config."""
+    return _config.get_mock_keyboard_config()
 
 
 def should_announce_movement(node_class_name: str) -> bool:
