@@ -43,6 +43,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         speed_control_keymap: dict = None,
         gripper_keymap: dict = None,
         stop_key: str = None,
+        verbose_key_log: bool = None,
     ):
         super().__init__(name=name)
         cfg = get_mock_teleop_params()
@@ -104,7 +105,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._finished = False
         self._interrupted = False
         self._key_provider = None
-        self._verbose_key_log = bool(cfg.get("verbose_key_log", False))
+        self._verbose_key_log = bool(_resolve(verbose_key_log, "verbose_key_log", False))
         self._mock_input_controller = get_mock_input_controller()
         self._forced_mock_mode = is_node_mocked(self.__class__.__name__)
         self._mock_subsystem = get_node_subsystem_name(self.__class__.__name__) or "mock_controls"

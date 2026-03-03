@@ -60,6 +60,7 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self._mock_consumer_id = f"{self.__class__.__name__}:{id(self)}"
         self._mock_start_tick = -1
         self._mock_start_event = -1
+        self._mock_teleop_setup_error = None
         
         if key is not None:
             self.blackboard = self.attach_blackboard_client(name=self.name)
@@ -110,6 +111,16 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             self._mock_input_controller.start()
             if self.mock_interaction_mode == "teleop":
                 self._setup_mock_teleop_node()
+                if self._mock_teleop_node is None:
+                    warn = (
+                        f"MOCK TELEOP SETUP FAILED [{self.__class__.__name__}/{self.name}]: "
+                        f"{self._mock_teleop_setup_error or 'unknown error'}. "
+                        "Falling back to wait_keypress."
+                    )
+                    self.feedback_message = warn
+                    print(f"⚠ {warn}")
+                    if self.node is not None:
+                        self.node.get_logger().warning(warn)
             print(f"MOCK MODE: Skipping action client creation for {self.action_name}")
             return
         
@@ -231,6 +242,15 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self.feedback_timeout = 10000.0
         if self.mock_mode and self.mock_interaction_mode == "teleop" and self._mock_teleop_node is not None:
             self._mock_teleop_node.initialise()
+        elif self.mock_mode and self.mock_interaction_mode == "teleop":
+            warn = (
+                f"MOCK TELEOP INIT WARNING [{self.__class__.__name__}/{self.name}]: "
+                "teleop backend is unavailable; node is running in wait_keypress fallback."
+            )
+            self.feedback_message = warn
+            print(f"⚠ {warn}")
+            if self.node is not None:
+                self.node.get_logger().warning(warn)
         
         # In mock mode, set result_status to SUCCESS immediately
         if self.mock_mode:
@@ -324,11 +344,15 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             print(f"MOCK MODE: Using teleop interaction for {self.__class__.__name__}")
         except Exception as exc:
             self._mock_teleop_node = None
+            self._mock_teleop_setup_error = str(exc)
             self.mock_interaction_mode = "wait_keypress"
-            print(
-                f"WARNING: Failed to initialize teleop mock for {self.__class__.__name__}: {exc}. "
+            warn = (
+                f"Failed to initialize teleop mock for {self.__class__.__name__}/{self.name}: {exc}. "
                 "Falling back to wait_keypress."
             )
+            print(f"⚠ WARNING: {warn}")
+            if self.node is not None:
+                self.node.get_logger().warning(warn)
 
     def update(self):
         """
