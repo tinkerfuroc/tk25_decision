@@ -116,6 +116,11 @@
       "linear_speed": 0.1,
       "angular_speed": 0.1,
       "joint_speed": 0.2,
+      "gripper_width_min_cm": 0.0,
+      "gripper_width_max_cm": 8.0,
+      "gripper_width_step_cm": 0.5,
+      "gripper_initial_width_cm": 8.0,
+      "gripper_hw_inverted": true,
       "stop_key": "p",
       "speed_control_keymap": {
         "linear_dec": "r",
@@ -126,9 +131,11 @@
         "joint_inc": "h"
       },
       "gripper_keymap": {
-        "_comment": "due to xarm api issues, open is actually close, and vice versa",
-        "open": "c",
-        "close": "b"
+        "_comment": "Four controls: width+/width- and instant open/close.",
+        "width_inc": "z",
+        "width_dec": "x",
+        "open": "v",
+        "close": "c"
       },
       "twist_keymap": {
         "w": "linear_x_pos",

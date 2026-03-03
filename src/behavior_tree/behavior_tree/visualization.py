@@ -66,6 +66,11 @@ class BehaviorTreeStatusGUI:
         self._bb_table = None
         self._mock_static_text = None
         self._mock_dynamic_text = None
+        self._teleop_live_table = None
+        self._teleop_controls_table = None
+        self._teleop_panel_frame = None
+        self._main_pane = None
+        self._show_teleop_panel = None
         self._first_node_render = True
         self._mock_controller = get_mock_input_controller()
         self._tree_body_font = None
@@ -91,6 +96,10 @@ class BehaviorTreeStatusGUI:
         self._gui_stuck_key_timeout_s = 0.8
         self._gui_wait_single_key_timeout_s = 0.6
         self._gui_release_grace_s = 0.04
+        self._last_teleop_live_render = ""
+        self._last_teleop_controls_render = ""
+        self._teleop_live_row_by_key: Dict[str, str] = {}
+        self._teleop_controls_row_by_key: Dict[str, str] = {}
 
     def start(self) -> bool:
         if not self.enabled:
@@ -150,8 +159,25 @@ class BehaviorTreeStatusGUI:
             self._root_window.bind_all("<Control-c>", self._on_copy_selection)
             self._root_window.bind_all("<Control-C>", self._on_copy_selection)
 
-            root_split = ttk.Panedwindow(self._root_window, orient=tk.VERTICAL)
-            root_split.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+            topbar = ttk.Frame(self._root_window)
+            topbar.pack(fill=tk.X, padx=8, pady=(8, 0))
+            ttk.Label(topbar, text="View").pack(side=tk.LEFT)
+            self._show_teleop_panel = tk.BooleanVar(value=False)
+            ttk.Checkbutton(
+                topbar,
+                text="Teleop Sidebar",
+                variable=self._show_teleop_panel,
+                command=self._toggle_teleop_panel,
+            ).pack(side=tk.RIGHT)
+
+            self._main_pane = ttk.Panedwindow(self._root_window, orient=tk.HORIZONTAL)
+            self._main_pane.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+            left_area = ttk.Frame(self._main_pane)
+            self._main_pane.add(left_area, weight=5)
+
+            root_split = ttk.Panedwindow(left_area, orient=tk.VERTICAL)
+            root_split.pack(fill=tk.BOTH, expand=True)
 
             container = ttk.Panedwindow(root_split, orient=tk.HORIZONTAL)
             root_split.add(container, weight=5)
@@ -160,8 +186,64 @@ class BehaviorTreeStatusGUI:
             bb_frame = ttk.Labelframe(container, text="Blackboard", padding=8)
             container.add(node_frame, weight=3)
             container.add(bb_frame, weight=2)
+
             mock_frame = ttk.Labelframe(root_split, text="Mock Mode Status / Input", padding=8)
             root_split.add(mock_frame, weight=1)
+
+            teleop_panel = ttk.Labelframe(self._main_pane, text="Teleop Monitor", padding=8)
+            self._teleop_panel_frame = teleop_panel
+            teleop_split = ttk.Panedwindow(teleop_panel, orient=tk.VERTICAL)
+            teleop_split.pack(fill=tk.BOTH, expand=True)
+            teleop_live_frame = ttk.Labelframe(teleop_split, text="Realtime State", padding=6)
+            teleop_controls_frame = ttk.Labelframe(teleop_split, text="Control Keys", padding=6)
+            teleop_split.add(teleop_live_frame, weight=2)
+            teleop_split.add(teleop_controls_frame, weight=3)
+
+            teleop_live_table_frame = ttk.Frame(teleop_live_frame)
+            teleop_live_table_frame.pack(fill=tk.BOTH, expand=True)
+            self._teleop_live_table = ttk.Treeview(
+                teleop_live_table_frame,
+                columns=("field", "value"),
+                show="headings",
+                selectmode="browse",
+            )
+            self._teleop_live_table.heading("field", text="Field")
+            self._teleop_live_table.heading("value", text="Value")
+            self._teleop_live_table.column("field", width=180, minwidth=120, anchor=tk.W, stretch=False)
+            self._teleop_live_table.column("value", width=520, minwidth=200, anchor=tk.W, stretch=True)
+            self._teleop_live_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            teleop_live_scroll_y = ttk.Scrollbar(teleop_live_table_frame, orient=tk.VERTICAL, command=self._teleop_live_table.yview)
+            teleop_live_scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+            teleop_live_scroll_x = ttk.Scrollbar(teleop_live_frame, orient=tk.HORIZONTAL, command=self._teleop_live_table.xview)
+            teleop_live_scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+            self._teleop_live_table.configure(yscrollcommand=teleop_live_scroll_y.set, xscrollcommand=teleop_live_scroll_x.set)
+
+            teleop_controls_table_frame = ttk.Frame(teleop_controls_frame)
+            teleop_controls_table_frame.pack(fill=tk.BOTH, expand=True)
+            self._teleop_controls_table = ttk.Treeview(
+                teleop_controls_table_frame,
+                columns=("group", "action", "keys"),
+                show="headings",
+                selectmode="browse",
+            )
+            self._teleop_controls_table.heading("group", text="Group")
+            self._teleop_controls_table.heading("action", text="Action")
+            self._teleop_controls_table.heading("keys", text="Keys")
+            self._teleop_controls_table.column("group", width=130, minwidth=80, anchor=tk.W, stretch=False)
+            self._teleop_controls_table.column("action", width=220, minwidth=140, anchor=tk.W, stretch=False)
+            self._teleop_controls_table.column("keys", width=420, minwidth=220, anchor=tk.W, stretch=True)
+            self._teleop_controls_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            teleop_controls_scroll_y = ttk.Scrollbar(
+                teleop_controls_table_frame, orient=tk.VERTICAL, command=self._teleop_controls_table.yview
+            )
+            teleop_controls_scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+            teleop_controls_scroll_x = ttk.Scrollbar(
+                teleop_controls_frame, orient=tk.HORIZONTAL, command=self._teleop_controls_table.xview
+            )
+            teleop_controls_scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+            self._teleop_controls_table.configure(
+                yscrollcommand=teleop_controls_scroll_y.set, xscrollcommand=teleop_controls_scroll_x.set
+            )
 
             node_table = ttk.Frame(node_frame)
             node_table.pack(fill=tk.BOTH, expand=True)
@@ -262,6 +344,17 @@ class BehaviorTreeStatusGUI:
         self._pending_release_at.clear()
         if self._root_window is not None:
             self._root_window.destroy()
+
+    def _toggle_teleop_panel(self) -> None:
+        if self._main_pane is None or self._teleop_panel_frame is None or self._show_teleop_panel is None:
+            return
+        try:
+            if self._show_teleop_panel.get():
+                self._main_pane.add(self._teleop_panel_frame, weight=2)
+            else:
+                self._main_pane.forget(self._teleop_panel_frame)
+        except Exception:
+            pass
 
     def _event_to_input(self, event) -> Optional[Tuple[str, str]]:
         keysym = getattr(event, "keysym", "")
@@ -424,6 +517,18 @@ class BehaviorTreeStatusGUI:
                 item = self._bb_table.item(selected[0])
                 values = item.get("values", [])
                 text_to_copy = "\t".join([str(v) for v in values])
+        elif widget == self._teleop_live_table and self._teleop_live_table is not None:
+            selected = self._teleop_live_table.selection()
+            if selected:
+                item = self._teleop_live_table.item(selected[0])
+                values = item.get("values", [])
+                text_to_copy = "\t".join([str(v) for v in values])
+        elif widget == self._teleop_controls_table and self._teleop_controls_table is not None:
+            selected = self._teleop_controls_table.selection()
+            if selected:
+                item = self._teleop_controls_table.item(selected[0])
+                values = item.get("values", [])
+                text_to_copy = "\t".join([str(v) for v in values])
         elif isinstance(widget, tk.Text):
             try:
                 text_to_copy = widget.get("sel.first", "sel.last")
@@ -454,7 +559,8 @@ class BehaviorTreeStatusGUI:
             self._log_state_changes(node_snapshots, blackboard_data)
             self._render_nodes(node_snapshots)
             self._render_blackboard(blackboard_data)
-            self._render_mock_status()
+        self._render_mock_status()
+        self._render_teleop_status()
 
         if self._root_window is not None:
             self._root_window.after(33, self._poll_queue)
@@ -645,6 +751,141 @@ class BehaviorTreeStatusGUI:
         self._mock_dynamic_text.insert(tk.END, dynamic_text)
         self._mock_dynamic_text.configure(state=tk.DISABLED)
         self._log_mock_runtime_change(dynamic_text)
+
+    def _render_teleop_status(self) -> None:
+        if self._teleop_live_table is None or self._teleop_controls_table is None:
+            return
+        data = self._mock_controller.get_teleop_feedback_snapshot()
+        speeds = data.get("speeds", {}) if isinstance(data.get("speeds"), dict) else {}
+        tokens = data.get("tokens", []) if isinstance(data.get("tokens"), list) else []
+        twist = data.get("twist")
+        joints = data.get("joints", [])
+        live_rows = [
+            ("active", "YES" if data.get("active") else "NO"),
+            ("node", str(data.get("node_name") or "-")),
+            ("message", str(data.get("message") or "-")),
+            ("note", str(data.get("note") or "-")),
+            ("tokens", ", ".join(tokens) if tokens else "-"),
+            ("linear_speed", f"{float(speeds.get('linear', 0.0)):.3f}"),
+            ("angular_speed", f"{float(speeds.get('angular', 0.0)):.3f}"),
+            ("joint_speed", f"{float(speeds.get('joint', 0.0)):.3f}"),
+            ("gripper_width_cm", f"{float(speeds.get('gripper_width_cm', 0.0)):.3f}"),
+        ]
+        if isinstance(twist, list) and len(twist) == 6:
+            live_rows.extend(
+                [
+                    ("twist_linear_x", f"{float(twist[0]):.3f}"),
+                    ("twist_linear_y", f"{float(twist[1]):.3f}"),
+                    ("twist_linear_z", f"{float(twist[2]):.3f}"),
+                    ("twist_angular_x", f"{float(twist[3]):.3f}"),
+                    ("twist_angular_y", f"{float(twist[4]):.3f}"),
+                    ("twist_angular_z", f"{float(twist[5]):.3f}"),
+                ]
+            )
+        else:
+            live_rows.append(("last_twist", "-"))
+        if isinstance(joints, list) and joints:
+            for joint in joints:
+                if not isinstance(joint, dict):
+                    continue
+                live_rows.append(
+                    (f"joint_{joint.get('name', '?')}", f"{float(joint.get('velocity', 0.0)):.3f}")
+                )
+        else:
+            live_rows.append(("last_joints", "-"))
+
+        controls = data.get("controls", {}) if isinstance(data.get("controls"), dict) else {}
+        speed = controls.get("speed", {}) if isinstance(controls.get("speed"), dict) else {}
+        control_rows = [
+            ("global", "finish", str(controls.get("finish", "enter"))),
+            ("global", "stop", str(controls.get("stop", "-"))),
+            (
+                "gripper",
+                "width +/-",
+                f"{controls.get('gripper_width_inc', '-')} / {controls.get('gripper_width_dec', '-')}",
+            ),
+            (
+                "gripper",
+                "open/close",
+                f"{controls.get('gripper_open', '-')} / {controls.get('gripper_close', '-')}",
+            ),
+            ("speed", "linear +/-", f"{speed.get('linear_dec', '-')} / {speed.get('linear_inc', '-')}"),
+            ("speed", "angular +/-", f"{speed.get('angular_dec', '-')} / {speed.get('angular_inc', '-')}"),
+            ("speed", "joint +/-", f"{speed.get('joint_dec', '-')} / {speed.get('joint_inc', '-')}"),
+        ]
+        if "gripper_width_step_cm" in controls:
+            control_rows.append(("gripper", "step(cm)", f"{float(controls.get('gripper_width_step_cm', 0.0)):.3f}"))
+        if isinstance(controls.get("gripper_width_range_cm"), list) and len(controls["gripper_width_range_cm"]) == 2:
+            lo, hi = controls["gripper_width_range_cm"]
+            control_rows.append(("gripper", "range(cm)", f"{float(lo):.3f} .. {float(hi):.3f}"))
+        twist_controls = controls.get("twist", []) if isinstance(controls.get("twist"), list) else []
+        twist_axis = {"lx": {"plus": "-", "minus": "-"}, "ly": {"plus": "-", "minus": "-"}, "lz": {"plus": "-", "minus": "-"},
+                      "ax": {"plus": "-", "minus": "-"}, "ay": {"plus": "-", "minus": "-"}, "az": {"plus": "-", "minus": "-"}}
+        for item in twist_controls:
+            if not isinstance(item, str) or "=>" not in item:
+                continue
+            key_text, axis_text = [part.strip() for part in item.split("=>", 1)]
+            if axis_text.endswith("+"):
+                axis_name = axis_text[:-1]
+                if axis_name in twist_axis:
+                    twist_axis[axis_name]["plus"] = key_text
+            elif axis_text.endswith("-"):
+                axis_name = axis_text[:-1]
+                if axis_name in twist_axis:
+                    twist_axis[axis_name]["minus"] = key_text
+        axis_names = {"lx": "linear_x", "ly": "linear_y", "lz": "linear_z", "ax": "angular_x", "ay": "angular_y", "az": "angular_z"}
+        for axis_code in ("lx", "ly", "lz", "ax", "ay", "az"):
+            keys = twist_axis[axis_code]
+            control_rows.append(("twist", axis_names[axis_code], f"+ {keys['plus']} / - {keys['minus']}"))
+
+        joint_controls = controls.get("joint", []) if isinstance(controls.get("joint"), list) else []
+        for item in joint_controls:
+            if not isinstance(item, str) or ":" not in item:
+                continue
+            action, keys = [part.strip() for part in item.split(":", 1)]
+            control_rows.append(("joint", action, keys))
+
+        self._sync_kv_table_rows(self._teleop_live_table, self._teleop_live_row_by_key, live_rows)
+        self._sync_triplet_table_rows(self._teleop_controls_table, self._teleop_controls_row_by_key, control_rows)
+
+    def _sync_kv_table_rows(self, table, row_map: Dict[str, str], rows: List[Tuple[str, str]]) -> None:
+        keys = [key for key, _ in rows]
+        current_keys = set(keys)
+        for key in list(row_map.keys()):
+            if key in current_keys:
+                continue
+            try:
+                table.delete(row_map[key])
+            except Exception:
+                pass
+            row_map.pop(key, None)
+        for key, value in rows:
+            row_id = row_map.get(key)
+            values = (key, value)
+            if row_id is None:
+                row_map[key] = table.insert("", tk.END, values=values)
+            else:
+                table.item(row_id, values=values)
+
+    def _sync_triplet_table_rows(self, table, row_map: Dict[str, str], rows: List[Tuple[str, str, str]]) -> None:
+        keys = [f"{group}:{action}" for group, action, _ in rows]
+        current_keys = set(keys)
+        for key in list(row_map.keys()):
+            if key in current_keys:
+                continue
+            try:
+                table.delete(row_map[key])
+            except Exception:
+                pass
+            row_map.pop(key, None)
+        for group, action, keys_text in rows:
+            row_key = f"{group}:{action}"
+            values = (group, action, keys_text)
+            row_id = row_map.get(row_key)
+            if row_id is None:
+                row_map[row_key] = table.insert("", tk.END, values=values)
+            else:
+                table.item(row_id, values=values)
 
     def _configure_styles(self) -> None:
         if ttk is None or tkfont is None:

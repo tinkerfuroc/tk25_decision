@@ -44,6 +44,11 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         gripper_keymap: dict = None,
         stop_key: str = None,
         verbose_key_log: bool = None,
+        gripper_width_min_cm: float = None,
+        gripper_width_max_cm: float = None,
+        gripper_width_step_cm: float = None,
+        gripper_initial_width_cm: float = None,
+        gripper_hw_inverted: bool = None,
     ):
         super().__init__(name=name)
         cfg = get_mock_teleop_params()
@@ -86,6 +91,14 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self.gripper_keymap = self._build_gripper_keymap(
             gripper_keymap if gripper_keymap is not None else cfg.get("gripper_keymap")
         )
+        self.gripper_width_min_cm = float(_resolve(gripper_width_min_cm, "gripper_width_min_cm", 0.0))
+        self.gripper_width_max_cm = float(_resolve(gripper_width_max_cm, "gripper_width_max_cm", 8.0))
+        if self.gripper_width_max_cm < self.gripper_width_min_cm:
+            self.gripper_width_min_cm, self.gripper_width_max_cm = self.gripper_width_max_cm, self.gripper_width_min_cm
+        self.gripper_width_step_cm = float(_resolve(gripper_width_step_cm, "gripper_width_step_cm", 0.5))
+        self.gripper_hw_inverted = bool(_resolve(gripper_hw_inverted, "gripper_hw_inverted", True))
+        initial_width = float(_resolve(gripper_initial_width_cm, "gripper_initial_width_cm", self.gripper_width_max_cm))
+        self.gripper_width_cm = self._clamp(initial_width, self.gripper_width_min_cm, self.gripper_width_max_cm)
         self.stop_key_combo = self._parse_key_combo(
             _resolve(stop_key, "stop_key", "space")
         )
@@ -112,6 +125,8 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._mock_consumer_id = f"{self.__class__.__name__}:{id(self)}"
         self._mock_start_tick = -1
         self._mock_start_event = -1
+        self._last_twist_cmd = None
+        self._last_joint_cmds = []
 
     def set_key_provider(self, provider):
         """
@@ -144,6 +159,8 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._finished = False
         self._interrupted = False
         self._stop_event.clear()
+        self._last_twist_cmd = None
+        self._last_joint_cmds = []
         self._mock_start_tick = self._mock_input_controller.get_tick_index()
         self._mock_start_event = self._mock_input_controller.get_event_index()
 
@@ -165,6 +182,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._start_servo()
         self._print_help()
         self.feedback_message = "Teleop active"
+        self._publish_visual_feedback(note="teleop started")
 
         if self._input_thread is not None and self._input_thread.is_alive():
             self._stop_event.set()
@@ -191,6 +209,9 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             self._input_thread = None
 
         self._publish_stop()
+        self._last_twist_cmd = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        self._last_joint_cmds = []
+        self._publish_visual_feedback(note="teleop stopped", active=False)
         if self._old_settings is not None:
             try:
                 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
@@ -232,9 +253,15 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
                     tokens = self._event_tokens(key)
                     if self._event_has_tokens(tokens, ("enter",)):
                         self._publish_stop()
+                        self._last_twist_cmd = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                        self._last_joint_cmds = []
+                        self.feedback_message = "Teleop finished (Enter pressed)"
+                        self._publish_visual_feedback(tokens=tokens, note="finish key", active=False)
                         self._finished = True
                         return
                     if self._event_has_tokens(tokens, ("ctrl", "c")):
+                        self.feedback_message = "Teleop interrupted (Ctrl+C)"
+                        self._publish_visual_feedback(tokens=tokens, note="ctrl+c", active=False)
                         self._interrupted = True
                         return
                     self._process_tokens(tokens)
@@ -247,31 +274,54 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
     def _process_tokens(self, tokens: set[str]) -> None:
         # print(f"Processing tokens: {tokens}")
         if self._handle_speed_tokens(tokens):
+            self._publish_visual_feedback(tokens=tokens, note="speed updated")
             return
         if self._combo_active(self.stop_key_combo, tokens):
             self._publish_stop()
             self.feedback_message = "Stop command published"
+            self._last_twist_cmd = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            self._last_joint_cmds = []
+            self._publish_visual_feedback(tokens=tokens, note="stop published")
             if self._verbose_key_log:
                 print(f"[MoveArmTeleop] key='{self._combo_to_str(self.stop_key_combo)}' -> stop (zero twist)")
             return
         if self._combo_active(self.gripper_keymap["open"], tokens):
-            self._publish_gripper(0.75)
-            self.feedback_message = "Gripper open command published"
+            self._set_gripper_width(self.gripper_width_max_cm)
+            self.feedback_message = f"Gripper opened (width={self.gripper_width_cm:.2f} cm)"
+            self._publish_visual_feedback(tokens=tokens, note="gripper instant open")
             if self._verbose_key_log:
-                print("[MoveArmTeleop] gripper=0.75 (open)")
+                print(f"[MoveArmTeleop] gripper instant open -> width={self.gripper_width_cm:.2f}cm")
             return
         if self._combo_active(self.gripper_keymap["close"], tokens):
-            self._publish_gripper(0.0)
-            self.feedback_message = "Gripper close command published"
+            self._set_gripper_width(self.gripper_width_min_cm)
+            self.feedback_message = f"Gripper closed (width={self.gripper_width_cm:.2f} cm)"
+            self._publish_visual_feedback(tokens=tokens, note="gripper instant close")
             if self._verbose_key_log:
-                print("[MoveArmTeleop] gripper=0.0 (close)")
+                print(f"[MoveArmTeleop] gripper instant close -> width={self.gripper_width_cm:.2f}cm")
+            return
+        if self._combo_active(self.gripper_keymap["width_inc"], tokens):
+            self._set_gripper_width(self.gripper_width_cm + self.gripper_width_step_cm)
+            self.feedback_message = f"Gripper width increased to {self.gripper_width_cm:.2f} cm"
+            self._publish_visual_feedback(tokens=tokens, note="gripper width increased")
+            if self._verbose_key_log:
+                print(f"[MoveArmTeleop] gripper_width={self.gripper_width_cm:.2f}cm (inc)")
+            return
+        if self._combo_active(self.gripper_keymap["width_dec"], tokens):
+            self._set_gripper_width(self.gripper_width_cm - self.gripper_width_step_cm)
+            self.feedback_message = f"Gripper width decreased to {self.gripper_width_cm:.2f} cm"
+            self._publish_visual_feedback(tokens=tokens, note="gripper width decreased")
+            if self._verbose_key_log:
+                print(f"[MoveArmTeleop] gripper_width={self.gripper_width_cm:.2f}cm (dec)")
             return
 
         joint_cmds = self._joint_commands_from_tokens(tokens)
         if joint_cmds:
             self._publish_joint_multi(joint_cmds)
+            self._last_joint_cmds = list(joint_cmds)
+            self._last_twist_cmd = None
             joints_txt = ", ".join([f"{name}:{vel:.3f}" for name, vel in joint_cmds])
             self.feedback_message = f"Joint command published: {joints_txt}"
+            self._publish_visual_feedback(tokens=tokens, note="joint command")
             if self._verbose_key_log:
                 print(f"[MoveArmTeleop] joints -> {joints_txt}")
             return
@@ -280,11 +330,14 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         if twist_cmd is not None:
             lx, ly, lz, ax, ay, az = twist_cmd
             self._publish_twist(lx, ly, lz, ax, ay, az)
+            self._last_twist_cmd = (lx, ly, lz, ax, ay, az)
+            self._last_joint_cmds = []
             self.feedback_message = (
                 "Cartesian command published: "
                 f"linear=({lx:.3f}, {ly:.3f}, {lz:.3f}), "
                 f"angular=({ax:.3f}, {ay:.3f}, {az:.3f})"
             )
+            self._publish_visual_feedback(tokens=tokens, note="twist command")
             if self._verbose_key_log:
                 print(
                     "[MoveArmTeleop] "
@@ -294,6 +347,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             return
 
         self.feedback_message = f"Ignored input '{'+'.join(sorted(tokens))}'"
+        self._publish_visual_feedback(tokens=tokens, note="ignored input")
 
     def _handle_speed_tokens(self, tokens: set[str]) -> bool:
         if self._combo_active(self.speed_control_keymap["linear_dec"], tokens):
@@ -452,13 +506,89 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             f"linear={self.linear_speed:.3f}, angular={self.angular_speed:.3f}, joint={self.joint_speed:.3f}"
         )
         print(
-            f"  Gripper:   {self._combo_to_str(self.gripper_keymap['open'])}(open), "
-            f"{self._combo_to_str(self.gripper_keymap['close'])}(close)"
+            f"  Gripper:   {self._combo_to_str(self.gripper_keymap['width_inc'])}(width +), "
+            f"{self._combo_to_str(self.gripper_keymap['width_dec'])}(width -), "
+            f"{self._combo_to_str(self.gripper_keymap['open'])}(open instant), "
+            f"{self._combo_to_str(self.gripper_keymap['close'])}(close instant)"
+        )
+        print(
+            "             current "
+            f"width={self.gripper_width_cm:.2f}cm step={self.gripper_width_step_cm:.2f}cm "
+            f"range=[{self.gripper_width_min_cm:.2f}, {self.gripper_width_max_cm:.2f}] "
+            f"inverted_hw={self.gripper_hw_inverted}"
         )
         print(f"  Stop:      {self._combo_to_str(self.stop_key_combo)}")
         print("  Finish:    Enter")
         print("")
         self._printed_help = True
+
+    def _publish_visual_feedback(self, tokens: set[str] = None, note: str = "", active: bool = True) -> None:
+        controls = self._build_controls_snapshot()
+        payload = {
+            "active": bool(active) and not self._finished and not self._interrupted,
+            "node_name": self.name,
+            "updated_at": time.time(),
+            "message": self.feedback_message,
+            "note": note,
+            "tokens": sorted(tokens) if isinstance(tokens, set) else [],
+            "speeds": {
+                "linear": float(self.linear_speed),
+                "angular": float(self.angular_speed),
+                "joint": float(self.joint_speed),
+                "gripper_width_cm": float(self.gripper_width_cm),
+            },
+            "twist": [float(v) for v in self._last_twist_cmd] if self._last_twist_cmd is not None else None,
+            "joints": [{"name": n, "velocity": float(v)} for n, v in self._last_joint_cmds],
+            "controls": controls,
+        }
+        self._mock_input_controller.publish_teleop_feedback(payload)
+
+    def _build_controls_snapshot(self) -> dict:
+        twist_controls = []
+        for combo, cmd in self.twist_keymap.items():
+            axis = self._twist_label_from_cmd(cmd)
+            twist_controls.append(f"{self._combo_to_str(combo)} => {axis}")
+        twist_controls.sort()
+        joint_controls = []
+        for joint_name, pos_combo, neg_combo in self.joint_keymap[: self.dof]:
+            joint_controls.append(
+                f"{joint_name}: +{self._combo_to_str(pos_combo)} / -{self._combo_to_str(neg_combo)}"
+            )
+        speed_controls = {
+            "linear_dec": self._combo_to_str(self.speed_control_keymap["linear_dec"]),
+            "linear_inc": self._combo_to_str(self.speed_control_keymap["linear_inc"]),
+            "angular_dec": self._combo_to_str(self.speed_control_keymap["angular_dec"]),
+            "angular_inc": self._combo_to_str(self.speed_control_keymap["angular_inc"]),
+            "joint_dec": self._combo_to_str(self.speed_control_keymap["joint_dec"]),
+            "joint_inc": self._combo_to_str(self.speed_control_keymap["joint_inc"]),
+        }
+        return {
+            "twist": twist_controls,
+            "joint": joint_controls,
+            "speed": speed_controls,
+            "gripper_width_inc": self._combo_to_str(self.gripper_keymap["width_inc"]),
+            "gripper_width_dec": self._combo_to_str(self.gripper_keymap["width_dec"]),
+            "gripper_open": self._combo_to_str(self.gripper_keymap["open"]),
+            "gripper_close": self._combo_to_str(self.gripper_keymap["close"]),
+            "gripper_width_step_cm": float(self.gripper_width_step_cm),
+            "gripper_width_range_cm": [float(self.gripper_width_min_cm), float(self.gripper_width_max_cm)],
+            "gripper_hw_inverted": bool(self.gripper_hw_inverted),
+            "stop": self._combo_to_str(self.stop_key_combo),
+            "finish": "enter",
+        }
+
+    def _twist_label_from_cmd(self, cmd) -> str:
+        labels = ("lx", "ly", "lz", "ax", "ay", "az")
+        parts = []
+        for i, value in enumerate(cmd):
+            try:
+                v = float(value)
+            except Exception:
+                continue
+            if abs(v) > 1e-9:
+                sign = "+" if v > 0 else "-"
+                parts.append(f"{labels[i]}{sign}")
+        return ",".join(parts) if parts else "zero"
 
     def _build_twist_keymap(self, configured):
         label_map = {
@@ -557,20 +687,39 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         return out
 
     def _build_gripper_keymap(self, configured):
-        default_map = {"open": "g", "close": "h"}
+        default_map = {
+            "width_inc": "g",
+            "width_dec": "h",
+            "open": "c",
+            "close": "b",
+        }
         if not isinstance(configured, dict):
             return {k: self._parse_key_combo(v) for k, v in default_map.items()}
-        out = dict(default_map)
-        for k in ("open", "close"):
-            val = configured.get(k)
-            combo = self._parse_key_combo(val)
-            if combo:
-                out[k] = combo
-            else:
-                out[k] = self._parse_key_combo(default_map[k])
-        if not configured:
-            out = {k: self._parse_key_combo(v) for k, v in default_map.items()}
+
+        out = {k: self._parse_key_combo(v) for k, v in default_map.items()}
+        # Backward compatibility: old configs used open/close as width +/-.
+        legacy_open_combo = self._parse_key_combo(configured.get("open"))
+        legacy_close_combo = self._parse_key_combo(configured.get("close"))
+        width_inc_combo = self._parse_key_combo(configured.get("width_inc"))
+        width_dec_combo = self._parse_key_combo(configured.get("width_dec"))
+
+        out["width_inc"] = width_inc_combo if width_inc_combo else (legacy_open_combo or out["width_inc"])
+        out["width_dec"] = width_dec_combo if width_dec_combo else (legacy_close_combo or out["width_dec"])
+
+        # Instant open/close keys are independent controls.
+        out["open"] = legacy_open_combo if legacy_open_combo else out["open"]
+        out["close"] = legacy_close_combo if legacy_close_combo else out["close"]
         return out
+
+    def _set_gripper_width(self, logical_width_cm: float) -> None:
+        self.gripper_width_cm = self._clamp(logical_width_cm, self.gripper_width_min_cm, self.gripper_width_max_cm)
+        cmd_width = self.gripper_width_cm
+        if self.gripper_hw_inverted:
+            cmd_width = self.gripper_width_max_cm + self.gripper_width_min_cm - self.gripper_width_cm
+        self._publish_gripper(cmd_width)
+
+    def _clamp(self, value: float, lo: float, hi: float) -> float:
+        return max(lo, min(hi, float(value)))
 
     def _parse_key_combo(self, spec):
         if isinstance(spec, str):

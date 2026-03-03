@@ -50,6 +50,17 @@ class MockInputController:
         self._event_id = 0
         self._last_delivered_event = defaultdict(int)
         self._last_injected_combo: Tuple[str, ...] = ()
+        self._teleop_feedback = {
+            "active": False,
+            "node_name": "",
+            "updated_at": 0.0,
+            "message": "",
+            "tokens": [],
+            "speeds": {"linear": 0.0, "angular": 0.0, "joint": 0.0},
+            "twist": None,
+            "joints": [],
+            "controls": {},
+        }
 
     def configure(self, cfg: Dict):
         with self._lock:
@@ -229,6 +240,24 @@ class MockInputController:
                 "last_key_source": self._last_key_source,
                 "tick_index": self._tick_index,
             }
+
+    def publish_teleop_feedback(self, payload: Dict):
+        """
+        Publish latest teleop state for visualization side-panel.
+        """
+        if not isinstance(payload, dict):
+            return
+        with self._lock:
+            merged = dict(self._teleop_feedback)
+            merged.update(payload)
+            self._teleop_feedback = merged
+
+    def get_teleop_feedback_snapshot(self) -> Dict:
+        """
+        Thread-safe teleop feedback snapshot for GUI rendering.
+        """
+        with self._lock:
+            return dict(self._teleop_feedback)
 
     def get_tick_index(self) -> int:
         with self._lock:
