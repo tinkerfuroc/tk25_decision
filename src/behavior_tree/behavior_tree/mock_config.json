@@ -116,6 +116,7 @@
       "linear_speed": 0.1,
       "angular_speed": 0.1,
       "joint_speed": 0.2,
+      "visual_feedback_min_period_s": 0.1,
       "gripper_width_min_cm": 0.0,
       "gripper_width_max_cm": 8.0,
       "gripper_width_step_cm": 0.5,

@@ -49,6 +49,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         gripper_width_step_cm: float = None,
         gripper_initial_width_cm: float = None,
         gripper_hw_inverted: bool = None,
+        visual_feedback_min_period_s: float = None,
     ):
         super().__init__(name=name)
         cfg = get_mock_teleop_params()
@@ -99,6 +100,9 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self.gripper_hw_inverted = bool(_resolve(gripper_hw_inverted, "gripper_hw_inverted", True))
         initial_width = float(_resolve(gripper_initial_width_cm, "gripper_initial_width_cm", self.gripper_width_max_cm))
         self.gripper_width_cm = self._clamp(initial_width, self.gripper_width_min_cm, self.gripper_width_max_cm)
+        self._visual_feedback_min_period_s = float(
+            _resolve(visual_feedback_min_period_s, "visual_feedback_min_period_s", 0.05)
+        )
         self.stop_key_combo = self._parse_key_combo(
             _resolve(stop_key, "stop_key", "space")
         )
@@ -127,6 +131,8 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._mock_start_event = -1
         self._last_twist_cmd = None
         self._last_joint_cmds = []
+        self._last_visual_feedback_ts = 0.0
+        self._controls_snapshot_cache = self._build_controls_snapshot()
 
     def set_key_provider(self, provider):
         """
@@ -161,6 +167,8 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._stop_event.clear()
         self._last_twist_cmd = None
         self._last_joint_cmds = []
+        self._last_visual_feedback_ts = 0.0
+        self._controls_snapshot_cache = self._build_controls_snapshot()
         self._mock_start_tick = self._mock_input_controller.get_tick_index()
         self._mock_start_event = self._mock_input_controller.get_event_index()
 
@@ -182,7 +190,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._start_servo()
         self._print_help()
         self.feedback_message = "Teleop active"
-        self._publish_visual_feedback(note="teleop started")
+        self._publish_visual_feedback(note="teleop started", force=True)
 
         if self._input_thread is not None and self._input_thread.is_alive():
             self._stop_event.set()
@@ -211,7 +219,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._publish_stop()
         self._last_twist_cmd = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         self._last_joint_cmds = []
-        self._publish_visual_feedback(note="teleop stopped", active=False)
+        self._publish_visual_feedback(note="teleop stopped", active=False, force=True)
         if self._old_settings is not None:
             try:
                 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
@@ -256,12 +264,12 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
                         self._last_twist_cmd = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
                         self._last_joint_cmds = []
                         self.feedback_message = "Teleop finished (Enter pressed)"
-                        self._publish_visual_feedback(tokens=tokens, note="finish key", active=False)
+                        self._publish_visual_feedback(tokens=tokens, note="finish key", active=False, force=True)
                         self._finished = True
                         return
                     if self._event_has_tokens(tokens, ("ctrl", "c")):
                         self.feedback_message = "Teleop interrupted (Ctrl+C)"
-                        self._publish_visual_feedback(tokens=tokens, note="ctrl+c", active=False)
+                        self._publish_visual_feedback(tokens=tokens, note="ctrl+c", active=False, force=True)
                         self._interrupted = True
                         return
                     self._process_tokens(tokens)
@@ -274,42 +282,42 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
     def _process_tokens(self, tokens: set[str]) -> None:
         # print(f"Processing tokens: {tokens}")
         if self._handle_speed_tokens(tokens):
-            self._publish_visual_feedback(tokens=tokens, note="speed updated")
+            self._publish_visual_feedback(tokens=tokens, note="speed updated", force=True)
             return
         if self._combo_active(self.stop_key_combo, tokens):
             self._publish_stop()
             self.feedback_message = "Stop command published"
             self._last_twist_cmd = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
             self._last_joint_cmds = []
-            self._publish_visual_feedback(tokens=tokens, note="stop published")
+            self._publish_visual_feedback(tokens=tokens, note="stop published", force=True)
             if self._verbose_key_log:
                 print(f"[MoveArmTeleop] key='{self._combo_to_str(self.stop_key_combo)}' -> stop (zero twist)")
             return
         if self._combo_active(self.gripper_keymap["open"], tokens):
             self._set_gripper_width(self.gripper_width_max_cm)
             self.feedback_message = f"Gripper opened (width={self.gripper_width_cm:.2f} cm)"
-            self._publish_visual_feedback(tokens=tokens, note="gripper instant open")
+            self._publish_visual_feedback(tokens=tokens, note="gripper instant open", force=True)
             if self._verbose_key_log:
                 print(f"[MoveArmTeleop] gripper instant open -> width={self.gripper_width_cm:.2f}cm")
             return
         if self._combo_active(self.gripper_keymap["close"], tokens):
             self._set_gripper_width(self.gripper_width_min_cm)
             self.feedback_message = f"Gripper closed (width={self.gripper_width_cm:.2f} cm)"
-            self._publish_visual_feedback(tokens=tokens, note="gripper instant close")
+            self._publish_visual_feedback(tokens=tokens, note="gripper instant close", force=True)
             if self._verbose_key_log:
                 print(f"[MoveArmTeleop] gripper instant close -> width={self.gripper_width_cm:.2f}cm")
             return
         if self._combo_active(self.gripper_keymap["width_inc"], tokens):
             self._set_gripper_width(self.gripper_width_cm + self.gripper_width_step_cm)
             self.feedback_message = f"Gripper width increased to {self.gripper_width_cm:.2f} cm"
-            self._publish_visual_feedback(tokens=tokens, note="gripper width increased")
+            self._publish_visual_feedback(tokens=tokens, note="gripper width increased", force=True)
             if self._verbose_key_log:
                 print(f"[MoveArmTeleop] gripper_width={self.gripper_width_cm:.2f}cm (inc)")
             return
         if self._combo_active(self.gripper_keymap["width_dec"], tokens):
             self._set_gripper_width(self.gripper_width_cm - self.gripper_width_step_cm)
             self.feedback_message = f"Gripper width decreased to {self.gripper_width_cm:.2f} cm"
-            self._publish_visual_feedback(tokens=tokens, note="gripper width decreased")
+            self._publish_visual_feedback(tokens=tokens, note="gripper width decreased", force=True)
             if self._verbose_key_log:
                 print(f"[MoveArmTeleop] gripper_width={self.gripper_width_cm:.2f}cm (dec)")
             return
@@ -413,6 +421,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self.twist_pub.publish(msg)
 
     def _publish_gripper(self, value: float) -> None:
+        # print(f"Publishing gripper width command: {value:.2f} cm")
         if self.gripper_pub is None:
             return
         msg = Float32()
@@ -522,12 +531,21 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         print("")
         self._printed_help = True
 
-    def _publish_visual_feedback(self, tokens: set[str] = None, note: str = "", active: bool = True) -> None:
-        controls = self._build_controls_snapshot()
+    def _publish_visual_feedback(
+        self,
+        tokens: set[str] = None,
+        note: str = "",
+        active: bool = True,
+        force: bool = False,
+    ) -> None:
+        now = time.time()
+        if not force and (now - self._last_visual_feedback_ts) < self._visual_feedback_min_period_s:
+            return
+        self._last_visual_feedback_ts = now
         payload = {
             "active": bool(active) and not self._finished and not self._interrupted,
             "node_name": self.name,
-            "updated_at": time.time(),
+            "updated_at": now,
             "message": self.feedback_message,
             "note": note,
             "tokens": sorted(tokens) if isinstance(tokens, set) else [],
@@ -539,7 +557,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             },
             "twist": [float(v) for v in self._last_twist_cmd] if self._last_twist_cmd is not None else None,
             "joints": [{"name": n, "velocity": float(v)} for n, v in self._last_joint_cmds],
-            "controls": controls,
+            "controls": self._controls_snapshot_cache,
         }
         self._mock_input_controller.publish_teleop_feedback(payload)
 

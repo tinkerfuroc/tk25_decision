@@ -92,6 +92,9 @@ class BehaviorTreeStatusGUI:
         self._pressed_key_down_at: Dict[str, float] = {}
         self._pressed_key_seen_at: Dict[str, float] = {}
         self._pending_release_at: Dict[str, float] = {}
+        self._key_state_lock = threading.Lock()
+        self._key_repeat_thread: Optional[threading.Thread] = None
+        self._key_repeat_stop = threading.Event()
         self._gui_key_repeat_ms = 8
         self._gui_stuck_key_timeout_s = 0.8
         self._gui_wait_single_key_timeout_s = 0.6
@@ -100,6 +103,11 @@ class BehaviorTreeStatusGUI:
         self._last_teleop_controls_render = ""
         self._teleop_live_row_by_key: Dict[str, str] = {}
         self._teleop_controls_row_by_key: Dict[str, str] = {}
+        self._last_mock_render_ts = 0.0
+        self._last_teleop_render_ts = 0.0
+        self._mock_render_period_s = 0.12
+        self._teleop_render_period_s = 0.05
+        self._poll_period_ms = 50
 
     def start(self) -> bool:
         if not self.enabled:
@@ -124,6 +132,7 @@ class BehaviorTreeStatusGUI:
         if not self.enabled:
             return
         self._closed.set()
+        self._key_repeat_stop.set()
         if self._queue.full():
             try:
                 self._queue.get_nowait()
@@ -132,6 +141,8 @@ class BehaviorTreeStatusGUI:
         self._queue.put_nowait(None)
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
+        if self._key_repeat_thread and self._key_repeat_thread.is_alive():
+            self._key_repeat_thread.join(timeout=1.0)
         if self._log_thread and self._log_thread.is_alive():
             self._log_stop.set()
             self._log_thread.join(timeout=1.0)
@@ -328,7 +339,7 @@ class BehaviorTreeStatusGUI:
 
             self._ready.set()
             self._poll_queue()
-            self._repeat_pressed_keys()
+            self._start_key_repeat_worker()
             self._root_window.mainloop()
         except Exception as exc:  # pragma: no cover - runtime UI environment issues
             self._window_error = str(exc)
@@ -338,12 +349,28 @@ class BehaviorTreeStatusGUI:
 
     def _on_close(self) -> None:
         self._closed.set()
-        self._pressed_keys.clear()
-        self._pressed_key_down_at.clear()
+        self._key_repeat_stop.set()
+        with self._key_state_lock:
+            self._pressed_keys.clear()
+            self._pressed_key_down_at.clear()
+            self._pressed_key_seen_at.clear()
+            self._pending_release_at.clear()
         self._mock_controller.clear_active_combo()
-        self._pending_release_at.clear()
         if self._root_window is not None:
             self._root_window.destroy()
+
+    def _start_key_repeat_worker(self) -> None:
+        if self._key_repeat_thread is not None and self._key_repeat_thread.is_alive():
+            return
+        self._key_repeat_stop.clear()
+        self._key_repeat_thread = threading.Thread(target=self._key_repeat_worker, daemon=True)
+        self._key_repeat_thread.start()
+
+    def _key_repeat_worker(self) -> None:
+        sleep_s = max(0.001, self._gui_key_repeat_ms / 1000.0)
+        while not self._closed.is_set() and not self._key_repeat_stop.is_set():
+            self._repeat_pressed_keys()
+            time.sleep(sleep_s)
 
     def _toggle_teleop_panel(self) -> None:
         if self._main_pane is None or self._teleop_panel_frame is None or self._show_teleop_panel is None:
@@ -407,25 +434,28 @@ class BehaviorTreeStatusGUI:
         resolved = self._event_to_input(event)
         if not resolved:
             # Defensive clear to recover quickly from IME/dead-key edge cases.
-            self._pressed_keys.clear()
-            self._pressed_key_down_at.clear()
-            self._pressed_key_seen_at.clear()
-            self._pending_release_at.clear()
+            with self._key_state_lock:
+                self._pressed_keys.clear()
+                self._pressed_key_down_at.clear()
+                self._pressed_key_seen_at.clear()
+                self._pending_release_at.clear()
             return
         key_id, token = resolved
         # Preserve copy shortcut behavior without forwarding to mock input.
         if event.state & 0x4 and token == "c":
             return
         now = time.monotonic()
-        self._pending_release_at.pop(key_id, None)
-        if key_id not in self._pressed_keys:
-            self._pressed_key_down_at[key_id] = now
-        self._pressed_keys[key_id] = token
-        self._pressed_key_seen_at[key_id] = now
-        # Keep combo members alive together when OS repeats only one key.
-        for existing_key in list(self._pressed_key_seen_at.keys()):
-            self._pressed_key_seen_at[existing_key] = now
-        self._mock_controller.inject_keys(tuple(self._pressed_keys.values()), source="gui")
+        with self._key_state_lock:
+            self._pending_release_at.pop(key_id, None)
+            if key_id not in self._pressed_keys:
+                self._pressed_key_down_at[key_id] = now
+            self._pressed_keys[key_id] = token
+            self._pressed_key_seen_at[key_id] = now
+            # Keep combo members alive together when OS repeats only one key.
+            for existing_key in list(self._pressed_key_seen_at.keys()):
+                self._pressed_key_seen_at[existing_key] = now
+            combo_tokens = tuple(self._pressed_keys.values())
+        self._mock_controller.inject_keys(combo_tokens, source="gui")
 
     def _on_keyrelease(self, event) -> None:
         resolved = self._event_to_input(event)
@@ -441,60 +471,60 @@ class BehaviorTreeStatusGUI:
         now = time.monotonic()
         # Key autorepeat on some platforms emits rapid release/press pairs.
         # Delay actual removal slightly; a following keypress cancels removal.
-        if key_id in self._pressed_keys:
-            self._pending_release_at[key_id] = now + self._gui_release_grace_s
-        else:
-            # Fallback for layout/keysym mismatches: schedule same-token entries.
-            for stale_id, value in list(self._pressed_keys.items()):
-                if value == token:
-                    self._pending_release_at[stale_id] = now + self._gui_release_grace_s
+        with self._key_state_lock:
+            if key_id in self._pressed_keys:
+                self._pending_release_at[key_id] = now + self._gui_release_grace_s
+            else:
+                # Fallback for layout/keysym mismatches: schedule same-token entries.
+                for stale_id, value in list(self._pressed_keys.items()):
+                    if value == token:
+                        self._pending_release_at[stale_id] = now + self._gui_release_grace_s
 
     def _on_focus_out(self, _event=None) -> None:
         # Avoid stuck "held keys" if release happens outside this window.
-        self._pressed_keys.clear()
-        self._pressed_key_down_at.clear()
-        self._pressed_key_seen_at.clear()
-        self._pending_release_at.clear()
+        with self._key_state_lock:
+            self._pressed_keys.clear()
+            self._pressed_key_down_at.clear()
+            self._pressed_key_seen_at.clear()
+            self._pending_release_at.clear()
         self._mock_controller.clear_active_combo()
 
     def _repeat_pressed_keys(self) -> None:
         if self._closed.is_set():
             return
         now = time.monotonic()
-        if self._pressed_keys:
-            stale_ids = [
-                key_id
-                for key_id, seen_at in self._pressed_key_seen_at.items()
-                if (now - seen_at) > self._gui_stuck_key_timeout_s
-            ]
-            for stale_id in stale_ids:
-                self._pressed_keys.pop(stale_id, None)
-                self._pressed_key_down_at.pop(stale_id, None)
-                self._pressed_key_seen_at.pop(stale_id, None)
-                self._pending_release_at.pop(stale_id, None)
+        with self._key_state_lock:
+            if self._pressed_keys:
+                stale_ids = [
+                    key_id
+                    for key_id, seen_at in self._pressed_key_seen_at.items()
+                    if (now - seen_at) > self._gui_stuck_key_timeout_s
+                ]
+                for stale_id in stale_ids:
+                    self._pressed_keys.pop(stale_id, None)
+                    self._pressed_key_down_at.pop(stale_id, None)
+                    self._pressed_key_seen_at.pop(stale_id, None)
+                    self._pending_release_at.pop(stale_id, None)
 
-            due_releases = [
-                key_id for key_id, release_at in self._pending_release_at.items() if now >= release_at
-            ]
-            for key_id in due_releases:
-                self._pressed_keys.pop(key_id, None)
-                self._pressed_key_down_at.pop(key_id, None)
-                self._pressed_key_seen_at.pop(key_id, None)
-                self._pending_release_at.pop(key_id, None)
+                due_releases = [
+                    key_id for key_id, release_at in self._pending_release_at.items() if now >= release_at
+                ]
+                for key_id in due_releases:
+                    self._pressed_keys.pop(key_id, None)
+                    self._pressed_key_down_at.pop(key_id, None)
+                    self._pressed_key_seen_at.pop(key_id, None)
+                    self._pending_release_at.pop(key_id, None)
 
-        repeat_tokens = []
-        if self._pressed_keys:
-            for key_id, token in self._pressed_keys.items():
-                down_at = self._pressed_key_down_at.get(key_id, now)
-                if (now - down_at) >= self._gui_wait_single_key_timeout_s:
-                    repeat_tokens.append(token)
+            repeat_tokens = []
+            if self._pressed_keys:
+                for key_id, token in self._pressed_keys.items():
+                    down_at = self._pressed_key_down_at.get(key_id, now)
+                    if (now - down_at) >= self._gui_wait_single_key_timeout_s:
+                        repeat_tokens.append(token)
         if repeat_tokens:
-            print(f"repeated: {repeat_tokens}")
             self._mock_controller.inject_keys(tuple(repeat_tokens), source="gui")
         else:
             self._mock_controller.clear_active_combo()
-        if self._root_window is not None:
-            self._root_window.after(self._gui_key_repeat_ms, self._repeat_pressed_keys)
 
     def _on_copy_selection(self, _event=None):
         if self._root_window is None:
@@ -559,11 +589,16 @@ class BehaviorTreeStatusGUI:
             self._log_state_changes(node_snapshots, blackboard_data)
             self._render_nodes(node_snapshots)
             self._render_blackboard(blackboard_data)
-        self._render_mock_status()
-        self._render_teleop_status()
+        now = time.monotonic()
+        if now - self._last_mock_render_ts >= self._mock_render_period_s:
+            self._render_mock_status()
+            self._last_mock_render_ts = now
+        if now - self._last_teleop_render_ts >= self._teleop_render_period_s:
+            self._render_teleop_status()
+            self._last_teleop_render_ts = now
 
         if self._root_window is not None:
-            self._root_window.after(33, self._poll_queue)
+            self._root_window.after(self._poll_period_ms, self._poll_queue)
 
     def _render_nodes(self, snapshots: List[_NodeSnapshot]) -> None:
         if self._treeview is None:
@@ -754,6 +789,8 @@ class BehaviorTreeStatusGUI:
 
     def _render_teleop_status(self) -> None:
         if self._teleop_live_table is None or self._teleop_controls_table is None:
+            return
+        if self._show_teleop_panel is not None and not self._show_teleop_panel.get():
             return
         data = self._mock_controller.get_teleop_feedback_snapshot()
         speeds = data.get("speeds", {}) if isinstance(data.get("speeds"), dict) else {}
