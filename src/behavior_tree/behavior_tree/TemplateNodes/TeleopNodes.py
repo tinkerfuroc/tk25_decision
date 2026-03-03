@@ -302,7 +302,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             return
         if self._combo_active(self.gripper_keymap["close"], tokens):
             self._set_gripper_width(self.gripper_width_min_cm)
-            self.feedback_message = f"Gripper closed (width={self.gripper_width_cm:.2f} cm)"
+            self.feedback_message = f"Gripper closed (width={self.gripper_width_cm:.2f})"
             self._publish_visual_feedback(tokens=tokens, note="gripper instant close", force=True)
             if self._verbose_key_log:
                 print(f"[MoveArmTeleop] gripper instant close -> width={self.gripper_width_cm:.2f}cm")
@@ -312,14 +312,14 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             self.feedback_message = f"Gripper width increased to {self.gripper_width_cm:.2f} cm"
             self._publish_visual_feedback(tokens=tokens, note="gripper width increased", force=True)
             if self._verbose_key_log:
-                print(f"[MoveArmTeleop] gripper_width={self.gripper_width_cm:.2f}cm (inc)")
+                print(f"[MoveArmTeleop] gripper_width={self.gripper_width_cm:.2f} (inc)")
             return
         if self._combo_active(self.gripper_keymap["width_dec"], tokens):
             self._set_gripper_width(self.gripper_width_cm - self.gripper_width_step_cm)
             self.feedback_message = f"Gripper width decreased to {self.gripper_width_cm:.2f} cm"
             self._publish_visual_feedback(tokens=tokens, note="gripper width decreased", force=True)
             if self._verbose_key_log:
-                print(f"[MoveArmTeleop] gripper_width={self.gripper_width_cm:.2f}cm (dec)")
+                print(f"[MoveArmTeleop] gripper_width={self.gripper_width_cm:.2f} (dec)")
             return
 
         joint_cmds = self._joint_commands_from_tokens(tokens)
@@ -421,8 +421,9 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self.twist_pub.publish(msg)
 
     def _publish_gripper(self, value: float) -> None:
-        # print(f"Publishing gripper width command: {value:.2f} cm")
+        print(f"Publishing gripper width command: {value:.2f}")
         if self.gripper_pub is None:
+            self.node.get_logger().warning("MoveArmTeleop: gripper_pub not initialized, cannot publish gripper command")
             return
         msg = Float32()
         msg.data = float(value)
