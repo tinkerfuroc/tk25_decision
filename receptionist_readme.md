@@ -53,4 +53,7 @@ gnome-terminal --tab -- zsh -c "export ALL_PROXY='' && export all_proxy='' && so
 
 最后，运行
 `ros2 run behavior_tree receptionist`
+<<<<<<< HEAD
+=======
 
+>>>>>>> origin

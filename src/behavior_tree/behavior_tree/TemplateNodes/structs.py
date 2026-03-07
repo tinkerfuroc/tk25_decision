@@ -3,3 +3,4 @@ class Person(object):
         self.name = None
         self.fav_drink = None
         self.features = None
+        self.interests = None

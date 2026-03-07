@@ -23,7 +23,7 @@ pose_starting_middle = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(
 
 point_drop = PointStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id="base_link"), point=Point(x=0.7, y=0.0, z=0.3))
 
-arm_navigating = [x / 180 * math.pi for x in [-87.6, -60, -2.6, -3.9, 12.4, -84.9, -8.2]]
+arm_navigating = [x / 180 * math.pi for x in [-87.0, -40.0, 28.0, 0.0, 30.0, -86.0, 0.0]]
 arm_scan = [0.0, -0.4187, 0.0, 1.709, 0.0, 1.343, 0.0]
 # arm_scan = [x / 180 * math.pi for x in [-19.4, -18.3, -1.7, 97.4, 11.4, 80.8, 0]]
 # arm_scan = [x / 180 * math.pi for x in [-12.9, -18.3, -5.4, 82.2, 12.3, 63.7, -30.9]]
@@ -57,7 +57,7 @@ def createGraspOnce():
     # add parallel node to grasp and announcing it is grasping
     parallel_grasp = py_trees.composites.Parallel("Parallel Grasp", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_grasp.add_child(BtNode_Announce(name="Announce grasping", bb_source="", message="grasping green water bottle"))
-    parallel_grasp.add_child(BtNode_Grasp("Grasp trash", bb_source=KEY_OBJECT, service_name=grasp_service_name))
+    parallel_grasp.add_child(BtNode_Grasp("Grasp trash", bb_source=KEY_OBJECT, action_name=grasp_service_name))
     root.add_child(parallel_grasp)
     root.add_child(BtNode_MoveArmSingle("Move arm to scan middle", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN_MIDDLE))
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))

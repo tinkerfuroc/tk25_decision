@@ -1,0 +1,191 @@
+{
+  "description": "Mock mode configuration for behavior tree nodes",
+  "version": "2.0",
+  "force_mock_nodes": {
+    "BtNode_MoveArmTeleop": {
+      "mode": "TELEOP",
+      "subsystem": "mock_controls",
+      "announce_movement": false
+    }
+  },
+  "mock_mode": {
+    "enabled": true,
+    "auto_detect": true,
+    "subsystems": {
+      "vision": {
+        "enabled": true,
+        "announce_movement": true,
+        "description": "Per-node mock mode for vision nodes. Allowed values: NO_MOCK, KEYPRESS, TELEOP, IMMEDIATE",
+        "nodes": {
+          "BtNode_ScanFor": "KEYPRESS",
+          "BtNode_TrackPerson": "KEYPRESS",
+          "BtNode_FindObj": "KEYPRESS",
+          "BtNode_FeatureExtraction": "KEYPRESS",
+          "BtNode_SeatRecommend": "KEYPRESS",
+          "BtNode_FeatureMatching": "KEYPRESS",
+          "BtNode_GetPointCloud": "KEYPRESS",
+          "BtNode_DoorDetection": "KEYPRESS",
+          "BtNode_TurnPanTilt": "KEYPRESS"
+        }
+      },
+      "manipulation": {
+        "enabled": true,
+        "announce_movement": true,
+        "description": "Per-node mock mode for manipulation nodes. Set TELEOP for interactive arm control.",
+        "nodes": {
+          "BtNode_Grasp": "TELEOP",
+          "BtNode_Place": "TELEOP",
+          "BtNode_Drop": "TELEOP",
+          "BtNode_MoveArmJoint": "TELEOP",
+          "BtNode_MoveArmSingle": "TELEOP",
+          "BtNode_GripperAction": "TELEOP",
+          "BtNode_PointTo": "TELEOP"
+        }
+      },
+      "navigation": {
+        "enabled": true,
+        "announce_movement": true,
+        "description": "Per-node mock mode for navigation nodes",
+        "nodes": {
+          "BtNode_GoTo": "KEYPRESS",
+          "BtNode_FollowPerson": "KEYPRESS",
+          "BtNode_ConvertGraspPose": "KEYPRESS",
+          "BtNode_GoToLuggage": "KEYPRESS",
+          "BtNode_GotoAction": "KEYPRESS"
+        }
+      },
+      "audio_input": {
+        "enabled": true,
+        "announce_movement": true,
+        "description": "Per-node mock mode for audio input nodes (not announcement)",
+        "nodes": {
+          "BtNode_WaitForStart": "KEYPRESS",
+          "BtNode_GraspRequest": "KEYPRESS",
+          "BtNode_PhraseExtraction": "KEYPRESS",
+          "BtNode_TargetExtraction": "KEYPRESS",
+          "BtNode_GetConfirmation": "KEYPRESS",
+          "BtNode_Listen": "KEYPRESS",
+          "BtNode_CompareInterest": "KEYPRESS"
+        }
+      },
+      "announcement": {
+        "enabled": true,
+        "announce_movement": true,
+        "description": "Per-node mock mode for TTS nodes",
+        "nodes": {
+          "BtNode_Announce": "KEYPRESS",
+          "BtNode_TTSCN": "KEYPRESS"
+        }
+      },
+      "mock_controls": {
+        "enabled": true,
+        "announce_movement": false,
+        "description": "Special mocked control-only nodes that always use MockInputController",
+        "nodes": {
+          "BtNode_MoveArmTeleop": "TELEOP"
+        }
+      }
+    }
+  },
+  "keyboard_control": {
+    "enabled": true,
+    "description": "When false, KEYPRESS mode degrades to IMMEDIATE"
+  },
+  "mock_keyboard": {
+    "description": "Shared keyboard router for all mock nodes. Select subsystem first, then Enter is success key.",
+    "start_input_key": "space",
+    "stop_input_key": "shift+space",
+    "subsystem_start_keys": {
+      "vision": "shift+v",
+      "manipulation": "shift+m",
+      "navigation": "shift+n",
+      "audio_input": "shift+i",
+      "announcement": "shift+a",
+      "mock_controls": "shift+t"
+    },
+    "success_key": "ENTER"
+  },
+  "teleop": {
+    "params": {
+      "verbose_key_log": true,
+      "dof": 7,
+      "cartesian_command_in_topic": "/servo_server/delta_twist_cmds",
+      "joint_command_in_topic": "/servo_server/delta_joint_cmds",
+      "gripper_command_in_topic": "/gripper_servo_cmd",
+      "command_frame": "link_base",
+      "linear_speed": 0.1,
+      "angular_speed": 0.1,
+      "joint_speed": 0.2,
+      "visual_feedback_min_period_s": 0.1,
+      "gripper_width_min_cm": 0.0,
+      "gripper_width_max_cm": 8.0,
+      "gripper_width_step_cm": 0.5,
+      "gripper_initial_width_cm": 8.0,
+      "gripper_hw_inverted": true,
+      "stop_key": "p",
+      "speed_control_keymap": {
+        "linear_dec": "r",
+        "linear_inc": "f",
+        "angular_dec": "t",
+        "angular_inc": "g",
+        "joint_dec": "y",
+        "joint_inc": "h"
+      },
+      "gripper_keymap": {
+        "_comment": "Four controls: width+/width- and instant open/close.",
+        "width_inc": "z",
+        "width_dec": "x",
+        "open": "v",
+        "close": "c"
+      },
+      "twist_keymap": {
+        "w": "linear_x_pos",
+        "s": "linear_x_neg",
+        "a": "linear_y_pos",
+        "d": "linear_y_neg",
+        "q": "linear_z_pos",
+        "e": "linear_z_neg",
+        "j": "angular_z_neg",
+        "l": "angular_z_pos",
+        "i": "angular_y_neg",
+        "k": "angular_y_pos",
+        "u": "angular_x_pos",
+        "o": "angular_x_neg"
+      },
+      "joint_keymap": {
+        "joint1": {
+          "pos": "1",
+          "neg": "2"
+        },
+        "joint2": {
+          "pos": "3",
+          "neg": "4"
+        },
+        "joint3": {
+          "pos": "5",
+          "neg": "6"
+        },
+        "joint4": {
+          "pos": "7",
+          "neg": "8"
+        },
+        "joint5": {
+          "pos": "9",
+          "neg": "0"
+        },
+        "joint6": {
+          "pos": "-",
+          "neg": "="
+        },
+        "joint7": {
+          "pos": "[",
+          "neg": "]"
+        }
+      }
+    }
+  },
+  "logging": {
+    "print_mock_operations": true,
+    "use_emoji": true
+  }
+}

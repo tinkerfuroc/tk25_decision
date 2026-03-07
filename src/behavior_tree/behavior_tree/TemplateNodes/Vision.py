@@ -1,10 +1,13 @@
+import asyncio
 import py_trees as pytree
 import time
+import math
 
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching
+from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl
+from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
 from py_trees.common import Status
 
@@ -17,24 +20,24 @@ class BtNode_ScanFor(ServiceHandler):
     def __init__(self, 
                  name: str,
                  bb_source: str,
-                 bb_namespace: str,
                  bb_key:str,
-                 service_name : str = "object_detection",
+                 service_name : str = "object_detection_yolo",
                  object: str = None,
                  use_orbbec = True,
-                 transform_to_map = False
+                 transform_to_map = False,
+                 category = "detected objects"
                  ):
         """
         executed when creating tree diagram, therefor very minimal
         """
         super(BtNode_ScanFor, self).__init__(name, service_name, ObjectDetection)
-        self.bb_namespace = bb_namespace
         self.bb_key = bb_key
         self.bb_source = bb_source
         self.object = object
         self.use_orbbec = use_orbbec
         self.transform_to_map = transform_to_map
         self.read = True
+        self.category = category
         if self.object is not None:
             self.read = False
 
@@ -45,7 +48,7 @@ class BtNode_ScanFor(ServiceHandler):
         """
         ServiceHandler.setup(self, **kwargs)
         # attaches a blackboard (more like a shared memory section with key-value pair references) under the namespace Locations
-        self.bb_write_client = self.attach_blackboard_client(name=f"ScanFor", namespace=self.bb_namespace)
+        self.bb_write_client = self.attach_blackboard_client(name=f"ScanFor")
          # register a key with the name of the object, with this client having write access
         self.bb_write_client.register_key(self.bb_key, access=pytree.common.Access.WRITE)
 
@@ -62,6 +65,27 @@ class BtNode_ScanFor(ServiceHandler):
         """
         Called when the node is visited
         """
+        super().initialise()
+
+        # Handle mock mode
+        if self.mock_mode:
+            if self.read:
+                try:
+                    self.object = self.bb_read_client.get(self.bb_source)
+                    assert isinstance(self.object, str)
+                except Exception as e:
+                    self.feedback_message = f"ScanFor reading object name failed"
+                    raise e
+            print(f"🔍 MOCK: Scanning for {self.object}")
+            # Create mock detection result
+            from behavior_tree.mock_messages import MockMessage
+            mock_result = MockMessage()
+            mock_result.status = 0
+            mock_result.objects = []  # Empty list means object not found but service succeeded
+            self.bb_write_client.set(self.bb_key, mock_result, overwrite=True)
+            self.feedback_message = f"MOCK: Scanned for {self.object}"
+            return
+            
         if self.read:
             try:
                 self.object = self.bb_read_client.get(self.bb_source)
@@ -73,6 +97,7 @@ class BtNode_ScanFor(ServiceHandler):
         request = ObjectDetection.Request()
         request.prompt = self.object
         request.flags = "scan"
+        request.category = self.category
         if self.use_orbbec:
             request.camera = "orbbec"
         else:
@@ -80,16 +105,26 @@ class BtNode_ScanFor(ServiceHandler):
         if self.transform_to_map:
             request.target_frame = "map"
         # setup things that needs to be cleared
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
 
         self.feedback_message = f"Initialized ScanFor for {self.object}"
 
     def update(self):
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
         self.logger.debug(f"Update ScanFor {self.object} with self.orbbec = {self.use_orbbec}")
+        
+        # Check if response exists
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+            
         if self.response.done():
             if self.response.result().status == 0:
                 self.bb_write_client.set(self.bb_key, self.response.result(), overwrite=True)
-                self.feedback_message = f"Found object, stored to blackboard {self.bb_namespace} / {self.bb_key}"
+                self.feedback_message = f"Found object, stored to blackboard / {self.bb_key}"
                 return pytree.common.Status.SUCCESS
             else:
                 self.feedback_message = f"Scanning for {self.object} failed with error code {self.response.result().status}: {self.response.result().error_msg}"
@@ -133,6 +168,10 @@ class BtNode_TrackPerson(ServiceHandler):
         self.logger.debug(f"Setup Track Person, writing to namespace {self.bb_namespace} and key {self.bb_key}")
     
     def send_request(self):
+        # Handle mock mode - don't send request
+        if self.mock_mode:
+            return
+            
         request = ObjectDetection.Request()
         request.prompt = "person"
         if self.use_orbbec:
@@ -145,12 +184,33 @@ class BtNode_TrackPerson(ServiceHandler):
         if self.person_id is None:
             request.flags = "register_person"
         
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
 
     def initialise(self) -> None:
         """
         Called when the node is visited
         """
+        super().initialise()
+
+        # Handle mock mode
+        if self.mock_mode:
+            if self.person_id is None:
+                self.person_id = 1  # Mock person ID
+                print(f"👤 MOCK: Registered person with ID {self.person_id}")
+            else:
+                print(f"👤 MOCK: Tracking person with ID {self.person_id}")
+            # Create mock point stamped
+            from geometry_msgs.msg import PointStamped
+            from std_msgs.msg import Header
+            point_stamped = PointStamped()
+            point_stamped.point.x = 2.0
+            point_stamped.point.y = 0.0
+            point_stamped.point.z = 1.0
+            point_stamped.header = Header()
+            point_stamped.header.frame_id = "map" if self.transform_to_map else "camera_link"
+            self.bb_write_client.set(self.bb_key, point_stamped, overwrite=True)
+            self.feedback_message = f"MOCK: Tracking person {self.person_id}"
+            return
         
         if self.do_send_tracking:
             self.send_request()
@@ -160,7 +220,16 @@ class BtNode_TrackPerson(ServiceHandler):
         self.feedback_message = f"Initialized Track Person"
 
     def update(self):
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
         self.logger.debug(f"Update Track Person")
+
+        # Check if response exists
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
 
         if self.response.done():
             # success
@@ -249,6 +318,18 @@ class BtNode_FindObj(ServiceHandler):
         """
         Called when the node is visited
         """
+        super().initialise()
+
+        # Handle mock mode
+        if self.mock_mode:
+            from behavior_tree.messages import ObjectDetection
+            # Create a mock response
+            mock_result = ObjectDetection.Response()
+            self.feedback_message = f"MOCK: Found object '{self.object}'"
+            print(f"🔍 MOCK FIND OBJ: Found '{self.object}'")
+            self.bb_write_client.set(self.bb_key, mock_result, overwrite=True)
+            return
+            
         if self.read:
             try:
                 self.object = self.bb_read_client.get(self.bb_source)
@@ -262,11 +343,18 @@ class BtNode_FindObj(ServiceHandler):
         request.flags = "find_for_grasp"
         request.camera = "realsense"
         # setup things that needs to be cleared
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
 
         self.feedback_message = f"Initialized FindObj for {self.object}"
 
     def update(self):
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return pytree.common.Status.FAILURE
+            
         self.logger.debug(f"Update FindObj {self.object}")
         if self.response.done():
             if self.response.result().status == 0:
@@ -313,13 +401,32 @@ class BtNode_FeatureExtraction(ServiceHandler):
         self.node = None
 
     def initialise(self):
+        super().initialise()
+
+        # Handle mock mode
+        if self.mock_mode:
+            print(f"👁️  MOCK: Feature extraction from {self.camera}")
+            self.feedback_message = f"MOCK: Feature extraction completed"
+            # Store mock features to blackboard
+            self.blackboard.features = [0.1, 0.2, 0.3, 0.4, 0.5]  # Mock feature vector
+            return
+            
         request = FeatureExtraction.Request()
         request.camera = self.camera
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
 
         self.feedback_message = f"Initialized Feature Extraction"
     
     def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+        
+        # Check if response exists
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+            
         self.logger.debug(f"Updated FeatureExtraction")
         if self.response.done():
             result : FeatureExtraction.Response = self.response.result()
@@ -365,6 +472,16 @@ class BtNode_SeatRecommend(ServiceHandler):
         self.node = None
 
     def initialise(self):
+        super().initialise()
+
+        # Handle mock mode
+        if self.mock_mode:
+            print(f"💺 MOCK: Seat recommendation from {self.camera}")
+            mock_recommendation = "I recommend the seat on the left side of the table."
+            self.blackboard.recommendation = "Dear guest, " + mock_recommendation
+            self.feedback_message = f"MOCK: Recommendation completed"
+            return
+            
         request = SeatRecommendation.Request()
         request.camera = self.camera
         request.names = []
@@ -374,11 +491,21 @@ class BtNode_SeatRecommend(ServiceHandler):
             for i in range(len(self.blackboard.persons) - 1):
                 request.names.append(self.blackboard.persons[i].name)
                 request.features.append(self.blackboard.persons[i].features)
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
         self.feedback_message = f"Initialized seat recommendation"
     
     def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
         self.logger.debug(f"Updated SeatRecommendation")
+        
+        # Check if response exists
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+            
         if self.response.done():
             result : SeatRecommendation.Response = self.response.result()
             if result.status == 0:
@@ -427,21 +554,53 @@ class BtNode_FeatureMatching(ServiceHandler):
         self.node = None
     
     def initialise(self):
+        super().initialise()
+
+        # Handle mock mode
+        if self.mock_mode:
+            print(f"🔍 MOCK: Feature matching from {self.camera}")
+            # Create mock centroid data
+            from geometry_msgs.msg import PointStamped
+            mock_centroid = PointStamped()
+            mock_centroid.point.x = 1.5
+            mock_centroid.point.y = 0.0
+            mock_centroid.point.z = 1.3
+            mock_centroid.header.frame_id = self.target_frame
+            self.blackboard.centroids = [mock_centroid]
+            self.feedback_message = f"MOCK: Feature matching completed"
+            return
+            
         request = FeatureMatching.Request()
         request.camera = self.camera
         request.features = [person.features for person in self.blackboard.persons]
         request.features = request.features[:-1] # remove last person as that is the new guest who is not seated yet
         request.max_distance = self.max_distance
         request.target_frame = self.target_frame
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
         self.feedback_message = f"Initializec feature matching"
 
     def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
         self.logger.debug(f"Updated Feature Matching")
+        
+        # Check if response exists
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+            
         if self.response.done():
             result : FeatureMatching.Response = self.response.result()
             if result.status == 0:
                 self.blackboard.centroids = result.centroids
+                # for p in self.blackboard.centroids:
+                #     # p.point.z = 1.30
+                #     fac = p.point.x / 0.6
+                #     p.point.x /= (fac + 1e-6)
+                #     p.point.y /= (fac + 1e-6)
+                #     p.point.z = 1.3
                 self.feedback_message = f"Centroids: {result.centroids}"
                 return pytree.common.Status.SUCCESS
             else:
@@ -450,3 +609,246 @@ class BtNode_FeatureMatching(ServiceHandler):
         else:
             self.feedback_message = "Still matching features..."
             return pytree.common.Status.RUNNING
+
+
+class BtNode_GetPointCloud(ServiceHandler):
+    def __init__(self,
+                 name: str,
+                 bb_point_cloud_key: str,
+                 service_name: str = "get_point_cloud_service",
+                 camera_name: str = "orbbec",
+                 ):
+        super().__init__(name, service_name, GetPointCloud)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.key = bb_point_cloud_key
+        self.blackboard.register_key(
+            key="point_cloud",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_point_cloud_key)
+        )
+
+        if "orbbec" in camera_name:
+            self.camera = "orbbec"
+        else:
+            self.camera = "realsense"
+
+        self.node = None
+    
+    def initialise(self):
+        super().initialise()
+
+        # Handle mock mode
+        if self.mock_mode:
+            from sensor_msgs.msg import PointCloud2
+            mock_pc = PointCloud2()
+            mock_pc.height = 480
+            mock_pc.width = 640
+            self.blackboard.point_cloud = mock_pc
+            self.feedback_message = f"MOCK: Got point cloud with {mock_pc.height * mock_pc.width} points"
+            print(f"☁️ MOCK GET POINT CLOUD: {mock_pc.height}x{mock_pc.width} points")
+            return
+            
+        request = GetPointCloud.Request()
+        request.camera = self.camera
+        self.response = self.call_service_async(request)
+        self.feedback_message = f"Initialized Getting Point Cloud Service"
+
+    def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        if self.response is None:
+            return pytree.common.Status.FAILURE
+            
+        self.logger.debug(f"Updated Point Cloud Service")
+        if self.response.done():
+            result : GetPointCloud.Response = self.response.result()
+            if result.status == 0:
+                self.blackboard.point_cloud = result.points
+                self.feedback_message = f"Successfully got point cloud with {result.points.height * result.points.width} points"
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Point cloud service failed with error code {result.status}: {result.error_msg}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still getting point cloud..."
+            return pytree.common.Status.RUNNING
+
+
+class BtNode_DoorDetection(ServiceHandler):
+    def __init__(self,
+                 name: str,
+                 bb_door_state_key: str,
+                 service_name: str = "door_detection_srv"
+                 ):
+        super().__init__(name, service_name, DoorDetection)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.key = bb_door_state_key
+        self.blackboard.register_key(
+            key="is_open",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_door_state_key)
+        )
+
+        self.camera = "orbbec"
+
+        self.node = None
+    
+    def initialise(self):
+        super().initialise()
+
+        # Handle mock mode
+        if self.mock_mode:
+            print(f"🚪 MOCK: Door detection from {self.camera}")
+            self.blackboard.is_open = 1  # Mock: door is open
+            self.feedback_message = f"MOCK: Door is open"
+            return
+            
+        request = DoorDetection.Request()
+        request.camera = self.camera
+        self.response = self.call_service_async(request)
+        self.feedback_message = f"Initialized Door Detection Service"
+
+    def update(self) -> Status:
+        # Handle mock mode
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+            
+        self.logger.debug(f"Updated Door Detection Service")
+        
+        # Check if response exists
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+            
+        if self.response.done():
+            result : DoorDetection.Response = self.response.result()
+            if result.is_open == 1:
+                # 0 for close, 1 for open
+                self.blackboard.is_open = result.is_open
+                self.feedback_message = f"Successfully return with is_open = {result.is_open}"
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Door detection service failed with error code {result.status}: {result.error_msg}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still waiting door service..."
+            return pytree.common.Status.RUNNING
+
+
+class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
+    def __init__(self, name: str, x: float = 0.0, y: float = 0.0, speed: float = 0.0):
+        super().__init__(name)
+        self.x = x
+        self.y = y
+        self.speed = speed
+        self.client = None
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
+    
+    def setup(self, **kwargs) -> None:
+        # node should be passed down the tree from the root node
+        try:
+            self.node = kwargs['node']
+        except KeyError as e:
+            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
+            raise KeyError(error_message) from e  # 'direct cause' traceability
+        
+        # Skip creating publisher in mock mode
+        if self.mock_mode:
+            print(f"MOCK MODE: Skipping pan/tilt publisher creation")
+            return
+        
+        # create publisher to a topic
+        self.publisher = self.node.create_publisher(PanTiltCtrl, "/pan_tilt_ctrl", 10)
+
+
+    def initialise(self) -> None:
+        # Initialize counter regardless of mode
+        self.cnt = 0
+        
+        # Skip ROS operations in mock mode
+        if self.mock_mode:
+            return
+            
+        # publish message
+        msg = PanTiltCtrl()
+        msg.x = self.x
+        msg.y = self.y
+        msg.speed = self.speed * 1.0  # convert to float, as the message expects a float
+
+        self.publisher.publish(msg)
+        self.logger.info(f"Publishing PanTiltCtrl with x: {self.x}, y: {self.y}, speed: {self.speed}")
+
+        # call wait_seconds to start the timer in a separate thread
+        # self.timer_future = asyncio.ensure_future(self.wait_seconds(2.0))
+
+    def update(self) -> Status:
+        # In mock mode, return success immediately
+        if self.mock_mode:
+            self.logger.info("MOCK: PanTiltCtrl completed immediately")
+            return pytree.common.Status.SUCCESS
+            
+        # TODO: count 8 loops then return
+        # if self.timer_future.done():
+        if self.cnt > 3:
+            # if the timer is done, cancel the future and return success
+            # self.timer_future.cancel()
+            self.cnt = 0
+            self.logger.info("2 seconds passed, PanTiltCtrl finished")
+            return pytree.common.Status.SUCCESS
+        else:
+            self.cnt += 1
+            # if the timer is not done, return running
+            self.logger.info("PanTiltCtrl still running")
+            return pytree.common.Status.RUNNING
+    
+    async def wait_seconds(self, seconds):
+        await asyncio.sleep(seconds)
+        return True
+    
+
+class BtNode_TurnTo(BtNode_TurnPanTilt):
+    """
+    Turn to a specific point relevant to 'base_link'
+    """
+    def __init__(self, name: str,
+                 bb_key_persons: str,
+                 bb_key_points: str,
+                 target_id: int = 0,
+                 ):
+        super().__init__(name, x=0, y=0, speed = 0.0)
+        self.bb_key_persons = bb_key_persons
+        self.bb_key_points = bb_key_points
+        self.target_id = target_id
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="persons",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_persons)
+        )
+        self.blackboard.register_key(
+            key='points',
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_points)
+        )
+    
+    def initialise(self) -> None:
+        if len(self.blackboard.persons) <= self.target_id:
+            self.feedback_message = f"Failed to initialize point_to"
+            self.response = None
+        else:
+            point = self.blackboard.points[self.target_id]
+            self.logger.info(f"Turning to point {point.point} with id {self.target_id} from blackboard {self.bb_key_points}")
+            x = math.atan2(-point.point.y, max(point.point.x-0.25, 0.01)) 
+            # x = math.atan2(self.blackboard.point.point.y, self.blackboard.point.point.x)
+            y = 20.0
+            msg = PanTiltCtrl()
+            msg.x = x / math.pi * 180.0  # convert to degrees
+            msg.y = y
+            msg.speed = self.speed
+            self.publisher.publish(msg)
+            self.logger.info(f"Publishing PanTiltCtrl with x: {x}, y: {y}, speed: {self.speed}")
+            self.feedback_message = f"Initialized TurnTo for point {point.point} with id {self.target_id} and pan tilt angle: x: {msg.x}, y: {msg.y}, speed: {self.speed}"
+        self.cnt = 0
+        

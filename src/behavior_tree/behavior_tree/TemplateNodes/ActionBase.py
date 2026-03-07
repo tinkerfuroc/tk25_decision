@@ -1,10 +1,27 @@
 import py_trees
 from typing import Any
 # from asyncio.tasks import wait_for
-import action_msgs.msg as action_msgs  # GoalStatus
+from behavior_tree.messages import action_msgs  # Import from our conditional import system
+from behavior_tree.config import (
+    is_node_mocked,
+    announce_node_action,
+    should_announce_movement,
+    is_mock_tts_active,
+    get_node_mock_interaction_mode,
+    get_mock_teleop_params,
+    get_node_subsystem_name,
+    get_mock_keyboard_config,
+)
 import rclpy.action
 import time
+import sys
+import tty
+import termios
+from .MockInputController import get_mock_input_controller
 from py_trees_ros import exceptions
+import sys
+import tty
+import termios
 
 class ActionHandler(py_trees.behaviour.Behaviour):
     """
@@ -16,12 +33,35 @@ class ActionHandler(py_trees.behaviour.Behaviour):
                  action_type: Any,
                  action_name: str,
                  key: str,
-                 wait_for_server_timeout_sec: float=-3.0
+                 wait_for_server_timeout_sec: float=-3.0,
+                 action_timeout_ticks:int = 0
                  ):
         super(ActionHandler, self).__init__(name)
         self.action_type = action_type
         self.action_name = action_name
         self.wait_for_server_timeout_sec = wait_for_server_timeout_sec
+        
+        # Check if this specific node should be mocked
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
+        self.mock_interaction_mode = get_node_mock_interaction_mode(self.__class__.__name__)
+        self.mock_subsystem = get_node_subsystem_name(self.__class__.__name__)
+        
+        # For mock mode keyboard press
+        self._mock_pressed = False
+        self._mock_announced = False
+        self._old_settings = None
+        self._mock_teleop_node = None
+        self._mock_input_controller = get_mock_input_controller()
+        self._mock_teleop_detailed_feedback = bool(
+            get_mock_teleop_params().get("detailed_feedback", True)
+        )
+        self._mock_auto_ticks_required = 2
+        self._mock_tick_counter = 0
+        self._mock_consumer_id = f"{self.__class__.__name__}:{id(self)}"
+        self._mock_start_tick = -1
+        self._mock_start_event = -1
+        self._mock_teleop_setup_error = None
+        
         if key is not None:
             self.blackboard = self.attach_blackboard_client(name=self.name)
             self.blackboard.register_key(
@@ -44,6 +84,8 @@ class ActionHandler(py_trees.behaviour.Behaviour):
                 action_msgs.GoalStatus.STATUS_ABORTED  : "STATUS_ABORTED"  # noqa
             }
 
+        self.action_timeout_ticks = action_timeout_ticks
+
     def setup(self, **kwargs):
         """
         Setup the action client services and subscribers.
@@ -63,6 +105,25 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.qualified_name)
             raise KeyError(error_message) from e  # 'direct cause' traceability
 
+        # Skip creating action client in mock mode
+        if self.mock_mode:
+            self._mock_input_controller.configure(get_mock_keyboard_config())
+            self._mock_input_controller.start()
+            if self.mock_interaction_mode == "teleop":
+                self._setup_mock_teleop_node()
+                if self._mock_teleop_node is None:
+                    warn = (
+                        f"MOCK TELEOP SETUP FAILED [{self.__class__.__name__}/{self.name}]: "
+                        f"{self._mock_teleop_setup_error or 'unknown error'}. "
+                        "Falling back to wait_keypress."
+                    )
+                    self.feedback_message = warn
+                    print(f"⚠ {warn}")
+                    if self.node is not None:
+                        self.node.get_logger().warning(warn)
+            print(f"MOCK MODE: Skipping action client creation for {self.action_name}")
+            return
+        
         self.action_client = rclpy.action.ActionClient(
             node=self.node,
             action_type=self.action_type,
@@ -97,6 +158,16 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         """
         child classes should override this funciton to how they wish to process the blackboard variable and send the goal
         """
+        # Handle mock mode
+        if self.mock_mode:
+            self.feedback_message = "MOCK: goal sent (mock mode)"
+            # Create a mock send_goal_future that appears done
+            class MockFuture:
+                def done(self):
+                    return True
+            self.send_goal_future = MockFuture()
+            return
+            
         try:
             self.send_goal_request(self.blackboard.goal)
             self.feedback_message = "sent goal request"
@@ -149,6 +220,11 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         Reset the internal variables and kick off a new goal request.
         """
         self.logger.debug("{}.initialise()".format(self.qualified_name))
+        self._mock_pressed = False
+        self._mock_announced = False
+        self._mock_tick_counter = 0
+        self._mock_start_tick = self._mock_input_controller.get_tick_index()
+        self._mock_start_event = self._mock_input_controller.get_event_index()
 
         # initialise some temporary variables
         self.goal_handle = None
@@ -164,7 +240,119 @@ class ActionHandler(py_trees.behaviour.Behaviour):
 
         self.last_feedback_time = time.time()
         self.feedback_timeout = 10000.0
+        if self.mock_mode and self.mock_interaction_mode == "teleop" and self._mock_teleop_node is not None:
+            self._mock_teleop_node.initialise()
+        elif self.mock_mode and self.mock_interaction_mode == "teleop":
+            warn = (
+                f"MOCK TELEOP INIT WARNING [{self.__class__.__name__}/{self.name}]: "
+                "teleop backend is unavailable; node is running in wait_keypress fallback."
+            )
+            self.feedback_message = warn
+            print(f"⚠ {warn}")
+            if self.node is not None:
+                self.node.get_logger().warning(warn)
+        
+        # In mock mode, set result_status to SUCCESS immediately
+        if self.mock_mode:
+            self.result_status = action_msgs.GoalStatus.STATUS_SUCCEEDED
+            self.result_status_string = "MOCK_SUCCESS"
+            # Create a mock result message
+            class MockResultMessage:
+                class Result:
+                    status = 0
+                    error_msg = ""
+                result = Result()
+            self.result_message = MockResultMessage()
+            # Create a mock future
+            class MockFuture:
+                def done(self):
+                    return True
+            self.get_result_future = MockFuture()
+        
         self.send_goal()
+
+        self.counter = 0
+    
+    def wait_for_keypress_in_mock(self):
+        """
+        Helper method for mock mode - wait for keyboard press and return status.
+        Returns RUNNING until key is pressed, then returns SUCCESS.
+        """
+        if not self.mock_mode:
+            return None
+
+        if self.mock_interaction_mode == "immediate":
+            self._mock_tick_counter += 1
+            if self._mock_tick_counter <= self._mock_auto_ticks_required:
+                self.feedback_message = f"MOCK: auto-completing ({self._mock_tick_counter}/{self._mock_auto_ticks_required})"
+                return py_trees.common.Status.RUNNING
+            if should_announce_movement(self.__class__.__name__) and is_mock_tts_active():
+                self.feedback_message = "MOCK: waiting for TTS broadcast"
+                return py_trees.common.Status.RUNNING
+            self.feedback_message = "MOCK: auto-complete finished"
+            return py_trees.common.Status.SUCCESS
+
+        if self.mock_interaction_mode == "teleop" and self._mock_teleop_node is not None:
+            if not self._mock_announced:
+                announce_node_action(self.name, self.__class__.__name__)
+                self._mock_announced = True
+            status = self._mock_teleop_node.update()
+            teleop_feedback = getattr(self._mock_teleop_node, "feedback_message", "")
+            if self._mock_teleop_detailed_feedback and teleop_feedback:
+                self.feedback_message = f"MOCK: {teleop_feedback}"
+            else:
+                if status == py_trees.common.Status.SUCCESS:
+                    self.feedback_message = "MOCK: Teleop finished (Enter pressed)"
+                else:
+                    self.feedback_message = "MOCK: Teleop active"
+            return status
+        
+        if not self._mock_announced:
+            announce_node_action(self.name, self.__class__.__name__)
+            self._mock_announced = True
+            
+        key = self._mock_input_controller.pop_key(
+            self.mock_subsystem,
+            consumer_id=self._mock_consumer_id,
+            consumer_start_tick=self._mock_start_tick,
+            consumer_start_event=self._mock_start_event,
+        )
+        if self._mock_input_controller.is_success_event(key):
+            self._mock_pressed = True
+            return py_trees.common.Status.SUCCESS
+        return py_trees.common.Status.RUNNING
+
+    def _setup_mock_teleop_node(self):
+        try:
+            from behavior_tree.TemplateNodes.TeleopNodes import BtNode_MoveArmTeleop
+
+            teleop_params = get_mock_teleop_params()
+            self._mock_teleop_node = BtNode_MoveArmTeleop(
+                name=f"{self.name}_mock_teleop",
+                **teleop_params,
+            )
+            self._mock_teleop_node.setup(node=self.node)
+            self._mock_teleop_node.set_key_provider(
+                lambda: self._mock_input_controller.pop_keys(
+                    self.mock_subsystem,
+                    consumer_id=self._mock_consumer_id,
+                    consumer_start_tick=self._mock_start_tick,
+                    consumer_start_event=self._mock_start_event,
+                    max_keys=128,
+                )
+            )
+            print(f"MOCK MODE: Using teleop interaction for {self.__class__.__name__}")
+        except Exception as exc:
+            self._mock_teleop_node = None
+            self._mock_teleop_setup_error = str(exc)
+            self.mock_interaction_mode = "wait_keypress"
+            warn = (
+                f"Failed to initialize teleop mock for {self.__class__.__name__}/{self.name}: {exc}. "
+                "Falling back to wait_keypress."
+            )
+            print(f"⚠ WARNING: {warn}")
+            if self.node is not None:
+                self.node.get_logger().warning(warn)
 
     def update(self):
         """
@@ -176,6 +364,17 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             :class:`py_trees.common.Status`
         """
         self.logger.debug("{}.update()".format(self.qualified_name))
+        
+        # In mock mode, wait for keyboard press
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
+        if self.action_timeout_ticks != 0:
+            self.counter += 1
+            if self.counter > self.action_timeout_ticks:
+                # TODO: abort the action here
+                self.feedback_message = "action timeout"
+                return py_trees.common.Status.FAILURE
 
         # processing errors
         if self.send_goal_future is None:
@@ -215,6 +414,19 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         Args:
             new_status: the behaviour is transitioning to this new status
         """
+        # Clean up terminal settings if in mock mode
+        if self.mock_mode and self._old_settings is not None:
+            try:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._old_settings)
+                self._old_settings = None
+            except:
+                pass
+        if self.mock_mode and self._mock_teleop_node is not None:
+            try:
+                self._mock_teleop_node.terminate(new_status)
+            except Exception:
+                pass
+        
         self.logger.debug(
             "{}.terminate({})".format(
                 self.qualified_name,
@@ -231,7 +443,9 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         """
         Clean up the action client when shutting down.
         """
-        self.action_client.destroy()
+        # Only destroy if action client exists (not in mock mode)
+        if self.action_client is not None:
+            self.action_client.destroy()
 
     ########################################
     # Action Client Methods
