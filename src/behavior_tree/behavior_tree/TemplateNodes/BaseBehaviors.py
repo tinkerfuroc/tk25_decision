@@ -1,3 +1,68 @@
+# Copyright 2025 Tinker Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#
+# Base Behaviors Module
+# =================
+#
+# This module provides the base class for service-based behavior tree nodes
+# and utility nodes for blackboard operations. All service-based nodes
+# inherit from ServiceHandler, which provides:
+#
+# - Automatic mock mode detection via config.py
+# - ROS2 service client management
+# - Keyboard-based interaction for mock mode
+# - Optional TTS announcements during mock execution
+#
+# The mock mode system supports multiple interaction modes per node:
+#
+# - ``wait_keypress``: Wait for keyboard press before succeeding (default)
+# - ``teleop``: Use teleoperation-style keyboard control for arm manipulation
+# - ``immediate``: Return success immediately without user interaction
+#
+# Classes
+# -------
+ServiceHandler
+    Base class for all nodes that call ROS2 services.
+# BtNode_WriteToBlackboard
+    Writes a value to the blackboard for inter-node communication.
+# BtNode_ClearBlackboard
+    Clears a value from the blackboard.
+# BtNode_CheckIfEmpty
+    Checks if a blackboard key has a value.
+# BtNode_WaitTicks
+    Waits for a specified number of behavior tree ticks.
+# BtNode_WaitKeyboardPress
+    Simple keyboard wait utility (also in WaitKeyPress.py).
+#
+# Usage
+# -----
+# Inherit from ServiceHandler and implement the update() method for real behavior,
+# or rely on the built-in mock mode support:
+#
+# >>> class MyCustomNode(ServiceHandler):
+# ...     def __init__(self, name, str):
+# ...         super().__init__(name, service_name="my_service", service_type=MyServiceType)
+# ...         # Mock mode is automatically handled
+# ...
+# ...     def update(self):
+# ...         if self.mock_mode:
+# ...             return self.wait_for_keypress_in_mock()
+# ...         # Real implementation here
+# ...         return py_trees.common.Status.RUNNING
+#
+
 import py_trees
 from py_trees.common import Status
 import threading
@@ -20,32 +85,72 @@ import termios
 
 
 class ServiceHandler(py_trees.behaviour.Behaviour):
+    """Base class for all nodes that call ROS2 services.
+
+    This class provides the foundation for service-based behavior tree nodes.
+    It automatically handles mock mode detection and keyboard-based
+    interaction when running without real hardware.
+
+    The mock mode system supports three interaction modes:
+    - ``wait_keypress``: Wait for keyboard press before succeeding
+    - ``teleop``: Use teleoperation-style keyboard control for arm manipulation
+    - ``immediate``: Return success immediately
+
+    Attributes
+    ----------
+    service_name : str
+        Name of the ROS2 service to connect to.
+    service_type : Any
+        The ROS2 service type class.
+    mock_mode : bool
+        Whether this node is running in mock mode.
+    mock_interaction_mode : str
+        The mock interaction mode ('wait_keypress', 'teleop', or 'immediate').
+    mock_subsystem : str or None
+        The subsystem this node belongs to (for keyboard routing).
+    node : Node
+        The ROS2 node instance.
+    client : Client
+        The ROS2 service client.
+    response : Future
+        The future object for the asynchronous service response.
+
     """
-    Base class for all nodes which handle a service
-    """
-    def __init__(self, 
+
+    def __init__(self,
                  name: str,
-                 service_name:str,
+                 service_name: str,
                  service_type: Any,
                  ):
+        """Initialize the ServiceHandler.
+
+        Parameters
+        ----------
+        name : str
+            The name of this behavior tree node.
+        service_name : str
+            The name of the ROS2 service to connect to.
+        service_type : Any
+            The ROS2 service type class.
+        """
         super(ServiceHandler, self).__init__(name=name)
         self.service_name = service_name
         self.service_type = service_type
-        
+
         # Check if this specific node should be mocked
         # Use the class name to determine mock status
         self.mock_mode = is_node_mocked(self.__class__.__name__)
         self.mock_interaction_mode = get_node_mock_interaction_mode(self.__class__.__name__)
         self.mock_subsystem = get_node_subsystem_name(self.__class__.__name__)
 
-        # guard the data
+        # Guard the data for thread safety
         self.data_guard = threading.Lock()
 
-        self.node : Node = None
+        self.node: Node = None
 
         self.response = None    # Future object for receiving response
-        self.client = None      # service client
-        
+        self.client = None      # Service client
+
         # For mock mode keyboard press
         self._mock_pressed = False
         self._mock_announced = False
@@ -61,8 +166,23 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         self._mock_start_tick = -1
         self._mock_start_event = -1
         self._mock_teleop_setup_error = None
-    
+
     def setup(self, **kwargs):
+        """Set up the service client and mock mode infrastructure.
+
+        Called by the behavior tree during the setup phase. Creates the
+        ROS2 service client or initializes mock mode infrastructure.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Must contain 'node' key with the ROS2 node instance.
+
+        Raises
+        ------
+        KeyError
+            If 'node' is not found in kwargs.
+        """
         print("Setting up service handler %s for node name %s" % (self.service_name, self.name))
         # node should be passed down the tree from the root node
         try:
@@ -108,6 +228,11 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         print("Finished setting up service handler")
 
     def initialise(self):
+        """Reset internal state when behavior starts.
+
+        Called by the behavior tree when this node is visited.
+        Resets mock mode state and clears any pending response.
+        """
         # some debugging info
         self.logger.debug("%s.initialise()" % self.__class__.__name__)
         self._mock_pressed = False
@@ -132,20 +257,40 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             print(f"⚠ {warn}")
             if self.node is not None:
                 self.node.get_logger().warning(warn)
-    
+
     def call_service_async(self, request):
-        """
-        Helper method to call service asynchronously.
-        Returns None in mock mode.
+        """Call the ROS2 service asynchronously.
+
+        Helper method to call service asynchronously. Returns None in
+        mock mode instead of making a real service call.
+
+        Parameters
+        ----------
+        request : Any
+            The service request message.
+
+        Returns
+        -------
+        Future or None
+            The future object for the service response, or None in mock mode.
         """
         if self.mock_mode:
             return None
         return self.client.call_async(request)
-    
+
     def wait_for_keypress_in_mock(self):
-        """
-        Helper method for mock mode - wait for keyboard press and return status.
-        Returns RUNNING until key is pressed, then returns SUCCESS.
+        """Handle mock mode interaction and return appropriate status.
+
+        This method implements the three mock interaction modes:
+        - ``immediate``: Auto-complete after a few ticks
+        - ``teleop``: Use keyboard teleoperation for arm control
+        - ``wait_keypress``: Wait for success key (default: ENTER)
+
+        Returns
+        -------
+        Status or None
+            RUNNING while waiting, SUCCESS when complete.
+            Returns None if not in mock mode.
         """
         if not self.mock_mode:
             return None
