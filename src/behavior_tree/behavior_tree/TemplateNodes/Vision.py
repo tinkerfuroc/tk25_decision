@@ -1,3 +1,54 @@
+# Copyright 2025 Tinker Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#
+# Vision Nodes Module
+# ===================
+#
+# This module provides behavior tree nodes for robot vision operations.
+# All nodes inherit from ServiceHandler and include built-in mock mode support.
+#
+# Classes
+# -------
+# BtNode_ScanFor
+#     Scans for objects using YOLO-based detection.
+# BtNode_TrackPerson
+#     Tracks a specific person across frames using person ID.
+# BtNode_FindObj
+#     Finds objects for grasping with distance validation.
+# BtNode_FeatureExtraction
+#     Extracts visual features for person recognition.
+# BtNode_SeatRecommend
+#     Recommends a seat based on current scene.
+# BtNode_FeatureMatching
+#     Matches extracted features to known persons.
+# BtNode_GetPointCloud
+#     Retrieves a point cloud from the depth camera.
+# BtNode_DoorDetection
+#     Detects if a door is open or closed.
+# BtNode_TurnPanTilt
+#     Controls the pan-tilt unit for camera orientation.
+# BtNode_TurnTo
+#     Turns the camera to face a specific point/person.
+#
+# Mock Mode
+# ---------
+# All vision nodes support mock mode via the mock_config.json settings.
+# In mock mode, they return simulated detection results or wait for
+# keyboard input.
+#
+
 import asyncio
 import py_trees as pytree
 import time
@@ -16,6 +67,12 @@ from .structs import Person
 
 
 class BtNode_ScanFor(ServiceHandler):
+    """
+    Scans for objects using YOLO-based detection.
+
+    This node performs object detection using the specified camera and stores
+    the detection results on the blackboard for use by subsequent nodes.
+    """
 
     def __init__(self, 
                  name: str,
@@ -135,6 +192,16 @@ class BtNode_ScanFor(ServiceHandler):
 
 
 class BtNode_TrackPerson(ServiceHandler):
+    """
+    Tracks a specific person across frames using person ID.
+
+    This node registers and tracks a person, storing their position on the
+    blackboard. On first execution, it registers a new person and obtains an ID.
+    On subsequent executions, it tracks that person by ID.
+
+    This is useful for maintaining persistent tracking of a specific individual
+    throughout a behavior tree execution.
+    """
 
     def __init__(self, 
                  name: str,
@@ -273,6 +340,13 @@ class BtNode_TrackPerson(ServiceHandler):
 
 
 class BtNode_FindObj(ServiceHandler):
+    """
+    Finds objects for grasping with distance validation.
+
+    This node locates objects suitable for grasping using the RealSense camera.
+    It validates that detected objects are within reachable distance for the
+    robot arm before returning success.
+    """
 
     def __init__(self, 
                  name: str,
@@ -378,6 +452,13 @@ class BtNode_FindObj(ServiceHandler):
 
 
 class BtNode_FeatureExtraction(ServiceHandler):
+    """
+    Extracts visual features for person recognition.
+
+    This node captures an image from the specified camera and extracts feature
+    vectors that can be used for person identification or matching. The features
+    are stored on the blackboard for use by matching nodes.
+    """
     def __init__(self, 
                  name: str,
                  bb_dest_key: str,
@@ -442,6 +523,13 @@ class BtNode_FeatureExtraction(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 class BtNode_SeatRecommend(ServiceHandler):
+    """
+    Recommends a seat based on the current scene.
+
+    This node analyzes the scene and existing seated persons to generate a
+    seating recommendation for a new guest. It uses the features of known
+    persons to provide context for the recommendation.
+    """
     def __init__(self, 
                  name: str,
                  bb_dest_key: str,
@@ -521,6 +609,13 @@ class BtNode_SeatRecommend(ServiceHandler):
 
 
 class BtNode_FeatureMatching(ServiceHandler):
+    """
+    Matches extracted features to known persons.
+
+    This node takes feature vectors of known persons and attempts to locate
+    them in the current camera view. It returns the centroid positions of
+    matched persons for use in subsequent operations like turning to face them.
+    """
     def __init__(self,
                  name: str,
                  bb_dest_key: str,
@@ -612,6 +707,12 @@ class BtNode_FeatureMatching(ServiceHandler):
 
 
 class BtNode_GetPointCloud(ServiceHandler):
+    """
+    Retrieves a point cloud from the depth camera.
+
+    This node captures a point cloud from the specified depth camera and stores
+    it on the blackboard for use by other nodes requiring 3D spatial data.
+    """
     def __init__(self,
                  name: str,
                  bb_point_cloud_key: str,
@@ -677,6 +778,13 @@ class BtNode_GetPointCloud(ServiceHandler):
 
 
 class BtNode_DoorDetection(ServiceHandler):
+    """
+    Detects if a door is open or closed.
+
+    This node uses the Orbbec camera to analyze the scene and determine
+    whether a door is currently open or closed. The result is stored on
+    the blackboard as a boolean (1 for open, 0 for closed).
+    """
     def __init__(self,
                  name: str,
                  bb_door_state_key: str,
@@ -738,6 +846,18 @@ class BtNode_DoorDetection(ServiceHandler):
 
 
 class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
+    """
+    Controls the pan-tilt unit for camera orientation.
+
+    This node publishes pan-tilt control commands to orient the camera.
+    Unlike other vision nodes, this inherits directly from Behaviour since
+    it uses topic publishing rather than service calls.
+
+    Attributes:
+        x: Pan angle in degrees.
+        y: Tilt angle in degrees.
+        speed: Movement speed.
+    """
     def __init__(self, name: str, x: float = 0.0, y: float = 0.0, speed: float = 0.0):
         super().__init__(name)
         self.x = x

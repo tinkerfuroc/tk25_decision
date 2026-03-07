@@ -1,3 +1,59 @@
+# Copyright 2025 Tinker Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#
+# Teleop Nodes Module
+# ==================
+#
+# This module provides keyboard-based teleoperation for robot arm control.
+# It is primarily used in mock mode but can also be used for real hardware
+# debugging and manual control.
+#
+# Classes
+# -------
+# BtNode_MoveArmTeleop
+#     Behavior tree node for keyboard-based arm teleoperation.
+#
+# Features
+# --------
+# - Cartesian (end-effector) control via twist commands
+# - Joint-by-joint control
+# - Gripper control (width adjustment and instant open/close)
+# - Speed adjustment for linear, angular, and joint motion
+# - Configurable keymaps via mock_config.json
+#
+# Key Mappings (Default)
+# ----------------------
+# Twist Control (Cartesian):
+#   w/s: linear x +/-    a/d: linear y +/-
+#   q/e: linear z +/-    j/l: angular x +/-
+#   i/k: angular y +/-   u/o: angular z +/-
+#
+# Joint Control:
+#   1/2: joint1  3/4: joint2  5/6: joint3
+#   7/8: joint4  9/0: joint5  -/=: joint6  [/]: joint7
+#
+# Gripper:
+#   z/x: width +/-    v: open    c: close
+#
+# Speed:
+#   r/f: linear +/-   t/g: angular +/-   y/h: joint +/-
+#
+# Control:
+#   space: stop    enter: finish teleop    p: stop key
+#
+
 import select
 import sys
 import termios
@@ -22,6 +78,45 @@ from .MockInputController import get_mock_input_controller
 
 
 class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
+    """Keyboard-based teleoperation node for robot arm control.
+
+    This node enables real-time keyboard control of a robot arm, supporting
+    both Cartesian (end-effector) and joint-space control. It is primarily
+    used in mock mode but can also be used for real hardware debugging.
+
+    The node runs a dedicated input thread for responsive key handling,
+    independent of the behavior tree tick rate.
+
+    Attributes
+    ----------
+    dof : int
+        Number of degrees of freedom for the arm (default: 7).
+    cartesian_command_in_topic : str
+        ROS topic for Cartesian twist commands.
+    joint_command_in_topic : str
+        ROS topic for joint velocity commands.
+    gripper_command_in_topic : str
+        ROS topic for gripper commands.
+    command_frame : str
+        Reference frame for Cartesian commands.
+    linear_speed : float
+        Current linear velocity scale.
+    angular_speed : float
+        Current angular velocity scale.
+    joint_speed : float
+        Current joint velocity scale.
+    gripper_width_cm : float
+        Current gripper width in centimeters.
+    twist_keymap : dict
+        Mapping of key combos to twist commands.
+    joint_keymap : list
+        Mapping of key combos to joint commands.
+    speed_control_keymap : dict
+        Keys for adjusting motion speeds.
+    gripper_keymap : dict
+        Keys for gripper control.
+
+    """
     def __init__(
         self,
         name: str,
@@ -49,6 +144,8 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         gripper_width_step_cm: float = None,
         gripper_initial_width_cm: float = None,
         gripper_hw_inverted: bool = None,
+        gripper_command_scale: float = None,
+        gripper_command_offset: float = None,
         visual_feedback_min_period_s: float = None,
     ):
         super().__init__(name=name)
@@ -98,6 +195,8 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             self.gripper_width_min_cm, self.gripper_width_max_cm = self.gripper_width_max_cm, self.gripper_width_min_cm
         self.gripper_width_step_cm = float(_resolve(gripper_width_step_cm, "gripper_width_step_cm", 0.5))
         self.gripper_hw_inverted = bool(_resolve(gripper_hw_inverted, "gripper_hw_inverted", True))
+        self.gripper_command_scale = float(_resolve(gripper_command_scale, "gripper_command_scale", 0.1))
+        self.gripper_command_offset = float(_resolve(gripper_command_offset, "gripper_command_offset", 0.0))
         initial_width = float(_resolve(gripper_initial_width_cm, "gripper_initial_width_cm", self.gripper_width_max_cm))
         self.gripper_width_cm = self._clamp(initial_width, self.gripper_width_min_cm, self.gripper_width_max_cm)
         self._visual_feedback_min_period_s = float(
@@ -133,6 +232,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         self._last_joint_cmds = []
         self._last_visual_feedback_ts = 0.0
         self._controls_snapshot_cache = self._build_controls_snapshot()
+        self._printed_keymap_conflict_warning = False
 
     def set_key_provider(self, provider):
         """
@@ -189,6 +289,7 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
 
         self._start_servo()
         self._print_help()
+        self._warn_keymap_conflicts_once()
         self.feedback_message = "Teleop active"
         self._publish_visual_feedback(note="teleop started", force=True)
 
@@ -281,9 +382,6 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
 
     def _process_tokens(self, tokens: set[str]) -> None:
         # print(f"Processing tokens: {tokens}")
-        if self._handle_speed_tokens(tokens):
-            self._publish_visual_feedback(tokens=tokens, note="speed updated", force=True)
-            return
         if self._combo_active(self.stop_key_combo, tokens):
             self._publish_stop()
             self.feedback_message = "Stop command published"
@@ -320,6 +418,9 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             self._publish_visual_feedback(tokens=tokens, note="gripper width decreased", force=True)
             if self._verbose_key_log:
                 print(f"[MoveArmTeleop] gripper_width={self.gripper_width_cm:.2f}cm (dec)")
+            return
+        if self._handle_speed_tokens(tokens):
+            self._publish_visual_feedback(tokens=tokens, note="speed updated", force=True)
             return
 
         joint_cmds = self._joint_commands_from_tokens(tokens)
@@ -524,12 +625,43 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             "             current "
             f"width={self.gripper_width_cm:.2f}cm step={self.gripper_width_step_cm:.2f}cm "
             f"range=[{self.gripper_width_min_cm:.2f}, {self.gripper_width_max_cm:.2f}] "
-            f"inverted_hw={self.gripper_hw_inverted}"
+            f"inverted_hw={self.gripper_hw_inverted} "
+            f"cmd_scale={self.gripper_command_scale:.3f} cmd_offset={self.gripper_command_offset:.3f}"
         )
         print(f"  Stop:      {self._combo_to_str(self.stop_key_combo)}")
         print("  Finish:    Enter")
         print("")
         self._printed_help = True
+
+    def _warn_keymap_conflicts_once(self) -> None:
+        if self._printed_keymap_conflict_warning:
+            return
+        speed_combos = {
+            self.speed_control_keymap["linear_dec"],
+            self.speed_control_keymap["linear_inc"],
+            self.speed_control_keymap["angular_dec"],
+            self.speed_control_keymap["angular_inc"],
+            self.speed_control_keymap["joint_dec"],
+            self.speed_control_keymap["joint_inc"],
+        }
+        conflicts = []
+        for name in ("width_inc", "width_dec", "open", "close"):
+            combo = self.gripper_keymap.get(name)
+            if combo in speed_combos:
+                conflicts.append(f"{name}={self._combo_to_str(combo)}")
+        if conflicts:
+            msg = (
+                "MoveArmTeleop keymap conflict: gripper keys overlap speed keys ("
+                + ", ".join(conflicts)
+                + "). Gripper actions take precedence."
+            )
+            print(f"WARNING: {msg}")
+            if self.node is not None:
+                try:
+                    self.node.get_logger().warning(msg)
+                except Exception:
+                    pass
+        self._printed_keymap_conflict_warning = True
 
     def _publish_visual_feedback(
         self,
@@ -591,6 +723,8 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
             "gripper_width_step_cm": float(self.gripper_width_step_cm),
             "gripper_width_range_cm": [float(self.gripper_width_min_cm), float(self.gripper_width_max_cm)],
             "gripper_hw_inverted": bool(self.gripper_hw_inverted),
+            "gripper_command_scale": float(self.gripper_command_scale),
+            "gripper_command_offset": float(self.gripper_command_offset),
             "stop": self._combo_to_str(self.stop_key_combo),
             "finish": "enter",
         }
@@ -734,7 +868,13 @@ class BtNode_MoveArmTeleop(pytree.behaviour.Behaviour):
         cmd_width = self.gripper_width_cm
         if self.gripper_hw_inverted:
             cmd_width = self.gripper_width_max_cm + self.gripper_width_min_cm - self.gripper_width_cm
-        self._publish_gripper(cmd_width)
+        cmd_value = (cmd_width * self.gripper_command_scale) + self.gripper_command_offset
+        self._publish_gripper(cmd_value)
+        if self._verbose_key_log:
+            print(
+                "[MoveArmTeleop] gripper cmd "
+                f"logical={self.gripper_width_cm:.2f}cm raw={cmd_width:.2f} scaled={cmd_value:.3f}"
+            )
 
     def _clamp(self, value: float, lo: float, hi: float) -> float:
         return max(lo, min(hi, float(value)))
