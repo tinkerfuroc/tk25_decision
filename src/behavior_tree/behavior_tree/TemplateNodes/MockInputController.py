@@ -1,3 +1,61 @@
+# Copyright 2025 Tinker Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Mock Input Controller Module
+============================
+
+This module provides a shared keyboard router for mock mode nodes.
+It enables GUI-based keyboard input to be forwarded to the appropriate
+mock subsystems (vision, manipulation, navigation, audio, etc.).
+
+The controller supports:
+- Subsystem selection via dedicated keys
+- Global enable/disable of input forwarding
+- Queue-based key delivery to multiple consumers
+- Event-based deduplication across consumers
+
+Control Flow
+------------
+1. Press ``start_input_key`` (default: '\\') to enable input forwarding
+2. Press ``stop_input_key`` (default: '/') to disable input forwarding
+3. Press a subsystem start key (e.g., 'm' for manipulation) to select
+   the active subsystem and enable forwarding
+4. While enabled, keys are forwarded only to the active subsystem's queue
+5. Success key (default: ENTER) signals mock nodes to complete
+
+Classes
+-------
+MockInputController
+    Singleton class that manages keyboard input routing.
+
+Functions
+---------
+get_mock_input_controller()
+    Returns the global MockInputController instance.
+
+Example
+-------
+>>> controller = get_mock_input_controller()
+>>> controller.configure({
+...     "start_input_key": "\\",
+...     "subsystem_start_keys": {"manipulation": "shift+m"}
+... })
+>>> controller.start()
+>>> # GUI can now inject keys via controller.inject_key('a')
+"""
+
 import atexit
 import threading
 from collections import defaultdict, deque
@@ -5,21 +63,46 @@ from typing import Dict, Iterable, Optional, Tuple
 
 
 class MockInputController:
-    """
-    Shared keyboard router for mock nodes.
+    """Shared keyboard router for mock mode nodes.
 
-    Control flow:
+    This singleton class manages keyboard input routing for the mock mode
+    system. It receives key events from GUI sources and distributes them
+    to the appropriate subsystem queues based on the current input state.
+
+    Attributes
+    ----------
+    _lock : threading.Lock
+        Thread lock for protecting shared state.
+    _queues : dict[str, deque]
+        Per-subsystem queues of (event_id, key_combo, tick) tuples.
+    _running : bool
+        Whether the controller is active.
+    _input_enabled : bool
+        Whether input forwarding is enabled.
+    _active_subsystem : str or None
+        Currently selected subsystem for input routing.
+    _broadcast_all_subsystems : bool
+        If True, broadcast keys to all subsystems.
+
+    Control Flow
+    ------------
     - Press start_input_key to enable input forwarding
     - Press stop_input_key to disable input forwarding
-    - Press subsystem start key (e.g. 'm') to select active subsystem and enable forwarding
+    - Press subsystem start key (e.g., 'm') to select active subsystem
     - While enabled, keys are forwarded only to active subsystem queue
     """
 
     def __init__(self):
+        """Initialize the mock input controller with default settings.
+
+        Sets up internal state including queues, locks, and default key bindings.
+        The controller starts in a disabled state until start() is called.
+        """
         self._lock = threading.Lock()
         self._queues = defaultdict(deque)
         self._running = False
 
+        # Default key bindings (can be overridden via configure())
         self._start_input_key = "\\"
         self._stop_input_key = "/"
         self._start_input_combo = frozenset({"\\"})
@@ -30,10 +113,13 @@ class MockInputController:
         self._success_key = "ENTER"
         self._success_combo = frozenset({"enter"})
 
+        # Input state
         self._input_enabled = False
         self._active_subsystem = None
         self._broadcast_all_subsystems = False
         self._help_printed = False
+
+        # Keys reserved for teleop control (not forwarded to regular mock nodes)
         self._teleop_reserved_keys = set(
             [
                 "w", "s", "a", "d", "q", "e",
@@ -42,6 +128,8 @@ class MockInputController:
             ]
         )
         self._dynamic_teleop_reserved_keys = set()
+
+        # Queue management
         self._max_queue_per_subsystem = 512
         self._last_key = None
         self._last_keys = ()
@@ -50,6 +138,8 @@ class MockInputController:
         self._event_id = 0
         self._last_delivered_event = defaultdict(int)
         self._last_injected_combo: Tuple[str, ...] = ()
+
+        # Teleop feedback for GUI visualization
         self._teleop_feedback = {
             "active": False,
             "node_name": "",
@@ -63,6 +153,18 @@ class MockInputController:
         }
 
     def configure(self, cfg: Dict):
+        """Configure the controller with custom key bindings.
+
+        Parameters
+        ----------
+        cfg : dict
+            Configuration dictionary with the following optional keys:
+            - start_input_key: Key to enable input forwarding (default: '\\\\')
+            - stop_input_key: Key to disable input forwarding (default: '/')
+            - subsystem_start_keys: Dict mapping subsystem names to activation keys
+            - teleop_reserved_keys: List of keys reserved for teleop mode
+            - success_key: Key that signals mock nodes to complete (default: 'ENTER')
+        """
         with self._lock:
             if not isinstance(cfg, dict):
                 return
@@ -117,6 +219,11 @@ class MockInputController:
         return sanitized, combos
 
     def start(self):
+        """Start the controller and print help message.
+
+        Called automatically by mock nodes when they initialize.
+        Prints the keyboard control help message on first call.
+        """
         with self._lock:
             if self._running:
                 return
@@ -126,6 +233,7 @@ class MockInputController:
                 self._help_printed = True
 
     def shutdown(self):
+        """Stop the controller and disable input forwarding."""
         with self._lock:
             self._running = False
 
@@ -136,6 +244,24 @@ class MockInputController:
         consumer_start_tick: Optional[int] = None,
         consumer_start_event: Optional[int] = None,
     ):
+        """Pop a single key event from the subsystem queue.
+
+        Parameters
+        ----------
+        subsystem : str or None
+            The subsystem queue to pop from.
+        consumer_id : str, optional
+            Unique identifier for the consumer (for event deduplication).
+        consumer_start_tick : int, optional
+            Minimum tick index for events to be delivered.
+        consumer_start_event : int, optional
+            Minimum event ID for events to be delivered.
+
+        Returns
+        -------
+        tuple or None
+            The key combo tuple, or None if no keys available.
+        """
         keys = self.pop_keys(
             subsystem,
             consumer_id=consumer_id,
@@ -155,9 +281,28 @@ class MockInputController:
         consumer_start_event: Optional[int] = None,
         max_keys: Optional[int] = None,
     ):
-        """
-        Pop all currently eligible keys for one consumer.
-        This is used by teleop to process burst input within the same tick.
+        """Pop multiple key events from the subsystem queue.
+
+        Used by teleop nodes to process burst input within the same tick.
+        This method supports event deduplication across multiple consumers.
+
+        Parameters
+        ----------
+        subsystem : str or None
+            The subsystem queue to pop from.
+        consumer_id : str, optional
+            Unique identifier for the consumer.
+        consumer_start_tick : int, optional
+            Minimum tick index for events to be delivered.
+        consumer_start_event : int, optional
+            Minimum event ID for events to be delivered.
+        max_keys : int, optional
+            Maximum number of keys to pop.
+
+        Returns
+        -------
+        list
+            List of key combo tuples.
         """
         if subsystem is None:
             return []
@@ -196,16 +341,33 @@ class MockInputController:
             return [key for _, key in selected]
 
     def inject_key(self, ch: str, source: str = "gui"):
-        """
-        Public API for one-key non-stdin input sources (e.g. GUI).
+        """Inject a single key event from external sources (e.g., GUI).
+
+        This is the primary entry point for GUI-based keyboard input.
+        The key is processed and routed to the appropriate subsystem queue.
+
+        Parameters
+        ----------
+        ch : str
+            The key character to inject.
+        source : str
+            Source identifier for debugging (default: "gui").
         """
         if not isinstance(ch, str) or len(ch) == 0:
             return
         self.inject_keys((ch[0],), source=source)
 
     def inject_keys(self, keys: Iterable[str], source: str = "gui"):
-        """
-        Public API for key-combo input sources (GUI only).
+        """Inject a key combo event from external sources.
+
+        Supports multi-key combinations like Ctrl+C or Shift+M.
+
+        Parameters
+        ----------
+        keys : iterable of str
+            The keys in the combo (e.g., ('ctrl', 'c')).
+        source : str
+            Source identifier for debugging (default: "gui").
         """
         combo = self._canonicalize_combo(keys)
         if not combo:
@@ -213,15 +375,22 @@ class MockInputController:
         self._handle_combo(combo, source=source)
 
     def clear_active_combo(self):
-        """
-        Clear combo edge-detection state (call on GUI key release/focus out).
+        """Clear combo edge-detection state.
+
+        Call this on GUI key release or focus loss to prevent
+        repeated delivery of the same combo.
         """
         with self._lock:
             self._last_injected_combo = ()
 
     def get_status_snapshot(self) -> Dict:
-        """
-        Thread-safe current state for diagnostics/visualization.
+        """Get a thread-safe snapshot of the current controller state.
+
+        Returns
+        -------
+        dict
+            Dictionary containing running status, input state, queue sizes,
+            active subsystem, and last key information.
         """
         with self._lock:
             queue_sizes = {subsystem: len(queue) for subsystem, queue in self._queues.items()}
@@ -334,6 +503,21 @@ class MockInputController:
                     self._enqueue_forward_key_locked(self._active_subsystem, event_id, combo, event_tick)
 
     def is_success_event(self, event) -> bool:
+        """Check if an event represents the success key.
+
+        The success key (default: ENTER) signals mock nodes to complete
+        and return SUCCESS status.
+
+        Parameters
+        ----------
+        event : str, tuple, frozenset, or None
+            The event to check.
+
+        Returns
+        -------
+        bool
+            True if the event matches the success key combo.
+        """
         combo = self._coerce_event_to_frozenset(event)
         return bool(combo) and combo == self._success_combo
 
