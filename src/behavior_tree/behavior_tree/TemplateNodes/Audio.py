@@ -1,3 +1,51 @@
+# Copyright 2025 Tinker Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#
+# Audio Nodes Module
+# ==================
+#
+# This module provides behavior tree nodes for robot audio operations.
+# All nodes inherit from ServiceHandler and include built-in mock mode support.
+#
+# Classes
+# -------
+# BtNode_TTSCN
+#     Text-to-speech for Chinese announcements.
+# BtNode_Announce
+#     Text-to-speech for English announcements.
+# BtNode_WaitForStart
+#     Waits for an audio start signal.
+# BtNode_GraspRequest
+#     Handles speech-based grasp object selection.
+# BtNode_PhraseExtraction
+#     Extracts phrases from speech using a wordlist.
+# BtNode_TargetExtraction
+#     Extracts grasp target from speech.
+# BtNode_GetConfirmation
+#     Gets confirmation from speech.
+# BtNode_Listen
+#     Listens for speech input.
+# BtNode_CompareInterest
+#     Compares interests between two statements for conversation matching.
+#
+# Mock Mode
+# ---------
+# All audio nodes support mock mode via mock_config.json settings.
+# In mock mode, speech recognition returns simulated or random results.
+#
+
 import py_trees as pytree
 from py_trees.common import Status
 
@@ -561,6 +609,13 @@ class BtNode_GetConfirmation(ServiceHandler):
         
 
 class BtNode_Listen(ServiceHandler):
+    """
+    Listens for speech input and stores the recognized message.
+
+    This node activates the speech recognition system and waits for voice
+    input. The recognized speech is stored on the blackboard for use by
+    other nodes like phrase extraction or target extraction.
+    """
     def __init__(self,
                  name: str,
                  bb_dest_key: str,
@@ -614,6 +669,13 @@ class BtNode_Listen(ServiceHandler):
             return Status.RUNNING
 
 class BtNode_CompareInterest(ServiceHandler):
+    """
+    Compares interests between two statements for conversation matching.
+
+    This node takes two speech statements from the blackboard and analyzes
+    them to find common interests or topics. The result is stored on the
+    blackboard for use in conversation or announcement nodes.
+    """
     def __init__(self,
                  name: str,
                  bb_source_key1: str,

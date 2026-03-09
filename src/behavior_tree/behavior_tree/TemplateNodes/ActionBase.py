@@ -1,3 +1,65 @@
+# Copyright 2025 Tinker Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#
+# Action Base Module
+# ==================
+#
+# This module provides the base class for action-based behavior tree nodes.
+# Actions are used for long-running operations that provide feedback during
+# execution (e.g., navigation, arm movements).
+#
+# Key Features
+# ------------
+# - Automatic mock mode detection via config.py
+# - ROS2 action client management with feedback handling
+# - Keyboard-based interaction for mock mode
+# - Timeout and error handling
+#
+# The action protocol follows this sequence:
+# 1. Node is visited -> initialise() called
+# 2. send_goal() called to send the action goal
+# 3. update() polls for feedback and result
+# 4. process_result() handles the final outcome
+#
+# Classes
+# -------
+ActionHandler
+    Base class for all nodes that call ROS2 actions.
+#
+# Usage
+# -----
+# Inherit from ActionHandler and implement send_goal() and process_result():
+#
+# >>> class MyNavigationNode(ActionHandler):
+# ...     def __init__(self, name, bb_key):
+# ...         super().__init__(name, NavigateToPose, "navigate", bb_key)
+# ...
+# ...     def send_goal(self):
+# ...         if self.mock_mode:
+# ...             # Handle mock mode
+# ...             return
+# ...         goal = NavigateToPose.Goal()
+# ...         goal.pose = self.blackboard.goal
+# ...         self.send_goal_request(goal)
+# ...
+# ...     def process_result(self):
+# ...         if self.result_status == action_msgs.GoalStatus.STATUS_SUCCEEDED:
+# ...             return py_trees.common.Status.SUCCESS
+# ...         return py_trees.common.Status.FAILURE
+#
+
 import py_trees
 from typing import Any
 # from asyncio.tasks import wait_for
@@ -23,10 +85,41 @@ import sys
 import tty
 import termios
 
+
 class ActionHandler(py_trees.behaviour.Behaviour):
-    """
-    Blackboard variable should already exist when this node is initialized, use py_trees.behaviours.WaitForBlackboardVariable as a guard if unsure
-    adapted from py_trees_ros.action_clients.FromBlackboard
+    """Base class for all nodes that call ROS2 actions.
+
+    This class provides the foundation for action-based behavior tree nodes.
+    Actions are used for long-running operations that provide feedback during
+    execution, such as navigation or arm movements.
+
+    The blackboard variable with the goal should already exist when this node
+    is initialized. Use py_trees.behaviours.WaitForBlackboardVariable as a
+    guard if unsure.
+
+    Adapted from py_trees_ros.action_clients.FromBlackboard.
+
+    Attributes
+    ----------
+    action_type : Any
+        The ROS2 action type class.
+    action_name : str
+        Name of the ROS2 action server.
+    mock_mode : bool
+        Whether this node is running in mock mode.
+    mock_interaction_mode : str
+        The mock interaction mode ('wait_keypress', 'teleop', or 'immediate').
+    action_client : ActionClient
+        The ROS2 action client.
+    goal_handle : ClientGoalHandle
+        Handle for the current goal.
+    result_status : int
+        Status of the action result.
+    action_status : int
+        Status code from feedback messages.
+    action_stage : int
+        Stage number from feedback messages.
+
     """
     def __init__(self,
                  name: str,
