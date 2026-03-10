@@ -43,6 +43,7 @@ setup(
             'test_follow_head = behavior_tree.Receptionist.test_follow_head:main',
             'test-prompt-reached = behavior_tree.HelpMeCarry.cli:test_prompt_reached',
             'inspection = behavior_tree.Inspection.cli:main',
+            'hri = behavior_tree.HRI.cli:main',
             'GPSR = behavior_tree.GPSR.gpsr_new:main',
             'EGPSR = behavior_tree.GPSR.egpsr:main',
             'restaurant = behavior_tree.Restaurant.cli:main',
