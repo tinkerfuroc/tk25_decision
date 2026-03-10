@@ -117,6 +117,7 @@ MIGRATED_EXPECTED = {
     "help-me-carry": "behavior_tree.HelpMeCarry.cli:help_me_carry",
     "test-prompt-reached": "behavior_tree.HelpMeCarry.cli:test_prompt_reached",
     "inspection": "behavior_tree.Inspection.cli:main",
+    "hri": "behavior_tree.HRI.cli:main",
     "restaurant": "behavior_tree.Restaurant.cli:main",
 }
 
@@ -209,6 +210,14 @@ CLI_DISPATCH_CASES = [
         "createRestaurantTask",
         "run_tree",
         {"period_ms": 500.0, "title": "Restaurant"},
+    ),
+    (
+        "behavior_tree.HRI.cli",
+        "main",
+        "behavior_tree.HRI.hri",
+        "createHRITask",
+        "run_tree",
+        {"period_ms": 500.0, "title": "HRI"},
     ),
     (
         "behavior_tree.grasp_intel_demo.cli",
