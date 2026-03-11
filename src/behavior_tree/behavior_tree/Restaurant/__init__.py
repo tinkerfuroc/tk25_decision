@@ -10,6 +10,14 @@ def restaurant():
     return _restaurant()
 
 
+def createRestaurantSimplifiedTask():
+    from .restaurant_simplified import (
+        createRestaurantSimplifiedTask as _create_restaurant_simplified_task,
+    )
+
+    return _create_restaurant_simplified_task()
+
+
 try:
     from .custumNodes import (
         BtNode_CommunicateWithBarman,
@@ -29,6 +37,7 @@ except Exception:  # pragma: no cover - available in ROS runtime
 
 __all__ = [
     'createRestaurantTask',
+    'createRestaurantSimplifiedTask',
     'restaurant',
     'BtNode_DetectCallingCustomer',
     'BtNode_TakeOrder',

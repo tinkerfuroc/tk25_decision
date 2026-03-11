@@ -119,6 +119,7 @@ MIGRATED_EXPECTED = {
     "inspection": "behavior_tree.Inspection.cli:main",
     "hri": "behavior_tree.HRI.cli:main",
     "restaurant": "behavior_tree.Restaurant.cli:main",
+    "restaurant-simplified": "behavior_tree.Restaurant.cli:simplified",
 }
 
 
@@ -210,6 +211,14 @@ CLI_DISPATCH_CASES = [
         "createRestaurantTask",
         "run_tree",
         {"period_ms": 500.0, "title": "Restaurant"},
+    ),
+    (
+        "behavior_tree.Restaurant.cli",
+        "simplified",
+        "behavior_tree.Restaurant.restaurant_simplified",
+        "createRestaurantSimplifiedTask",
+        "run_tree",
+        {"period_ms": 500.0, "title": "Restaurant Simplified"},
     ),
     (
         "behavior_tree.HRI.cli",
