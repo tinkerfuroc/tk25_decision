@@ -5,8 +5,15 @@ import types
 import py_trees
 
 from behavior_tree.Restaurant.state_nodes import (
+    BtNode_AddDetectedCustomerToBatch,
+    BtNode_AdvanceBatchIndex,
+    BtNode_BuildBatchOrdersSummary,
+    BtNode_InitCustomerBatch,
     BtNode_RequirePickupVerified,
+    BtNode_ResetBatchIndex,
     BtNode_SelectNextCustomer,
+    BtNode_SelectBatchCustomerByIndex,
+    BtNode_StoreOrderForActiveBatchCustomer,
 )
 
 
@@ -185,3 +192,127 @@ def test_tray_and_non_tray_branches_are_executable(monkeypatch):
     monkeypatch.setattr(restaurants, "BtNode_DetectTray", _FailNode)
     without_tray = restaurants.createOptionalTrayTransport()
     assert _tick_once(without_tray) == py_trees.common.Status.SUCCESS
+
+
+def test_init_customer_batch_sets_defaults():
+    node = BtNode_InitCustomerBatch(
+        name="init batch",
+        batch_key="customer_batch",
+        batch_size_limit_key="batch_size_limit",
+        current_index_key="current_batch_index",
+        default_limit=3,
+        summary_key="batch_orders_summary",
+    )
+    assert _tick_once(node) == py_trees.common.Status.SUCCESS
+    bb = _get_bb(
+        "customer_batch",
+        "batch_size_limit",
+        "current_batch_index",
+        "batch_orders_summary",
+    )
+    assert bb["customer_batch"] == []
+    assert bb["batch_size_limit"] == 3
+    assert bb["current_batch_index"] == 0
+    assert bb["batch_orders_summary"] == ""
+
+
+def test_add_detected_customers_until_limit():
+    _set_bb(
+        customer_batch=[],
+        customer_location="pose_1",
+        batch_size_limit=3,
+    )
+    add = BtNode_AddDetectedCustomerToBatch(
+        name="add one",
+        batch_key="customer_batch",
+        source_pose_key="customer_location",
+        batch_size_limit_key="batch_size_limit",
+    )
+    assert _tick_once(add) == py_trees.common.Status.SUCCESS
+    _set_bb(
+        customer_batch=_get_bb("customer_batch")["customer_batch"],
+        customer_location="pose_2",
+        batch_size_limit=3,
+    )
+    assert _tick_once(add) == py_trees.common.Status.SUCCESS
+    _set_bb(
+        customer_batch=_get_bb("customer_batch")["customer_batch"],
+        customer_location="pose_3",
+        batch_size_limit=3,
+    )
+    assert _tick_once(add) == py_trees.common.Status.SUCCESS
+    _set_bb(
+        customer_batch=_get_bb("customer_batch")["customer_batch"],
+        customer_location="pose_4",
+        batch_size_limit=3,
+    )
+    assert _tick_once(add) == py_trees.common.Status.FAILURE
+
+
+def test_batch_index_select_advance_and_reset():
+    batch = [
+        {"id": 1, "pose": "p1", "order": "", "status": "detected"},
+        {"id": 2, "pose": "p2", "order": "tea", "status": "ordered"},
+    ]
+    _set_bb(
+        customer_batch=batch,
+        current_batch_index=0,
+        customer_location=None,
+        active_customer_id=None,
+        customer_order="",
+    )
+    select = BtNode_SelectBatchCustomerByIndex(
+        name="select idx",
+        batch_key="customer_batch",
+        current_index_key="current_batch_index",
+        customer_pose_key="customer_location",
+        active_id_key="active_customer_id",
+        customer_order_key="customer_order",
+    )
+    assert _tick_once(select) == py_trees.common.Status.SUCCESS
+    bb = _get_bb("customer_location", "active_customer_id")
+    assert bb["customer_location"] == "p1"
+    assert bb["active_customer_id"] == 1
+
+    advance = BtNode_AdvanceBatchIndex(
+        name="advance",
+        current_index_key="current_batch_index",
+    )
+    assert _tick_once(advance) == py_trees.common.Status.SUCCESS
+    assert _get_bb("current_batch_index")["current_batch_index"] == 1
+
+    reset = BtNode_ResetBatchIndex(
+        name="reset",
+        current_index_key="current_batch_index",
+    )
+    assert _tick_once(reset) == py_trees.common.Status.SUCCESS
+    assert _get_bb("current_batch_index")["current_batch_index"] == 0
+
+
+def test_store_order_and_build_summary():
+    batch = [
+        {"id": 1, "pose": "p1", "order": "", "status": "detected"},
+        {"id": 2, "pose": "p2", "order": "coffee", "status": "ordered"},
+    ]
+    _set_bb(
+        customer_batch=batch,
+        active_customer_id=1,
+        customer_order="water",
+        batch_orders_summary="",
+    )
+    store = BtNode_StoreOrderForActiveBatchCustomer(
+        name="store",
+        batch_key="customer_batch",
+        active_id_key="active_customer_id",
+        customer_order_key="customer_order",
+    )
+    assert _tick_once(store) == py_trees.common.Status.SUCCESS
+    summary = BtNode_BuildBatchOrdersSummary(
+        name="summary",
+        batch_key="customer_batch",
+        summary_key="batch_orders_summary",
+    )
+    assert _tick_once(summary) == py_trees.common.Status.SUCCESS
+    text = _get_bb("batch_orders_summary")["batch_orders_summary"]
+    assert "customer 1: water" in text
+    assert "customer 2: coffee" in text

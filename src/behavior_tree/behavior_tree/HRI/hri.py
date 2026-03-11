@@ -1,45 +1,12 @@
 from __future__ import annotations
 
-import json
-import math
-from pathlib import Path
+"""HRI behavior tree composition.
+
+This module keeps focus on phase composition and node wiring.
+Constants, precomputed poses, and key declarations live in `HRI/config.py`.
+"""
 
 import py_trees
-try:
-    import rclpy
-except ModuleNotFoundError:  # pragma: no cover - exercised in non-ROS unit tests
-    rclpy = None
-try:
-    from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-    from std_msgs.msg import Header
-except ModuleNotFoundError:  # pragma: no cover - exercised in non-ROS unit tests
-    class Point:  # pylint: disable=too-few-public-methods
-        def __init__(self, x=0.0, y=0.0, z=0.0):
-            self.x = x
-            self.y = y
-            self.z = z
-
-    class Quaternion:  # pylint: disable=too-few-public-methods
-        def __init__(self, x=0.0, y=0.0, z=0.0, w=1.0):
-            self.x = x
-            self.y = y
-            self.z = z
-            self.w = w
-
-    class Pose:  # pylint: disable=too-few-public-methods
-        def __init__(self, position=None, orientation=None):
-            self.position = position or Point()
-            self.orientation = orientation or Quaternion()
-
-    class Header:  # pylint: disable=too-few-public-methods
-        def __init__(self, stamp=None, frame_id=""):
-            self.stamp = stamp
-            self.frame_id = frame_id
-
-    class PoseStamped:  # pylint: disable=too-few-public-methods
-        def __init__(self, header=None, pose=None):
-            self.header = header or Header()
-            self.pose = pose or Pose()
 
 from behavior_tree.TemplateNodes.Audio import (
     BtNode_Announce,
@@ -61,76 +28,31 @@ from behavior_tree.Receptionist.customNodes import (
     BtNode_HeadTrackingAction,
     BtNode_Introduce,
 )
-
-
-def _load_constants():
-    candidates = [
-        Path(__file__).with_name("constants.json"),
-        Path(__file__).resolve().parents[1] / "Receptionist" / "constants.json",
-    ]
-    for path in candidates:
-        if path.exists():
-            with path.open("r", encoding="utf-8") as file:
-                return json.load(file)
-    raise FileNotFoundError("Unable to find HRI/Receptionist constants.json")
-
-
-constants = _load_constants()
-
-
-def _pose_reader(pose_dict):
-    stamp = None
-    if rclpy is not None:
-        stamp = rclpy.time.Time().to_msg()
-    return PoseStamped(
-        header=Header(stamp=stamp, frame_id="map"),
-        pose=Pose(
-            position=Point(
-                x=pose_dict["point"]["x"],
-                y=pose_dict["point"]["y"],
-                z=0.0,
-            ),
-            orientation=Quaternion(
-                x=pose_dict["orientation"]["x"],
-                y=pose_dict["orientation"]["y"],
-                z=pose_dict["orientation"]["z"],
-                w=pose_dict["orientation"]["w"],
-            ),
-        ),
-    )
-
-
-def _arm_pose_reader(arm_pose_list):
-    return [x / 180 * math.pi for x in arm_pose_list]
-
-
-POSE_DOOR = _pose_reader(constants["pose_door"])
-POSE_SOFA = _pose_reader(constants["pose_sofa"])
-ARM_POS_NAVIGATING = _arm_pose_reader(constants["arm_pos_navigating"])
-ARM_POS_HANDOVER = _arm_pose_reader(constants.get("arm_pos_handover", constants["arm_pos_point_to"]))
-ARM_POS_DROP = _arm_pose_reader(constants.get("arm_pos_drop", constants["arm_pos_navigating"]))
-
-HOST_NAME = constants.get("host_name", "Host")
-HOST_DRINK = constants.get("host_drink", "water")
-DRINKS = list(constants.get("drinks", ["water", "cola", "juice", "milk", "coffee"]))
-NAMES = list(constants.get("names", ["Alex", "Sam", "Maria", "John"]))
-
-KEY_DOOR_POSE = "hri_door_pose"
-KEY_SOFA_POSE = "hri_sofa_pose"
-KEY_DOOR_STATUS = "hri_door_status"
-KEY_ARM_NAVIGATING = "hri_arm_navigating"
-KEY_ARM_HANDOVER = "hri_arm_handover"
-KEY_ARM_DROP = "hri_arm_drop"
-KEY_PERSONS = "hri_persons"
-KEY_SEAT_RECOMMENDATION = "hri_seat_recommendation"
-
-KEY_GUEST1_NAME = "hri_guest1_name"
-KEY_GUEST1_DRINK = "hri_guest1_drink"
-KEY_GUEST1_FEATURES = "hri_guest1_features"
-
-KEY_GUEST2_NAME = "hri_guest2_name"
-KEY_GUEST2_DRINK = "hri_guest2_drink"
-KEY_GUEST2_FEATURES = "hri_guest2_features"
+from .config import (
+    ARM_POS_DROP,
+    ARM_POS_HANDOVER,
+    ARM_POS_NAVIGATING,
+    DRINKS,
+    HOST_DRINK,
+    HOST_NAME,
+    KEY_ARM_DROP,
+    KEY_ARM_HANDOVER,
+    KEY_ARM_NAVIGATING,
+    KEY_DOOR_POSE,
+    KEY_DOOR_STATUS,
+    KEY_GUEST1_DRINK,
+    KEY_GUEST1_FEATURES,
+    KEY_GUEST1_NAME,
+    KEY_GUEST2_DRINK,
+    KEY_GUEST2_FEATURES,
+    KEY_GUEST2_NAME,
+    KEY_PERSONS,
+    KEY_SEAT_RECOMMENDATION,
+    KEY_SOFA_POSE,
+    NAMES,
+    POSE_DOOR,
+    POSE_SOFA,
+)
 
 
 class BtNode_MockArrivalTrigger(py_trees.behaviour.Behaviour):
@@ -161,6 +83,7 @@ class BtNode_MockSafetyCheck(py_trees.behaviour.Behaviour):
 
 
 def createConstantWriter():
+    """Initialize static HRI values on the blackboard."""
     root = py_trees.composites.Parallel(
         name="Write HRI constants",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
@@ -223,6 +146,7 @@ def createConstantWriter():
 
 
 def createArrivalTrigger():
+    """Try real door-trigger first, then fallback to mock trigger."""
     root = py_trees.composites.Selector(name="Arrival trigger", memory=False)
     real_trigger = py_trees.composites.Sequence(name="Door detection trigger", memory=True)
     real_trigger.add_child(
@@ -236,7 +160,7 @@ def createArrivalTrigger():
         BtNode_Announce(
             name="Arrival detected announcement",
             bb_source=None,
-            message="I detected a guest at the door.",
+            message="I see a guest at the door.",
         )
     )
     root.add_child(real_trigger)
@@ -245,13 +169,14 @@ def createArrivalTrigger():
 
 
 def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
+    """Prompt -> extract -> confirm loop for one spoken field."""
     root = py_trees.composites.Sequence(name=f"Get {field_name}", memory=True)
     loop = py_trees.composites.Sequence(name=f"Get+confirm {field_name}", memory=True)
     loop.add_child(
         BtNode_Announce(
             name=f"Prompt for {field_name}",
             bb_source=None,
-            message=f"Please tell me your {field_name} after the beep.",
+            message=f"Please tell me your {field_name}.",
         )
     )
     loop.add_child(
@@ -275,6 +200,7 @@ def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
 
 
 def createGuestIntake(guest_idx: int):
+    """Collect name/drink/features for one guest at the door."""
     if guest_idx == 1:
         name_key = KEY_GUEST1_NAME
         drink_key = KEY_GUEST1_DRINK
@@ -308,6 +234,7 @@ def createGuestIntake(guest_idx: int):
 
 
 def _with_gaze_supervisor(name: str, main_child: py_trees.behaviour.Behaviour):
+    """Wrap a subtree with non-blocking gaze helpers."""
     root = py_trees.composites.Parallel(
         name=name,
         policy=py_trees.common.ParallelPolicy.SuccessOnSelected([main_child]),
@@ -329,12 +256,13 @@ def _with_gaze_supervisor(name: str, main_child: py_trees.behaviour.Behaviour):
 
 
 def createEscortAndSeat(guest_idx: int):
+    """Escort one guest and issue explicit seat recommendation."""
     escort = py_trees.composites.Sequence(name=f"Escort and seat guest {guest_idx}", memory=True)
     escort.add_child(
         BtNode_Announce(
             name=f"Invite guest {guest_idx} to follow",
             bb_source=None,
-            message="Please follow me to the seating area.",
+            message="Please follow me to your seat.",
         )
     )
     escort.add_child(
@@ -359,7 +287,7 @@ def createEscortAndSeat(guest_idx: int):
         BtNode_Announce(
             name=f"Announce seat recommendation guest {guest_idx}",
             bb_source=KEY_SEAT_RECOMMENDATION,
-            message="Please take this seat.",
+            message="Please sit here.",
         )
     )
     escort.add_child(seat_recommend)
@@ -367,6 +295,7 @@ def createEscortAndSeat(guest_idx: int):
 
 
 def createTwoWayIntroduction():
+    """Introduce guest1<->guest2 with gaze-aware wrappers."""
     root = py_trees.composites.Sequence(name="Two-way introductions", memory=True)
     intro_1 = BtNode_Introduce(
         name="Introduce guest1 to guest2",
@@ -388,14 +317,8 @@ def createTwoWayIntroduction():
 
 
 def createBagFlow():
+    """Handle bag handover, host-follow proxy, and bag drop sequence."""
     root = py_trees.composites.Sequence(name="Bag handover-follow-drop", memory=True)
-    root.add_child(
-        BtNode_Announce(
-            name="Ask for bag handover",
-            bb_source=None,
-            message="Please hand me your bag.",
-        )
-    )
     root.add_child(
         py_trees.decorators.Retry(
             name="Retry arm to handover pose",
@@ -409,13 +332,20 @@ def createBagFlow():
         )
     )
     root.add_child(BtNode_GripperAction(name="Open gripper for bag", open_gripper=True))
-    root.add_child(BtNode_MockSafetyCheck(name="Safe handover detector TODO", todo="replace with handover-done detector"))
+    root.add_child(
+        BtNode_Announce(
+            name="Ask for bag handover",
+            bb_source=None,
+            message="Please place your bag in my gripper.",
+        )
+    )
+    root.add_child(py_trees.timers.Timer(name="Wait for bag placement", duration=3.0))
     root.add_child(BtNode_GripperAction(name="Close gripper with bag", open_gripper=False))
     root.add_child(
         BtNode_Announce(
             name="Follow host announcement",
             bb_source=None,
-            message="I will follow you and carry the bag.",
+            message="I'll follow you and carry the bag.",
         )
     )
     # TODO: replace this with a dedicated follow-host behavior once available.
@@ -445,13 +375,14 @@ def createBagFlow():
 
 
 def createHRITask():
+    """Compose full HRI task in the expected competition order."""
     root = py_trees.composites.Sequence(name="HRI Task", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(
         BtNode_Announce(
             name="HRI start announcement",
             bb_source=None,
-            message=f"Starting HRI task. Host is {HOST_NAME} and host drink is {HOST_DRINK}.",
+            message=f"HRI task started. Host: {HOST_NAME}. Favorite drink: {HOST_DRINK}.",
         )
     )
     root.add_child(
@@ -478,7 +409,7 @@ def createHRITask():
         BtNode_Announce(
             name="HRI completion announcement",
             bb_source=None,
-            message="HRI task completed.",
+            message="HRI task complete.",
         )
     )
     return root

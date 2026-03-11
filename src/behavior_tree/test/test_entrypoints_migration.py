@@ -118,7 +118,9 @@ MIGRATED_EXPECTED = {
     "test-prompt-reached": "behavior_tree.HelpMeCarry.cli:test_prompt_reached",
     "inspection": "behavior_tree.Inspection.cli:main",
     "hri": "behavior_tree.HRI.cli:main",
+    "pick-and-place": "behavior_tree.PickAndPlace.cli:main",
     "restaurant": "behavior_tree.Restaurant.cli:main",
+    "restaurant-simplified": "behavior_tree.Restaurant.cli:simplified",
 }
 
 
@@ -212,12 +214,28 @@ CLI_DISPATCH_CASES = [
         {"period_ms": 500.0, "title": "Restaurant"},
     ),
     (
+        "behavior_tree.Restaurant.cli",
+        "simplified",
+        "behavior_tree.Restaurant.restaurant_simplified",
+        "createRestaurantSimplifiedTask",
+        "run_tree",
+        {"period_ms": 500.0, "title": "Restaurant Simplified"},
+    ),
+    (
         "behavior_tree.HRI.cli",
         "main",
         "behavior_tree.HRI.hri",
         "createHRITask",
         "run_tree",
         {"period_ms": 500.0, "title": "HRI"},
+    ),
+    (
+        "behavior_tree.PickAndPlace.cli",
+        "main",
+        "behavior_tree.PickAndPlace.pick_and_place",
+        "createPickAndPlaceTask",
+        "run_tree",
+        {"period_ms": 500.0, "title": "Pick And Place"},
     ),
     (
         "behavior_tree.grasp_intel_demo.cli",

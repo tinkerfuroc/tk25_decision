@@ -1,45 +1,12 @@
 from __future__ import annotations
 
-import json
-import math
-from pathlib import Path
+"""Standard Restaurant behavior tree composition.
+
+This module defines the default order-cycle strategy.
+Shared constants and blackboard keys are centralized in `Restaurant/config.py`.
+"""
 
 import py_trees
-try:
-    import rclpy
-except ModuleNotFoundError:  # pragma: no cover - exercised in non-ROS unit tests
-    rclpy = None
-try:
-    from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-    from std_msgs.msg import Header
-except ModuleNotFoundError:  # pragma: no cover - exercised in non-ROS unit tests
-    class Point:  # pylint: disable=too-few-public-methods
-        def __init__(self, x=0.0, y=0.0, z=0.0):
-            self.x = x
-            self.y = y
-            self.z = z
-
-    class Quaternion:  # pylint: disable=too-few-public-methods
-        def __init__(self, x=0.0, y=0.0, z=0.0, w=1.0):
-            self.x = x
-            self.y = y
-            self.z = z
-            self.w = w
-
-    class Pose:  # pylint: disable=too-few-public-methods
-        def __init__(self, position=None, orientation=None):
-            self.position = position or Point()
-            self.orientation = orientation or Quaternion()
-
-    class Header:  # pylint: disable=too-few-public-methods
-        def __init__(self, stamp=None, frame_id=""):
-            self.stamp = stamp
-            self.frame_id = frame_id
-
-    class PoseStamped:  # pylint: disable=too-few-public-methods
-        def __init__(self, header=None, pose=None):
-            self.header = header or Header()
-            self.pose = pose or Pose()
 
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
@@ -56,6 +23,22 @@ from .custumNodes import (
     BtNode_ServeOrder,
     BtNode_TakeOrder,
 )
+from .config import (
+    ARM_POS_NAVIGATING,
+    ARM_POS_SERVING,
+    KEY_ACTIVE_CUSTOMER_ID,
+    KEY_ARM_NAVIGATING,
+    KEY_ARM_SERVING,
+    KEY_CUSTOMER_LOCATION,
+    KEY_CUSTOMER_ORDER,
+    KEY_CUSTOMER_QUEUE,
+    KEY_KITCHEN_BAR_POSE,
+    KEY_ORDER_CHECKLIST,
+    KEY_PICKUP_VERIFIED,
+    KEY_TRAY_LOCATION,
+    POSE_KITCHEN_BAR,
+    constants,
+)
 from .state_nodes import (
     BtNode_AppendCustomerCandidate,
     BtNode_CloseActiveCustomer,
@@ -67,48 +50,8 @@ from .state_nodes import (
 )
 
 
-def _load_constants():
-    constants_path = Path(__file__).with_name("constants.json")
-    with constants_path.open("r", encoding="utf-8") as file:
-        return json.load(file)
-
-
-constants = _load_constants()
-
-_stamp = rclpy.time.Time().to_msg() if rclpy is not None else None
-pose_kitchen_bar = PoseStamped(
-    header=Header(stamp=_stamp, frame_id="map"),
-    pose=Pose(
-        position=Point(
-            x=constants["pose_kitchen_bar"]["point"]["x"],
-            y=constants["pose_kitchen_bar"]["point"]["y"],
-            z=0.0,
-        ),
-        orientation=Quaternion(
-            x=constants["pose_kitchen_bar"]["orientation"]["x"],
-            y=constants["pose_kitchen_bar"]["orientation"]["y"],
-            z=constants["pose_kitchen_bar"]["orientation"]["z"],
-            w=constants["pose_kitchen_bar"]["orientation"]["w"],
-        ),
-    ),
-)
-
-ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
-ARM_POS_SERVING = [x / 180 * math.pi for x in constants["arm_pos_serving"]]
-
-KEY_KITCHEN_BAR_POSE = "kitchen_bar_pose"
-KEY_CUSTOMER_LOCATION = "customer_location"
-KEY_CUSTOMER_ORDER = "customer_order"
-KEY_TRAY_LOCATION = "tray_location"
-KEY_ARM_NAVIGATING = "arm_navigating"
-KEY_ARM_SERVING = "arm_serving"
-KEY_CUSTOMER_QUEUE = "customer_queue"
-KEY_ACTIVE_CUSTOMER_ID = "active_customer_id"
-KEY_ORDER_CHECKLIST = "order_checklist"
-KEY_PICKUP_VERIFIED = "pickup_verified"
-
-
 def createConstantWriter():
+    """Initialize static task constants and runtime state on blackboard."""
     root = py_trees.composites.Parallel(
         name="Write constants to blackboard",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
@@ -119,7 +62,7 @@ def createConstantWriter():
             bb_namespace="",
             bb_source=None,
             bb_key=KEY_KITCHEN_BAR_POSE,
-            object=pose_kitchen_bar,
+            object=POSE_KITCHEN_BAR,
         )
     )
     root.add_child(
@@ -180,6 +123,7 @@ def createConstantWriter():
 
 
 def createDetectAndArbitrateCustomers():
+    """Detect callers and select one active target using queue arbitration."""
     root = py_trees.composites.Sequence(name="Detect and arbitrate callers", memory=True)
     detect_selector = py_trees.composites.Selector(name="Detect callers", memory=False)
     detect_selector.add_child(
@@ -228,6 +172,7 @@ def createDetectAndArbitrateCustomers():
 
 
 def createApproachCustomer():
+    """Reach selected customer; fallback to partial-score path if unreachable."""
     root = py_trees.composites.Selector(name="Approach selected customer", memory=False)
     success_path = py_trees.composites.Sequence(name="Reach customer", memory=True)
     success_path.add_child(
@@ -253,7 +198,7 @@ def createApproachCustomer():
         BtNode_Announce(
             name="Announce detected-but-unreachable caller",
             bb_source=None,
-            message="I detected a calling customer but could not reach this table.",
+            message="I saw a caller but couldn't reach the table.",
         )
     )
     partial_score_path.add_child(
@@ -277,6 +222,7 @@ def createApproachCustomer():
 
 
 def _create_optional_second_caller():
+    """Attempt to collect a second caller candidate for simultaneous-call scenarios."""
     root = py_trees.composites.Sequence(name="Second caller sequence", memory=True)
     root.add_child(
         BtNode_DetectCallingCustomer(
@@ -298,12 +244,13 @@ def _create_optional_second_caller():
 
 
 def createTakeAndConfirmOrder():
+    """Run customer-facing order intake and confirmation loop."""
     root = py_trees.composites.Sequence(name="Take and confirm order", memory=True)
     root.add_child(
         BtNode_Announce(
             name="Order engagement prompt",
             bb_source=None,
-            message="Hello. I am making eye contact and listening carefully. What would you like to order?",
+            message="Hi. What would you like to order?",
         )
     )
     order_loop = py_trees.composites.Sequence(name="Order taking loop", memory=True)
@@ -337,6 +284,7 @@ def createTakeAndConfirmOrder():
 
 
 def createPlaceOrderWithBarman():
+    """Navigate to bar and communicate one confirmed order to the barman."""
     root = py_trees.composites.Sequence(name="Place order with barman", memory=True)
     root.add_child(
         py_trees.decorators.Retry(
@@ -355,12 +303,13 @@ def createPlaceOrderWithBarman():
 
 
 def createPickupVerification():
+    """Explicit pickup verification hook before delivery phase."""
     root = py_trees.composites.Sequence(name="Pickup verification", memory=True)
     root.add_child(
         BtNode_Announce(
             name="Pickup prompt",
             bb_source=None,
-            message="I will pick up the requested items now.",
+            message="I'll pick up your order now.",
         )
     )
     root.add_child(
@@ -374,6 +323,7 @@ def createPickupVerification():
 
 
 def createOptionalTrayTransport():
+    """Optional tray branch with direct-carry fallback."""
     root = py_trees.composites.Selector(name="Optional tray transport", memory=False)
     tray_sequence = py_trees.composites.Sequence(name="Use tray transport", memory=True)
     tray_sequence.add_child(
@@ -386,13 +336,13 @@ def createOptionalTrayTransport():
         BtNode_Announce(
             name="Announce tray usage",
             bb_source=None,
-            message="I will use a tray to transport your order.",
+            message="I'll use a tray for your order.",
         )
     )
     direct_transport = BtNode_Announce(
         name="Direct transport",
         bb_source=None,
-        message="No tray detected, I will transport the items directly.",
+        message="I couldn't find a tray, so I'll carry it directly.",
     )
     root.add_child(tray_sequence)
     root.add_child(direct_transport)
@@ -400,6 +350,7 @@ def createOptionalTrayTransport():
 
 
 def createDeliverOrder():
+    """Deliver and serve order for the active customer."""
     root = py_trees.composites.Sequence(name="Deliver order", memory=True)
     root.add_child(
         BtNode_RequirePickupVerified(
@@ -440,6 +391,7 @@ def createDeliverOrder():
 
 
 def createSingleOrderCycle():
+    """End-to-end cycle for one customer order."""
     root = py_trees.composites.Sequence(name="Single order cycle", memory=True)
     root.add_child(
         BtNode_InitOrderChecklist(
@@ -458,6 +410,7 @@ def createSingleOrderCycle():
 
 
 def createRestaurantTask():
+    """Compose the default Restaurant task with optional second cycle."""
     root = py_trees.composites.Sequence(name="Restaurant Task", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(
@@ -476,7 +429,7 @@ def createRestaurantTask():
         BtNode_Announce(
             name="Start announcement",
             bb_source=None,
-            message="Restaurant service starting. I am ready to take your orders.",
+            message="Restaurant service started. I'm ready for orders.",
         )
     )
 
@@ -489,7 +442,7 @@ def createRestaurantTask():
         BtNode_Announce(
             name="No second customer",
             bb_source=None,
-            message="No additional customers detected. Service completed.",
+            message="No more customers detected. Service complete.",
         )
     )
     first.add_child(second_optional)
@@ -498,7 +451,7 @@ def createRestaurantTask():
         BtNode_Announce(
             name="No customers fallback",
             bb_source=None,
-            message="No customers detected yet. Waiting for calls.",
+            message="No callers yet. Waiting.",
         )
     )
     root.add_child(cycles)
@@ -506,13 +459,14 @@ def createRestaurantTask():
         BtNode_Announce(
             name="Task completion",
             bb_source=None,
-            message="Restaurant service task completed successfully. Thank you!",
+            message="Restaurant service complete. Thank you.",
         )
     )
     return root
 
 
 def restaurant():
+    """Runtime entry for the default Restaurant strategy."""
     run_tree(createRestaurantTask, period_ms=500.0, title="Restaurant")
 
 
