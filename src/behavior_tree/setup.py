@@ -44,9 +44,11 @@ setup(
             'test-prompt-reached = behavior_tree.HelpMeCarry.cli:test_prompt_reached',
             'inspection = behavior_tree.Inspection.cli:main',
             'hri = behavior_tree.HRI.cli:main',
+            'pick-and-place = behavior_tree.PickAndPlace.cli:main',
             'GPSR = behavior_tree.GPSR.gpsr_new:main',
             'EGPSR = behavior_tree.GPSR.egpsr:main',
             'restaurant = behavior_tree.Restaurant.cli:main',
+            'restaurant-simplified = behavior_tree.Restaurant.cli:simplified',
             'grasp_once = behavior_tree.grasp_intel_demo.grasp:main',
             # Mock mode test scripts
             'test-mock-mode = behavior_tree.test_mock_mode:main',
