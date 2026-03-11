@@ -95,7 +95,9 @@ def _install_stubs(monkeypatch):
 def _import_hri(monkeypatch):
     _install_stubs(monkeypatch)
     sys.modules.pop("behavior_tree.HRI.hri", None)
-    return importlib.import_module("behavior_tree.HRI.hri")
+    hri = importlib.import_module("behavior_tree.HRI.hri")
+    monkeypatch.setattr(hri.py_trees.timers, "Timer", _SuccessNode)
+    return hri
 
 
 def _tick_tree(root, max_ticks=20):

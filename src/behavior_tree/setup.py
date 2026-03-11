@@ -47,6 +47,7 @@ setup(
             'GPSR = behavior_tree.GPSR.gpsr_new:main',
             'EGPSR = behavior_tree.GPSR.egpsr:main',
             'restaurant = behavior_tree.Restaurant.cli:main',
+            'restaurant-simplified = behavior_tree.Restaurant.cli:simplified',
             'grasp_once = behavior_tree.grasp_intel_demo.grasp:main',
             # Mock mode test scripts
             'test-mock-mode = behavior_tree.test_mock_mode:main',

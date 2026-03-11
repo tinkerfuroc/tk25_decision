@@ -236,7 +236,7 @@ def createArrivalTrigger():
         BtNode_Announce(
             name="Arrival detected announcement",
             bb_source=None,
-            message="I detected a guest at the door.",
+            message="I see a guest at the door.",
         )
     )
     root.add_child(real_trigger)
@@ -251,7 +251,7 @@ def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
         BtNode_Announce(
             name=f"Prompt for {field_name}",
             bb_source=None,
-            message=f"Please tell me your {field_name} after the beep.",
+            message=f"Please tell me your {field_name}.",
         )
     )
     loop.add_child(
@@ -334,7 +334,7 @@ def createEscortAndSeat(guest_idx: int):
         BtNode_Announce(
             name=f"Invite guest {guest_idx} to follow",
             bb_source=None,
-            message="Please follow me to the seating area.",
+            message="Please follow me to your seat.",
         )
     )
     escort.add_child(
@@ -359,7 +359,7 @@ def createEscortAndSeat(guest_idx: int):
         BtNode_Announce(
             name=f"Announce seat recommendation guest {guest_idx}",
             bb_source=KEY_SEAT_RECOMMENDATION,
-            message="Please take this seat.",
+            message="Please sit here.",
         )
     )
     escort.add_child(seat_recommend)
@@ -390,13 +390,6 @@ def createTwoWayIntroduction():
 def createBagFlow():
     root = py_trees.composites.Sequence(name="Bag handover-follow-drop", memory=True)
     root.add_child(
-        BtNode_Announce(
-            name="Ask for bag handover",
-            bb_source=None,
-            message="Please hand me your bag.",
-        )
-    )
-    root.add_child(
         py_trees.decorators.Retry(
             name="Retry arm to handover pose",
             child=BtNode_MoveArmSingle(
@@ -409,13 +402,20 @@ def createBagFlow():
         )
     )
     root.add_child(BtNode_GripperAction(name="Open gripper for bag", open_gripper=True))
-    root.add_child(BtNode_MockSafetyCheck(name="Safe handover detector TODO", todo="replace with handover-done detector"))
+    root.add_child(
+        BtNode_Announce(
+            name="Ask for bag handover",
+            bb_source=None,
+            message="Please place your bag in my gripper.",
+        )
+    )
+    root.add_child(py_trees.timers.Timer(name="Wait for bag placement", duration=3.0))
     root.add_child(BtNode_GripperAction(name="Close gripper with bag", open_gripper=False))
     root.add_child(
         BtNode_Announce(
             name="Follow host announcement",
             bb_source=None,
-            message="I will follow you and carry the bag.",
+            message="I'll follow you and carry the bag.",
         )
     )
     # TODO: replace this with a dedicated follow-host behavior once available.
@@ -451,7 +451,7 @@ def createHRITask():
         BtNode_Announce(
             name="HRI start announcement",
             bb_source=None,
-            message=f"Starting HRI task. Host is {HOST_NAME} and host drink is {HOST_DRINK}.",
+            message=f"HRI task started. Host: {HOST_NAME}. Favorite drink: {HOST_DRINK}.",
         )
     )
     root.add_child(
@@ -478,7 +478,7 @@ def createHRITask():
         BtNode_Announce(
             name="HRI completion announcement",
             bb_source=None,
-            message="HRI task completed.",
+            message="HRI task complete.",
         )
     )
     return root

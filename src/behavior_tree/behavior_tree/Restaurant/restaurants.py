@@ -253,7 +253,7 @@ def createApproachCustomer():
         BtNode_Announce(
             name="Announce detected-but-unreachable caller",
             bb_source=None,
-            message="I detected a calling customer but could not reach this table.",
+            message="I saw a caller but couldn't reach the table.",
         )
     )
     partial_score_path.add_child(
@@ -303,7 +303,7 @@ def createTakeAndConfirmOrder():
         BtNode_Announce(
             name="Order engagement prompt",
             bb_source=None,
-            message="Hello. I am making eye contact and listening carefully. What would you like to order?",
+            message="Hi. What would you like to order?",
         )
     )
     order_loop = py_trees.composites.Sequence(name="Order taking loop", memory=True)
@@ -360,7 +360,7 @@ def createPickupVerification():
         BtNode_Announce(
             name="Pickup prompt",
             bb_source=None,
-            message="I will pick up the requested items now.",
+            message="I'll pick up your order now.",
         )
     )
     root.add_child(
@@ -386,13 +386,13 @@ def createOptionalTrayTransport():
         BtNode_Announce(
             name="Announce tray usage",
             bb_source=None,
-            message="I will use a tray to transport your order.",
+            message="I'll use a tray for your order.",
         )
     )
     direct_transport = BtNode_Announce(
         name="Direct transport",
         bb_source=None,
-        message="No tray detected, I will transport the items directly.",
+        message="I couldn't find a tray, so I'll carry it directly.",
     )
     root.add_child(tray_sequence)
     root.add_child(direct_transport)
@@ -476,7 +476,7 @@ def createRestaurantTask():
         BtNode_Announce(
             name="Start announcement",
             bb_source=None,
-            message="Restaurant service starting. I am ready to take your orders.",
+            message="Restaurant service started. I'm ready for orders.",
         )
     )
 
@@ -489,7 +489,7 @@ def createRestaurantTask():
         BtNode_Announce(
             name="No second customer",
             bb_source=None,
-            message="No additional customers detected. Service completed.",
+            message="No more customers detected. Service complete.",
         )
     )
     first.add_child(second_optional)
@@ -498,7 +498,7 @@ def createRestaurantTask():
         BtNode_Announce(
             name="No customers fallback",
             bb_source=None,
-            message="No customers detected yet. Waiting for calls.",
+            message="No callers yet. Waiting.",
         )
     )
     root.add_child(cycles)
@@ -506,7 +506,7 @@ def createRestaurantTask():
         BtNode_Announce(
             name="Task completion",
             bb_source=None,
-            message="Restaurant service task completed successfully. Thank you!",
+            message="Restaurant service complete. Thank you.",
         )
     )
     return root
