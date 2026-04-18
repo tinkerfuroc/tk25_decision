@@ -1,3 +1,51 @@
+# Copyright 2025 Tinker Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#
+# Navigation Nodes Module
+# =======================
+#
+# This module provides behavior tree nodes for robot navigation operations.
+# All nodes inherit from either ServiceHandler or ActionHandler and include
+# built-in mock mode support.
+#
+# Classes
+# -------
+# BtNode_GotoAction
+#     Action-based navigation to a target pose using Nav2.
+# BtNode_ConvertGraspPose
+#     Converts a PointStamped to a grasp-compatible pose.
+# BtNode_GoToLuggage
+#     Navigates to a luggage position and returns the target pose.
+#
+# Mock Mode
+# ---------
+# All navigation nodes support mock mode via the mock_config.json settings.
+# In mock mode, they can:
+# - Wait for keyboard press before succeeding (KEYPRESS mode)
+# - Auto-complete immediately (IMMEDIATE mode)
+# - Use teleoperation-style control (TELEOP mode - for arm-related navigation)
+#
+# Usage
+# -----
+# >>> # Navigate to a pose stored in blackboard
+# >>> nav_node = BtNode_GotoAction(
+# ...     name="Go to kitchen",
+# ...     key="target_pose"  # Blackboard key with PoseStamped
+# ... )
+#
+
 from typing import Any
 import py_trees
 import rclpy
@@ -21,6 +69,16 @@ import time
 
 
 class BtNode_GotoAction(ActionHandler):
+    """
+    Action-based navigation to a target pose using Nav2.
+
+    This node uses ROS2 Nav2 action server to navigate the robot base to a
+    target pose. The target can be either a PoseStamped or PointStamped
+    stored on the blackboard.
+
+    Attributes:
+        key: Blackboard key containing the navigation goal.
+    """
     def __init__(self, name: str, key: str, action_name: str = "navigate_to_pose", wait_for_server_timeout_sec: float = -3, action_timeout_ticks=0):
         super().__init__(name, NavigateToPose, action_name, key, wait_for_server_timeout_sec, action_timeout_ticks)
     
@@ -121,6 +179,13 @@ class BtNode_GotoAction(ActionHandler):
 
 
 class BtNode_ConvertGraspPose(ServiceHandler):
+    """
+    Converts a PointStamped to a grasp-compatible pose.
+
+    This node takes a 3D point from the blackboard and calls a service to
+    compute an appropriate arm pose for grasping. The resulting pose is
+    stored back on the blackboard.
+    """
     def __init__(self, name: str, bb_source_key: str, bb_dest_key: str, service_name: str = "compute_grasp_pos"):
         super().__init__(name, service_name, ComputeGrasp)
         self.bb_source_key = bb_source_key
@@ -190,6 +255,13 @@ class BtNode_ConvertGraspPose(ServiceHandler):
 
 
 class BtNode_GoToLuggage(ServiceHandler):
+    """
+    Navigates to a luggage position and returns the target pose.
+
+    This node takes a point representing luggage location, calls a service
+    to compute an appropriate navigation pose for approaching the luggage,
+    and stores the result on the blackboard.
+    """
     def __init__(self, name: str, bb_src_key: str, bb_target_key, service_name: str = "set_luggage_pose"):
         super().__init__(name, service_name, SetLuggagePose)
 
