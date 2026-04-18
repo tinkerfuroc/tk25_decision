@@ -34,9 +34,13 @@
 # BtNode_TargetExtraction
 #     Extracts grasp target from speech.
 # BtNode_GetConfirmation
-#     Gets confirmation from speech.
+#     Gets confirmation from speech (deprecated; use BtNode_GetConfirmationAction).
+# BtNode_GetConfirmationAction
+#     Action-based confirmation wrapping tk_24_audio's `get_confirmation_action`.
 # BtNode_Listen
-#     Listens for speech input.
+#     Listens for speech input (deprecated; use BtNode_ListenAction).
+# BtNode_ListenAction
+#     Action-based listen wrapping tk_24_audio's `listen_action`.
 # BtNode_CompareInterest
 #     Compares interests between two statements for conversation matching.
 #
@@ -46,13 +50,22 @@
 # In mock mode, speech recognition returns simulated or random results.
 #
 
+import time
+import warnings
+
 import py_trees as pytree
 from py_trees.common import Status
 
 # from tinker_decision_msgs.srv import Announce, WaitForStart
-from behavior_tree.messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, GraspRequest
+from behavior_tree.messages import (
+    TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction,
+    GetConfirmation, Listen, CompareInterest, GraspRequest,
+    GetConfirmationAction, ListenAction,
+)
 
 from .BaseBehaviors import ServiceHandler
+from .ActionBase import ActionHandler
+from behavior_tree.messages import action_msgs
 
 
 from typing import Optional
@@ -552,13 +565,23 @@ class BtNode_TargetExtraction(ServiceHandler):
 
 class BtNode_GetConfirmation(ServiceHandler):
     """
-    Node to get confirmation from a given speech, returns success once confirmation is received
+    DEPRECATED: use BtNode_GetConfirmationAction. The tk_24_audio package has
+    migrated confirmation to a ROS 2 action (`get_confirmation_action`); the
+    service-based `get_confirmation_service` will be retired once all task
+    trees (GPSR, EGPSR, Receptionist, Restaurant, help-me-carry, serve-breakfast,
+    store-groceries) have been migrated.
     """
-    def __init__(self, 
+    def __init__(self,
                  name : str,
                  service_name : str = "get_confirmation_service",
                  timeout : float = 15.0
                  ):
+        warnings.warn(
+            "BtNode_GetConfirmation is deprecated; use BtNode_GetConfirmationAction "
+            "(tk_24_audio migrated to action `get_confirmation_action`).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super(BtNode_GetConfirmation, self).__init__(name, service_name, GetConfirmation)
         self.timeout = timeout
     
@@ -610,11 +633,14 @@ class BtNode_GetConfirmation(ServiceHandler):
 
 class BtNode_Listen(ServiceHandler):
     """
-    Listens for speech input and stores the recognized message.
+    Listens for speech input and stores the recognized message on the blackboard
+    for use by other nodes like phrase extraction or target extraction.
 
-    This node activates the speech recognition system and waits for voice
-    input. The recognized speech is stored on the blackboard for use by
-    other nodes like phrase extraction or target extraction.
+    DEPRECATED: use BtNode_ListenAction. The tk_24_audio package has migrated
+    Listen to a ROS 2 action (`listen_action`); the service-based
+    `listen_service` will be retired once all task trees (GPSR, EGPSR,
+    Receptionist, Restaurant, help-me-carry, serve-breakfast, store-groceries)
+    have been migrated.
     """
     def __init__(self,
                  name: str,
@@ -622,6 +648,12 @@ class BtNode_Listen(ServiceHandler):
                  service_name = "listen_service",
                  timeout : float = 5.0
                  ):
+        warnings.warn(
+            "BtNode_Listen is deprecated; use BtNode_ListenAction "
+            "(tk_24_audio migrated to action `listen_action`).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(name, service_name, Listen)
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
@@ -741,3 +773,135 @@ class BtNode_CompareInterest(ServiceHandler):
         else:
             self.feedback_message = "Still comparing interest..."
             return Status.RUNNING
+
+
+class _MockFuture:
+    """Stand-in future used in ActionHandler mock paths — always reports done."""
+    def done(self):
+        return True
+
+
+class BtNode_GetConfirmationAction(ActionHandler):
+    """
+    Action-client variant of BtNode_GetConfirmation targeting tk_24_audio's
+    `get_confirmation_action` (tinker_audio_msgs/action/GetConfirmation).
+
+    Returns SUCCESS only when the action succeeds AND `result.confirmed` is True
+    (matches the legacy service contract).
+
+    NOTE (2026-04): the server's execute_callback runs Kimi classification then
+    Qwen multimodal classification **sequentially** — total latency can reach
+    ~20 s on top of `timeout`. The feedback_timeout here is set wide enough to
+    cover that. When the audio package switches to concurrent LLM cross-check,
+    drop `_feedback_timeout_secs` back to ~15.
+    """
+
+    def __init__(self,
+                 name: str,
+                 timeout: float = 15.0,
+                 action_name: str = "get_confirmation_action",
+                 wait_for_server_timeout_sec: float = -3.0):
+        super().__init__(name, GetConfirmationAction, action_name, key=None,
+                         wait_for_server_timeout_sec=wait_for_server_timeout_sec)
+        self.timeout = timeout
+        self._feedback_timeout_secs = max(self.timeout + 5.0, 30.0)
+
+    def send_goal(self):
+        if self.mock_mode:
+            self.feedback_message = "MOCK: GetConfirmation goal sent"
+            self.send_goal_future = _MockFuture()
+            return
+        goal = GetConfirmationAction.Goal()
+        goal.timeout = float(self.timeout)
+        self.send_goal_request(goal)
+        self.feedback_message = f"sent GetConfirmation goal (timeout={self.timeout}s)"
+
+    def feedback_callback(self, msg):
+        feedback = msg.feedback
+        self.last_feedback_time = time.time()
+        self.feedback_timeout = self._feedback_timeout_secs
+        self.action_status = 0
+        progress = getattr(feedback, 'progress', 0.0)
+        status_message = getattr(feedback, 'status_message', '')
+        partial = getattr(feedback, 'partial_transcription', '')
+        self.feedback_message = (
+            f"confirmation progress={progress:.2f} {status_message}"
+            + (f" [partial: '{partial}']" if partial else "")
+        )
+
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            err = getattr(getattr(self.result_message, 'result', None), 'error_message', '')
+            self.feedback_message = f"GetConfirmation action did not succeed ({self.result_status_string}): {err}"
+            return Status.FAILURE
+        result = self.result_message.result
+        if getattr(result, 'confirmed', False):
+            self.feedback_message = "Got confirmation: True"
+            return Status.SUCCESS
+        self.feedback_message = "Got confirmation: False"
+        return Status.FAILURE
+
+
+class BtNode_ListenAction(ActionHandler):
+    """
+    Action-client variant of BtNode_Listen targeting tk_24_audio's
+    `listen_action` (tinker_audio_msgs/action/Listen).
+
+    On success, writes `result.message` to the blackboard at `bb_dest_key`.
+    """
+
+    def __init__(self,
+                 name: str,
+                 bb_dest_key: str,
+                 timeout: float = 5.0,
+                 action_name: str = "listen_action",
+                 wait_for_server_timeout_sec: float = -3.0):
+        super().__init__(name, ListenAction, action_name, key=None,
+                         wait_for_server_timeout_sec=wait_for_server_timeout_sec)
+        self.timeout = timeout
+        self._feedback_timeout_secs = max(self.timeout + 10.0, 30.0)
+        self.bb_dest_key = bb_dest_key
+        self.message_blackboard = self.attach_blackboard_client(name=f"{self.name}_ListenAction")
+        self.message_blackboard.register_key(
+            key="message",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key),
+        )
+
+    def send_goal(self):
+        if self.mock_mode:
+            self.message_blackboard.message = "This is a mock speech input message"
+            self.feedback_message = "MOCK: Listen goal sent, wrote mock transcription"
+            print(f"👂 MOCK LISTEN (action): '{self.message_blackboard.message}'")
+            self.send_goal_future = _MockFuture()
+            return
+        goal = ListenAction.Goal()
+        goal.timeout = float(self.timeout)
+        self.send_goal_request(goal)
+        self.feedback_message = f"sent Listen goal (timeout={self.timeout}s)"
+
+    def feedback_callback(self, msg):
+        feedback = msg.feedback
+        self.last_feedback_time = time.time()
+        self.feedback_timeout = self._feedback_timeout_secs
+        self.action_status = 0
+        progress = getattr(feedback, 'progress', 0.0)
+        status_message = getattr(feedback, 'status_message', '')
+        partial = getattr(feedback, 'partial_transcription', '')
+        self.feedback_message = (
+            f"listen progress={progress:.2f} {status_message}"
+            + (f" [partial: '{partial}']" if partial else "")
+        )
+
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            err = getattr(getattr(self.result_message, 'result', None), 'error_message', '')
+            self.feedback_message = f"Listen action did not succeed ({self.result_status_string}): {err}"
+            return Status.FAILURE
+        result = self.result_message.result
+        if getattr(result, 'status', 0) != 0:
+            self.feedback_message = f"Listen failed with code {result.status}: {getattr(result, 'error_message', '')}"
+            return Status.FAILURE
+        self.message_blackboard.message = result.message
+        self.feedback_message = f"Listened: '{result.message}'"
+        return Status.SUCCESS

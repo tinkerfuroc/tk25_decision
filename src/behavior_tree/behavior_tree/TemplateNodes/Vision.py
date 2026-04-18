@@ -50,19 +50,25 @@
 #
 
 import asyncio
+import os
 import py_trees as pytree
 import time
 import math
+from typing import Any, Optional
+
+import action_msgs.msg as action_msgs
 
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl
+from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, DetectWaving, FollowHeadAction
+from std_msgs.msg import Header
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
 from py_trees.common import Status
 
 from .BaseBehaviors import ServiceHandler
+from .ActionBase import ActionHandler
 from .structs import Person
 
 
@@ -971,4 +977,253 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
             self.logger.info(f"Publishing PanTiltCtrl with x: {x}, y: {y}, speed: {self.speed}")
             self.feedback_message = f"Initialized TurnTo for point {point.point} with id {self.target_id} and pan tilt angle: x: {msg.x}, y: {msg.y}, speed: {self.speed}"
         self.cnt = 0
-        
+
+
+class BtNode_ScanForWavingPerson(ServiceHandler):
+    """
+    Call tk26's `detect_waving_persons` service (tinker_vision_msgs_26/DetectWaving),
+    write the full list and the closest person to the blackboard.
+
+    Blackboard:
+      - `bb_key_all_persons`    ← list[PointStamped] sorted closest-first
+      - `bb_key_closest_person` ← PointStamped (index 0)
+      - `bb_key_pictures` (opt) ← list[str] filesystem paths of per-person RGB crops
+
+    Succeeds when at least one waving person is detected within `threshold_meters`.
+    """
+
+    def __init__(self,
+                 name: str,
+                 bb_key_all_persons: str,
+                 bb_key_closest_person: str,
+                 threshold_meters: float,
+                 service_name: str = "detect_waving_persons",
+                 target_frame: str = "map",
+                 bb_key_pictures: Optional[str] = None,
+                 picture_output_dir: str = "/tmp",
+                 ):
+        super(BtNode_ScanForWavingPerson, self).__init__(name, service_name, DetectWaving)
+        self.bb_key_all_persons = bb_key_all_persons
+        self.bb_key_closest_person = bb_key_closest_person
+        self.bb_key_pictures = bb_key_pictures
+        self.threshold_meters = threshold_meters
+        self.target_frame = target_frame
+        self.picture_output_dir = picture_output_dir
+        self.bb_write_client = None
+
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+        self.bb_write_client = self.attach_blackboard_client(name="ScanForWavingPerson")
+        self.bb_write_client.register_key(self.bb_key_all_persons, access=pytree.common.Access.WRITE)
+        self.bb_write_client.register_key(self.bb_key_closest_person, access=pytree.common.Access.WRITE)
+        if self.bb_key_pictures is not None:
+            self.bb_write_client.register_key(self.bb_key_pictures, access=pytree.common.Access.WRITE)
+        self.logger.debug("Setup ScanForWavingPerson")
+
+    def _crop_and_save(self, rgb_msg, segments):
+        """
+        Convert rgb_image + per-person segment masks into per-person cropped PNGs on disk.
+        Returns list[str] of paths (same order as `segments`). Empty list on failure.
+        """
+        try:
+            import cv2
+            import numpy as np
+            from cv_bridge import CvBridge
+        except Exception as e:
+            self.logger.warning(f"ScanForWavingPerson: cv2/cv_bridge unavailable ({e}); skipping picture export")
+            return []
+
+        bridge = CvBridge()
+        try:
+            rgb = bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="bgr8")
+        except Exception as e:
+            self.logger.warning(f"ScanForWavingPerson: failed to decode rgb_image ({e})")
+            return []
+
+        os.makedirs(self.picture_output_dir, exist_ok=True)
+        ts = int(time.time() * 1000)
+        paths = []
+        for idx, seg_msg in enumerate(segments):
+            try:
+                seg = bridge.imgmsg_to_cv2(seg_msg, desired_encoding="passthrough")
+                mask = seg if seg.ndim == 2 else seg[..., 0]
+                ys, xs = np.where(mask > 0)
+                if ys.size == 0 or xs.size == 0:
+                    # fall back to whole frame if mask is empty
+                    crop = rgb
+                else:
+                    y0, y1 = int(ys.min()), int(ys.max()) + 1
+                    x0, x1 = int(xs.min()), int(xs.max()) + 1
+                    crop = rgb[y0:y1, x0:x1]
+                path = os.path.join(
+                    self.picture_output_dir,
+                    f"restaurant_customer_{idx}_{ts}.png",
+                )
+                cv2.imwrite(path, crop)
+                paths.append(path)
+            except Exception as e:
+                self.logger.warning(f"ScanForWavingPerson: failed to crop person {idx}: {e}")
+                paths.append("")
+        return paths
+
+    def initialise(self) -> None:
+        super().initialise()
+
+        if self.mock_mode:
+            mock_person = PointStamped()
+            mock_person.header = Header(frame_id=self.target_frame or "map")
+            mock_person.point.x = 1.0
+            mock_person.point.y = 0.0
+            mock_person.point.z = 0.0
+            self.bb_write_client.set(self.bb_key_all_persons, [mock_person], overwrite=True)
+            self.bb_write_client.set(self.bb_key_closest_person, mock_person, overwrite=True)
+            if self.bb_key_pictures is not None:
+                self.bb_write_client.set(self.bb_key_pictures, ["/tmp/mock_customer.png"], overwrite=True)
+            print(f"👋 MOCK: ScanForWavingPerson → wrote synthetic person at (1.0, 0.0, 0.0) in {self.target_frame or 'map'}")
+            self.feedback_message = "MOCK: Scanned for waving person"
+            return
+
+        request = DetectWaving.Request()
+        request.threshold_meters = self.threshold_meters
+        request.target_frame = self.target_frame
+        self.response = self.client.call_async(request)
+        self.feedback_message = "Initialized ScanForWavingPerson"
+
+    def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
+        self.logger.debug("Update ScanForWavingPerson")
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return Status.FAILURE
+
+        if self.response.done():
+            result = self.response.result()
+            if result.status == 0 and result.waving_persons:
+                self.bb_write_client.set(self.bb_key_all_persons, result.waving_persons, overwrite=True)
+                self.bb_write_client.set(self.bb_key_closest_person, result.waving_persons[0], overwrite=True)
+                if self.bb_key_pictures is not None:
+                    paths = self._crop_and_save(result.rgb_image, result.segments)
+                    # pad/truncate to match waving_persons length so index alignment is safe
+                    n = len(result.waving_persons)
+                    if len(paths) < n:
+                        paths = paths + [""] * (n - len(paths))
+                    else:
+                        paths = paths[:n]
+                    self.bb_write_client.set(self.bb_key_pictures, paths, overwrite=True)
+                closest = result.waving_persons[0]
+                self.feedback_message = (
+                    f"Found {len(result.waving_persons)} waving person(s). "
+                    f"Closest at ({closest.point.x:.3f}, {closest.point.y:.3f}, {closest.point.z:.3f}) "
+                    f"in {closest.header.frame_id}"
+                )
+                return Status.SUCCESS
+            elif result.status == 0:
+                self.feedback_message = "Service succeeded, but no waving person found."
+                return Status.FAILURE
+            else:
+                self.feedback_message = f"Service failed with status {result.status}: {result.error_msg}"
+                return Status.FAILURE
+        else:
+            self.feedback_message = "Still scanning for waving persons..."
+            return Status.RUNNING
+
+
+class BtNode_MaintainEyeContact(ActionHandler):
+    """
+    Wrap the HRI `follow_head_action` (tinker_vision_msgs.action.FollowHeadAction) to maintain
+    eye-contact with the closest face. Server returns success after a single gaze lock.
+
+    Feedback schema is `{pan, tilt}` — not the BT canonical `{stage, stage_name, status, delay_limit}`.
+    We override `feedback_callback` to stamp `last_feedback_time`, force `action_status=0`, and
+    keep a generous `feedback_timeout`.
+    """
+    def __init__(self,
+                 name: str,
+                 action_name: str = "follow_head_action",
+                 feedback_timeout_secs: float = 30.0,
+                 wait_for_server_timeout_sec: float = -3.0,
+                 ):
+        super().__init__(name, FollowHeadAction, action_name, None, wait_for_server_timeout_sec)
+        self._feedback_timeout_secs = feedback_timeout_secs
+
+    def send_goal(self):
+        if self.mock_mode:
+            self.feedback_message = "MOCK: eye-contact goal sent"
+            class MockFuture:
+                def done(self):
+                    return True
+            self.send_goal_future = MockFuture()
+            return
+        goal = FollowHeadAction.Goal()
+        goal.start_following = True
+        self.send_goal_request(goal)
+        self.feedback_message = "Eye-contact goal sent"
+
+    def feedback_callback(self, msg: Any):
+        feedback = msg.feedback
+        self.last_feedback_time = time.time()
+        self.feedback_timeout = self._feedback_timeout_secs
+        self.action_status = 0
+        pan = getattr(feedback, "pan", None)
+        tilt = getattr(feedback, "tilt", None)
+        self.feedback_message = f"eye-contact: pan={pan}, tilt={tilt}"
+
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = f"Eye-contact action failed with status {self.result_status}"
+            return pytree.common.Status.FAILURE
+        if getattr(self.result_message.result, "success", False):
+            self.feedback_message = "Eye-contact succeeded"
+            return pytree.common.Status.SUCCESS
+        err = getattr(self.result_message.result, "message", "")
+        self.feedback_message = f"Eye-contact failed: {err}"
+        return pytree.common.Status.FAILURE
+
+    def terminate(self, new_status: pytree.common.Status):
+        if not self.mock_mode and self.goal_handle is not None:
+            self.send_cancel_request()
+        super().terminate(new_status)
+
+
+class BtNode_ShowImage(pytree.behaviour.Behaviour):
+    """
+    Display an image to the referee/audience. Currently a **stub**:
+    reads the file path from the blackboard, logs it, and returns SUCCESS.
+
+    TODO: Replace body with a publisher to the on-robot display topic once identified.
+    """
+    def __init__(self,
+                 name: str,
+                 bb_image_path_key: str,
+                 ):
+        super().__init__(name)
+        self.bb_image_path_key = bb_image_path_key
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="image_path",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_image_path_key)
+        )
+
+    def update(self) -> Status:
+        try:
+            path = self.blackboard.image_path
+        except Exception as e:
+            self.feedback_message = f"ShowImage: no image path on blackboard ({e})"
+            return pytree.common.Status.FAILURE
+        if not path:
+            self.feedback_message = "ShowImage: empty image path"
+            return pytree.common.Status.FAILURE
+        exists = os.path.exists(path)
+        prefix = "MOCK" if self.mock_mode else "STUB"
+        if exists:
+            self.feedback_message = f"{prefix}: displaying {path}"
+            print(f"🖼️  {prefix} SHOW IMAGE: {path}")
+        else:
+            self.feedback_message = f"{prefix}: image path {path} not on disk (displaying anyway)"
+            print(f"🖼️  {prefix} SHOW IMAGE (missing file): {path}")
+        return pytree.common.Status.SUCCESS
+
