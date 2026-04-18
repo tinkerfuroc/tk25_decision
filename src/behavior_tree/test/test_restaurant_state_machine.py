@@ -90,6 +90,11 @@ def _install_stubs(monkeypatch):
     custom.BtNode_DetectTray = _SuccessNode
     custom.BtNode_ServeOrder = _SuccessNode
     custom.BtNode_ScanForCallingCustomer = _SuccessNode
+    # PR-follow-up-1 batched helpers used by the rewritten restaurants.py.
+    custom.BtNode_RecordOrder = _SuccessNode
+    custom.BtNode_FormatOrdersForBarman = _SuccessNode
+    custom.BtNode_IterateOrderItems = _SuccessNode
+    custom.BtNode_MarkItemDelivered = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.Restaurant.custumNodes", custom)
 
 
@@ -323,3 +328,121 @@ def test_store_order_and_build_summary():
     text = _get_bb("batch_orders_summary")["batch_orders_summary"]
     assert "customer 1: water" in text
     assert "customer 2: coffee" in text
+
+
+# ---------------------------------------------------------------------------
+# Phase-gating tests (PR follow-up — batched Phase 1)
+# ---------------------------------------------------------------------------
+
+def _counting_node_class(counter):
+    """Return a BT leaf class that increments counter[0] on each tick."""
+
+    class _Counter(py_trees.behaviour.Behaviour):
+        def __init__(self, name, *args, **kwargs):
+            super().__init__(name=name)
+
+        def update(self):
+            counter[0] += 1
+            return py_trees.common.Status.SUCCESS
+
+    return _Counter
+
+
+def test_queue_gate_skips_scan_when_queued_entries_exist():
+    from behavior_tree.Restaurant.state_nodes import BtNode_QueueHasQueued
+
+    queue_with = [
+        {"id": 1, "pose": "p", "timestamp": 1.0, "confidence": 1.0, "status": "queued"},
+    ]
+    _set_bb(customer_queue=queue_with)
+    node = BtNode_QueueHasQueued(name="gate", queue_key="customer_queue")
+    assert _tick_once(node) == py_trees.common.Status.SUCCESS
+
+    # An empty queue or queue with only served entries → FAILURE.
+    _set_bb(customer_queue=[])
+    node = BtNode_QueueHasQueued(name="gate", queue_key="customer_queue")
+    assert _tick_once(node) == py_trees.common.Status.FAILURE
+
+    _set_bb(customer_queue=[{"id": 1, "pose": "p", "timestamp": 1.0, "confidence": 1.0, "status": "served"}])
+    node = BtNode_QueueHasQueued(name="gate", queue_key="customer_queue")
+    assert _tick_once(node) == py_trees.common.Status.FAILURE
+
+
+def test_order_list_not_empty_gate():
+    from behavior_tree.Restaurant.state_nodes import BtNode_OrderListNotEmpty
+
+    _set_bb(order_list=[])
+    node = BtNode_OrderListNotEmpty(name="gate", order_list_key="order_list")
+    assert _tick_once(node) == py_trees.common.Status.FAILURE
+
+    _set_bb(order_list=[{"id": 1, "items": ["water"]}])
+    node = BtNode_OrderListNotEmpty(name="gate", order_list_key="order_list")
+    assert _tick_once(node) == py_trees.common.Status.SUCCESS
+
+
+def test_require_active_customer_gate():
+    from behavior_tree.Restaurant.state_nodes import BtNode_RequireActiveCustomer
+
+    _set_bb(active_customer_id=None)
+    node = BtNode_RequireActiveCustomer(name="gate", active_id_key="active_customer_id")
+    assert _tick_once(node) == py_trees.common.Status.FAILURE
+
+    _set_bb(active_customer_id=7)
+    node = BtNode_RequireActiveCustomer(name="gate", active_id_key="active_customer_id")
+    assert _tick_once(node) == py_trees.common.Status.SUCCESS
+
+
+def test_barman_phase_skipped_when_order_list_empty(monkeypatch):
+    """Empty order list → Phase 2 skip announcement; actual-trip leaves never fire."""
+    announce_calls = []
+
+    class _RecordingAnnounce(py_trees.behaviour.Behaviour):
+        def __init__(self, name, *args, message=None, bb_source=None, **kwargs):
+            super().__init__(name=name)
+            self._message = message
+            self._bb_source = bb_source
+
+        def update(self):
+            announce_calls.append({"name": self.name, "message": self._message, "bb_source": self._bb_source})
+            return py_trees.common.Status.SUCCESS
+
+    restaurants = _import_restaurants(monkeypatch)
+    monkeypatch.setattr(restaurants, "BtNode_Announce", _RecordingAnnounce)
+
+    goto_calls = [0]
+    monkeypatch.setattr(restaurants, "BtNode_GotoAction", _counting_node_class(goto_calls))
+    format_calls = [0]
+    monkeypatch.setattr(restaurants, "BtNode_FormatOrdersForBarman", _counting_node_class(format_calls))
+    confirm_calls = [0]
+    monkeypatch.setattr(restaurants, "BtNode_GetConfirmationAction", _counting_node_class(confirm_calls))
+
+    _set_bb(order_list=[])
+    root = restaurants.createBarmanPhase()
+    assert _tick_until_terminal(root) == py_trees.common.Status.SUCCESS
+
+    # Skip branch fired its announcement; actual-trip leaves did not.
+    skip_msgs = [call for call in announce_calls if call["message"] and "skipping barman" in call["message"].lower()]
+    assert skip_msgs, f"Expected 'skipping barman' announcement; got: {announce_calls}"
+    assert goto_calls[0] == 0
+    assert format_calls[0] == 0
+    assert confirm_calls[0] == 0
+
+
+def test_barman_phase_runs_trip_when_order_list_populated(monkeypatch):
+    """Non-empty order list → actual barman trip fires all leaves."""
+    restaurants = _import_restaurants(monkeypatch)
+    monkeypatch.setattr(restaurants, "BtNode_Announce", _SuccessNode)
+
+    goto_calls = [0]
+    monkeypatch.setattr(restaurants, "BtNode_GotoAction", _counting_node_class(goto_calls))
+    format_calls = [0]
+    monkeypatch.setattr(restaurants, "BtNode_FormatOrdersForBarman", _counting_node_class(format_calls))
+    confirm_calls = [0]
+    monkeypatch.setattr(restaurants, "BtNode_GetConfirmationAction", _counting_node_class(confirm_calls))
+
+    _set_bb(order_list=[{"id": 1, "items": ["water"]}])
+    root = restaurants.createBarmanPhase()
+    assert _tick_until_terminal(root) == py_trees.common.Status.SUCCESS
+    assert goto_calls[0] >= 1
+    assert format_calls[0] == 1
+    assert confirm_calls[0] == 1
