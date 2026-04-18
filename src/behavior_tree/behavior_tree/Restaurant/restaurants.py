@@ -45,7 +45,7 @@ from .state_nodes import (
     BtNode_InitOrderChecklist,
     BtNode_MarkPickupVerified,
     BtNode_RequirePickupVerified,
-    BtNode_SelectNextCustomer,
+    BtNode_SelectNextQueuedCustomer,
     BtNode_UpdateChecklistFlag,
 )
 
@@ -161,7 +161,7 @@ def createDetectAndArbitrateCustomers():
     )
     root.add_child(collect)
     root.add_child(
-        BtNode_SelectNextCustomer(
+        BtNode_SelectNextQueuedCustomer(
             name="Select next caller",
             queue_key=KEY_CUSTOMER_QUEUE,
             selected_pose_key=KEY_CUSTOMER_LOCATION,
