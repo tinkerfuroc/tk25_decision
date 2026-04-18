@@ -1,3 +1,52 @@
+# Copyright 2025 Tinker Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#
+# Manipulation Nodes Module
+# =========================
+#
+# This module provides behavior tree nodes for robot arm manipulation.
+# All nodes inherit from either ServiceHandler or ActionHandler and include
+# built-in mock mode support with teleop interaction.
+#
+# Classes
+# -------
+# BtNode_CartesianMove
+#     Moves the arm using Cartesian (end-effector) control with point cloud.
+# BtNode_MoveArmJointPC
+#     Moves the arm joints with point cloud for collision avoidance.
+# BtNode_Grasp
+#     Grasps an object using vision-guided grasping.
+# BtNode_Drop
+#     Drops an object at a specified location (trash bin).
+# BtNode_Place
+#     Places an object at a target location.
+# BtNode_MoveArm
+#     Moves arm through predefined scan poses (iterative).
+# BtNode_MoveArmSingle
+#     Moves arm to a single predefined pose.
+# BtNode_GripperAction
+#     Opens or closes the gripper.
+# BtNode_PointTo
+#     Points the arm towards a specific person.
+#
+# Mock Mode
+# ---------
+# Manipulation nodes support TELEOP mode in mock mode, allowing keyboard-based
+# arm control for testing and development without real hardware.
+#
+
 from typing import Any
 import py_trees as pytree
 
@@ -15,6 +64,13 @@ from .ActionBase import ActionHandler
 import math
 
 class BtNode_CartesianMove(ActionHandler):
+    """
+    Moves the arm using Cartesian (end-effector) control with point cloud.
+
+    This node performs Cartesian path planning using a point cloud for
+    collision avoidance. It moves the end-effector to a target point
+    while avoiding obstacles in the environment.
+    """
     def __init__(self,
                  name: str,
                  bb_key_pointcloud: str,
@@ -67,6 +123,13 @@ class BtNode_CartesianMove(ActionHandler):
         return super().feedback_callback(msg)
 
 class BtNode_MoveArmJointPC(ActionHandler):
+    """
+    Moves the arm joints with point cloud for collision avoidance.
+
+    This node performs joint-space motion planning using a point cloud
+    for collision avoidance. It moves the arm to a specified joint
+    configuration while avoiding obstacles.
+    """
     def __init__(self,
                  name: str,
                  bb_key_pointcloud: str,
@@ -184,6 +247,13 @@ class BtNode_Grasp(ActionHandler):
 
 
 class BtNode_Drop(ServiceHandler):
+    """
+    Drops an object at a specified location (trash bin).
+
+    This node moves the arm to a drop position and releases the gripper
+    to drop an object. The drop location can be read from the blackboard
+    or specified directly.
+    """
     def __init__(self, 
                  name: str,
                  bb_source: str,
@@ -277,6 +347,13 @@ class BtNode_Drop(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 class BtNode_Place(ActionHandler):
+    """
+    Places an object at a target location.
+
+    This node performs a place action using vision guidance and collision
+    avoidance. It takes the target point, current grasp pose, and
+    environment point cloud to plan and execute the place motion.
+    """
     def __init__(self, 
                  name: str,
                  bb_key_point: str,
@@ -346,6 +423,13 @@ class BtNode_Place(ActionHandler):
 
 
 class BtNode_MoveArm(ServiceHandler):
+    """
+    Moves arm through predefined scan poses (iterative).
+
+    This node moves the arm to a sequence of predefined poses for scanning
+    operations. It reads an index from the blackboard and moves to the
+    corresponding pose, incrementing the index for the next iteration.
+    """
     def __init__(self, name: str, 
                  service_name: str, 
                 #  arm_joint_pose: list[float]
@@ -428,6 +512,13 @@ class BtNode_MoveArm(ServiceHandler):
 
 
 class BtNode_MoveArmSingle(ServiceHandler):
+    """
+    Moves arm to a single predefined pose.
+
+    This node moves the arm to a joint configuration read from the
+    blackboard. Unlike BtNode_MoveArm, it does not iterate through
+    multiple poses.
+    """
     def __init__(self, name: str, 
                  service_name: str, 
                 #  arm_joint_pose: list[float]
@@ -498,6 +589,13 @@ class BtNode_MoveArmSingle(ServiceHandler):
 
 
 class BtNode_GripperAction(ActionHandler):
+    """
+    Opens or closes the gripper.
+
+    This node controls the gripper to either open or close based on the
+    open_gripper parameter. It uses the standard ROS2 gripper action
+    interface.
+    """
     def __init__(self, 
                  name: str, 
                  open_gripper: bool, 
@@ -535,6 +633,13 @@ class BtNode_GripperAction(ActionHandler):
 
 
 class BtNode_PointTo(ServiceHandler):
+    """
+    Points the arm towards a specific person.
+
+    This node moves the arm to point at a target person identified by ID.
+    It reads the target's position from the blackboard and computes an
+    appropriate arm configuration for pointing.
+    """
     def __init__(self, name: str,
                  bb_key_persons: str,
                  bb_key_points: str,
