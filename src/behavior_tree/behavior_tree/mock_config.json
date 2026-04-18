@@ -25,7 +25,10 @@
           "BtNode_FeatureMatching": "KEYPRESS",
           "BtNode_GetPointCloud": "KEYPRESS",
           "BtNode_DoorDetection": "KEYPRESS",
-          "BtNode_TurnPanTilt": "KEYPRESS"
+          "BtNode_TurnPanTilt": "KEYPRESS",
+          "BtNode_ScanForWavingPerson": "KEYPRESS",
+          "BtNode_MaintainEyeContact": "KEYPRESS",
+          "BtNode_ShowImage": "KEYPRESS"
         }
       },
       "manipulation": {
@@ -65,7 +68,9 @@
           "BtNode_TargetExtraction": "KEYPRESS",
           "BtNode_GetConfirmation": "KEYPRESS",
           "BtNode_Listen": "KEYPRESS",
-          "BtNode_CompareInterest": "KEYPRESS"
+          "BtNode_CompareInterest": "KEYPRESS",
+          "BtNode_GetConfirmationAction": "KEYPRESS",
+          "BtNode_ListenAction": "KEYPRESS"
         }
       },
       "announcement": {
