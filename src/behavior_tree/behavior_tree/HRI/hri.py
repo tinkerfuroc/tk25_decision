@@ -33,6 +33,7 @@ from .config import (
     ARM_POS_HANDOVER,
     ARM_POS_NAVIGATING,
     DRINKS,
+    FOLLOW_CONFIG,
     HOST_DRINK,
     HOST_NAME,
     KEY_ARM_DROP,
@@ -53,6 +54,7 @@ from .config import (
     POSE_DOOR,
     POSE_SOFA,
 )
+from .follow import createFollowPerson
 
 
 class BtNode_MockArrivalTrigger(py_trees.behaviour.Behaviour):
@@ -348,14 +350,7 @@ def createBagFlow():
             message="I'll follow you and carry the bag.",
         )
     )
-    # TODO: replace this with a dedicated follow-host behavior once available.
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="Proxy follow host by navigation",
-            child=BtNode_GotoAction(name="Move to drop area proxy", key=KEY_SOFA_POSE),
-            num_failures=3,
-        )
-    )
+    root.add_child(createFollowPerson(FOLLOW_CONFIG))
     root.add_child(
         py_trees.decorators.Retry(
             name="Retry arm to drop pose",

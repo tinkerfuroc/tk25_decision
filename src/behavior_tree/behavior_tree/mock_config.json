@@ -19,6 +19,7 @@
         "nodes": {
           "BtNode_ScanFor": "KEYPRESS",
           "BtNode_TrackPerson": "KEYPRESS",
+          "BtNode_TrackPersonAction": "KEYPRESS",
           "BtNode_FindObj": "KEYPRESS",
           "BtNode_FeatureExtraction": "KEYPRESS",
           "BtNode_SeatRecommend": "KEYPRESS",
@@ -51,10 +52,10 @@
         "description": "Per-node mock mode for navigation nodes",
         "nodes": {
           "BtNode_GoTo": "KEYPRESS",
-          "BtNode_FollowPerson": "KEYPRESS",
           "BtNode_ConvertGraspPose": "KEYPRESS",
           "BtNode_GoToLuggage": "KEYPRESS",
-          "BtNode_GotoAction": "KEYPRESS"
+          "BtNode_GotoAction": "KEYPRESS",
+          "BtNode_FollowAction": "KEYPRESS"
         }
       },
       "audio_input": {
@@ -74,7 +75,7 @@
         }
       },
       "announcement": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": true,
         "description": "Per-node mock mode for TTS nodes",
         "nodes": {
