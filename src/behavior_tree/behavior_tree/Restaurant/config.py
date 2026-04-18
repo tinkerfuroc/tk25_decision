@@ -112,5 +112,10 @@ KEY_CURRENT_ITEMS = "current_items"
 KEY_CURRENT_ITEM = "current_item"
 KEY_CURRENT_ITEM_SUMMARY = "current_item_summary"
 
+# Batched pipeline keys (production `restaurants.py`). `KEY_ORDER_LIST` mirrors the
+# demo tree's schema (`list[{id, pose, picture_path, items, delivered_items}]`).
+KEY_ORDER_LIST = "order_list"
+KEY_BARMAN_TEXT = "barman_text"
+
 # Radius (meters) for waving-person detection. Raise for larger venues.
 DETECT_WAVING_THRESHOLD_M = 8.0

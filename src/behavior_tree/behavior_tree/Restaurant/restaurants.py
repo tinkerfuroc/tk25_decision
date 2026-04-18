@@ -2,27 +2,27 @@ from __future__ import annotations
 
 """Standard Restaurant behavior tree composition.
 
-This module defines the default order-cycle strategy. Shared constants and
-blackboard keys are centralized in ``Restaurant/config.py``.
+Shape: **batched three-phase pipeline**, mirroring ``restaurants_fake.py``.
 
-The tree combines two design vocabularies:
+1. **Phase 1 — Collect orders.** ``Repeat(n=2)`` × ``Retry(n=2)`` around a
+   single-order collection sequence. Queue-arbitration is preserved from PR #8
+   for simultaneous-caller handling; ``BtNode_QueueHasQueued`` gates the scan
+   so the detector runs only when the queue is dry (dedup across iterations).
+2. **Phase 2 — Barman trip.** One trip only. Gated by
+   ``BtNode_OrderListNotEmpty`` — if Phase 1 produced no orders, skip to a
+   "nothing to place" announcement and move on.
+3. **Phase 3 — Deliver all items.** Single per-item loop across all orders.
+   Each iteration: bar round-trip (open gripper → barman places → close) then
+   table delivery (with show-picture fallback for unreachable tables).
 
-1. **Queue-arbitration upstream** (from PR #8) — ``BtNode_QueueWavingCandidates``
-   feeds detected customers into a queue; ``BtNode_SelectNextQueuedCustomer``
-   picks the oldest and exposes it as the active target. This handles the
-   rulebook's "simultaneous callers" clause.
-
-2. **Per-item delivery downstream** (ported from ``restaurants_fake.py`` /
-   PR #7) — one order is split into items via ``BtNode_SplitOrderItems``;
-   ``BtNode_PopNextItem`` drives a loop that makes one bar trip per item
-   (the arm only grasps one object at a time), with a show-picture fallback
-   on unreachable-customer failure.
-
-Also folded in from PR #7: ``BtNode_ScanForWavingPerson`` as the primary
-customer-detection path, ``BtNode_MaintainEyeContact`` ticks around order
-intake and service to avoid the −80 eye-contact penalty, and
-``BtNode_ShowImage`` for the partial-score fallback when a detected customer
-cannot be reached.
+Shared constants and blackboard keys in ``Restaurant/config.py``. Helpers come
+from two modules:
+  - ``custumNodes.py`` — list-of-orders helpers (``BtNode_RecordOrder``,
+    ``BtNode_FormatOrdersForBarman``, ``BtNode_IterateOrderItems``,
+    ``BtNode_MarkItemDelivered``). Originally written for ``restaurants_fake.py``
+    but key-name–parameterized, so reused here.
+  - ``state_nodes.py`` — queue-arbitration helpers plus the three small guards
+    this module introduces.
 """
 
 import py_trees
@@ -39,10 +39,13 @@ from behavior_tree.TemplateNodes.Vision import (
 from behavior_tree.runtime import run_tree
 
 from .custumNodes import (
-    BtNode_CommunicateWithBarman,
     BtNode_ConfirmOrder,
     BtNode_DetectCallingCustomer,
     BtNode_DetectTray,
+    BtNode_FormatOrdersForBarman,
+    BtNode_IterateOrderItems,
+    BtNode_MarkItemDelivered,
+    BtNode_RecordOrder,
     BtNode_ScanForCallingCustomer,
     BtNode_ServeOrder,
     BtNode_TakeOrder,
@@ -55,14 +58,15 @@ from .config import (
     KEY_ACTIVE_CUSTOMER_PICTURE,
     KEY_ARM_NAVIGATING,
     KEY_ARM_SERVING,
+    KEY_BARMAN_TEXT,
     KEY_CURRENT_ITEM,
     KEY_CURRENT_ITEM_SUMMARY,
-    KEY_CURRENT_ITEMS,
     KEY_CUSTOMER_LOCATION,
     KEY_CUSTOMER_ORDER,
     KEY_CUSTOMER_QUEUE,
     KEY_KITCHEN_BAR_POSE,
     KEY_ORDER_CHECKLIST,
+    KEY_ORDER_LIST,
     KEY_PICKUP_VERIFIED,
     KEY_TRAY_LOCATION,
     KEY_WAVING_CLOSEST_PERSON,
@@ -76,11 +80,12 @@ from .state_nodes import (
     BtNode_CloseActiveCustomer,
     BtNode_InitOrderChecklist,
     BtNode_MarkPickupVerified,
-    BtNode_PopNextItem,
+    BtNode_OrderListNotEmpty,
+    BtNode_QueueHasQueued,
     BtNode_QueueWavingCandidates,
+    BtNode_RequireActiveCustomer,
     BtNode_RequirePickupVerified,
     BtNode_SelectNextQueuedCustomer,
-    BtNode_SplitOrderItems,
     BtNode_UpdateChecklistFlag,
 )
 
@@ -91,87 +96,27 @@ def createConstantWriter():
         name="Write constants to blackboard",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
-    root.add_child(
-        BtNode_WriteToBlackboard(
-            name="Write kitchen bar location",
-            bb_namespace="",
-            bb_source=None,
-            bb_key=KEY_KITCHEN_BAR_POSE,
-            object=POSE_KITCHEN_BAR,
+    for name, key, value in (
+        ("Write kitchen bar location", KEY_KITCHEN_BAR_POSE, POSE_KITCHEN_BAR),
+        ("Write arm navigating pose", KEY_ARM_NAVIGATING, ARM_POS_NAVIGATING),
+        ("Write arm serving pose", KEY_ARM_SERVING, ARM_POS_SERVING),
+        ("Initialize caller queue", KEY_CUSTOMER_QUEUE, []),
+        ("Initialize active caller id", KEY_ACTIVE_CUSTOMER_ID, None),
+        ("Initialize active caller picture", KEY_ACTIVE_CUSTOMER_PICTURE, ""),
+        ("Initialize pickup verification", KEY_PICKUP_VERIFIED, False),
+        ("Initialize order checklist", KEY_ORDER_CHECKLIST, {}),
+        ("Initialize order list", KEY_ORDER_LIST, []),
+        ("Initialize barman text", KEY_BARMAN_TEXT, ""),
+    ):
+        root.add_child(
+            BtNode_WriteToBlackboard(
+                name=name,
+                bb_namespace="",
+                bb_source=None,
+                bb_key=key,
+                object=value,
+            )
         )
-    )
-    root.add_child(
-        BtNode_WriteToBlackboard(
-            name="Write arm navigating pose",
-            bb_namespace="",
-            bb_source=None,
-            bb_key=KEY_ARM_NAVIGATING,
-            object=ARM_POS_NAVIGATING,
-        )
-    )
-    root.add_child(
-        BtNode_WriteToBlackboard(
-            name="Write arm serving pose",
-            bb_namespace="",
-            bb_source=None,
-            bb_key=KEY_ARM_SERVING,
-            object=ARM_POS_SERVING,
-        )
-    )
-    root.add_child(
-        BtNode_WriteToBlackboard(
-            name="Initialize caller queue",
-            bb_namespace="",
-            bb_source=None,
-            bb_key=KEY_CUSTOMER_QUEUE,
-            object=[],
-        )
-    )
-    root.add_child(
-        BtNode_WriteToBlackboard(
-            name="Initialize active caller id",
-            bb_namespace="",
-            bb_source=None,
-            bb_key=KEY_ACTIVE_CUSTOMER_ID,
-            object=None,
-        )
-    )
-    root.add_child(
-        BtNode_WriteToBlackboard(
-            name="Initialize active caller picture",
-            bb_namespace="",
-            bb_source=None,
-            bb_key=KEY_ACTIVE_CUSTOMER_PICTURE,
-            object="",
-        )
-    )
-    root.add_child(
-        BtNode_WriteToBlackboard(
-            name="Initialize pickup verification",
-            bb_namespace="",
-            bb_source=None,
-            bb_key=KEY_PICKUP_VERIFIED,
-            object=False,
-        )
-    )
-    root.add_child(
-        BtNode_WriteToBlackboard(
-            name="Initialize order checklist",
-            bb_namespace="",
-            bb_source=None,
-            bb_key=KEY_ORDER_CHECKLIST,
-            object={},
-        )
-    )
-    root.add_child(
-        BtNode_WriteToBlackboard(
-            name="Initialize current items list",
-            bb_namespace="",
-            bb_source=None,
-            bb_key=KEY_CURRENT_ITEMS,
-            object=[],
-        )
-    )
     return root
 
 
@@ -233,9 +178,15 @@ def _create_legacy_detection_pass():
 
 
 def createDetectAndArbitrateCustomers():
-    """Detect callers and select one active target using queue arbitration."""
+    """Detect callers (only if queue dry) and select one active target via arbitration."""
     root = py_trees.composites.Sequence(name="Detect and arbitrate callers", memory=True)
     detect = py_trees.composites.Selector(name="Detection strategy", memory=False)
+    detect.add_child(
+        BtNode_QueueHasQueued(
+            name="Queue has queued entries?",
+            queue_key=KEY_CUSTOMER_QUEUE,
+        )
+    )
     detect.add_child(_create_waving_detection_pass())
     detect.add_child(_create_legacy_detection_pass())
     root.add_child(detect)
@@ -341,37 +292,11 @@ def createTakeAndConfirmOrder():
         )
     )
     root.add_child(
-        BtNode_SplitOrderItems(
-            name="Split order into items",
-            order_key=KEY_CUSTOMER_ORDER,
-            items_key=KEY_CURRENT_ITEMS,
-        )
-    )
-    root.add_child(
         BtNode_UpdateChecklistFlag(
             name="Mark order confirmed",
             checklist_key=KEY_ORDER_CHECKLIST,
             flag="order_confirmed",
             value=True,
-        )
-    )
-    return root
-
-
-def createPlaceOrderWithBarman():
-    """Navigate to bar and communicate one confirmed order to the barman."""
-    root = py_trees.composites.Sequence(name="Place order with barman", memory=True)
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="retry goto kitchen bar",
-            child=BtNode_GotoAction(name="Go to kitchen bar", key=KEY_KITCHEN_BAR_POSE),
-            num_failures=3,
-        )
-    )
-    root.add_child(
-        BtNode_CommunicateWithBarman(
-            name="Communicate with barman",
-            bb_order_key=KEY_CUSTOMER_ORDER,
         )
     )
     return root
@@ -407,9 +332,9 @@ def createOptionalTrayTransport():
 def createPickupVerification():
     """Receive one item from the barman at the kitchen bar (per-item barman round-trip).
 
-    Called once per item by the delivery loop. Positions the arm, asks the
-    barman to place the current item (``KEY_CURRENT_ITEM_SUMMARY``), gates on
-    a spoken confirmation, then stows the arm for navigation.
+    Called once per item by the Phase-3 delivery loop. Positions the arm, asks
+    the barman to place the current item (``KEY_CURRENT_ITEM_SUMMARY``), gates
+    on a spoken confirmation, then stows the arm for navigation.
     """
     root = py_trees.composites.Sequence(name="Pickup verification", memory=True)
     root.add_child(
@@ -547,40 +472,9 @@ def createDeliverOrder():
     return root
 
 
-def createPerItemLoop():
-    """Iterate items in the active customer's order: one bar round-trip per item.
-
-    Each iteration: ``PopNextItem → createPickupVerification → createDeliverOrder``.
-    The item list is destructively drained; when ``PopNextItem`` returns FAILURE
-    the ``Retry`` is exhausted and ``FailureIsSuccess`` converts the terminal
-    FAILURE into SUCCESS for the parent sequence.
-    """
-    iter_body = py_trees.composites.Sequence(name="One item bar-to-table", memory=True)
-    iter_body.add_child(
-        BtNode_PopNextItem(
-            name="Pop next item",
-            items_key=KEY_CURRENT_ITEMS,
-            current_item_key=KEY_CURRENT_ITEM,
-            current_item_summary_key=KEY_CURRENT_ITEM_SUMMARY,
-            active_id_key=KEY_ACTIVE_CUSTOMER_ID,
-        )
-    )
-    iter_body.add_child(createPickupVerification())
-    iter_body.add_child(createDeliverOrder())
-
-    return py_trees.decorators.FailureIsSuccess(
-        name="Deliver all items",
-        child=py_trees.decorators.Retry(
-            name="per-item loop",
-            child=iter_body,
-            num_failures=32,
-        ),
-    )
-
-
-def createSingleOrderCycle():
-    """End-to-end cycle for one customer order."""
-    root = py_trees.composites.Sequence(name="Single order cycle", memory=True)
+def createCollectOneOrder():
+    """One pass through the Phase-1 collect loop: detect → approach → order → record."""
+    root = py_trees.composites.Sequence(name="Collect one order", memory=True)
     root.add_child(
         BtNode_InitOrderChecklist(
             name="Initialize per-order checklist",
@@ -590,21 +484,26 @@ def createSingleOrderCycle():
     )
     root.add_child(createDetectAndArbitrateCustomers())
     root.add_child(createApproachCustomer())
-    root.add_child(createTakeAndConfirmOrder())
-    root.add_child(createPlaceOrderWithBarman())
-    root.add_child(createOptionalTrayTransport())
-    root.add_child(createPerItemLoop())
     root.add_child(
-        BtNode_UpdateChecklistFlag(
-            name="Mark served",
-            checklist_key=KEY_ORDER_CHECKLIST,
-            flag="served",
-            value=True,
+        BtNode_RequireActiveCustomer(
+            name="Require active customer (post-approach)",
+            active_id_key=KEY_ACTIVE_CUSTOMER_ID,
+        )
+    )
+    root.add_child(createTakeAndConfirmOrder())
+    root.add_child(
+        BtNode_RecordOrder(
+            name="Record order to order list",
+            bb_key_order_list=KEY_ORDER_LIST,
+            bb_key_cur_id=KEY_ACTIVE_CUSTOMER_ID,
+            bb_key_cur_pose=KEY_CUSTOMER_LOCATION,
+            bb_key_cur_picture=KEY_ACTIVE_CUSTOMER_PICTURE,
+            bb_key_cur_order_items=KEY_CUSTOMER_ORDER,
         )
     )
     root.add_child(
         BtNode_CloseActiveCustomer(
-            name="Close served active caller",
+            name="Close active caller (order recorded)",
             queue_key=KEY_CUSTOMER_QUEUE,
             active_id_key=KEY_ACTIVE_CUSTOMER_ID,
         )
@@ -612,8 +511,106 @@ def createSingleOrderCycle():
     return root
 
 
+def createCollectOrdersPhase():
+    """Phase 1: two orders, one retry per order."""
+    root = py_trees.composites.Sequence(name="Collect orders (2x)", memory=True)
+    for i in range(2):
+        root.add_child(
+            py_trees.decorators.Retry(
+                name=f"retry collect order {i + 1}",
+                child=createCollectOneOrder(),
+                num_failures=2,
+            )
+        )
+    return root
+
+
+def createBarmanPhase():
+    """Phase 2: one bar trip for all collected orders. Gated on non-empty order list."""
+    root = py_trees.composites.Selector(name="Barman trip (gated)", memory=False)
+
+    actual = py_trees.composites.Sequence(name="Actual barman trip", memory=True)
+    actual.add_child(
+        BtNode_OrderListNotEmpty(
+            name="Order list not empty?",
+            order_list_key=KEY_ORDER_LIST,
+        )
+    )
+    actual.add_child(
+        py_trees.decorators.Retry(
+            name="retry goto kitchen bar",
+            child=BtNode_GotoAction(name="Go to kitchen bar", key=KEY_KITCHEN_BAR_POSE),
+            num_failures=3,
+        )
+    )
+    actual.add_child(
+        BtNode_FormatOrdersForBarman(
+            name="Format orders for barman",
+            bb_key_order_list=KEY_ORDER_LIST,
+            bb_key_barman_text=KEY_BARMAN_TEXT,
+        )
+    )
+    actual.add_child(
+        BtNode_Announce(
+            name="Announce orders to barman",
+            bb_source=KEY_BARMAN_TEXT,
+        )
+    )
+    actual.add_child(
+        BtNode_GetConfirmationAction(
+            name="Barman ready?",
+            timeout=120.0,  # rulebook allows up to 2 min to instruct the barman
+        )
+    )
+
+    skip = BtNode_Announce(
+        name="Skip barman (no orders)",
+        bb_source=None,
+        message="No customers served. Skipping barman.",
+    )
+
+    root.add_child(actual)
+    root.add_child(skip)
+    return root
+
+
+def createDeliverAllItemsPhase():
+    """Phase 3: drain KEY_ORDER_LIST one item at a time, each with one bar round-trip."""
+    iter_body = py_trees.composites.Sequence(name="One item bar-to-table", memory=True)
+    iter_body.add_child(
+        BtNode_IterateOrderItems(
+            name="Next undelivered item",
+            bb_key_order_list=KEY_ORDER_LIST,
+            bb_key_cur_item=KEY_CURRENT_ITEM,
+            bb_key_cur_order_id=KEY_ACTIVE_CUSTOMER_ID,
+            bb_key_cur_order_pose=KEY_CUSTOMER_LOCATION,
+            bb_key_cur_order_picture=KEY_ACTIVE_CUSTOMER_PICTURE,
+            bb_key_cur_order_summary=KEY_CURRENT_ITEM_SUMMARY,
+        )
+    )
+    iter_body.add_child(createPickupVerification())
+    iter_body.add_child(createDeliverOrder())
+    iter_body.add_child(
+        BtNode_MarkItemDelivered(
+            name="Mark item delivered",
+            bb_key_order_list=KEY_ORDER_LIST,
+            bb_key_cur_order_id=KEY_ACTIVE_CUSTOMER_ID,
+            bb_key_cur_item=KEY_CURRENT_ITEM,
+        )
+    )
+
+    return py_trees.decorators.FailureIsSuccess(
+        name="Deliver all items",
+        child=py_trees.decorators.Retry(
+            name="deliver-all-items",
+            child=iter_body,
+            num_failures=32,
+        ),
+    )
+
+
 def createRestaurantTask():
-    """Compose the default Restaurant task with optional second cycle."""
+    """Compose the batched three-phase Restaurant task."""
     root = py_trees.composites.Sequence(name="Restaurant Task", memory=True)
     root.add_child(createConstantWriter())
     root.add_child(
@@ -636,28 +633,11 @@ def createRestaurantTask():
         )
     )
 
-    cycles = py_trees.composites.Selector(name="Order cycles", memory=False)
-    first = py_trees.composites.Sequence(name="First order cycle", memory=True)
-    first.add_child(createSingleOrderCycle())
-    second_optional = py_trees.composites.Selector(name="Optional second cycle", memory=False)
-    second_optional.add_child(createSingleOrderCycle())
-    second_optional.add_child(
-        BtNode_Announce(
-            name="No second customer",
-            bb_source=None,
-            message="No more customers detected. Service complete.",
-        )
-    )
-    first.add_child(second_optional)
-    cycles.add_child(first)
-    cycles.add_child(
-        BtNode_Announce(
-            name="No customers fallback",
-            bb_source=None,
-            message="No callers yet. Waiting.",
-        )
-    )
-    root.add_child(cycles)
+    root.add_child(createCollectOrdersPhase())
+    root.add_child(createOptionalTrayTransport())
+    root.add_child(createBarmanPhase())
+    root.add_child(createDeliverAllItemsPhase())
+
     root.add_child(
         BtNode_Announce(
             name="Task completion",
