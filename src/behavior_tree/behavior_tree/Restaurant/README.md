@@ -123,10 +123,12 @@ Special Penalties & Bonuses:
 
 ## Entry points
 
-- `ros2 run behavior_tree restaurant-demo` — mock/live; subsystems follow `mock_config.json`.
-- `BT_MOCK_MODE=true ros2 run behavior_tree restaurant-demo` — force all subsystems to mock.
+- `ros2 run behavior_tree restaurant` — production entry, backed by `restaurants.py::createRestaurantTask`. Queue-arbitration upstream (handles "simultaneous callers") + per-item delivery downstream (arm grasps one item at a time).
+- `ros2 run behavior_tree restaurant-simplified` — batch-first variant, `restaurant_simplified.py::createRestaurantSimplifiedTask`.
+- `ros2 run behavior_tree restaurant-demo` — demo-only variant, `restaurants_fake.py::createRestaurantTask`. Simpler shape (no queue), same perception/interaction primitives.
+- `BT_MOCK_MODE=true ros2 run behavior_tree <entry>` — force all subsystems to mock.
 
-The live tree is `restaurants_fake.py::createRestaurantTask`. The older single-order-cycle version (`restaurants.py`) is retained but no longer the entry point.
+All three entries share the same perception and audio-interaction primitives: `BtNode_ScanForWavingPerson`, `BtNode_MaintainEyeContact`, `BtNode_ShowImage`, `BtNode_GetConfirmationAction`, `BtNode_ListenAction`. Helpers live in `state_nodes.py` (queue-arbitration + per-item) and `custumNodes.py` (list-of-orders model for the demo).
 
 ## Target score
 
@@ -147,7 +149,87 @@ Deferred for higher score: tray bonus (+400), outstanding-performance (+200).
 | "Return with order" (+100) + "Serve" (+200) | Per-item delivery loop (see below). |
 | "If detected but not reached, clearly show who was detected" | `BtNode_ShowImage` on the per-customer crop captured at detection time. Currently a **stub**: logs path + returns SUCCESS. Swap to the on-robot display topic when identified. |
 
-## Tree topology
+## Tree topology — `restaurants.py` (production, `restaurant` entry)
+
+```
+Restaurant Task (Sequence, memory=True)
+├── Write constants to blackboard (Parallel)
+│   └── kitchen_bar_pose, arm poses, empty queue, empty items list, checklist, picture=""
+├── Retry(3) { MoveArmSingle(navigating) }
+├── Announce("Restaurant service started")
+│
+├── Order cycles (Selector)
+│   └── First order cycle (Sequence)
+│       ├── Single order cycle ─────────────────────────┐  (first order)
+│       └── Selector "Optional second cycle"             │
+│           ├── Single order cycle                       │  (second order)
+│           └── Announce("No more customers detected")   │
+│                                                        │
+│  Single order cycle (Sequence, shared)                │
+│  ├── InitOrderChecklist                                │
+│  ├── Detect + arbitrate (Sequence)                     │
+│  │   ├── Detection strategy (Selector)                 │
+│  │   │   ├── Waving pass: ScanForWavingPerson → QueueWavingCandidates
+│  │   │   └── Legacy pass: DetectCallingCustomer / ScanForCallingCustomer → AppendCustomerCandidate
+│  │   └── SelectNextQueuedCustomer → customer_location + active_customer_picture
+│  ├── Approach customer (Selector)
+│  │   ├── Sequence "Reach customer"
+│  │   │   ├── Retry(3) { GotoAction(customer_location) }
+│  │   │   ├── MaintainEyeContact
+│  │   │   └── UpdateChecklistFlag("reached")
+│  │   └── Sequence "Partial score on unreachable caller"
+│  │       ├── Announce("I saw a caller but couldn't reach…")
+│  │       ├── ShowImage(active_customer_picture)
+│  │       ├── UpdateChecklistFlag("partial_score")
+│  │       └── CloseActiveCustomer
+│  ├── Take and confirm order (Sequence)
+│  │   ├── MaintainEyeContact
+│  │   ├── Announce("What would you like to order?")
+│  │   ├── Retry(3) { TakeOrder → ConfirmOrder → GetConfirmationAction }
+│  │   ├── SplitOrderItems          → current_items = [item, …]
+│  │   └── UpdateChecklistFlag("order_confirmed")
+│  ├── Place order with barman (goto bar → communicate)
+│  ├── Optional tray transport (selector with announce-only fallback)
+│  ├── Per-item loop (FailureIsSuccess → Retry(32) → Sequence)
+│  │   ├── PopNextItem → current_item, current_item_summary   (FAILURE when empty → loop exit)
+│  │   ├── Pickup verification (per-item bar trip)
+│  │   │   ├── Retry(3) { GotoAction(KITCHEN_BAR_POSE) }
+│  │   │   ├── MoveArmSingle(serving)
+│  │   │   ├── Announce("Please place: " + current_item_summary)
+│  │   │   ├── GripperAction(open)
+│  │   │   ├── GetConfirmationAction "Item placed?" (60s)
+│  │   │   ├── GripperAction(close)
+│  │   │   ├── MoveArmSingle(navigating)
+│  │   │   └── MarkPickupVerified
+│  │   └── Deliver order (Sequence)
+│  │       ├── RequirePickupVerified
+│  │       └── Selector "Deliver or fallback"
+│  │           ├── Sequence "Normal delivery"
+│  │           │   ├── Retry(3) { GotoAction(customer_location) }
+│  │           │   ├── MaintainEyeContact
+│  │           │   ├── MoveArmSingle(serving)
+│  │           │   ├── Announce("Here is: " + current_item_summary)
+│  │           │   ├── Announce("Three. Two. One.")
+│  │           │   ├── GripperAction(open)
+│  │           │   ├── MoveArmSingle(navigating)
+│  │           │   └── ServeOrder
+│  │           └── Sequence "Show-picture fallback"
+│  │               ├── Announce("Could not deliver…")
+│  │               ├── ShowImage(active_customer_picture)
+│  │               ├── UpdateChecklistFlag("partial_score")
+│  │               └── Success
+│  ├── UpdateChecklistFlag("served")
+│  └── CloseActiveCustomer
+└── Announce("Restaurant service complete")
+```
+
+### Key reconciliation
+
+The queue-arbitration model (PR #8, upstream) and the list-of-items model (PR #7, downstream) coexist. The queue handles *which customer is active*; for that single active customer, `BtNode_SplitOrderItems` produces `current_items` and `BtNode_PopNextItem` drains it. There is no `KEY_ORDER_LIST` in the production tree — that key lives only in `restaurants_fake.py`.
+
+The `follow_head_action` server is assumed to terminate on a single gaze lock; `BtNode_MaintainEyeContact` calls it with `start_following=True` and cancels on node terminate. If the server turns out to be a continuous streamer, each `MaintainEyeContact` will block until its own result arrives — visible as a long tick during live runs.
+
+## Tree topology — `restaurants_fake.py` (demo, `restaurant-demo` entry)
 
 ```
 Restaurant Task (Sequence, memory=True)
@@ -211,24 +293,42 @@ Restaurant Task (Sequence, memory=True)
 
 Loop mechanics: `BtNode_IterateOrderItems` advances one undelivered item per tick. When all items are marked delivered it returns `FAILURE`, which `Retry(32)` propagates up and `FailureIsSuccess` converts to the parent's `SUCCESS`. The `Retry` ceiling is a safety stop — in practice, 2 orders × ≤3 items = ≤6 iterations.
 
-## Blackboard schema
+## Blackboard schema — `restaurants.py` (production)
 
-All keys are root-scoped (`absolute_name("/", key)`). Module-local constants in `restaurants_fake.py`.
+All keys are root-scoped (`absolute_name("/", key)`). Names defined in `Restaurant/config.py`.
 
 | Key | Writer → readers | Payload |
 |---|---|---|
 | `kitchen_bar_pose` | constant writer → Goto | `PoseStamped` from `constants.json` |
 | `arm_navigating`, `arm_serving` | constant writer → MoveArmSingle | `list[float]` radians |
+| `waving_person_poses` | ScanForWavingPerson → QueueWavingCandidates | `list[PointStamped]` closest-first |
+| `waving_person_pictures` | ScanForWavingPerson → QueueWavingCandidates | `list[str]` picture paths |
+| `customer_queue` | Queue*/AppendCustomerCandidate → Select*, CloseActiveCustomer | `list[{id, pose, picture_path, timestamp, confidence, status}]` |
+| `active_customer_id` | SelectNextQueuedCustomer, CloseActiveCustomer | `int` or `None` |
+| `customer_location` | SelectNextQueuedCustomer, legacy detectors → GotoAction | `PoseStamped` or `PointStamped` |
+| `active_customer_picture` | SelectNextQueuedCustomer → ShowImage | `str` filesystem path (may be empty) |
+| `customer_order` | TakeOrder → ConfirmOrder, SplitOrderItems, CommunicateWithBarman | `str` |
+| `current_items` | SplitOrderItems → PopNextItem (drained) | `list[str]` |
+| `current_item`, `current_item_summary` | PopNextItem → Announce, served | `str` |
+| `order_checklist` | Init/UpdateChecklistFlag, MarkPickupVerified → RequirePickupVerified | `dict[str, bool]` |
+| `pickup_verified` | MarkPickupVerified → RequirePickupVerified | `bool` |
+| `tray_location` | DetectTray (selector fallback) | `PointStamped` or `None` |
+
+## Blackboard schema — `restaurants_fake.py` (demo)
+
+The demo tree uses a distinct, flatter model — no queue, just a list of orders.
+
+| Key | Writer → readers | Payload |
+|---|---|---|
 | `restaurant_all_person_poses` | ScanForWavingPerson → SelectNextCustomer | `list[PointStamped]` closest-first |
 | `restaurant_all_person_pictures` | ScanForWavingPerson → SelectNextCustomer | `list[str]` filesystem paths |
-| `restaurant_closest_person` | ScanForWavingPerson | `PointStamped` (unused downstream, kept for parity) |
 | `restaurant_cur_id` / `_pose` / `_picture` | SelectNextCustomer → Goto, RecordOrder | one customer's fields |
 | `restaurant_cur_order_items` | ListenAction / PhraseExtraction → Announce, RecordOrder | `str` or `list[str]` |
 | `restaurant_order_list` | RecordOrder, MarkItemDelivered → FormatOrdersForBarman, IterateOrderItems | `list[dict]` (see schema below) |
 | `restaurant_barman_text` | FormatOrdersForBarman → Announce | `str` |
 | `restaurant_cur_item` / `_order_id` / `_order_pose` / `_order_picture` / `_order_summary` | IterateOrderItems → Deliver, MarkItemDelivered, ShowImage, Announce | current-delivery fields |
 
-`restaurant_order_list` element schema:
+`restaurant_order_list` element schema (demo tree only):
 
 ```python
 {

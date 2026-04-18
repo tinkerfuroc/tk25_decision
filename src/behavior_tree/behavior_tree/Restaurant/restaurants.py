@@ -2,16 +2,40 @@ from __future__ import annotations
 
 """Standard Restaurant behavior tree composition.
 
-This module defines the default order-cycle strategy.
-Shared constants and blackboard keys are centralized in `Restaurant/config.py`.
+This module defines the default order-cycle strategy. Shared constants and
+blackboard keys are centralized in ``Restaurant/config.py``.
+
+The tree combines two design vocabularies:
+
+1. **Queue-arbitration upstream** (from PR #8) — ``BtNode_QueueWavingCandidates``
+   feeds detected customers into a queue; ``BtNode_SelectNextQueuedCustomer``
+   picks the oldest and exposes it as the active target. This handles the
+   rulebook's "simultaneous callers" clause.
+
+2. **Per-item delivery downstream** (ported from ``restaurants_fake.py`` /
+   PR #7) — one order is split into items via ``BtNode_SplitOrderItems``;
+   ``BtNode_PopNextItem`` drives a loop that makes one bar trip per item
+   (the arm only grasps one object at a time), with a show-picture fallback
+   on unreachable-customer failure.
+
+Also folded in from PR #7: ``BtNode_ScanForWavingPerson`` as the primary
+customer-detection path, ``BtNode_MaintainEyeContact`` ticks around order
+intake and service to avoid the −80 eye-contact penalty, and
+``BtNode_ShowImage`` for the partial-score fallback when a detected customer
+cannot be reached.
 """
 
 import py_trees
 
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
+from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
+from behavior_tree.TemplateNodes.Vision import (
+    BtNode_MaintainEyeContact,
+    BtNode_ScanForWavingPerson,
+    BtNode_ShowImage,
+)
 from behavior_tree.runtime import run_tree
 
 from .custumNodes import (
@@ -26,9 +50,14 @@ from .custumNodes import (
 from .config import (
     ARM_POS_NAVIGATING,
     ARM_POS_SERVING,
+    DETECT_WAVING_THRESHOLD_M,
     KEY_ACTIVE_CUSTOMER_ID,
+    KEY_ACTIVE_CUSTOMER_PICTURE,
     KEY_ARM_NAVIGATING,
     KEY_ARM_SERVING,
+    KEY_CURRENT_ITEM,
+    KEY_CURRENT_ITEM_SUMMARY,
+    KEY_CURRENT_ITEMS,
     KEY_CUSTOMER_LOCATION,
     KEY_CUSTOMER_ORDER,
     KEY_CUSTOMER_QUEUE,
@@ -36,6 +65,9 @@ from .config import (
     KEY_ORDER_CHECKLIST,
     KEY_PICKUP_VERIFIED,
     KEY_TRAY_LOCATION,
+    KEY_WAVING_CLOSEST_PERSON,
+    KEY_WAVING_PERSON_PICTURES,
+    KEY_WAVING_PERSON_POSES,
     POSE_KITCHEN_BAR,
     constants,
 )
@@ -44,8 +76,11 @@ from .state_nodes import (
     BtNode_CloseActiveCustomer,
     BtNode_InitOrderChecklist,
     BtNode_MarkPickupVerified,
+    BtNode_PopNextItem,
+    BtNode_QueueWavingCandidates,
     BtNode_RequirePickupVerified,
     BtNode_SelectNextQueuedCustomer,
+    BtNode_SplitOrderItems,
     BtNode_UpdateChecklistFlag,
 )
 
@@ -103,6 +138,15 @@ def createConstantWriter():
     )
     root.add_child(
         BtNode_WriteToBlackboard(
+            name="Initialize active caller picture",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_ACTIVE_CUSTOMER_PICTURE,
+            object="",
+        )
+    )
+    root.add_child(
+        BtNode_WriteToBlackboard(
             name="Initialize pickup verification",
             bb_namespace="",
             bb_source=None,
@@ -119,60 +163,96 @@ def createConstantWriter():
             object={},
         )
     )
+    root.add_child(
+        BtNode_WriteToBlackboard(
+            name="Initialize current items list",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_CURRENT_ITEMS,
+            object=[],
+        )
+    )
     return root
 
 
-def createDetectAndArbitrateCustomers():
-    """Detect callers and select one active target using queue arbitration."""
-    root = py_trees.composites.Sequence(name="Detect and arbitrate callers", memory=True)
-    detect_selector = py_trees.composites.Selector(name="Detect callers", memory=False)
-    detect_selector.add_child(
+def _create_waving_detection_pass():
+    """Primary detection: tk26 waving-person service with per-person picture crops."""
+    seq = py_trees.composites.Sequence(name="Waving detection pass", memory=True)
+    seq.add_child(
+        BtNode_ScanForWavingPerson(
+            name="Scan for waving persons",
+            bb_key_all_persons=KEY_WAVING_PERSON_POSES,
+            bb_key_closest_person=KEY_WAVING_CLOSEST_PERSON,
+            threshold_meters=DETECT_WAVING_THRESHOLD_M,
+            target_frame="map",
+            bb_key_pictures=KEY_WAVING_PERSON_PICTURES,
+        )
+    )
+    seq.add_child(
+        BtNode_QueueWavingCandidates(
+            name="Queue waving candidates",
+            all_poses_key=KEY_WAVING_PERSON_POSES,
+            all_pictures_key=KEY_WAVING_PERSON_PICTURES,
+            queue_key=KEY_CUSTOMER_QUEUE,
+            active_id_key=KEY_ACTIVE_CUSTOMER_ID,
+            max_candidates=2,
+        )
+    )
+    return seq
+
+
+def _create_legacy_detection_pass():
+    """Fallback detection: legacy calling-customer YOLO path (no pictures)."""
+    seq = py_trees.composites.Sequence(name="Legacy detection pass", memory=True)
+    inner = py_trees.composites.Selector(name="Legacy detect selector", memory=False)
+    inner.add_child(
         BtNode_DetectCallingCustomer(
             name="Direct detect calling customer",
             bb_dest_key=KEY_CUSTOMER_LOCATION,
             timeout=5.0,
         )
     )
-    detect_selector.add_child(
+    inner.add_child(
         BtNode_ScanForCallingCustomer(
             name="Scan for calling customer",
             bb_dest_key=KEY_CUSTOMER_LOCATION,
             timeout=30.0,
         )
     )
-
-    # Try to enqueue up to two detections to support simultaneous-caller policy.
-    collect = py_trees.composites.Sequence(name="Collect caller candidates", memory=True)
-    collect.add_child(detect_selector)
-    collect.add_child(
+    seq.add_child(inner)
+    seq.add_child(
         BtNode_AppendCustomerCandidate(
-            name="Queue caller candidate 1",
+            name="Queue legacy caller candidate",
             queue_key=KEY_CUSTOMER_QUEUE,
             source_pose_key=KEY_CUSTOMER_LOCATION,
             active_id_key=KEY_ACTIVE_CUSTOMER_ID,
-            confidence=1.0,
+            confidence=0.7,
         )
     )
-    collect.add_child(
-        py_trees.decorators.FailureIsSuccess(
-            name="Optional second caller detection",
-            child=_create_optional_second_caller(),
-        )
-    )
-    root.add_child(collect)
+    return seq
+
+
+def createDetectAndArbitrateCustomers():
+    """Detect callers and select one active target using queue arbitration."""
+    root = py_trees.composites.Sequence(name="Detect and arbitrate callers", memory=True)
+    detect = py_trees.composites.Selector(name="Detection strategy", memory=False)
+    detect.add_child(_create_waving_detection_pass())
+    detect.add_child(_create_legacy_detection_pass())
+    root.add_child(detect)
     root.add_child(
         BtNode_SelectNextQueuedCustomer(
             name="Select next caller",
             queue_key=KEY_CUSTOMER_QUEUE,
             selected_pose_key=KEY_CUSTOMER_LOCATION,
             active_id_key=KEY_ACTIVE_CUSTOMER_ID,
+            picture_path_key=KEY_ACTIVE_CUSTOMER_PICTURE,
         )
     )
     return root
 
 
 def createApproachCustomer():
-    """Reach selected customer; fallback to partial-score path if unreachable."""
+    """Reach selected customer; fallback to show-picture partial-score path if unreachable."""
     root = py_trees.composites.Selector(name="Approach selected customer", memory=False)
     success_path = py_trees.composites.Sequence(name="Reach customer", memory=True)
     success_path.add_child(
@@ -181,6 +261,9 @@ def createApproachCustomer():
             child=BtNode_GotoAction(name="Go to customer table", key=KEY_CUSTOMER_LOCATION),
             num_failures=3,
         )
+    )
+    success_path.add_child(
+        BtNode_MaintainEyeContact(name="Eye-contact (on arrival)")
     )
     success_path.add_child(
         BtNode_UpdateChecklistFlag(
@@ -198,7 +281,13 @@ def createApproachCustomer():
         BtNode_Announce(
             name="Announce detected-but-unreachable caller",
             bb_source=None,
-            message="I saw a caller but couldn't reach the table.",
+            message="I saw a caller but couldn't reach the table. Here is who I detected.",
+        )
+    )
+    partial_score_path.add_child(
+        BtNode_ShowImage(
+            name="Show detected caller picture",
+            bb_image_path_key=KEY_ACTIVE_CUSTOMER_PICTURE,
         )
     )
     partial_score_path.add_child(
@@ -221,31 +310,10 @@ def createApproachCustomer():
     return root
 
 
-def _create_optional_second_caller():
-    """Attempt to collect a second caller candidate for simultaneous-call scenarios."""
-    root = py_trees.composites.Sequence(name="Second caller sequence", memory=True)
-    root.add_child(
-        BtNode_DetectCallingCustomer(
-            name="Detect possible second caller",
-            bb_dest_key=KEY_CUSTOMER_LOCATION,
-            timeout=2.0,
-        )
-    )
-    root.add_child(
-        BtNode_AppendCustomerCandidate(
-            name="Queue caller candidate 2",
-            queue_key=KEY_CUSTOMER_QUEUE,
-            source_pose_key=KEY_CUSTOMER_LOCATION,
-            active_id_key=KEY_ACTIVE_CUSTOMER_ID,
-            confidence=0.9,
-        )
-    )
-    return root
-
-
 def createTakeAndConfirmOrder():
     """Run customer-facing order intake and confirmation loop."""
     root = py_trees.composites.Sequence(name="Take and confirm order", memory=True)
+    root.add_child(BtNode_MaintainEyeContact(name="Eye-contact (order-taking)"))
     root.add_child(
         BtNode_Announce(
             name="Order engagement prompt",
@@ -270,6 +338,13 @@ def createTakeAndConfirmOrder():
             name="retry order taking",
             child=order_loop,
             num_failures=3,
+        )
+    )
+    root.add_child(
+        BtNode_SplitOrderItems(
+            name="Split order into items",
+            order_key=KEY_CUSTOMER_ORDER,
+            items_key=KEY_CURRENT_ITEMS,
         )
     )
     root.add_child(
@@ -302,28 +377,8 @@ def createPlaceOrderWithBarman():
     return root
 
 
-def createPickupVerification():
-    """Explicit pickup verification hook before delivery phase."""
-    root = py_trees.composites.Sequence(name="Pickup verification", memory=True)
-    root.add_child(
-        BtNode_Announce(
-            name="Pickup prompt",
-            bb_source=None,
-            message="I'll pick up your order now.",
-        )
-    )
-    root.add_child(
-        BtNode_MarkPickupVerified(
-            name="Mark pickup verified",
-            checklist_key=KEY_ORDER_CHECKLIST,
-            pickup_verified_key=KEY_PICKUP_VERIFIED,
-        )
-    )
-    return root
-
-
 def createOptionalTrayTransport():
-    """Optional tray branch with direct-carry fallback."""
+    """Optional tray branch with direct-carry fallback (single announcement, pre-loop)."""
     root = py_trees.composites.Selector(name="Optional tray transport", memory=False)
     tray_sequence = py_trees.composites.Sequence(name="Use tray transport", memory=True)
     tray_sequence.add_child(
@@ -342,15 +397,66 @@ def createOptionalTrayTransport():
     direct_transport = BtNode_Announce(
         name="Direct transport",
         bb_source=None,
-        message="I couldn't find a tray, so I'll carry it directly.",
+        message="I couldn't find a tray, so I'll carry items individually.",
     )
     root.add_child(tray_sequence)
     root.add_child(direct_transport)
     return root
 
 
+def createPickupVerification():
+    """Receive one item from the barman at the kitchen bar (per-item barman round-trip).
+
+    Called once per item by the delivery loop. Positions the arm, asks the
+    barman to place the current item (``KEY_CURRENT_ITEM_SUMMARY``), gates on
+    a spoken confirmation, then stows the arm for navigation.
+    """
+    root = py_trees.composites.Sequence(name="Pickup verification", memory=True)
+    root.add_child(
+        py_trees.decorators.Retry(
+            name="retry goto kitchen bar",
+            child=BtNode_GotoAction(name="Go to kitchen bar", key=KEY_KITCHEN_BAR_POSE),
+            num_failures=3,
+        )
+    )
+    root.add_child(
+        BtNode_MoveArmSingle(
+            name="Arm to serving pose (bar receive)",
+            service_name="arm_joint_service",
+            arm_pose_bb_key=KEY_ARM_SERVING,
+            add_octomap=False,
+        )
+    )
+    root.add_child(
+        BtNode_Announce(
+            name="Ask barman to place item",
+            bb_source=KEY_CURRENT_ITEM_SUMMARY,
+            message="Please place the following item in my gripper:",
+        )
+    )
+    root.add_child(BtNode_GripperAction(name="Open gripper (receive)", open_gripper=True))
+    root.add_child(BtNode_GetConfirmationAction(name="Item placed?", timeout=60.0))
+    root.add_child(BtNode_GripperAction(name="Close gripper (secure item)", open_gripper=False))
+    root.add_child(
+        BtNode_MoveArmSingle(
+            name="Arm to navigating pose",
+            service_name="arm_joint_service",
+            arm_pose_bb_key=KEY_ARM_NAVIGATING,
+            add_octomap=False,
+        )
+    )
+    root.add_child(
+        BtNode_MarkPickupVerified(
+            name="Mark pickup verified",
+            checklist_key=KEY_ORDER_CHECKLIST,
+            pickup_verified_key=KEY_PICKUP_VERIFIED,
+        )
+    )
+    return root
+
+
 def createDeliverOrder():
-    """Deliver and serve order for the active customer."""
+    """Deliver the current item to the active customer, with show-picture fallback."""
     root = py_trees.composites.Sequence(name="Deliver order", memory=True)
     root.add_child(
         BtNode_RequirePickupVerified(
@@ -358,36 +464,118 @@ def createDeliverOrder():
             pickup_verified_key=KEY_PICKUP_VERIFIED,
         )
     )
-    root.add_child(createOptionalTrayTransport())
-    root.add_child(
+
+    deliver_or_fallback = py_trees.composites.Selector(
+        name="Deliver or fallback",
+        memory=False,
+    )
+
+    normal = py_trees.composites.Sequence(name="Normal delivery", memory=True)
+    normal.add_child(
         py_trees.decorators.Retry(
             name="retry return to customer",
             child=BtNode_GotoAction(name="Return to customer table", key=KEY_CUSTOMER_LOCATION),
             num_failures=3,
         )
     )
-    root.add_child(
+    normal.add_child(BtNode_MaintainEyeContact(name="Eye-contact (serving)"))
+    normal.add_child(
+        BtNode_MoveArmSingle(
+            name="Arm to serving pose (at table)",
+            service_name="arm_joint_service",
+            arm_pose_bb_key=KEY_ARM_SERVING,
+            add_octomap=False,
+        )
+    )
+    normal.add_child(
+        BtNode_Announce(
+            name="Serve item",
+            bb_source=KEY_CURRENT_ITEM_SUMMARY,
+            message="Here is:",
+        )
+    )
+    normal.add_child(
+        BtNode_Announce(
+            name="Countdown",
+            bb_source=None,
+            message="Three. Two. One.",
+        )
+    )
+    normal.add_child(BtNode_GripperAction(name="Release item", open_gripper=True))
+    normal.add_child(
+        BtNode_MoveArmSingle(
+            name="Arm to navigating pose",
+            service_name="arm_joint_service",
+            arm_pose_bb_key=KEY_ARM_NAVIGATING,
+            add_octomap=False,
+        )
+    )
+    normal.add_child(
         BtNode_ServeOrder(
-            name="Serve order",
+            name="Serve announcement",
             bb_order_key=KEY_CUSTOMER_ORDER,
         )
     )
-    root.add_child(
+
+    fallback = py_trees.composites.Sequence(name="Show-picture fallback", memory=True)
+    fallback.add_child(
+        BtNode_Announce(
+            name="Announce unreachable delivery",
+            bb_source=None,
+            message="I could not deliver to this customer. Showing who the order was for.",
+        )
+    )
+    fallback.add_child(
+        BtNode_ShowImage(
+            name="Show customer picture (delivery fallback)",
+            bb_image_path_key=KEY_ACTIVE_CUSTOMER_PICTURE,
+        )
+    )
+    fallback.add_child(
         BtNode_UpdateChecklistFlag(
-            name="Mark served",
+            name="Mark partial score (delivery)",
             checklist_key=KEY_ORDER_CHECKLIST,
-            flag="served",
+            flag="partial_score",
             value=True,
         )
     )
-    root.add_child(
-        BtNode_CloseActiveCustomer(
-            name="Close served active caller",
-            queue_key=KEY_CUSTOMER_QUEUE,
+    fallback.add_child(py_trees.behaviours.Success(name="Fallback SUCCESS"))
+
+    deliver_or_fallback.add_child(normal)
+    deliver_or_fallback.add_child(fallback)
+    root.add_child(deliver_or_fallback)
+    return root
+
+
+def createPerItemLoop():
+    """Iterate items in the active customer's order: one bar round-trip per item.
+
+    Each iteration: ``PopNextItem → createPickupVerification → createDeliverOrder``.
+    The item list is destructively drained; when ``PopNextItem`` returns FAILURE
+    the ``Retry`` is exhausted and ``FailureIsSuccess`` converts the terminal
+    FAILURE into SUCCESS for the parent sequence.
+    """
+    iter_body = py_trees.composites.Sequence(name="One item bar-to-table", memory=True)
+    iter_body.add_child(
+        BtNode_PopNextItem(
+            name="Pop next item",
+            items_key=KEY_CURRENT_ITEMS,
+            current_item_key=KEY_CURRENT_ITEM,
+            current_item_summary_key=KEY_CURRENT_ITEM_SUMMARY,
             active_id_key=KEY_ACTIVE_CUSTOMER_ID,
         )
     )
-    return root
+    iter_body.add_child(createPickupVerification())
+    iter_body.add_child(createDeliverOrder())
+
+    return py_trees.decorators.FailureIsSuccess(
+        name="Deliver all items",
+        child=py_trees.decorators.Retry(
+            name="per-item loop",
+            child=iter_body,
+            num_failures=32,
+        ),
+    )
 
 
 def createSingleOrderCycle():
@@ -404,8 +592,23 @@ def createSingleOrderCycle():
     root.add_child(createApproachCustomer())
     root.add_child(createTakeAndConfirmOrder())
     root.add_child(createPlaceOrderWithBarman())
-    root.add_child(createPickupVerification())
-    root.add_child(createDeliverOrder())
+    root.add_child(createOptionalTrayTransport())
+    root.add_child(createPerItemLoop())
+    root.add_child(
+        BtNode_UpdateChecklistFlag(
+            name="Mark served",
+            checklist_key=KEY_ORDER_CHECKLIST,
+            flag="served",
+            value=True,
+        )
+    )
+    root.add_child(
+        BtNode_CloseActiveCustomer(
+            name="Close served active caller",
+            queue_key=KEY_CUSTOMER_QUEUE,
+            active_id_key=KEY_ACTIVE_CUSTOMER_ID,
+        )
+    )
     return root
 
 
