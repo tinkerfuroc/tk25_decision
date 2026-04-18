@@ -8,7 +8,7 @@ Shared constants and blackboard keys are centralized in `Restaurant/config.py`.
 
 import py_trees
 
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
@@ -264,7 +264,7 @@ def createTakeAndConfirmOrder():
     order_loop.add_child(
         BtNode_ConfirmOrder(name="Confirm order", bb_order_key=KEY_CUSTOMER_ORDER)
     )
-    order_loop.add_child(BtNode_GetConfirmation(name="Get confirmation", timeout=5.0))
+    order_loop.add_child(BtNode_GetConfirmationAction(name="Get confirmation", timeout=5.0))
     root.add_child(
         py_trees.decorators.Retry(
             name="retry order taking",
