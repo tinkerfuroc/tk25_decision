@@ -19,8 +19,10 @@ else:
 
 if _config.has_dependency('tinker_vision_msgs_26'):
     from tinker_vision_msgs_26.srv import DetectWaving
+    from tinker_vision_msgs_26.action import TrackPerson
 else:
     from behavior_tree.mock_messages import DetectWaving
+    from behavior_tree.mock_messages import TrackPerson
 
 if _config.has_dependency('tinker_arm_msgs'):
     from tinker_arm_msgs.srv import Drop, ArmJointService, PointTo
@@ -42,6 +44,14 @@ if _config.has_dependency('tinker_nav_msgs'):
     from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp
 else:
     from behavior_tree.mock_messages import SetLuggagePose, ComputeGrasp
+
+# `Follow` lives only in tk26_ws's tinker_nav_msgs; the tk25_ws package of the
+# same name ships srv-only. Import defensively so BT builds even when only
+# tk25 is sourced — the mock stub still exercises the tree shape.
+try:
+    from tinker_nav_msgs.action import Follow
+except (ImportError, ModuleNotFoundError):
+    from behavior_tree.mock_messages import Follow
 
 if _config.has_dependency('nav2_msgs'):
     from nav2_msgs.action import NavigateToPose

@@ -89,5 +89,18 @@
         "Antonio",
         "Francisco",
         "Carlos"
-    ]
+    ],
+    "follow": {
+        "lost_short_sec": 5.0,
+        "lost_long_sec": 15.0,
+        "n_nav_retry": 3,
+        "n_restart": 2,
+        "follow_timeout_sec": 2.0,
+        "target_frame": "map",
+        "target_point_topic": "/target_points",
+        "track_action_name": "track_person",
+        "follow_action_name": "tracking_server",
+        "announce_short": "Please stop and wait for Tinker to catch up.",
+        "announce_long": "I've lost you. Please come back in front of Tinker."
+    }
 }

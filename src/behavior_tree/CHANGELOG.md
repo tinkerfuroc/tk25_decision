@@ -59,9 +59,14 @@ All template nodes now have native mock support with automatic configuration che
 - BtNode_MoveArmJoint, BtNode_MoveArmSingle
 - BtNode_GripperAction, BtNode_PointTo
 
-**Navigation.py** (4 nodes)
-- BtNode_GotoAction, BtNode_FollowPerson
-- BtNode_ConvertGraspPose, BtNode_GoToLuggage
+**Navigation.py** (3 nodes)
+- BtNode_GotoAction, BtNode_ConvertGraspPose, BtNode_GoToLuggage
+
+**HRI/follow.py** (8 nodes, action-based follow-person subtree)
+- BtNode_TrackPersonAction, BtNode_FollowAction, BtNode_IsTargetVisible
+- BtNode_UpdateLossElapsed, BtNode_LossElapsedAtLeast, BtNode_WriteBBIfVisible
+- BtNode_FlagIsFalse, BtNode_SetFlag
+- `createFollowPerson(cfg)` factory; `hri-follow` console entry point
 
 #### Base Classes
 - **BaseBehaviors.py** - Updated ServiceHandler with:

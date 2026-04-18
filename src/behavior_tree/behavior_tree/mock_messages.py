@@ -316,6 +316,47 @@ class HumanFollowing(MockAction):
     pass
 
 
+class TrackPerson(MockAction):
+    """Mock TrackPerson action (tk26_vision)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.target_frame = ""
+            self.target_point_topic = ""
+            self.return_rgb_img = False
+            self.return_depth_img = False
+            self.return_segment = False
+            self.debug = False
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.target_lost = False
+            self.target_track_id = -1
+            self.is_transformation_successful = False
+            self.target_position = None
+
+
+class Follow(MockAction):
+    """Mock Follow action (tk26 tinker_nav_msgs)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.timeout = 2.0
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.result = 1
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.status = ""
+            self.point_header = None
+            self.nav_goal_header = None
+
+
 # Mock Navigation Actions (from nav2)
 class NavigateToPose(MockAction):
     """Mock NavigateToPose action."""
