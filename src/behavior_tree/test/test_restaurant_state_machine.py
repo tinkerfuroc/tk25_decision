@@ -69,11 +69,18 @@ def _install_stubs(monkeypatch):
 
     manip = types.ModuleType("behavior_tree.TemplateNodes.Manipulation")
     manip.BtNode_MoveArmSingle = _SuccessNode
+    manip.BtNode_GripperAction = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Manipulation", manip)
 
     nav = types.ModuleType("behavior_tree.TemplateNodes.Navigation")
     nav.BtNode_GotoAction = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Navigation", nav)
+
+    vision = types.ModuleType("behavior_tree.TemplateNodes.Vision")
+    vision.BtNode_ScanForWavingPerson = _SuccessNode
+    vision.BtNode_MaintainEyeContact = _SuccessNode
+    vision.BtNode_ShowImage = _SuccessNode
+    monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Vision", vision)
 
     custom = types.ModuleType("behavior_tree.Restaurant.custumNodes")
     custom.BtNode_DetectCallingCustomer = _SuccessNode
