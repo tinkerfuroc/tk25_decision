@@ -9,13 +9,18 @@ _config = get_config()
 
 # Import based on availability
 if _config.has_dependency('tinker_vision_msgs'):
-    from tinker_vision_msgs.srv import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
+    from tinker_vision_msgs.srv import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead
     from tinker_vision_msgs.msg import Object, PanTiltCtrl
     from tinker_vision_msgs.action import Categorize, FollowHeadAction, HumanFollowing
 else:
-    from behavior_tree.mock_messages import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
+    from behavior_tree.mock_messages import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead
     from behavior_tree.mock_messages import Object, PanTiltCtrl
     from behavior_tree.mock_messages import Categorize, FollowHeadAction, HumanFollowing
+
+if _config.has_dependency('tinker_vision_msgs_26'):
+    from tinker_vision_msgs_26.srv import DetectWaving
+else:
+    from behavior_tree.mock_messages import DetectWaving
 
 if _config.has_dependency('tinker_arm_msgs'):
     from tinker_arm_msgs.srv import Drop, ArmJointService, PointTo
@@ -26,8 +31,12 @@ else:
 
 if _config.has_dependency('tinker_audio_msgs'):
     from tinker_audio_msgs.srv import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
+    from tinker_audio_msgs.action import GetConfirmation as GetConfirmationAction
+    from tinker_audio_msgs.action import Listen as ListenAction
 else:
     from behavior_tree.mock_messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
+    from behavior_tree.mock_messages import GetConfirmation as GetConfirmationAction
+    from behavior_tree.mock_messages import Listen as ListenAction
 
 if _config.has_dependency('tinker_nav_msgs'):
     from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp

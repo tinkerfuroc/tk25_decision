@@ -33,18 +33,18 @@
 #
 # Classes
 # -------
-ServiceHandler
-    Base class for all nodes that call ROS2 services.
+# ServiceHandler
+#     Base class for all nodes that call ROS2 services.
 # BtNode_WriteToBlackboard
-    Writes a value to the blackboard for inter-node communication.
+#     Writes a value to the blackboard for inter-node communication.
 # BtNode_ClearBlackboard
-    Clears a value from the blackboard.
+#     Clears a value from the blackboard.
 # BtNode_CheckIfEmpty
-    Checks if a blackboard key has a value.
+#     Checks if a blackboard key has a value.
 # BtNode_WaitTicks
-    Waits for a specified number of behavior tree ticks.
+#     Waits for a specified number of behavior tree ticks.
 # BtNode_WaitKeyboardPress
-    Simple keyboard wait utility (also in WaitKeyPress.py).
+#     Simple keyboard wait utility (also in WaitKeyPress.py).
 #
 # Usage
 # -----

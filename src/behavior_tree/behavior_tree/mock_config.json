@@ -25,7 +25,10 @@
           "BtNode_FeatureMatching": "KEYPRESS",
           "BtNode_GetPointCloud": "KEYPRESS",
           "BtNode_DoorDetection": "KEYPRESS",
-          "BtNode_TurnPanTilt": "KEYPRESS"
+          "BtNode_TurnPanTilt": "KEYPRESS",
+          "BtNode_ScanForWavingPerson": "KEYPRESS",
+          "BtNode_MaintainEyeContact": "KEYPRESS",
+          "BtNode_ShowImage": "KEYPRESS"
         }
       },
       "manipulation": {
@@ -65,7 +68,9 @@
           "BtNode_TargetExtraction": "KEYPRESS",
           "BtNode_GetConfirmation": "KEYPRESS",
           "BtNode_Listen": "KEYPRESS",
-          "BtNode_CompareInterest": "KEYPRESS"
+          "BtNode_CompareInterest": "KEYPRESS",
+          "BtNode_GetConfirmationAction": "KEYPRESS",
+          "BtNode_ListenAction": "KEYPRESS"
         }
       },
       "announcement": {
@@ -117,10 +122,10 @@
       "angular_speed": 0.2,
       "joint_speed": 0.15,
       "visual_feedback_min_period_s": 0.1,
-      "gripper_width_min_cm": 0.0,
-      "gripper_width_max_cm": 8.0,
-      "gripper_width_step_cm": 0.5,
-      "gripper_initial_width_cm": 8.0,
+      "gripper_width_min_cm": 0.02,
+      "gripper_width_max_cm": 0.78,
+      "gripper_width_step_cm": 0.05,
+      "gripper_initial_width_cm": 0.78,
       "gripper_hw_inverted": true,
       "gripper_command_scale": 0.1,
       "gripper_command_offset": 0.0,
