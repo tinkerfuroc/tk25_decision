@@ -73,8 +73,13 @@ class BtNode_AppendCustomerCandidate(py_trees.behaviour.Behaviour):
         return py_trees.common.Status.SUCCESS
 
 
-class BtNode_SelectNextCustomer(py_trees.behaviour.Behaviour):
-    """Select oldest valid queued customer and expose it as active target."""
+class BtNode_SelectNextQueuedCustomer(py_trees.behaviour.Behaviour):
+    """Select oldest valid queued customer and expose it as active target.
+
+    Previously named ``BtNode_SelectNextCustomer``. Renamed to disambiguate from
+    ``Restaurant.custumNodes.BtNode_SelectNextCustomer`` (the list-of-orders
+    variant used by ``restaurants_fake.py``).
+    """
 
     def __init__(
         self,

@@ -11,7 +11,7 @@ from behavior_tree.Restaurant.state_nodes import (
     BtNode_InitCustomerBatch,
     BtNode_RequirePickupVerified,
     BtNode_ResetBatchIndex,
-    BtNode_SelectNextCustomer,
+    BtNode_SelectNextQueuedCustomer,
     BtNode_SelectBatchCustomerByIndex,
     BtNode_StoreOrderForActiveBatchCustomer,
 )
@@ -139,7 +139,7 @@ def test_simultaneous_callers_select_oldest():
         {"id": 1, "pose": "p1", "timestamp": 1.0, "confidence": 0.9, "status": "queued"},
     ]
     _set_bb(customer_queue=queue, customer_location=None, active_customer_id=None)
-    node = BtNode_SelectNextCustomer(
+    node = BtNode_SelectNextQueuedCustomer(
         name="select",
         queue_key="customer_queue",
         selected_pose_key="customer_location",
