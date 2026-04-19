@@ -56,10 +56,101 @@ BB_SHORT_ANNOUNCED = "follow_short_announced"
 
 
 # -----------------------------------------------------------------------------
+# Drain-pending-cancel mixin
+# -----------------------------------------------------------------------------
+
+class _DrainPriorCancelMixin:
+    """Serialise cancel → re-init for action wrappers under Repeat/Retry.
+
+    ``ActionHandler.send_cancel_request`` (``ActionBase.py:605-617``) discards
+    the cancel future, and ``ActionHandler.initialise`` immediately fires a
+    fresh ``send_goal_async`` after a re-tick. When the outer ``Retry`` here
+    restarts the parallel, the new goal therefore races the still-pending
+    cancel of the old one. This mixin captures both the cancel future and the
+    old result future on terminate, and defers ``send_goal`` until both have
+    resolved (or a bounded timeout elapses).
+
+    Why both futures: the cancel response just acknowledges the request was
+    accepted. The server still treats the goal as active until the result
+    future fires with ``STATUS_CANCELED``. Single-active-goal servers (e.g.
+    ``person_track_node``) reject a new goal that arrives in that window.
+    """
+
+    # Subclasses may override.
+    _drain_timeout_sec: float = 1.5
+
+    def _drain_init(self):
+        self._pending_cancel_future = None
+        self._pending_result_future = None
+        self._needs_drain = False
+        self._drain_deadline = None
+
+    def _capture_cancel(self):
+        if self.goal_handle is None:
+            return
+        cancel_future = self.goal_handle.cancel_goal_async()
+        cancel_future.add_done_callback(self.cancel_response_callback)
+        self._pending_cancel_future = cancel_future
+        # Hold a reference so we can wait for STATUS_CANCELED to land on the
+        # server side. The old get_result_callback will fire into the still-
+        # current self.result_status field; we defer initialise()'s reset
+        # until after that fires so the write is harmless.
+        self._pending_result_future = self.get_result_future
+        self.feedback_message = "cancelling prior goal"
+
+    def _drain_pending(self) -> bool:
+        cf = self._pending_cancel_future
+        rf = self._pending_result_future
+        if cf is None and rf is None:
+            return False
+        cancel_done = cf is None or cf.done()
+        result_done = rf is None or rf.done()
+        if cancel_done and result_done:
+            self._pending_cancel_future = None
+            self._pending_result_future = None
+            return False
+        if self._drain_deadline is not None and time.time() >= self._drain_deadline:
+            self.node.get_logger().warning(
+                f"[{self.qualified_name}] cancel drain timed out after "
+                f"{self._drain_timeout_sec:.1f}s "
+                f"(cancel_done={cancel_done}, result_done={result_done}); "
+                f"sending new goal regardless"
+            )
+            self._pending_cancel_future = None
+            self._pending_result_future = None
+            return False
+        return True
+
+    def _reset_action_state_without_send(self):
+        """Mirror ``ActionHandler.initialise`` reset, but skip ``send_goal()``."""
+        self.goal_handle = None
+        self.send_goal_future = None
+        self.get_result_future = None
+        self.result_message = None
+        self.result_status = None
+        self.result_status_string = None
+        self.action_status = 0
+        self.action_stage = None
+        self.last_feedback_time = time.time()
+        self.feedback_timeout = 10000.0
+        self.counter = 0
+
+    def get_result_callback(self, future):
+        # rclpy ``Future.done()`` returns True as soon as the result is set,
+        # but done-callbacks may be invoked later (deferred to the executor).
+        # The OLD goal's callback can therefore fire AFTER we have already
+        # reset state and sent a new goal, poisoning self.result_status with
+        # the cancelled goal's terminal status. Discard those stale calls.
+        if future is not self.get_result_future:
+            return
+        super().get_result_callback(future)
+
+
+# -----------------------------------------------------------------------------
 # Action / visibility leaves
 # -----------------------------------------------------------------------------
 
-class BtNode_TrackPersonAction(ActionHandler):
+class BtNode_TrackPersonAction(_DrainPriorCancelMixin, ActionHandler):
     """Wrap ``tk26_vision/track_person`` and fan feedback onto the blackboard.
 
     Feedback schema is ``{target_lost, target_track_id,
@@ -79,6 +170,7 @@ class BtNode_TrackPersonAction(ActionHandler):
         wait_for_server_timeout_sec: float = -3.0,
     ):
         super().__init__(name, TrackPerson, action_name, None, wait_for_server_timeout_sec)
+        self._drain_init()
         self._target_frame = target_frame
         self._target_point_topic = target_point_topic
         self._feedback_timeout_secs = feedback_timeout_secs
@@ -155,9 +247,48 @@ class BtNode_TrackPersonAction(ActionHandler):
         )
         return py_trees.common.Status.FAILURE
 
+    def initialise(self):
+        cf = self._pending_cancel_future
+        rf = self._pending_result_future
+        cancel_done = cf is None or cf.done()
+        result_done = rf is None or rf.done()
+        if not (cancel_done and result_done):
+            # State is intentionally NOT reset here — the old get_result
+            # callback may still fire and we want it to land in the old
+            # fields. update() resets right before sending the new goal.
+            self._needs_drain = True
+            self._drain_deadline = time.time() + self._drain_timeout_sec
+            self.feedback_message = "draining prior cancel before new goal"
+            return
+        self._pending_cancel_future = None
+        self._pending_result_future = None
+        self._needs_drain = False
+        self._drain_deadline = None
+        super().initialise()
+
+    def update(self):
+        if self._needs_drain:
+            if self._drain_pending():
+                self.feedback_message = "draining prior cancel"
+                return py_trees.common.Status.RUNNING
+            self._needs_drain = False
+            self._drain_deadline = None
+            self._reset_action_state_without_send()
+            self.send_goal()
+            if self.send_goal_future is None:
+                self.feedback_message = "send_goal failed after drain"
+                return py_trees.common.Status.FAILURE
+            self.last_feedback_time = time.time()
+        return super().update()
+
     def terminate(self, new_status: py_trees.common.Status):
         if not self.mock_mode and self.goal_handle is not None:
-            self.send_cancel_request()
+            self._capture_cancel()
+            # Neuter the base ActionHandler.terminate's own cancel — we just
+            # sent ours. Keep self.get_result_future intact: the old result
+            # callback firing into still-live fields is harmless and we wait
+            # for it as part of the drain.
+            self.goal_handle = None
         super().terminate(new_status)
 
 
@@ -179,6 +310,7 @@ class BtNode_FollowAction(ActionHandler):
         wait_for_server_timeout_sec: float = -3.0,
     ):
         super().__init__(name, Follow, action_name, None, wait_for_server_timeout_sec)
+        # self._drain_init()
         self._follow_timeout_sec = follow_timeout_sec
         self._feedback_timeout_secs = feedback_timeout_secs
 
@@ -217,8 +349,41 @@ class BtNode_FollowAction(ActionHandler):
         )
         return py_trees.common.Status.FAILURE
 
+    # def initialise(self):
+    #     cf = self._pending_cancel_future
+    #     rf = self._pending_result_future
+    #     cancel_done = cf is None or cf.done()
+    #     result_done = rf is None or rf.done()
+    #     if not (cancel_done and result_done):
+    #         self._needs_drain = True
+    #         self._drain_deadline = time.time() + self._drain_timeout_sec
+    #         self.feedback_message = "draining prior cancel before new goal"
+    #         return
+    #     self._pending_cancel_future = None
+    #     self._pending_result_future = None
+    #     self._needs_drain = False
+    #     self._drain_deadline = None
+    #     super().initialise()
+
+    # def update(self):
+    #     if self._needs_drain:
+    #         if self._drain_pending():
+    #             self.feedback_message = "draining prior cancel"
+    #             return py_trees.common.Status.RUNNING
+    #         self._needs_drain = False
+    #         self._drain_deadline = None
+    #         self._reset_action_state_without_send()
+    #         self.send_goal()
+    #         if self.send_goal_future is None:
+    #             self.feedback_message = "send_goal failed after drain"
+    #             return py_trees.common.Status.FAILURE
+    #         self.last_feedback_time = time.time()
+    #     return super().update()
+
     def terminate(self, new_status: py_trees.common.Status):
         if not self.mock_mode and self.goal_handle is not None:
+            # self._capture_cancel()
+            # self.goal_handle = None
             self.send_cancel_request()
         super().terminate(new_status)
 
@@ -463,6 +628,7 @@ def createFollowPerson(cfg: dict) -> py_trees.behaviour.Behaviour:
             py_trees.behaviours.Failure(name="trigger restart"),
         ],
     )
+    long_sentinel_retry = py_trees.decorators.Retry("infinite retry", long_sentinel, -1)
 
     # --- follow branch: wait-visible → follow + short guard ---
     nav = BtNode_FollowAction(
@@ -472,16 +638,16 @@ def createFollowPerson(cfg: dict) -> py_trees.behaviour.Behaviour:
     )
     short_guard = py_trees.composites.Sequence(
         name="short-lost → please wait",
-        memory=False,
+        memory=True,
         children=[
             BtNode_LossElapsedAtLeast(
                 name=f"≥ {cfg.get('lost_short_sec', 5.0):.1f}s lost?",
                 threshold_sec=float(cfg.get("lost_short_sec", 5.0)),
             ),
-            BtNode_FlagIsFalse(
-                name="not yet announced?",
-                key=BB_SHORT_ANNOUNCED,
-            ),
+            # BtNode_FlagIsFalse(
+            #     name="not yet announced?",
+            #     key=BB_SHORT_ANNOUNCED,
+            # ),
             BtNode_Announce(
                 name="say wait",
                 bb_source=None,
@@ -490,18 +656,19 @@ def createFollowPerson(cfg: dict) -> py_trees.behaviour.Behaviour:
                     "Please stop and wait for Tinker to catch up.",
                 ),
             ),
-            BtNode_SetFlag(
-                name="mark short announced",
-                key=BB_SHORT_ANNOUNCED,
-                value=True,
-            ),
-            py_trees.behaviours.Running(name="idle"),
+            # BtNode_SetFlag(
+            #     name="mark short announced",
+            #     key=BB_SHORT_ANNOUNCED,
+            #     value=True,
+            # ),
+            # py_trees.behaviours.Running(name="idle"),
         ],
     )
+    short_guard_repeat = py_trees.decorators.Retry("infinite retry", short_guard, -1)
     active = py_trees.composites.Parallel(
         name="FollowActive",
         policy=py_trees.common.ParallelPolicy.SuccessOnSelected(children=[nav]),
-        children=[nav, short_guard],
+        children=[nav, short_guard_repeat],
     )
 
     follow_seq = py_trees.composites.Sequence(
@@ -528,7 +695,7 @@ def createFollowPerson(cfg: dict) -> py_trees.behaviour.Behaviour:
             vision_branch,
             loss_updater,
             dedup_reset,
-            long_sentinel,
+            long_sentinel_retry,
             follow_branch,
         ],
     )
