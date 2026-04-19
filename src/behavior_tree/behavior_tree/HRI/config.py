@@ -120,6 +120,7 @@ KEY_ARM_NAVIGATING = "hri_arm_navigating"
 KEY_ARM_HANDOVER = "hri_arm_handover"
 KEY_ARM_DROP = "hri_arm_drop"
 KEY_PERSONS = "hri_persons"
+KEY_PERSON_CENTROIDS = "hri_person_centroids"
 KEY_SEAT_RECOMMENDATION = "hri_seat_recommendation"
 
 # Guest-specific memory keys

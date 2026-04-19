@@ -20,8 +20,10 @@ from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_DoorDetection,
     BtNode_FeatureExtraction,
+    BtNode_FeatureMatching,
     BtNode_SeatRecommend,
     BtNode_TurnPanTilt,
+    BtNode_TurnTo,
 )
 from behavior_tree.Receptionist.customNodes import (
     BtNode_CombinePerson,
@@ -49,6 +51,7 @@ from .config import (
     KEY_GUEST2_FEATURES,
     KEY_GUEST2_NAME,
     KEY_PERSONS,
+    KEY_PERSON_CENTROIDS,
     KEY_SEAT_RECOMMENDATION,
     KEY_SOFA_POSE,
     NAMES,
@@ -347,9 +350,62 @@ def createEscortAndSeat(guest_idx: int):
     return _with_gaze_supervisor(f"Gaze-supervised escort guest {guest_idx}", escort)
 
 
+def _intro_with_target_gaze(
+    name: str,
+    intro_node: py_trees.behaviour.Behaviour,
+    target_id: int,
+):
+    """Pre-orient head at `target_id`'s seated centroid, then announce.
+
+    Physically turning the head before the intro makes the `target_id` guest
+    the closest face in the camera frustum, so the gaze supervisor's
+    `MaintainEyeContact` locks on the correct guest instead of whichever
+    happens to be geometrically closer to the base. Rulebook 5.1 scores
+    2×50 pts for "look to the correct guest while talking about the other".
+
+    Best-effort: if `KEY_PERSON_CENTROIDS` isn't populated (feature matching
+    failed), the `FailureIsSuccess` wrapper absorbs the error and the intro
+    proceeds with only the generic gaze supervisor.
+    """
+    seq = py_trees.composites.Sequence(name=name, memory=True)
+    seq.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name=f"Pre-orient at guest {target_id}",
+            child=BtNode_TurnTo(
+                name=f"Look at guest {target_id}",
+                bb_key_persons=KEY_PERSONS,
+                bb_key_points=KEY_PERSON_CENTROIDS,
+                target_id=target_id,
+            ),
+        )
+    )
+    seq.add_child(_with_gaze_supervisor(f"Gaze {name}", intro_node))
+    return seq
+
+
 def createTwoWayIntroduction():
-    """Introduce guest1<->guest2 with gaze-aware wrappers."""
+    """Introduce guest1<->guest2 with target-guided gaze per intro."""
     root = py_trees.composites.Sequence(name="Two-way introductions", memory=True)
+
+    # Locate both seated guests ahead of the intros so we can orient the head
+    # at the right one for each direction. trim_last_person=False because
+    # BOTH guests are seated by this point (unlike Receptionist's pattern).
+    root.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name="Scan seated guest centroids",
+            child=py_trees.decorators.Retry(
+                name="Retry feature matching seated guests",
+                child=BtNode_FeatureMatching(
+                    name="Match seated guest features",
+                    bb_dest_key=KEY_PERSON_CENTROIDS,
+                    bb_persons_key=KEY_PERSONS,
+                    trim_last_person=False,
+                ),
+                num_failures=3,
+            ),
+        )
+    )
+
     intro_1 = BtNode_Introduce(
         name="Introduce guest1 to guest2",
         key_person=KEY_PERSONS,
@@ -364,8 +420,9 @@ def createTwoWayIntroduction():
         introduced_id=1,
         describe_introduced=True,
     )
-    root.add_child(_with_gaze_supervisor("Gaze intro 1", intro_1))
-    root.add_child(_with_gaze_supervisor("Gaze intro 2", intro_2))
+
+    root.add_child(_intro_with_target_gaze("Intro 1", intro_1, target_id=1))
+    root.add_child(_intro_with_target_gaze("Intro 2", intro_2, target_id=0))
     return root
 
 
