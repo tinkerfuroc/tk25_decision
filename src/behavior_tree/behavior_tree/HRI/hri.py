@@ -11,7 +11,7 @@ import py_trees
 from behavior_tree.TemplateNodes.Audio import (
     BtNode_Announce,
     BtNode_GetConfirmationAction,
-    BtNode_PhraseExtraction,
+    BtNode_ListenAction,
     BtNode_PhraseExtractionAction,
 )
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
@@ -183,10 +183,12 @@ def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
     entry. The rulebook awards a 4×15 "no non-essential questions" bonus for
     accepting on that signal without a confirmation prompt.
 
-    Fallback branch: if both primary attempts abort, do one legacy-service
-    extraction plus explicit confirmation. Preserves partial scoring in
-    noisy environments at the cost of the no-confirmation bonus for this
-    field only.
+    Fallback branch: if both primary attempts abort, re-prompt, capture
+    the raw transcription via `BtNode_ListenAction`, then `BtNode_Confirm`
+    speaks it back (`"Your <field> is <value>, correct?"`) and
+    `BtNode_GetConfirmationAction` waits for yes/no. Preserves partial
+    scoring in noisy environments at the cost of the no-confirmation
+    bonus for this field only.
     """
     primary_loop = py_trees.composites.Sequence(
         name=f"Prompt+extract {field_name}",
@@ -225,10 +227,9 @@ def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
         )
     )
     fallback.add_child(
-        BtNode_PhraseExtraction(
-            name=f"Fallback extract {field_name}",
+        BtNode_ListenAction(
+            name=f"Fallback listen {field_name}",
             bb_dest_key=storage_key,
-            wordlist=word_list,
             timeout=7.0,
         )
     )
