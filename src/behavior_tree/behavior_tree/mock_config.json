@@ -9,12 +9,12 @@
     }
   },
   "mock_mode": {
-    "enabled": true,
-    "auto_detect": true,
+    "enabled": false,
+    "auto_detect": false,
     "subsystems": {
       "vision": {
-        "enabled": true,
-        "announce_movement": true,
+        "enabled": false,
+        "announce_movement": false,
         "description": "Per-node mock mode for vision nodes. Allowed values: NO_MOCK, KEYPRESS, TELEOP, IMMEDIATE",
         "nodes": {
           "BtNode_ScanFor": "KEYPRESS",
@@ -35,7 +35,7 @@
       },
       "manipulation": {
         "enabled": true,
-        "announce_movement": true,
+        "announce_movement": false,
         "description": "Per-node mock mode for manipulation nodes. Set TELEOP for interactive arm control.",
         "nodes": {
           "BtNode_Grasp": "TELEOP",
@@ -49,7 +49,7 @@
       },
       "navigation": {
         "enabled": true,
-        "announce_movement": true,
+        "announce_movement": false,
         "description": "Per-node mock mode for navigation nodes",
         "nodes": {
           "BtNode_GoTo": "KEYPRESS",
@@ -61,7 +61,7 @@
       },
       "audio_input": {
         "enabled": true,
-        "announce_movement": true,
+        "announce_movement": false,
         "description": "Per-node mock mode for audio input nodes (not announcement)",
         "nodes": {
           "BtNode_WaitForStart": "KEYPRESS",
@@ -78,7 +78,7 @@
       },
       "announcement": {
         "enabled": false,
-        "announce_movement": true,
+        "announce_movement": false,
         "description": "Per-node mock mode for TTS nodes",
         "nodes": {
           "BtNode_Announce": "KEYPRESS",
@@ -98,7 +98,7 @@
     }
   },
   "keyboard_control": {
-    "enabled": true,
+    "enabled": false,
     "description": "When false, KEYPRESS mode degrades to IMMEDIATE"
   },
   "mock_keyboard": {
