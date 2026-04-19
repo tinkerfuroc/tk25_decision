@@ -60,7 +60,7 @@ from py_trees.common import Status
 from behavior_tree.messages import (
     TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction,
     GetConfirmation, Listen, CompareInterest, GraspRequest,
-    GetConfirmationAction, ListenAction,
+    GetConfirmationAction, ListenAction, PhraseExtractionAction,
 )
 
 from .BaseBehaviors import ServiceHandler
@@ -441,15 +441,28 @@ class BtNode_GraspRequest(ServiceHandler):
 
 class BtNode_PhraseExtraction(ServiceHandler):
     """
-    Node to extract a phrase from a given speech, returns success once phrase is extracted
+    Node to extract a phrase from a given speech, returns success once phrase is extracted.
+
+    DEPRECATED: use BtNode_PhraseExtractionAction. The tk_24_audio package has
+    migrated phrase extraction to a ROS 2 action (`phrase_extraction_action`),
+    which runs Whisper + Qwen ASR cross-check and exposes the high-confidence
+    path via terminal `STATUS_SUCCEEDED`. The service-based
+    `phrase_extraction_service` will be retired once all task trees (GPSR,
+    Receptionist, Restaurant demo, grasp-intel) have been migrated.
     """
-    def __init__(self, 
+    def __init__(self,
                  name : str,
                  wordlist : list,
                  bb_dest_key : str,
                  service_name : str = "phrase_extraction_service",
                  timeout : float = 15.0
                  ):
+        warnings.warn(
+            "BtNode_PhraseExtraction is deprecated; use BtNode_PhraseExtractionAction "
+            "(tk_24_audio added action-based `phrase_extraction_action`).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super(BtNode_PhraseExtraction, self).__init__(name, service_name, PhraseExtraction)
 
         self.wordlist = wordlist
@@ -904,4 +917,90 @@ class BtNode_ListenAction(ActionHandler):
             return Status.FAILURE
         self.message_blackboard.message = result.message
         self.feedback_message = f"Listened: '{result.message}'"
+        return Status.SUCCESS
+
+
+class BtNode_PhraseExtractionAction(ActionHandler):
+    """
+    Action-client variant of BtNode_PhraseExtraction targeting tk_24_audio's
+    `phrase_extraction_action` (tinker_audio_msgs/action/PhraseExtraction).
+
+    The server only calls `goal_handle.succeed()` when status=0 — the Whisper
+    + Qwen ASR cross-check agrees on the same wordlist entry. Any other
+    status (1 timeout, 2 transcription error, 3 not in wordlist, 4 ASR
+    disagreement) calls `goal_handle.abort()`. We therefore map
+    `STATUS_SUCCEEDED` → SUCCESS (phrase usable, downstream confirmation can
+    be skipped) and everything else → FAILURE (let the outer Retry / Selector
+    re-prompt or escalate to a confirmation fallback).
+
+    Feedback schema is `{progress, status_message, partial_transcription}` —
+    not the canonical BT `{stage, stage_name, status, delay_limit}`. Same
+    override pattern as `BtNode_GetConfirmationAction` / `BtNode_ListenAction`.
+    """
+
+    def __init__(self,
+                 name: str,
+                 wordlist: list,
+                 bb_dest_key: str,
+                 timeout: float = 7.0,
+                 action_name: str = "phrase_extraction_action",
+                 wait_for_server_timeout_sec: float = -3.0):
+        super().__init__(name, PhraseExtractionAction, action_name, key=None,
+                         wait_for_server_timeout_sec=wait_for_server_timeout_sec)
+        self.wordlist = list(wordlist)
+        self.timeout = timeout
+        # Whisper + Qwen ASR run sequentially after recording; give margin.
+        self._feedback_timeout_secs = max(self.timeout + 15.0, 30.0)
+        self.bb_dest_key = bb_dest_key
+        self._bb = self.attach_blackboard_client(name=f"{self.name}_PhraseExtractionAction")
+        self._bb.register_key(
+            key="phrase",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key),
+        )
+
+    def send_goal(self):
+        if self.mock_mode:
+            import random
+            picked = random.choice(self.wordlist) if self.wordlist else "mock_phrase"
+            self._bb.phrase = picked
+            self.feedback_message = f"MOCK: picked '{picked}' from {self.wordlist[:3]}..."
+            print(f"🎤 MOCK PHRASE EXTRACTION (action): '{picked}'")
+            self.send_goal_future = _MockFuture()
+            return
+        goal = PhraseExtractionAction.Goal()
+        goal.timeout = float(self.timeout)
+        goal.wordlist = self.wordlist
+        self.send_goal_request(goal)
+        self.feedback_message = (
+            f"sent PhraseExtraction goal (timeout={self.timeout}s, "
+            f"|wordlist|={len(self.wordlist)})"
+        )
+
+    def feedback_callback(self, msg):
+        feedback = msg.feedback
+        self.last_feedback_time = time.time()
+        self.feedback_timeout = self._feedback_timeout_secs
+        self.action_status = 0
+        progress = getattr(feedback, 'progress', 0.0)
+        status_message = getattr(feedback, 'status_message', '')
+        partial = getattr(feedback, 'partial_transcription', '')
+        self.feedback_message = (
+            f"phrase progress={progress:.2f} {status_message}"
+            + (f" [partial: '{partial}']" if partial else "")
+        )
+
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            result = getattr(self.result_message, 'result', None)
+            status = getattr(result, 'status', -1)
+            err = getattr(result, 'error_message', '')
+            self.feedback_message = (
+                f"PhraseExtraction aborted (action={self.result_status_string}, "
+                f"server status={status}): {err}"
+            )
+            return Status.FAILURE
+        phrase = getattr(self.result_message.result, 'phrase', '')
+        self._bb.phrase = phrase
+        self.feedback_message = f"extracted high-confidence phrase: '{phrase}'"
         return Status.SUCCESS

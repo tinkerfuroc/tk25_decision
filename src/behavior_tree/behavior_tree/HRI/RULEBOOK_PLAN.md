@@ -111,7 +111,11 @@ Implementation priorities:
 - Bag handover/drop confirmation are placeholders, not verified by perception.
 - Follow-host stage now uses the real action pair (`TrackPerson` + `Follow`)
   with two-stage loss recovery; previously a navigation proxy.
-- Intake still uses confirmation loops; this may hurt "no non-essential questions" bonus mode.
+- Intake is now hybrid: primary path via action-based `phrase_extraction_action`
+  skips confirmation when Whisper+Qwen cross-check agrees (banks the 4×15
+  no-non-essential-questions bonus); only the last-resort fallback reverts
+  to the legacy confirm loop. See `HRI/hri.py:_create_get_info` and the
+  standalone `hri-intake` harness in `HRI/intake.py`.
 
 ## Potential Improvements (Prioritized)
 
@@ -122,7 +126,8 @@ Implementation priorities:
    recovery — see `HRI/follow.py`. Remaining: tune thresholds on-robot and
    wire up map-frame TF so the transformed `target_position` stream to Nav2
    is continuous (server currently suppresses publication when TF fails).
-5. Add configurable dialogue profiles:
-   - conservative (with confirmations)
-   - bonus-minimal (fewer prompts).
+5. *(done — 2026-04-19)* Skip-confirmation-when-high-confidence intake.
+   `HRI/hri.py:_create_get_info` now uses `BtNode_PhraseExtractionAction`
+   (cross-check → `STATUS_SUCCEEDED` = status=0) inside a `Selector(Retry(2),
+   fallback)` so confirmation only fires on the last-resort branch.
 6. Add task-level timing checkpoints for 6:00 budget and phase preemption.

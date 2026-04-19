@@ -35,10 +35,12 @@ if _config.has_dependency('tinker_audio_msgs'):
     from tinker_audio_msgs.srv import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
     from tinker_audio_msgs.action import GetConfirmation as GetConfirmationAction
     from tinker_audio_msgs.action import Listen as ListenAction
+    from tinker_audio_msgs.action import PhraseExtraction as PhraseExtractionAction
 else:
     from behavior_tree.mock_messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
     from behavior_tree.mock_messages import GetConfirmation as GetConfirmationAction
     from behavior_tree.mock_messages import Listen as ListenAction
+    from behavior_tree.mock_messages import PhraseExtractionAction
 
 if _config.has_dependency('tinker_nav_msgs'):
     from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp

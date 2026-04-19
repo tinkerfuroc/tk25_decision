@@ -10,8 +10,9 @@ import py_trees
 
 from behavior_tree.TemplateNodes.Audio import (
     BtNode_Announce,
-    BtNode_GetConfirmation,
+    BtNode_GetConfirmationAction,
     BtNode_PhraseExtraction,
+    BtNode_PhraseExtractionAction,
 )
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle
@@ -171,33 +172,83 @@ def createArrivalTrigger():
 
 
 def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
-    """Prompt -> extract -> confirm loop for one spoken field."""
-    root = py_trees.composites.Sequence(name=f"Get {field_name}", memory=True)
-    loop = py_trees.composites.Sequence(name=f"Get+confirm {field_name}", memory=True)
-    loop.add_child(
+    """High-confidence-first capture with a last-resort confirmation fallback.
+
+    Primary branch: up to 2 attempts of prompt → action-based extract. The
+    action (`phrase_extraction_action`) only succeeds on server status=0,
+    which means Whisper + Qwen ASR cross-check agreed on the same wordlist
+    entry. The rulebook awards a 4×15 "no non-essential questions" bonus for
+    accepting on that signal without a confirmation prompt.
+
+    Fallback branch: if both primary attempts abort, do one legacy-service
+    extraction plus explicit confirmation. Preserves partial scoring in
+    noisy environments at the cost of the no-confirmation bonus for this
+    field only.
+    """
+    primary_loop = py_trees.composites.Sequence(
+        name=f"Prompt+extract {field_name}",
+        memory=True,
+    )
+    primary_loop.add_child(
         BtNode_Announce(
             name=f"Prompt for {field_name}",
             bb_source=None,
             message=f"Please tell me your {field_name}.",
         )
     )
-    loop.add_child(
+    primary_loop.add_child(
+        BtNode_PhraseExtractionAction(
+            name=f"High-conf extract {field_name}",
+            wordlist=word_list,
+            bb_dest_key=storage_key,
+            timeout=7.0,
+        )
+    )
+    primary = py_trees.decorators.Retry(
+        name=f"Retry high-conf {field_name}",
+        child=primary_loop,
+        num_failures=2,
+    )
+
+    fallback = py_trees.composites.Sequence(
+        name=f"Last-resort confirm {field_name}",
+        memory=True,
+    )
+    fallback.add_child(
+        BtNode_Announce(
+            name=f"Fallback prompt for {field_name}",
+            bb_source=None,
+            message=f"Let me try again. Please tell me your {field_name} clearly.",
+        )
+    )
+    fallback.add_child(
         BtNode_PhraseExtraction(
-            name=f"Extract {field_name}",
+            name=f"Fallback extract {field_name}",
             bb_dest_key=storage_key,
             wordlist=word_list,
             timeout=7.0,
         )
     )
-    loop.add_child(
+    fallback.add_child(
         BtNode_Confirm(
             name=f"Confirm {field_name}",
             key_confirmed=storage_key,
             type=field_name,
         )
     )
-    loop.add_child(BtNode_GetConfirmation(name=f"Get {field_name} confirmation", timeout=5.0))
-    root.add_child(py_trees.decorators.Retry(name="Retry get+confirm", child=loop, num_failures=5))
+    fallback.add_child(
+        BtNode_GetConfirmationAction(
+            name=f"Get {field_name} confirmation",
+            timeout=5.0,
+        )
+    )
+
+    root = py_trees.composites.Selector(
+        name=f"Get {field_name}",
+        memory=True,
+    )
+    root.add_child(primary)
+    root.add_child(fallback)
     return root
 
 
