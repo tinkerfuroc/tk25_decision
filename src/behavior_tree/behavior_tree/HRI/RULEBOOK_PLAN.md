@@ -130,4 +130,11 @@ Implementation priorities:
    `HRI/hri.py:_create_get_info` now uses `BtNode_PhraseExtractionAction`
    (cross-check → `STATUS_SUCCEEDED` = status=0) inside a `Selector(Retry(2),
    fallback)` so confirmation only fires on the last-resort branch.
-6. Add task-level timing checkpoints for 6:00 budget and phase preemption.
+6. *(done — 2026-04-19)* Target-guided intro cross-gaze. `HRI/hri.py:
+   createTwoWayIntroduction` now runs `BtNode_FeatureMatching(trim_last_person=False)`
+   once at sofa, then each intro pre-orients via `BtNode_TurnTo(target_id)`
+   before `BtNode_Introduce`. The pre-orient makes `target_id`'s guest the
+   closest face so the supervisor's `MaintainEyeContact` locks on them, up
+   from a random 50 pts (one of two correct by closest-face chance) toward
+   the full 100 pts.
+7. Add task-level timing checkpoints for 6:00 budget and phase preemption.

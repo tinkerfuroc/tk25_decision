@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.2.1] - 2026-04-19
+
+### ✨ Target-guided gaze during HRI introductions
+
+Partially fixes the rulebook 5.1 "look to the correct guest while talking
+about the other guest" 2×50 pts item. Previously the parallel-sibling
+`BtNode_MaintainEyeContact` locked onto whichever face was geometrically
+closest to the base — a coin flip for which of two seated guests got the
+right intro gaze.
+
+- `BtNode_FeatureMatching` — added `trim_last_person: bool = True` kwarg.
+  Default preserves Receptionist's "new guest just walked up, not seated
+  yet" behavior; `False` sends every persons's features so centroids come
+  back for all seated guests. Mock path now emits one fake centroid per
+  (non-trimmed) person instead of a single element.
+- `HRI/config.py` — new `KEY_PERSON_CENTROIDS` blackboard key.
+- `HRI/hri.py:createTwoWayIntroduction` — runs feature matching once with
+  `trim_last_person=False` to populate `KEY_PERSON_CENTROIDS`, then each
+  intro now does `BtNode_TurnTo(target_id)` → `BtNode_Introduce`
+  inside the existing gaze supervisor. Physically turning the head first
+  makes the target guest the closest face, so `MaintainEyeContact`
+  locks on the correct one.
+- Best-effort wrapping (`FailureIsSuccess` around feature matching and
+  turn-to) ensures the intro still fires if the scan fails — falls back
+  to previous closest-face behavior without crashing the tree.
+
+---
+
 ## [2.2.0] - 2026-04-19
 
 ### ✨ New — Action-based phrase extraction integrated into HRI intake
