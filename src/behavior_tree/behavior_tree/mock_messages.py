@@ -230,11 +230,34 @@ class PhraseExtraction(MockService):
             super().__init__()
             self.wordlist = []
             self.timeout = 0.0
-    
+
     class Response(MockService.Response):
         def __init__(self):
             super().__init__()
             self.result = ""
+
+
+class PhraseExtractionAction(MockAction):
+    """Mock PhraseExtraction action (tk_24_audio `phrase_extraction_action`)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.timeout = 0.0
+            self.wordlist = []
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.error_message = ""
+            self.phrase = ""
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.progress = 0.0
+            self.status_message = ""
+            self.partial_transcription = ""
 
 
 class GetConfirmation(MockService):

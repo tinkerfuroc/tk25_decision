@@ -71,7 +71,8 @@
           "BtNode_Listen": "KEYPRESS",
           "BtNode_CompareInterest": "KEYPRESS",
           "BtNode_GetConfirmationAction": "KEYPRESS",
-          "BtNode_ListenAction": "KEYPRESS"
+          "BtNode_ListenAction": "KEYPRESS",
+          "BtNode_PhraseExtractionAction": "KEYPRESS"
         }
       },
       "announcement": {
