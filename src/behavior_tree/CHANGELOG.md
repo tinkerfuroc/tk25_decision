@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.2.3] - 2026-04-19
+
+### 🧹 HRI intake fallback — drop deprecated `BtNode_PhraseExtraction`
+
+`HRI/hri.py:_create_get_info`'s fallback branch no longer imports or calls
+the service-based `BtNode_PhraseExtraction` (deprecated, emits
+`DeprecationWarning`). It now uses `BtNode_ListenAction` to capture raw
+speech into the same storage key, then reuses the existing
+`BtNode_Confirm` + `BtNode_GetConfirmationAction` tail. HRI is now
+completely off deprecated service-based audio nodes — all audio leaves in
+the HRI package are either action-based or wrap `TextToSpeech` (which has
+no action counterpart).
+
+Primary path behaviour is unchanged: on cross-check success (server
+status=0) the `Selector` short-circuits and the fallback never ticks,
+preserving the rulebook 4×15 "no non-essential questions" bonus.
+
+Scope limited to HRI; Receptionist, Restaurant demo, GPSR, help-me-carry,
+serve-breakfast, store-groceries, grasp-intel still call the deprecated
+node and will migrate when next touched.
+
+### Files modified
+- `behavior_tree/HRI/hri.py`
+
+---
+
 ## [2.2.2] - 2026-04-19
 
 ### 🧪 Standalone intro harness + mock-config catch-up

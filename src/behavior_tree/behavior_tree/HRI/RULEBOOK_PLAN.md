@@ -113,9 +113,12 @@ Implementation priorities:
   with two-stage loss recovery; previously a navigation proxy.
 - Intake is now hybrid: primary path via action-based `phrase_extraction_action`
   skips confirmation when Whisper+Qwen cross-check agrees (banks the 4×15
-  no-non-essential-questions bonus); only the last-resort fallback reverts
-  to the legacy confirm loop. See `HRI/hri.py:_create_get_info` and the
-  standalone `hri-intake` harness in `HRI/intake.py`.
+  no-non-essential-questions bonus). Last-resort fallback (after two primary
+  failures) uses `BtNode_ListenAction` → `BtNode_Confirm` →
+  `BtNode_GetConfirmationAction` for a noisy-environment partial-score path
+  — no deprecated service-based audio nodes remain in HRI. See
+  `HRI/hri.py:_create_get_info` and the standalone `hri-intake` harness in
+  `HRI/intake.py`.
 
 ## Potential Improvements (Prioritized)
 
