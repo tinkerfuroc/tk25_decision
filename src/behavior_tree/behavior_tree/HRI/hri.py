@@ -21,6 +21,7 @@ from behavior_tree.TemplateNodes.Vision import (
     BtNode_DoorDetection,
     BtNode_FeatureExtraction,
     BtNode_FeatureMatching,
+    BtNode_MaintainEyeContact,
     BtNode_SeatRecommend,
     BtNode_TurnPanTilt,
     BtNode_TurnTo,
@@ -28,7 +29,6 @@ from behavior_tree.TemplateNodes.Vision import (
 from behavior_tree.Receptionist.customNodes import (
     BtNode_CombinePerson,
     BtNode_Confirm,
-    BtNode_HeadTrackingAction,
     BtNode_Introduce,
 )
 from .config import (
@@ -299,7 +299,7 @@ def _with_gaze_supervisor(name: str, main_child: py_trees.behaviour.Behaviour):
     root.add_child(
         py_trees.decorators.FailureIsSuccess(
             name="Gaze follow fallback",
-            child=BtNode_HeadTrackingAction(name="Follow speaker gaze", actionName="follow_head_action"),
+            child=BtNode_MaintainEyeContact(name="Follow speaker gaze"),
         )
     )
     root.add_child(

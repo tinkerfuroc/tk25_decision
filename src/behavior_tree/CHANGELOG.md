@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.2.2] - 2026-04-19
+
+### 🧪 Standalone intro harness + mock-config catch-up
+
+- New `HRI/intro.py` + `hri-intro` console script. Seeds two mock guest
+  profiles on the blackboard and runs just `createTwoWayIntroduction`, so
+  the feature-match → pre-orient → announce path can be KEYPRESS-stepped
+  end-to-end without the full HRI task. Mirrors `hri-follow` / `hri-intake`.
+- `mock_config.json` — added missing class-name registrations so the new
+  harness runs under `BT_MOCK_MODE=true`:
+    - `announcement` subsystem: `BtNode_Introduce`, `BtNode_Confirm`.
+    - `vision` subsystem: `BtNode_TurnTo` (was inheriting from
+      `BtNode_TurnPanTilt` but class-name lookup doesn't walk the MRO).
+- `HRI/hri.py` — `_with_gaze_supervisor` migrated from the deprecated
+  `BtNode_HeadTrackingAction` shim to `BtNode_MaintainEyeContact` directly,
+  per the migration path documented in `.claude/rules/behavior-tree.md`.
+  Removes a DeprecationWarning on every HRI boot.
+
+---
+
 ## [2.2.1] - 2026-04-19
 
 ### ✨ Target-guided gaze during HRI introductions

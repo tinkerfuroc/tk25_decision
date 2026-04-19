@@ -48,6 +48,7 @@ setup(
             'hri = behavior_tree.HRI.cli:main',
             'hri-follow = behavior_tree.HRI.follow:main',
             'hri-intake = behavior_tree.HRI.intake:main',
+            'hri-intro = behavior_tree.HRI.intro:main',
             'pick-and-place = behavior_tree.PickAndPlace.cli:main',
             'GPSR = behavior_tree.GPSR.gpsr_new:main',
             'EGPSR = behavior_tree.GPSR.egpsr:main',

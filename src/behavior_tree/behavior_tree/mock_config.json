@@ -27,6 +27,7 @@
           "BtNode_GetPointCloud": "KEYPRESS",
           "BtNode_DoorDetection": "KEYPRESS",
           "BtNode_TurnPanTilt": "KEYPRESS",
+          "BtNode_TurnTo": "KEYPRESS",
           "BtNode_ScanForWavingPerson": "KEYPRESS",
           "BtNode_MaintainEyeContact": "KEYPRESS",
           "BtNode_ShowImage": "KEYPRESS"
@@ -81,7 +82,9 @@
         "description": "Per-node mock mode for TTS nodes",
         "nodes": {
           "BtNode_Announce": "KEYPRESS",
-          "BtNode_TTSCN": "KEYPRESS"
+          "BtNode_TTSCN": "KEYPRESS",
+          "BtNode_Introduce": "KEYPRESS",
+          "BtNode_Confirm": "KEYPRESS"
         }
       },
       "mock_controls": {
