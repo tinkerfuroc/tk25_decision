@@ -542,6 +542,12 @@ class BtNode_GetCommand(ServiceHandler):
 
 
 class BtNode_ScanForWavingPerson(ServiceHandler):
+    """
+    DEPRECATED: calls `object_detection` with `flags="find_waving_person"`, a
+    contract no server implements in tk26. Use
+    `behavior_tree.TemplateNodes.Vision.BtNode_ScanForWavingPerson`, which calls
+    the tk26 `detect_waving_persons` service (DetectWaving) and supports mock mode.
+    """
 
     def __init__(self,
                  name: str,
