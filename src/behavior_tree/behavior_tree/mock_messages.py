@@ -92,6 +92,30 @@ class ObjectDetection(MockService):
             self.image_height = 0
 
 
+class ObjectDetectionGeneralist(MockService):
+    """Mock for tk26 generalist ObjectDetection — boolean flags, detection_source tag."""
+    class Request(MockService.Request):
+        def __init__(self):
+            super().__init__()
+            self.camera = ""
+            self.prompt = ""
+            self.target_frame = ""
+            self.sort_closest = False
+            self.sort_highest = False
+            self.return_rgb_image = False
+            self.return_depth_image = False
+            self.return_segments = False
+            self.force_vlm_sam = False
+            self.use_vlm_sam_fallback = False
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.person_id = 0
+            self.objects = []
+            self.detection_source = "none"
+
+
 class FeatureExtraction(MockService):
     """Mock FeatureExtraction service."""
     class Response(MockService.Response):
@@ -314,6 +338,39 @@ class FollowHeadAction(MockAction):
 class HumanFollowing(MockAction):
     """Mock HumanFollowing action."""
     pass
+
+
+class TrackPerson(MockAction):
+    """Mock TrackPerson action from tinker_vision_msgs_26."""
+
+    class Goal(MockAction.Goal):
+        """Mock TrackPerson goal."""
+        def __init__(self):
+            super().__init__()
+            self.target_frame = "map"
+            self.return_rgb_img = False
+            self.return_depth_img = False
+            self.return_segment = False
+            self.debug = False
+
+    class Result(MockAction.Result):
+        """Mock TrackPerson result."""
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.message = "Mock tracking completed"
+
+    class Feedback(MockAction.Feedback):
+        """Mock TrackPerson feedback."""
+        def __init__(self):
+            super().__init__()
+            self.target_lost = False
+            self.target_track_id = 1
+            self.is_transformation_successful = True
+            self.target_position = None  # PointStamped
+            self.rgb_img = None
+            self.depth_img = None
+            self.segment_img = None
 
 
 # Mock Navigation Actions (from nav2)

@@ -35,8 +35,8 @@
 #
 # Classes
 # -------
-ActionHandler
-    Base class for all nodes that call ROS2 actions.
+# ActionHandler
+#     Base class for all nodes that call ROS2 actions.
 #
 # Usage
 # -----
