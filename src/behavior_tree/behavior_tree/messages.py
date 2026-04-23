@@ -8,14 +8,16 @@ from behavior_tree.config import get_config
 _config = get_config()
 
 # Import based on availability
-if _config.has_dependency('tinker_vision_msgs'):
-    from tinker_vision_msgs.srv import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
-    from tinker_vision_msgs.msg import Object, PanTiltCtrl
-    from tinker_vision_msgs.action import Categorize, FollowHeadAction, HumanFollowing
+if _config.has_dependency('tinker_vision_msgs_26'):
+    from tinker_vision_msgs_26.srv import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
+    from tinker_vision_msgs_26.srv import ObjectDetectionGeneralist
+    from tinker_vision_msgs_26.msg import Object, PanTiltCtrl
+    from tinker_vision_msgs_26.action import Categorize, FollowHeadAction, HumanFollowing, TrackPerson
 else:
     from behavior_tree.mock_messages import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
+    from behavior_tree.mock_messages import ObjectDetectionGeneralist
     from behavior_tree.mock_messages import Object, PanTiltCtrl
-    from behavior_tree.mock_messages import Categorize, FollowHeadAction, HumanFollowing
+    from behavior_tree.mock_messages import Categorize, FollowHeadAction, HumanFollowing, TrackPerson
 
 if _config.has_dependency('tinker_arm_msgs'):
     from tinker_arm_msgs.srv import Drop, ArmJointService, PointTo

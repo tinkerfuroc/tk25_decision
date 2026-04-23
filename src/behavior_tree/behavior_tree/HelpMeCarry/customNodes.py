@@ -19,7 +19,7 @@ class BtNode_FindPointedLuggage(ServiceHandler):
                  bb_namespace: str,
                  bb_key: str,
                  bb_key_announce_msg: str,
-                 service_name: str = "object_detection"):
+                 service_name: str = "object_detection_yolo"):
         super().__init__(name, service_name, ObjectDetection)
         self.bb_namespace = bb_namespace
         self.bb_key = bb_key

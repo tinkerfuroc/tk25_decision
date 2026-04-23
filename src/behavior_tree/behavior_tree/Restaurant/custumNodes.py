@@ -4,17 +4,17 @@ from typing import List, Dict, Any
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.messages import ObjectDetection, TextToSpeech, Listen, PhraseExtraction, PanTiltCtrl
+from behavior_tree.messages import ObjectDetectionGeneralist, TextToSpeech, Listen, PhraseExtraction, PanTiltCtrl
 from geometry_msgs.msg import PointStamped, PoseStamped
 from std_msgs.msg import String
 
 class BtNode_DetectCallingCustomer(ServiceHandler):
-    def __init__(self, 
+    def __init__(self,
                  name: str,
                  bb_dest_key: str,
-                 service_name: str = "object_detection",
+                 service_name: str = "object_detection_generalist",
                  timeout: float = 10.0):
-        super().__init__(name, service_name, ObjectDetection)
+        super().__init__(name, service_name, ObjectDetectionGeneralist)
         self.bb_dest_key = bb_dest_key
         self.timeout = timeout
         self.start_time = None
@@ -28,9 +28,11 @@ class BtNode_DetectCallingCustomer(ServiceHandler):
     
     def initialise(self):
         self.start_time = time.time()
-        request = ObjectDetection.Request()
+        request = ObjectDetectionGeneralist.Request()
         request.prompt = "person waving or calling"
-        request.flags = "detect_gesture"
+        # tk23's flags="detect_gesture" was a no-op in tk26; fall through to VLM+SAM
+        # so the open-vocabulary prompt actually has a chance of matching.
+        request.use_vlm_sam_fallback = True
         request.camera = "orbbec"
         request.target_frame = "map"
         self.response = self.client.call_async(request)

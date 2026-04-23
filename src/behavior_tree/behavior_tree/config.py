@@ -54,7 +54,7 @@ class BehaviorTreeConfig:
         # List of required packages
         # Note: Only check modules that actually exist for each package
         self.required_packages = {
-            'tinker_vision_msgs': ['tinker_vision_msgs.srv', 'tinker_vision_msgs.msg', 'tinker_vision_msgs.action'],
+            'tinker_vision_msgs_26': ['tinker_vision_msgs_26.srv', 'tinker_vision_msgs_26.msg', 'tinker_vision_msgs_26.action'],
             'tinker_arm_msgs': ['tinker_arm_msgs.srv', 'tinker_arm_msgs.action'],
             'tinker_audio_msgs': ['tinker_audio_msgs.srv'],  # Only has services, no messages
             'tinker_nav_msgs': ['tinker_nav_msgs.srv'],  # Only has services
@@ -676,8 +676,8 @@ def is_mock_tts_active() -> bool:
 
 # Legacy compatibility functions
 def has_tinker_vision() -> bool:
-    """Check if tinker_vision_msgs is available."""
-    return _config.has_dependency('tinker_vision_msgs')
+    """Check if tinker_vision_msgs_26 is available."""
+    return _config.has_dependency('tinker_vision_msgs_26')
 
 
 def has_tinker_arm() -> bool:

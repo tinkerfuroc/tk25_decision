@@ -21,7 +21,7 @@ class BtNode_FindObjTable(ServiceHandler):
                  bb_key_announcement: str,
                  target_frame: str = "base_link",
                  use_realsense: bool = True,
-                 service_name = "object_detection",
+                 service_name = "object_detection_yolo",
                  service_type = ObjectDetection,
                  ):
         super(BtNode_FindObjTable, self).__init__(name=name,
