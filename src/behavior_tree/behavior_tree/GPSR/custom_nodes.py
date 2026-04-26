@@ -1,6 +1,6 @@
 import asyncio
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
-from behavior_tree.messages import ObjectDetection, DetectWaving
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, DetectWaving
 import py_trees
 from py_trees.common import Status, Access
 from py_trees.behaviour import Behaviour
@@ -552,24 +552,18 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
     def __init__(self,
                  name: str,
                  bb_target: str,
-                 service_name : str = "object_detection",
+                 service_name : str = "object_detection_generalist",
                  use_orbbec = True,
                  target_frame = "map"
                  ):
         """
         executed when creating tree diagram, therefor very minimal
         """
-        import warnings
-        warnings.warn(
-            "GPSR.custom_nodes.BtNode_ScanForWavingPerson is deprecated: "
-            "its ObjectDetection `flags='find_waving_person'` contract is not "
-            "implemented by any tk26 server. Use "
-            "behavior_tree.TemplateNodes.Vision.BtNode_ScanForWavingPerson "
-            "(DetectWaving / tk26 detect_waving_persons) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        super(BtNode_ScanForWavingPerson, self).__init__(name, service_name, ObjectDetection)
+        # NOTE: the generalist (like the tk26 YOLO nodes) does not populate
+        # `Object.being_pointed`. The `being_pointed == 3` filter in update()
+        # will never match. For gesture detection, prefer
+        # BtNode_ScanForWavingPersonNew (uses the DetectWaving service).
+        super(BtNode_ScanForWavingPerson, self).__init__(name, service_name, ObjectDetectionGeneralist)
         self.bb_target = bb_target
         self.use_orbbec = use_orbbec
         self.target_frame = target_frame
@@ -591,9 +585,10 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
         """
         Called when the node is visited
         """
-        request = ObjectDetection.Request()
+        request = ObjectDetectionGeneralist.Request()
         request.prompt = "person"
-        request.flags = "find_waving_person"
+        # tk23's flags="find_waving_person" was a no-op in tk26; see class docstring.
+        request.use_vlm_sam_fallback = True
         if self.use_orbbec:
             request.camera = "orbbec"
         else:

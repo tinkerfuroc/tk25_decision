@@ -92,6 +92,30 @@ class ObjectDetection(MockService):
             self.image_height = 0
 
 
+class ObjectDetectionGeneralist(MockService):
+    """Mock for tk26 generalist ObjectDetection — boolean flags, detection_source tag."""
+    class Request(MockService.Request):
+        def __init__(self):
+            super().__init__()
+            self.camera = ""
+            self.prompt = ""
+            self.target_frame = ""
+            self.sort_closest = False
+            self.sort_highest = False
+            self.return_rgb_image = False
+            self.return_depth_image = False
+            self.return_segments = False
+            self.force_vlm_sam = False
+            self.use_vlm_sam_fallback = False
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.person_id = 0
+            self.objects = []
+            self.detection_source = "none"
+
+
 class FeatureExtraction(MockService):
     """Mock FeatureExtraction service."""
     class Response(MockService.Response):
