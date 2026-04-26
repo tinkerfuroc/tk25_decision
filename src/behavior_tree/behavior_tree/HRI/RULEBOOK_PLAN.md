@@ -91,9 +91,15 @@ Implementation priorities:
 - `BtNode_MockSafetyCheck` ("Drop confirmation detector TODO"):
   - Placeholder after bag drop open-gripper action.
   - TODO in code: replace with actual bag-drop confirmation detector.
-- Follow-host proxy:
-  - Current flow uses `BtNode_GotoAction` to sofa as a proxy "follow host".
-  - TODO in code: replace with true host-follow behavior/action.
+- Follow-host subtree:
+  - Implemented in `HRI/follow.py:createFollowPerson()`.
+  - Wraps `tinker_vision_msgs_26/TrackPerson` (vision) + `tinker_nav_msgs/Follow`
+    (tk26 `tracking_server`, Nav2-driven) in a lost-sight-tolerant tree:
+    two-stage recovery (short-audio "please wait" → long-audio "please come
+    back" + ReID reanchor via outer `Retry`).
+  - All thresholds/audio strings live under the `follow` block of
+    `Receptionist/constants.json` (loaded by `HRI/config.py:FOLLOW_CONFIG`).
+  - Standalone harness: `ros2 run behavior_tree hri-follow`.
 - Gaze supervisor fallback behavior:
   - `BtNode_HeadTrackingAction` and navigation-direction pan/tilt are wrapped with `FailureIsSuccess` fallback.
   - This prevents hard failure but can hide degraded gaze performance.
@@ -103,16 +109,35 @@ Implementation priorities:
 - No explicit door-opening action branch for bonus scoring.
 - Arrival trigger is not yet true doorbell/knock detection (fallback exists).
 - Bag handover/drop confirmation are placeholders, not verified by perception.
-- Follow-host stage is approximated by navigation, not continuous person-follow.
-- Intake still uses confirmation loops; this may hurt "no non-essential questions" bonus mode.
+- Follow-host stage now uses the real action pair (`TrackPerson` + `Follow`)
+  with two-stage loss recovery; previously a navigation proxy.
+- Intake is now hybrid: primary path via action-based `phrase_extraction_action`
+  skips confirmation when Whisper+Qwen cross-check agrees (banks the 4×15
+  no-non-essential-questions bonus). Last-resort fallback (after two primary
+  failures) uses `BtNode_ListenAction` → `BtNode_Confirm` →
+  `BtNode_GetConfirmationAction` for a noisy-environment partial-score path
+  — no deprecated service-based audio nodes remain in HRI. See
+  `HRI/hri.py:_create_get_info` and the standalone `hri-intake` harness in
+  `HRI/intake.py`.
 
 ## Potential Improvements (Prioritized)
 
 1. Replace arrival fallback with an audio/event-based doorbell node and keep door-vision as secondary fallback.
 2. Add explicit door-opening subtree with retry + safety checks.
 3. Integrate real handover/dropped-bag verification nodes and remove `BtNode_MockSafetyCheck`.
-4. Replace follow proxy with a real follow-host action, including lost-target recovery policy.
-5. Add configurable dialogue profiles:
-   - conservative (with confirmations)
-   - bonus-minimal (fewer prompts).
-6. Add task-level timing checkpoints for 6:00 budget and phase preemption.
+4. *(done)* Follow-host uses a real action pair with two-stage lost-target
+   recovery — see `HRI/follow.py`. Remaining: tune thresholds on-robot and
+   wire up map-frame TF so the transformed `target_position` stream to Nav2
+   is continuous (server currently suppresses publication when TF fails).
+5. *(done — 2026-04-19)* Skip-confirmation-when-high-confidence intake.
+   `HRI/hri.py:_create_get_info` now uses `BtNode_PhraseExtractionAction`
+   (cross-check → `STATUS_SUCCEEDED` = status=0) inside a `Selector(Retry(2),
+   fallback)` so confirmation only fires on the last-resort branch.
+6. *(done — 2026-04-19)* Target-guided intro cross-gaze. `HRI/hri.py:
+   createTwoWayIntroduction` now runs `BtNode_FeatureMatching(trim_last_person=False)`
+   once at sofa, then each intro pre-orients via `BtNode_TurnTo(target_id)`
+   before `BtNode_Introduce`. The pre-orient makes `target_id`'s guest the
+   closest face so the supervisor's `MaintainEyeContact` locks on them, up
+   from a random 50 pts (one of two correct by closest-face chance) toward
+   the full 100 pts.
+7. Add task-level timing checkpoints for 6:00 budget and phase preemption.

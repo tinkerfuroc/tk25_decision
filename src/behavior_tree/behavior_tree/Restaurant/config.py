@@ -101,3 +101,21 @@ KEY_BATCH_ORDERS_SUMMARY = "batch_orders_summary"
 KEY_BATCH_DETECTION_SUMMARY = "batch_detection_summary"
 
 BATCH_SIZE_LIMIT = 3
+
+# Waving-detection / per-item-delivery keys used by `restaurants.py` (ported from
+# `restaurants_fake.py`).
+KEY_WAVING_PERSON_POSES = "waving_person_poses"
+KEY_WAVING_PERSON_PICTURES = "waving_person_pictures"
+KEY_WAVING_CLOSEST_PERSON = "waving_closest_person"
+KEY_ACTIVE_CUSTOMER_PICTURE = "active_customer_picture"
+KEY_CURRENT_ITEMS = "current_items"
+KEY_CURRENT_ITEM = "current_item"
+KEY_CURRENT_ITEM_SUMMARY = "current_item_summary"
+
+# Batched pipeline keys (production `restaurants.py`). `KEY_ORDER_LIST` mirrors the
+# demo tree's schema (`list[{id, pose, picture_path, items, delivered_items}]`).
+KEY_ORDER_LIST = "order_list"
+KEY_BARMAN_TEXT = "barman_text"
+
+# Radius (meters) for waving-person detection. Raise for larger venues.
+DETECT_WAVING_THRESHOLD_M = 8.0

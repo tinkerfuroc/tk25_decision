@@ -10,8 +10,9 @@ import py_trees
 
 from behavior_tree.TemplateNodes.Audio import (
     BtNode_Announce,
-    BtNode_GetConfirmation,
-    BtNode_PhraseExtraction,
+    BtNode_GetConfirmationAction,
+    BtNode_ListenAction,
+    BtNode_PhraseExtractionAction,
 )
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle
@@ -19,13 +20,15 @@ from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_DoorDetection,
     BtNode_FeatureExtraction,
+    BtNode_FeatureMatching,
+    BtNode_MaintainEyeContact,
     BtNode_SeatRecommend,
     BtNode_TurnPanTilt,
+    BtNode_TurnTo,
 )
 from behavior_tree.Receptionist.customNodes import (
     BtNode_CombinePerson,
     BtNode_Confirm,
-    BtNode_HeadTrackingAction,
     BtNode_Introduce,
 )
 from .config import (
@@ -33,6 +36,7 @@ from .config import (
     ARM_POS_HANDOVER,
     ARM_POS_NAVIGATING,
     DRINKS,
+    FOLLOW_CONFIG,
     HOST_DRINK,
     HOST_NAME,
     KEY_ARM_DROP,
@@ -47,12 +51,14 @@ from .config import (
     KEY_GUEST2_FEATURES,
     KEY_GUEST2_NAME,
     KEY_PERSONS,
+    KEY_PERSON_CENTROIDS,
     KEY_SEAT_RECOMMENDATION,
     KEY_SOFA_POSE,
     NAMES,
     POSE_DOOR,
     POSE_SOFA,
 )
+from .follow import createFollowPerson
 
 
 class BtNode_MockArrivalTrigger(py_trees.behaviour.Behaviour):
@@ -169,33 +175,84 @@ def createArrivalTrigger():
 
 
 def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
-    """Prompt -> extract -> confirm loop for one spoken field."""
-    root = py_trees.composites.Sequence(name=f"Get {field_name}", memory=True)
-    loop = py_trees.composites.Sequence(name=f"Get+confirm {field_name}", memory=True)
-    loop.add_child(
+    """High-confidence-first capture with a last-resort confirmation fallback.
+
+    Primary branch: up to 2 attempts of prompt → action-based extract. The
+    action (`phrase_extraction_action`) only succeeds on server status=0,
+    which means Whisper + Qwen ASR cross-check agreed on the same wordlist
+    entry. The rulebook awards a 4×15 "no non-essential questions" bonus for
+    accepting on that signal without a confirmation prompt.
+
+    Fallback branch: if both primary attempts abort, re-prompt, capture
+    the raw transcription via `BtNode_ListenAction`, then `BtNode_Confirm`
+    speaks it back (`"Your <field> is <value>, correct?"`) and
+    `BtNode_GetConfirmationAction` waits for yes/no. Preserves partial
+    scoring in noisy environments at the cost of the no-confirmation
+    bonus for this field only.
+    """
+    primary_loop = py_trees.composites.Sequence(
+        name=f"Prompt+extract {field_name}",
+        memory=True,
+    )
+    primary_loop.add_child(
         BtNode_Announce(
             name=f"Prompt for {field_name}",
             bb_source=None,
             message=f"Please tell me your {field_name}.",
         )
     )
-    loop.add_child(
-        BtNode_PhraseExtraction(
-            name=f"Extract {field_name}",
-            bb_dest_key=storage_key,
+    primary_loop.add_child(
+        BtNode_PhraseExtractionAction(
+            name=f"High-conf extract {field_name}",
             wordlist=word_list,
+            bb_dest_key=storage_key,
             timeout=7.0,
         )
     )
-    loop.add_child(
+    primary = py_trees.decorators.Retry(
+        name=f"Retry high-conf {field_name}",
+        child=primary_loop,
+        num_failures=2,
+    )
+
+    fallback = py_trees.composites.Sequence(
+        name=f"Last-resort confirm {field_name}",
+        memory=True,
+    )
+    fallback.add_child(
+        BtNode_Announce(
+            name=f"Fallback prompt for {field_name}",
+            bb_source=None,
+            message=f"Let me try again. Please tell me your {field_name} clearly.",
+        )
+    )
+    fallback.add_child(
+        BtNode_ListenAction(
+            name=f"Fallback listen {field_name}",
+            bb_dest_key=storage_key,
+            timeout=7.0,
+        )
+    )
+    fallback.add_child(
         BtNode_Confirm(
             name=f"Confirm {field_name}",
             key_confirmed=storage_key,
             type=field_name,
         )
     )
-    loop.add_child(BtNode_GetConfirmation(name=f"Get {field_name} confirmation", timeout=5.0))
-    root.add_child(py_trees.decorators.Retry(name="Retry get+confirm", child=loop, num_failures=5))
+    fallback.add_child(
+        BtNode_GetConfirmationAction(
+            name=f"Get {field_name} confirmation",
+            timeout=5.0,
+        )
+    )
+
+    root = py_trees.composites.Selector(
+        name=f"Get {field_name}",
+        memory=True,
+    )
+    root.add_child(primary)
+    root.add_child(fallback)
     return root
 
 
@@ -243,16 +300,14 @@ def _with_gaze_supervisor(name: str, main_child: py_trees.behaviour.Behaviour):
     root.add_child(
         py_trees.decorators.FailureIsSuccess(
             name="Gaze follow fallback",
-            child=BtNode_HeadTrackingAction(name="Follow speaker gaze", actionName="follow_head_action"),
+            child=BtNode_MaintainEyeContact(name="Follow speaker gaze"),
         )
     )
-    root.add_child(
-        py_trees.decorators.FailureIsSuccess(
-            name="Nav direction gaze fallback",
-            child=BtNode_TurnPanTilt(name="Look to navigation direction", x=0.0, y=35.0, speed=0.0),
-        )
-    )
-    return root
+
+    root_ = py_trees.composites.Sequence("gaze follow with end correction", memory=True)
+    root_.add_child(root)
+    root_.add_child(name="Look to navigation direction", x=0.0, y=35.0, speed=0.0)
+    return root_
 
 
 def createEscortAndSeat(guest_idx: int):
@@ -294,9 +349,62 @@ def createEscortAndSeat(guest_idx: int):
     return _with_gaze_supervisor(f"Gaze-supervised escort guest {guest_idx}", escort)
 
 
+def _intro_with_target_gaze(
+    name: str,
+    intro_node: py_trees.behaviour.Behaviour,
+    target_id: int,
+):
+    """Pre-orient head at `target_id`'s seated centroid, then announce.
+
+    Physically turning the head before the intro makes the `target_id` guest
+    the closest face in the camera frustum, so the gaze supervisor's
+    `MaintainEyeContact` locks on the correct guest instead of whichever
+    happens to be geometrically closer to the base. Rulebook 5.1 scores
+    2×50 pts for "look to the correct guest while talking about the other".
+
+    Best-effort: if `KEY_PERSON_CENTROIDS` isn't populated (feature matching
+    failed), the `FailureIsSuccess` wrapper absorbs the error and the intro
+    proceeds with only the generic gaze supervisor.
+    """
+    seq = py_trees.composites.Sequence(name=name, memory=True)
+    seq.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name=f"Pre-orient at guest {target_id}",
+            child=BtNode_TurnTo(
+                name=f"Look at guest {target_id}",
+                bb_key_persons=KEY_PERSONS,
+                bb_key_points=KEY_PERSON_CENTROIDS,
+                target_id=target_id,
+            ),
+        )
+    )
+    seq.add_child(_with_gaze_supervisor(f"Gaze {name}", intro_node))
+    return seq
+
+
 def createTwoWayIntroduction():
-    """Introduce guest1<->guest2 with gaze-aware wrappers."""
+    """Introduce guest1<->guest2 with target-guided gaze per intro."""
     root = py_trees.composites.Sequence(name="Two-way introductions", memory=True)
+
+    # Locate both seated guests ahead of the intros so we can orient the head
+    # at the right one for each direction. trim_last_person=False because
+    # BOTH guests are seated by this point (unlike Receptionist's pattern).
+    root.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name="Scan seated guest centroids",
+            child=py_trees.decorators.Retry(
+                name="Retry feature matching seated guests",
+                child=BtNode_FeatureMatching(
+                    name="Match seated guest features",
+                    bb_dest_key=KEY_PERSON_CENTROIDS,
+                    bb_persons_key=KEY_PERSONS,
+                    trim_last_person=False,
+                ),
+                num_failures=3,
+            ),
+        )
+    )
+
     intro_1 = BtNode_Introduce(
         name="Introduce guest1 to guest2",
         key_person=KEY_PERSONS,
@@ -311,8 +419,9 @@ def createTwoWayIntroduction():
         introduced_id=1,
         describe_introduced=True,
     )
-    root.add_child(_with_gaze_supervisor("Gaze intro 1", intro_1))
-    root.add_child(_with_gaze_supervisor("Gaze intro 2", intro_2))
+
+    root.add_child(_intro_with_target_gaze("Intro 1", intro_1, target_id=1))
+    root.add_child(_intro_with_target_gaze("Intro 2", intro_2, target_id=0))
     return root
 
 
@@ -348,14 +457,7 @@ def createBagFlow():
             message="I'll follow you and carry the bag.",
         )
     )
-    # TODO: replace this with a dedicated follow-host behavior once available.
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="Proxy follow host by navigation",
-            child=BtNode_GotoAction(name="Move to drop area proxy", key=KEY_SOFA_POSE),
-            num_failures=3,
-        )
-    )
+    root.add_child(createFollowPerson(FOLLOW_CONFIG))
     root.add_child(
         py_trees.decorators.Retry(
             name="Retry arm to drop pose",

@@ -628,8 +628,18 @@ class BtNode_FeatureMatching(ServiceHandler):
                  service_name: str = "feature_matching_service",
                  use_orbbec: bool = True,
                  max_distance: float = 2.0,
-                 target_frame: str = "base_link"
+                 target_frame: str = "base_link",
+                 trim_last_person: bool = True,
                  ):
+        """
+        Args:
+            ...
+            trim_last_person: when True (default, matches Receptionist's
+                flow where the newest registered guest has not sat down yet),
+                drop the last feature vector before sending. Set to False
+                in HRI-style intros where **all** registered persons are
+                already seated and their centroids are needed.
+        """
         super().__init__(name, service_name, FeatureMatching)
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.key = bb_dest_key
@@ -650,34 +660,48 @@ class BtNode_FeatureMatching(ServiceHandler):
             self.camera = "realsense"
         self.max_distance = max_distance
         self.target_frame = target_frame
+        self.trim_last_person = trim_last_person
 
         self.node = None
-    
+
     def initialise(self):
         super().initialise()
 
         # Handle mock mode
         if self.mock_mode:
             print(f"🔍 MOCK: Feature matching from {self.camera}")
-            # Create mock centroid data
             from geometry_msgs.msg import PointStamped
-            mock_centroid = PointStamped()
-            mock_centroid.point.x = 1.5
-            mock_centroid.point.y = 0.0
-            mock_centroid.point.z = 1.3
-            mock_centroid.header.frame_id = self.target_frame
-            self.blackboard.centroids = [mock_centroid]
-            self.feedback_message = f"MOCK: Feature matching completed"
+            persons = self.blackboard.persons or []
+            n = len(persons)
+            if self.trim_last_person and n > 0:
+                n -= 1
+            n = max(n, 1)  # keep a single centroid even if persons is empty
+            centroids = []
+            for i in range(n):
+                mc = PointStamped()
+                mc.point.x = 1.5
+                mc.point.y = -0.5 + i * 1.0   # spread mock guests laterally
+                mc.point.z = 1.3
+                mc.header.frame_id = self.target_frame
+                centroids.append(mc)
+            self.blackboard.centroids = centroids
+            self.feedback_message = f"MOCK: Feature matching → {n} centroid(s)"
             return
-            
+
         request = FeatureMatching.Request()
         request.camera = self.camera
         request.features = [person.features for person in self.blackboard.persons]
-        request.features = request.features[:-1] # remove last person as that is the new guest who is not seated yet
+        if self.trim_last_person:
+            # Receptionist flow: the newest registered guest has not sat down yet
+            # and won't match anything at the sofa scan, so drop them.
+            request.features = request.features[:-1]
         request.max_distance = self.max_distance
         request.target_frame = self.target_frame
         self.response = self.call_service_async(request)
-        self.feedback_message = f"Initializec feature matching"
+        self.feedback_message = (
+            f"Initialized feature matching (|features|={len(request.features)}, "
+            f"trim_last={self.trim_last_person})"
+        )
 
     def update(self) -> Status:
         # Handle mock mode
