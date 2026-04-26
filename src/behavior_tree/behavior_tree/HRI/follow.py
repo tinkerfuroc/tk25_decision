@@ -42,6 +42,7 @@ import action_msgs.msg as action_msgs  # GoalStatus
 from behavior_tree.messages import Follow, TrackPerson
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
 
 
 # Blackboard keys — root-scoped per .claude/rules/behavior-tree.md.
@@ -588,6 +589,8 @@ def createFollowPerson(cfg: dict) -> py_trees.behaviour.Behaviour:
     All thresholds / action names / audio strings come from *cfg* (see
     ``HRI/config.py:FOLLOW_CONFIG`` for the canonical dictionary).
     """
+
+    turn_head_up = BtNode_TurnPanTilt("turn head up", x=0.0, y=45.0)
     # --- vision branch: keep TrackPerson alive through the whole session ---
     vision_branch = py_trees.decorators.Repeat(
         name="TrackPerson keep-alive",
@@ -700,10 +703,19 @@ def createFollowPerson(cfg: dict) -> py_trees.behaviour.Behaviour:
         ],
     )
 
-    return py_trees.decorators.Retry(
+    follow_person = py_trees.decorators.Retry(
         name="FollowPerson restart (reanchor ReID)",
         child=outer_parallel,
         num_failures=int(cfg.get("n_restart", 2)),
+    )
+
+    return py_trees.composites.Sequence(
+        name="FollowPerson with head turn",
+        children=[
+            turn_head_up,
+            follow_person,
+        ],
+        memory=True
     )
 
 
