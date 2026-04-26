@@ -9,12 +9,12 @@
     }
   },
   "mock_mode": {
-    "enabled": true,
-    "auto_detect": true,
+    "enabled": false,
+    "auto_detect": false,
     "subsystems": {
       "vision": {
-        "enabled": true,
-        "announce_movement": true,
+        "enabled": false,
+        "announce_movement": false,
         "description": "Per-node mock mode for vision nodes. Allowed values: NO_MOCK, KEYPRESS, TELEOP, IMMEDIATE",
         "nodes": {
           "BtNode_ScanFor": "KEYPRESS",
@@ -27,6 +27,7 @@
           "BtNode_GetPointCloud": "KEYPRESS",
           "BtNode_DoorDetection": "KEYPRESS",
           "BtNode_TurnPanTilt": "KEYPRESS",
+          "BtNode_TurnTo": "KEYPRESS",
           "BtNode_ScanForWavingPerson": "KEYPRESS",
           "BtNode_MaintainEyeContact": "KEYPRESS",
           "BtNode_ShowImage": "KEYPRESS"
@@ -34,7 +35,7 @@
       },
       "manipulation": {
         "enabled": true,
-        "announce_movement": true,
+        "announce_movement": false,
         "description": "Per-node mock mode for manipulation nodes. Set TELEOP for interactive arm control.",
         "nodes": {
           "BtNode_Grasp": "TELEOP",
@@ -48,19 +49,19 @@
       },
       "navigation": {
         "enabled": true,
-        "announce_movement": true,
+        "announce_movement": false,
         "description": "Per-node mock mode for navigation nodes",
         "nodes": {
           "BtNode_GoTo": "KEYPRESS",
-          "BtNode_FollowPerson": "KEYPRESS",
           "BtNode_ConvertGraspPose": "KEYPRESS",
           "BtNode_GoToLuggage": "KEYPRESS",
-          "BtNode_GotoAction": "KEYPRESS"
+          "BtNode_GotoAction": "KEYPRESS",
+          "BtNode_FollowAction": "KEYPRESS"
         }
       },
       "audio_input": {
         "enabled": true,
-        "announce_movement": true,
+        "announce_movement": false,
         "description": "Per-node mock mode for audio input nodes (not announcement)",
         "nodes": {
           "BtNode_WaitForStart": "KEYPRESS",
@@ -71,16 +72,19 @@
           "BtNode_Listen": "KEYPRESS",
           "BtNode_CompareInterest": "KEYPRESS",
           "BtNode_GetConfirmationAction": "KEYPRESS",
-          "BtNode_ListenAction": "KEYPRESS"
+          "BtNode_ListenAction": "KEYPRESS",
+          "BtNode_PhraseExtractionAction": "KEYPRESS"
         }
       },
       "announcement": {
-        "enabled": true,
-        "announce_movement": true,
+        "enabled": false,
+        "announce_movement": false,
         "description": "Per-node mock mode for TTS nodes",
         "nodes": {
           "BtNode_Announce": "KEYPRESS",
-          "BtNode_TTSCN": "KEYPRESS"
+          "BtNode_TTSCN": "KEYPRESS",
+          "BtNode_Introduce": "KEYPRESS",
+          "BtNode_Confirm": "KEYPRESS"
         }
       },
       "mock_controls": {
@@ -94,7 +98,7 @@
     }
   },
   "keyboard_control": {
-    "enabled": true,
+    "enabled": false,
     "description": "When false, KEYPRESS mode degrades to IMMEDIATE"
   },
   "mock_keyboard": {

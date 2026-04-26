@@ -272,7 +272,7 @@ The package includes a sophisticated mock mode system:
       "navigation": {
         "enabled": true,
         "announce_movement": false,
-        "nodes": ["BtNode_GotoAction", "BtNode_FollowPerson", ...]
+        "nodes": ["BtNode_GotoAction", "BtNode_FollowAction", ...]
       },
       "audio_input": {
         "enabled": true,

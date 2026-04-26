@@ -13,6 +13,8 @@ setup(
     ],
     package_data={
         'behavior_tree': ['mock_config.json'],
+        'behavior_tree.Receptionist': ['constants.json'],
+        'behavior_tree.HRI': ['constants.json'],
     },
     install_requires=['setuptools'],
     zip_safe=True,
@@ -44,6 +46,9 @@ setup(
             'test-prompt-reached = behavior_tree.HelpMeCarry.cli:test_prompt_reached',
             'inspection = behavior_tree.Inspection.cli:main',
             'hri = behavior_tree.HRI.cli:main',
+            'hri-follow = behavior_tree.HRI.follow:main',
+            'hri-intake = behavior_tree.HRI.intake:main',
+            'hri-intro = behavior_tree.HRI.intro:main',
             'pick-and-place = behavior_tree.PickAndPlace.cli:main',
             'GPSR = behavior_tree.GPSR.gpsr_new:main',
             'EGPSR = behavior_tree.GPSR.egpsr:main',

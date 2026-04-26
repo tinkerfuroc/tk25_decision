@@ -28,13 +28,27 @@ else:
 
 if _config.has_dependency('tinker_audio_msgs'):
     from tinker_audio_msgs.srv import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
+    from tinker_audio_msgs.action import GetConfirmation as GetConfirmationAction
+    from tinker_audio_msgs.action import Listen as ListenAction
+    from tinker_audio_msgs.action import PhraseExtraction as PhraseExtractionAction
 else:
     from behavior_tree.mock_messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
+    from behavior_tree.mock_messages import GetConfirmation as GetConfirmationAction
+    from behavior_tree.mock_messages import Listen as ListenAction
+    from behavior_tree.mock_messages import PhraseExtractionAction
 
 if _config.has_dependency('tinker_nav_msgs'):
     from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp
 else:
     from behavior_tree.mock_messages import SetLuggagePose, ComputeGrasp
+
+# `Follow` lives only in tk26_ws's tinker_nav_msgs; the tk25_ws package of the
+# same name ships srv-only. Import defensively so BT builds even when only
+# tk25 is sourced — the mock stub still exercises the tree shape.
+try:
+    from tinker_nav_msgs.action import Follow
+except (ImportError, ModuleNotFoundError):
+    from behavior_tree.mock_messages import Follow
 
 if _config.has_dependency('nav2_msgs'):
     from nav2_msgs.action import NavigateToPose

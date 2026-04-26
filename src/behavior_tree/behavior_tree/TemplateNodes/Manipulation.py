@@ -227,20 +227,14 @@ class BtNode_Grasp(ActionHandler):
 
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            
-            self.feedback_message = f"Grasp feedback received with status: {self.result_status}"
-            self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
+            result = self.result_message.result
+            self.feedback_message = f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}"
+            self.logger.debug(f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}")
             return pytree.common.Status.FAILURE
         else:
-            result = self.result_message.result
-            if result.success:
-                self.feedback_message = f"Grasp feedback received with success: {result.success}"
-                self.logger.debug(f"Grasp feedback received with success")
-                return pytree.common.Status.SUCCESS
-            else: 
-                self.feedback_message = f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}"
-                self.logger.debug(f"Grasp feedback received with stage: {result.stage} and error message {result.error_msg}")
-                return pytree.common.Status.FAILURE
+            self.feedback_message = "Grasp succeeded"
+            self.logger.debug("Grasp succeeded")
+            return pytree.common.Status.SUCCESS
 
     def feedback_callback(self, msg: Any):
         return super().feedback_callback(msg)
@@ -386,7 +380,7 @@ class BtNode_Place(ActionHandler):
         try:
             goal = Place.Goal()
             goal.target_point = self.blackboard.target_point
-            goal.grasp_pose = self.blackboard.grasp_pose
+            goal.orientation = self.blackboard.grasp_pose
             goal.env_points = self.blackboard.env_points
             self.send_goal_request(goal)
             self.feedback_message = f"Sent place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}"
@@ -395,22 +389,17 @@ class BtNode_Place(ActionHandler):
             self.feedback_message = f"Failed to send place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}; error: {e}"
             self.logger.error(f"Failed to send place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}; error: {e}")
             return pytree.common.Status.FAILURE
-    
+
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            self.feedback_message = f"Place feedback received with status: {self.result_status}"
-            self.logger.debug(f"Place feedback received with status: {self.result_status}")
+            result = self.result_message.result
+            self.feedback_message = f"Place failed with status: {self.result_status}, error: {result.error_msg}"
+            self.logger.debug(f"Place failed with status: {self.result_status}, error: {result.error_msg}")
             return pytree.common.Status.FAILURE
         else:
-            result = self.result_message.result
-            if result.success:
-                self.feedback_message = f"Place feedback received with success: {result.success}"
-                self.logger.debug(f"Place feedback received with success")
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Place feedback received with success: {result.success} and error message {result.error_msg}"
-                self.logger.debug(f"Place feedback received with success: {result.success} and error message {result.error_msg}")
-                return pytree.common.Status.FAILURE
+            self.feedback_message = "Place succeeded"
+            self.logger.debug("Place succeeded")
+            return pytree.common.Status.SUCCESS
 
     def feedback_callback(self, msg: Any):
         feedback = msg.feedback
