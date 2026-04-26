@@ -303,13 +303,11 @@ def _with_gaze_supervisor(name: str, main_child: py_trees.behaviour.Behaviour):
             child=BtNode_MaintainEyeContact(name="Follow speaker gaze"),
         )
     )
-    root.add_child(
-        py_trees.decorators.FailureIsSuccess(
-            name="Nav direction gaze fallback",
-            child=BtNode_TurnPanTilt(name="Look to navigation direction", x=0.0, y=35.0, speed=0.0),
-        )
-    )
-    return root
+
+    root_ = py_trees.composites.Sequence("gaze follow with end correction", memory=True)
+    root_.add_child(root)
+    root_.add_child(name="Look to navigation direction", x=0.0, y=35.0, speed=0.0)
+    return root_
 
 
 def createEscortAndSeat(guest_idx: int):
