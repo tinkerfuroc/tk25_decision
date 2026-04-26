@@ -127,7 +127,7 @@ Core (always required):
 - `rclpy` - ROS2 Python client
 
 Tinker packages (optional - auto-mocked if missing):
-- `tinker_vision_msgs` - Vision services/actions
+- `tinker_vision_msgs_26` - Vision services/actions (canonical; tk23's `tinker_vision_msgs` is retired)
 - `tinker_arm_msgs` - Arm control services/actions
 - `tinker_audio_msgs` - Speech recognition/announcement services
 - `tinker_nav_msgs` - Navigation services
@@ -148,3 +148,36 @@ ros2 run behavior_tree test-mock-mode
 ## Constants Files
 
 Tasks like Receptionist require `constants.json` with pose data and task-specific parameters. The file path is hardcoded in each task file (e.g., `receptionist.py` line 34). Ensure this file exists on the target system.
+
+## Known issues & broken nodes
+
+Surfaced during the 2026-04-22 tk26_vision follow-up work. These are *pre-existing* behavior gaps — they have existed since the tk23→tk26 detection migration — that the srv-type migration in that session made visible but did not cause.
+
+### Nodes broken against current tk26 detection services
+
+| Node | Defined | Broken because | Live use? | Fix |
+|---|---|---|---|---|
+| `BtNode_TrackPerson` | `TemplateNodes/Vision.py:194` | Depends on `flags="register_person"` + `result.person_id` for persistent-ID tracking. tk26 detection nodes silently ignore the flag and always return `person_id=0`. | Only via dev/test entry points: `follow`, `test-track`, `follow-action`, `draw_follow` (through `HelpMeCarry/Track.py:createFollowPerson`). **Not used by the production `help-me-carry` task**, which uses `BtNode_TrackPersonAction` against `/track_person` (`vision_track/person_track_server`, action-based, real ReID). | Swap `HelpMeCarry/Track.py:15` to `BtNode_TrackPersonAction` against `/track_person`. Match the action-based pattern the production HelpMeCarry tree already uses. |
+| `BtNode_ScanForWavingPerson` | `GPSR/custom_nodes.py:544` | Filters response for `obj.being_pointed == 3`; tk26 detection nodes never populate `being_pointed` (always 0). | **Live in `GPSR` task** (`gpsr_new.py:146`, unconditional). EGPSR already gates behind `USE_NEW_SCAN_WAVING=True` and uses the sibling `BtNode_ScanForWavingPersonNew`. | In `gpsr_new.py:146`, replace with `BtNode_ScanForWavingPersonNew` (defined `custom_nodes.py:618`). It calls `/detect_waving_persons` (`DetectWaving` srv, served by `tk_vision_specialized/waving_person_server.py`) and propagates the waving-person centroid correctly. EGPSR is a working reference. |
+| `BtNode_FindPointedLuggage` | `HelpMeCarry/customNodes.py:16` | Branches on `obj.being_pointed == 1 or == 2` to classify left/right. Same issue — tk26 doesn't populate the field. | Live in the HelpMeCarry task (via `help_me_carry.py`). | Needs a dedicated gesture service (e.g. extend `DetectWaving`-style pattern) or a VLM prompt that encodes the left/right semantics in the text response rather than a numeric field. Not trivial; flag for re-scope. |
+
+### Legacy `ObjectDetection.Request.flags` strings that are no-ops in tk26
+
+The tk26 detection nodes (`object_seg_yolo.py:1080`+) parse only `sort_closest` / `sort_highest` / `sort_none` substrings from `request.flags`. Every other legacy string is accepted without error and silently ignored:
+
+- `"scan"` (was `BtNode_ScanFor`, pre-migration)
+- `"register_person"` (was `BtNode_TrackPerson`)
+- `"find_for_grasp"` (was `BtNode_FindObj`, `BtNode_FindObjTable`, `anygrasp_test.py`)
+- `"find_waving_person"` (was `BtNode_ScanForWavingPerson`)
+- `"detect_gesture"` (was `BtNode_DetectCallingCustomer`)
+- `"find_pointed_object"` (was `BtNode_FindPointedLuggage`)
+- `"request_image"` / `"request_segments"` / `"request_segmentation"` — these now always return populated (tk26 doesn't gate on them).
+
+Dropping these strings on migration is behavior-preserving, not a semantic change.
+
+### Other gotchas
+
+- **`BtNode_TrackPerson` import in `GPSR/gpsr.py:15`** — present but the one instantiation at line 88 is commented out. And `gpsr.py` is **not** the `GPSR` entry point (`gpsr_new.py` is, per `setup.py:48`). Cleaning up this import is harmless.
+- **`messages.py:43` `TTSCnRequest` import failure** — on this workstation (2026-04-22), `from tinker_audio_msgs.srv import TTSCnRequest, ...` raises `ImportError: cannot import name 'TTSCnRequest'`. `tinker_audio_msgs` is installed but doesn't export that symbol; the `has_dependency('tinker_audio_msgs')` check returns True, so the mock fallback doesn't trigger. Importing `behavior_tree.messages` fails system-wide on this host. Either rebuild `tinker_audio_msgs` from a newer source or downgrade the import to a symbol-by-symbol try/except. Not caused by the tk26_vision follow-up — surfaced when the follow-up tried to verify BT imports.
+- **Two distinct `BtNode_TrackPersonAction` definitions.** `TemplateNodes/TrackPersonAction.py:123` and `HelpMeCarry/Follow.py:115` both define a class with this name. `HelpMeCarry/help_me_carry.py:17` imports from `.Follow`; `HelpMeCarry/test/test_follow.py:26` imports from elsewhere. Confusing but not broken today; worth consolidating eventually.
+

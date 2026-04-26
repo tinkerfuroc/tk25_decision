@@ -54,15 +54,11 @@ import os
 import py_trees as pytree
 import time
 import math
-from typing import Any, Optional
-
-import action_msgs.msg as action_msgs
 
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, DetectWaving, FollowHeadAction
-from std_msgs.msg import Header
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
 from py_trees.common import Status
@@ -209,18 +205,21 @@ class BtNode_TrackPerson(ServiceHandler):
     throughout a behavior tree execution.
     """
 
-    def __init__(self, 
+    def __init__(self,
                  name: str,
                  bb_namespace: str,
                  bb_key:str,
-                 service_name : str = "object_detection",
+                 service_name : str = "object_detection_generalist",
                  use_orbbec = True,
                  transform_to_map = True,
                  ):
         """
         executed when creating tree diagram, therefor very minimal
         """
-        super(BtNode_TrackPerson, self).__init__(name, service_name, ObjectDetection)
+        # NOTE: tk26 generalist does not implement person-ID registration
+        # (returns person_id=0). Downstream by-id matching below is a legacy
+        # tk23 codepath — see Wave 2.1 follow-up note.
+        super(BtNode_TrackPerson, self).__init__(name, service_name, ObjectDetectionGeneralist)
         self.bb_namespace = bb_namespace
         self.bb_key = bb_key
         self.use_orbbec = use_orbbec
@@ -245,7 +244,7 @@ class BtNode_TrackPerson(ServiceHandler):
         if self.mock_mode:
             return
             
-        request = ObjectDetection.Request()
+        request = ObjectDetectionGeneralist.Request()
         request.prompt = "person"
         if self.use_orbbec:
             request.camera = "orbbec"
@@ -254,9 +253,9 @@ class BtNode_TrackPerson(ServiceHandler):
         if self.transform_to_map:
             request.target_frame = "map"
 
-        if self.person_id is None:
-            request.flags = "register_person"
-        
+        # tk23's flags="register_person" had no effect on tk26 detection nodes
+        # (no-op flag string); dropped on migration to the generalist srv.
+
         self.response = self.call_service_async(request)
 
     def initialise(self) -> None:
@@ -354,12 +353,12 @@ class BtNode_FindObj(ServiceHandler):
     robot arm before returning success.
     """
 
-    def __init__(self, 
+    def __init__(self,
                  name: str,
                  bb_source,
                  bb_namespace: str,
                  bb_key:str,
-                 service_name:str = "object_detection",
+                 service_name:str = "object_detection_yolo",
                  object:str = None,
                  target_object_cls:str = None
                  ):
