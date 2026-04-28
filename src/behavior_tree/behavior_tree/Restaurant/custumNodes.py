@@ -4,7 +4,8 @@ from typing import List, Dict, Any, Optional
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.messages import ObjectDetectionGeneralist, TextToSpeech, Listen, PhraseExtraction, PanTiltCtrl
+import math
+from behavior_tree.messages import ObjectDetectionGeneralist, TextToSpeech, Listen, PhraseExtraction, PanTiltCommand
 from geometry_msgs.msg import PointStamped, PoseStamped
 from std_msgs.msg import String
 
@@ -242,13 +243,15 @@ class BtNode_ScanForCallingCustomer(ServiceHandler):
     
     def setup(self, **kwargs):
         super().setup(**kwargs)
-        self.pan_tilt_publisher = self.node.create_publisher(PanTiltCtrl, '/pan_tilt_ctrl', 10)
-    
+        self.pan_tilt_publisher = self.node.create_publisher(PanTiltCommand, '/pan_tilt_controller/cmd', 10)
+
     def move_camera_to_position(self, x_angle, y_angle):
-        msg = PanTiltCtrl()
-        msg.x = float(x_angle)
-        msg.y = float(y_angle)
-        msg.speed = 30.0
+        msg = PanTiltCommand()
+        msg.mode = PanTiltCommand.ABSOLUTE
+        msg.pan_rad = math.radians(float(x_angle))
+        msg.tilt_rad = math.radians(float(y_angle))
+        msg.speed_raw = 0
+        msg.accel_raw = 0
         self.pan_tilt_publisher.publish(msg)
     
     def initialise(self):

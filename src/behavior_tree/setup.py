@@ -45,6 +45,7 @@ setup(
             'inspection = behavior_tree.Inspection.cli:main',
             'hri = behavior_tree.HRI.cli:main',
             'pick-and-place = behavior_tree.PickAndPlace.cli:main',
+            'doing-laundry = behavior_tree.DoingLaundry.cli:main',
             'GPSR = behavior_tree.GPSR.gpsr_new:main',
             'EGPSR = behavior_tree.GPSR.egpsr:main',
             'restaurant = behavior_tree.Restaurant.cli:main',
@@ -53,6 +54,7 @@ setup(
             # Mock mode test scripts
             'test-mock-mode = behavior_tree.test_mock_mode:main',
             'test-mockable-wrapper = scripts.test_mockable_wrapper:main',
+            'verify-task-endpoints = scripts.verify_task_endpoints:main',
             # HelpMeCarry test scripts
             'hmc-mock-nav = behavior_tree.HelpMeCarry.test.mock_nav_server:main',
             'hmc-mock-track = behavior_tree.HelpMeCarry.test.mock_track_server:main',

@@ -8,7 +8,7 @@ from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle, BtNod
 from behavior_tree.StoringGroceries.customNodes import BtNode_FindObjTable, BtNode_GraspWithPose
 
 from .node_test import DecideNextAction, CheckAndWriteAction, WriteActionSuccessful
-from .custom_nodes import BtNode_ScanForWavingPerson #BtNode_QA, 
+from .custom_nodes import BtNode_ScanForWavingPersonNew #BtNode_QA,
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import py_trees_ros
@@ -73,6 +73,9 @@ KEY_POSE_COMMAND = "pose_command"
 
 KEY_QA_ANSWER = "qa_answer"
 KEY_POSE_WAVING_PERSON = "waving_person"
+KEY_ALL_WAVING_PERSONS = "all_waving_persons"
+
+WAVING_PERSON_THRESHOLD_METERS = 6.0
 
 arm_service_name = "arm_joint_service"
 grasp_service_name = "start_grasp"
@@ -143,7 +146,17 @@ def createGoto():
 
 def createGotoWaving():
     root = py_trees.composites.Sequence("root of goto_waving", True)
-    root.add_child(BtNode_ScanForWavingPerson("find waving person", KEY_POSE_WAVING_PERSON, use_orbbec=True, target_frame="base_link"))
+    root.add_child(py_trees.decorators.Retry(
+        "retry",
+        BtNode_ScanForWavingPersonNew(
+            "find waving persons",
+            KEY_ALL_WAVING_PERSONS,
+            KEY_POSE_WAVING_PERSON,
+            WAVING_PERSON_THRESHOLD_METERS,
+            target_frame="map",
+        ),
+        5,
+    ))
     root.add_child(BtNode_Announce("announce found waving person", None, message="Found waving person. Dear person, could you move a little so I can reach you?"))
     root.add_child(py_trees.decorators.Retry("retry", BtNode_GotoAction("goto instruction point", KEY_POSE_WAVING_PERSON), 5))
     return root
