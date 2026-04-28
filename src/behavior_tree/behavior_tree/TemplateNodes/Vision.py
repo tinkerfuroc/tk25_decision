@@ -61,7 +61,10 @@ from typing import Any, Optional
 from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, SeatRecommendBbox, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, FollowHeadAction
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
+from std_msgs.msg import Header
 from py_trees.common import Status
+
+from typing import Optional, Any
 
 from .BaseBehaviors import ServiceHandler
 from .ActionBase import ActionHandler
