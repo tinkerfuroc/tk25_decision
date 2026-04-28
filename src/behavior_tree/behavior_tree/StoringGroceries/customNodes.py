@@ -5,6 +5,7 @@ from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.messages import ObjectDetection, Categorize
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
+from geometry_msgs.msg import Pose
 
 import action_msgs.msg as action_msgs
 
@@ -206,30 +207,18 @@ class BtNode_GraspWithPose(BtNode_Grasp):
     
     def process_result(self):
         try:
-            if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED and False:
-                self.feedback_message = f"Grasp feedback received with status: {self.result_status}"
-                self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
-                self.logger.debug(textwrap.dedent("""       
-            'STATUS_UNKNOWN': 0,
-            'STATUS_ACCEPTED': 1,
-            'STATUS_EXECUTING': 2,
-            'STATUS_CANCELING': 3,
-            'STATUS_SUCCEEDED': 4,
-            'STATUS_CANCELED': 5,
-            'STATUS_ABORTED': 6,"""))
+            if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+                result = self.result_message.result
+                self.feedback_message = f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}"
+                self.logger.debug(f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}")
                 return py_trees.common.Status.FAILURE
             else:
-                self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
-                result = self.result_message.result
-                if result.success:
-                    self.blackboard.pose = result.grasp_pose
-                    self.feedback_message = f"Grasp completed received with success: {result.success}"
-                    self.logger.debug(f"Grasp completed received with success")
-                    return py_trees.common.Status.SUCCESS
-                else: 
-                    self.feedback_message = f"Grasp completed received with stage: {result.stage} and error message {result.error_msg}"
-                    self.logger.debug(f"Grasp completed received with stage: {result.stage} and error message {result.error_msg}")
-                    return py_trees.common.Status.FAILURE
+                # Grasp.Result 不再返回 grasp_pose；下游 Place 的 orientation 留空即可，
+                # pick_and_place server 会回退到它在 Pick 里缓存的 last_grasp_orientation_
+                self.blackboard.pose = Pose()
+                self.feedback_message = "Grasp succeeded"
+                self.logger.debug("Grasp succeeded")
+                return py_trees.common.Status.SUCCESS
         except Exception as e:
             self.feedback_message = f"Failed to process grasp result: {e}"
             self.logger.debug(f"Failed to process grasp result: {e}")
