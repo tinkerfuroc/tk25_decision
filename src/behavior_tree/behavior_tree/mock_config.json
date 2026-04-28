@@ -23,13 +23,17 @@
           "BtNode_FindObj": "KEYPRESS",
           "BtNode_FeatureExtraction": "KEYPRESS",
           "BtNode_SeatRecommend": "KEYPRESS",
+          "BtNode_SeatRecommendBbox": "KEYPRESS",
           "BtNode_FeatureMatching": "KEYPRESS",
           "BtNode_GetPointCloud": "KEYPRESS",
           "BtNode_DoorDetection": "KEYPRESS",
           "BtNode_TurnPanTilt": "KEYPRESS",
           "BtNode_ScanForWavingPerson": "KEYPRESS",
           "BtNode_MaintainEyeContact": "KEYPRESS",
-          "BtNode_ShowImage": "KEYPRESS"
+          "BtNode_ShowImage": "KEYPRESS",
+          "BtNode_FindObjTable": "KEYPRESS",
+          "BtNode_CategorizeGrocery": "KEYPRESS",
+          "BtNode_FoldClothing": "KEYPRESS"
         }
       },
       "manipulation": {
@@ -38,6 +42,7 @@
         "description": "Per-node mock mode for manipulation nodes. Set TELEOP for interactive arm control.",
         "nodes": {
           "BtNode_Grasp": "TELEOP",
+          "BtNode_GraspWithPose": "TELEOP",
           "BtNode_Place": "TELEOP",
           "BtNode_Drop": "TELEOP",
           "BtNode_MoveArmJoint": "TELEOP",

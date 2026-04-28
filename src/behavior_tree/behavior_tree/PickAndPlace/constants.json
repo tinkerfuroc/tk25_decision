@@ -1,0 +1,63 @@
+{
+  "_comment_doc": "PickAndPlace Setup-Days overrides. All keys mirror config._default_constants(); any omitted key falls back to that default. Update poses + designated_trash_labels after Setup Days announcement.",
+
+  "pose_kitchen_entry": {
+    "point": {"x": 0.5, "y": 0.0, "z": 0.0},
+    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+  },
+  "pose_table": {
+    "point": {"x": 1.2, "y": 0.4, "z": 0.0},
+    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+  },
+  "pose_wash_staging": {
+    "_comment": "Safe surface near the dishwasher. NOT inside the rack. Hardware can't accurate-place — see RULEBOOK_PLAN.md.",
+    "point": {"x": 1.4, "y": -0.6, "z": 0.0},
+    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+  },
+  "pose_trash_bin": {
+    "point": {"x": -0.6, "y": 0.8, "z": 0.0},
+    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+  },
+  "pose_cabinet": {
+    "point": {"x": 1.4658832550048828, "y": -1.2834669351577759, "z": 0.0},
+    "orientation": {"x": 0.0, "y": 0.0, "z": -0.4766690590, "w": 0.8790828221}
+  },
+  "pose_kitchen_shelf": {
+    "_comment": "Designated bowl/spoon retrieval surface in the kitchen.",
+    "point": {"x": 0.9, "y": -1.0, "z": 0.0},
+    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+  },
+
+  "point_wash_staging":     {"x": 1.4,  "y": -0.6, "z": 0.75},
+  "point_trash_bin":        {"x": -0.6, "y":  0.8, "z": 0.75},
+  "point_cabinet_default":  {"x": 1.5,  "y": -1.3, "z": 0.85},
+  "point_kitchen_surface":  {"x": 0.9,  "y": -1.0, "z": 0.75},
+
+  "point_breakfast_bowl":   {"x": 1.20, "y": 0.50, "z": 0.75},
+  "point_breakfast_spoon":  {"x": 1.20, "y": 0.62, "z": 0.75},
+  "point_breakfast_cereal": {"x": 1.35, "y": 0.50, "z": 0.75},
+  "point_breakfast_milk":   {"x": 1.35, "y": 0.62, "z": 0.75},
+
+  "point_shelf_left":  {"x": 1.30, "y": -1.40, "z": 0.0},
+  "point_shelf_right": {"x": 1.60, "y": -1.20, "z": 0.0},
+
+  "arm_pos_navigating": [-87.0, -58.8, -2.4, 8.0, 12.3, -68.5, -8.2],
+  "arm_pos_scan":       [0.0, -45.0, 0.0, 30.0, 0.0, -75.0, 0.0],
+  "arm_pos_placing":    [0.0, -30.0, 0.0, 60.0, 0.0, -90.0, 0.0],
+  "arm_pos_drop":       [0.0, -20.0, 0.0, 70.0, 0.0, -90.0, 0.0],
+
+  "designated_trash_labels": ["paper cup"],
+  "cutlery_labels":          ["fork", "knife", "spoon"],
+  "tableware_labels":        ["plate", "mug", "cup", "bowl"],
+
+  "table_scan_prompt": "fork . knife . spoon . plate . mug . cup . bowl . paper cup . napkin . bottle . can . wrapper . snack bag . pringles . chocolate . ketchup . oats . tuna",
+
+  "n_layers": 2,
+  "max_runtime_sec": 390.0,
+  "nav_retry_limit": 3,
+  "scan_retry_limit": 2,
+  "grasp_retry_limit": 2,
+
+  "do_floor_optional": false,
+  "do_dishwasher_place": false
+}
