@@ -129,6 +129,34 @@ class SeatRecommendation(MockService):
     pass
 
 
+class SeatRecommendBbox(MockService):
+    """Mock SeatRecommendBbox service (recommendation + bbox + 3D centroid)."""
+    class Request(MockService.Request):
+        def __init__(self):
+            super().__init__()
+            self.camera = ""
+            self.names = []
+            self.features = []
+            self.target_frame = ""
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.recommendation = ""
+            self.bbox = BoundingBox()
+            self.centroid = None
+
+
+class BoundingBox(MockMessage):
+    """Mock BoundingBox message — xmin/ymin/xmax/ymax pixel ints."""
+    def __init__(self, xmin: int = 0, ymin: int = 0, xmax: int = 0, ymax: int = 0):
+        super().__init__()
+        self.xmin = xmin
+        self.ymin = ymin
+        self.xmax = xmax
+        self.ymax = ymax
+
+
 class FeatureMatching(MockService):
     """Mock FeatureMatching service."""
     class Request(MockService.Request):
@@ -347,6 +375,19 @@ class PanTiltCtrl(MockMessage):
         self.speed = 0.0
 
 
+class PanTiltCommand(MockMessage):
+    """Mock PanTiltCommand message."""
+    ABSOLUTE = 0
+    RELATIVE = 1
+    def __init__(self):
+        super().__init__()
+        self.mode = 0
+        self.pan_rad = 0.0
+        self.tilt_rad = 0.0
+        self.speed_raw = 0
+        self.accel_raw = 0
+
+
 # Mock Vision Actions
 class Categorize(MockAction):
     """Mock Categorize action."""
@@ -360,6 +401,16 @@ class FollowHeadAction(MockAction):
 
 class HumanFollowing(MockAction):
     """Mock HumanFollowing action."""
+    pass
+
+
+class GetConfirmationAction(MockAction):
+    """Mock GetConfirmation action from tinker_audio_msgs."""
+    pass
+
+
+class ListenAction(MockAction):
+    """Mock Listen action from tinker_audio_msgs."""
     pass
 
 

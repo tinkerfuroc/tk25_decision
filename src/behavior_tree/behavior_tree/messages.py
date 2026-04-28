@@ -10,13 +10,13 @@ _config = get_config()
 # Import based on availability
 if _config.has_dependency('tinker_vision_msgs_26'):
     from tinker_vision_msgs_26.srv import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
-    from tinker_vision_msgs_26.srv import ObjectDetectionGeneralist
-    from tinker_vision_msgs_26.msg import Object, PanTiltCtrl
+    from tinker_vision_msgs_26.srv import ObjectDetectionGeneralist, SeatRecommendBbox
+    from tinker_vision_msgs_26.msg import Object, PanTiltCtrl, PanTiltCommand, BoundingBox
     from tinker_vision_msgs_26.action import Categorize, FollowHeadAction, HumanFollowing, TrackPerson
 else:
     from behavior_tree.mock_messages import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
-    from behavior_tree.mock_messages import ObjectDetectionGeneralist
-    from behavior_tree.mock_messages import Object, PanTiltCtrl
+    from behavior_tree.mock_messages import ObjectDetectionGeneralist, SeatRecommendBbox
+    from behavior_tree.mock_messages import Object, PanTiltCtrl, PanTiltCommand, BoundingBox
     from behavior_tree.mock_messages import Categorize, FollowHeadAction, HumanFollowing, TrackPerson
 
 if _config.has_dependency('tinker_arm_msgs'):
@@ -28,13 +28,11 @@ else:
 
 if _config.has_dependency('tinker_audio_msgs'):
     from tinker_audio_msgs.srv import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
-    from tinker_audio_msgs.action import GetConfirmation as GetConfirmationAction
-    from tinker_audio_msgs.action import Listen as ListenAction
+    from tinker_audio_msgs.action import GetConfirmation as GetConfirmationAction, Listen as ListenAction
     from tinker_audio_msgs.action import PhraseExtraction as PhraseExtractionAction
 else:
     from behavior_tree.mock_messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
-    from behavior_tree.mock_messages import GetConfirmation as GetConfirmationAction
-    from behavior_tree.mock_messages import Listen as ListenAction
+    from behavior_tree.mock_messages import GetConfirmationAction, ListenAction
     from behavior_tree.mock_messages import PhraseExtractionAction
 
 if _config.has_dependency('tinker_nav_msgs'):

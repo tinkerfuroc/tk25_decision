@@ -1,0 +1,50 @@
+{
+  "_comment_doc": "DoingLaundry Setup-Days overrides. Override poses + flags after the OC announces the washer + folding-table location. Defaults from config._default_constants() apply for any omitted key.",
+
+  "pose_arena_entry": {
+    "point": {"x": 0.5, "y": 0.0, "z": 0.0},
+    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+  },
+  "pose_laundry_area": {
+    "point": {"x": 1.5, "y": -0.8, "z": 0.0},
+    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+  },
+  "pose_washing_machine": {
+    "point": {"x": 1.6, "y": -1.2, "z": 0.0},
+    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+  },
+  "pose_basket": {
+    "_comment": "Used only if do_pick_from_basket is flipped to true.",
+    "point": {"x": 1.4, "y": -0.6, "z": 0.0},
+    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+  },
+  "pose_folding_table": {
+    "point": {"x": 1.0, "y": 0.4, "z": 0.0},
+    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+  },
+
+  "point_table_fold_zone":  {"x": 1.00, "y": 0.40, "z": 0.75},
+  "point_table_stack_zone": {"x": 1.15, "y": 0.40, "z": 0.75},
+  "point_basket_top":       {"x": 1.40, "y": -0.60, "z": 0.55},
+  "point_washer_drum":      {"x": 1.60, "y": -1.20, "z": 0.55},
+
+  "arm_pos_navigating":  [-87.0, -58.8, -2.4, 8.0, 12.3, -68.5, -8.2],
+  "arm_pos_scan":        [0.0, -45.0, 0.0, 30.0, 0.0, -75.0, 0.0],
+  "arm_pos_pick_basket": [0.0, -25.0, 0.0, 65.0, 0.0, -85.0, 0.0],
+  "arm_pos_pick_washer": [-15.0, -10.0, 0.0, 80.0, 0.0, -85.0, 0.0],
+  "arm_pos_placing":     [0.0, -30.0, 0.0, 60.0, 0.0, -90.0, 0.0],
+  "arm_pos_fold_start":  [0.0, -40.0, 0.0, 55.0, 0.0, -80.0, 0.0],
+
+  "fold_cycles": 3,
+  "max_runtime_sec": 390.0,
+  "nav_retry_limit": 3,
+
+  "do_basket_transport": false,
+  "do_request_washer_help": true,
+  "do_pick_from_washer": true,
+  "do_pick_from_basket": false,
+  "do_request_single_piece_via_handover": true,
+  "do_fold_picked_pieces": true,
+
+  "max_extra_folds": 2
+}
