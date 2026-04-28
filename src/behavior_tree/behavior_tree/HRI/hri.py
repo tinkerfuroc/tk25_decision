@@ -306,7 +306,7 @@ def _with_gaze_supervisor(name: str, main_child: py_trees.behaviour.Behaviour):
 
     root_ = py_trees.composites.Sequence("gaze follow with end correction", memory=True)
     root_.add_child(root)
-    root_.add_child(name="Look to navigation direction", x=0.0, y=35.0, speed=0.0)
+    root_.add_child(BtNode_TurnPanTilt(name="Look to navigation direction", x=0.0, y=35.0, speed=0.0))
     return root_
 
 
@@ -341,8 +341,7 @@ def createEscortAndSeat(guest_idx: int):
     seat_recommend.add_child(
         BtNode_Announce(
             name=f"Announce seat recommendation guest {guest_idx}",
-            bb_source=KEY_SEAT_RECOMMENDATION,
-            message="Please sit here.",
+            bb_source=KEY_SEAT_RECOMMENDATION
         )
     )
     escort.add_child(seat_recommend)

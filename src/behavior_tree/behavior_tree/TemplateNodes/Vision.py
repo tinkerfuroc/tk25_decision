@@ -58,10 +58,13 @@ import math
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, FollowHeadAction, DetectWaving
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
+from std_msgs.msg import Header
 from py_trees.common import Status
+
+from typing import Optional, Any
 
 from .BaseBehaviors import ServiceHandler
 from .ActionBase import ActionHandler
