@@ -7,7 +7,7 @@ then assemble breakfast (bowl, spoon, cereal, milk) on the table.
 
 Hardware-aware deviations from the rulebook (see RULEBOOK_PLAN.md):
   * Cutlery + tableware go to a wash-staging surface, not the dishwasher rack.
-  * Floor pickup is gated off (DO_FLOOR_OPTIONAL).
+  * Floor pickup is skipped.
 """
 
 import py_trees

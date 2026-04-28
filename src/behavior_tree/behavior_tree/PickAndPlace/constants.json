@@ -56,8 +56,5 @@
   "max_runtime_sec": 390.0,
   "nav_retry_limit": 3,
   "scan_retry_limit": 2,
-  "grasp_retry_limit": 2,
-
-  "do_floor_optional": false,
-  "do_dishwasher_place": false
+  "grasp_retry_limit": 2
 }

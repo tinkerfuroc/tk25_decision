@@ -3,9 +3,9 @@ from __future__ import annotations
 """PickAndPlace configuration and shared blackboard keys.
 
 Hardware-aware design (see RULEBOOK_PLAN.md):
-  - Robot cannot pick from the floor → DO_FLOOR_OPTIONAL=False
-  - Robot cannot place into dishwasher rack accurately → DO_DISHWASHER_PLACE=False
-    Cutlery + tableware go to a wash-staging surface instead.
+  - Robot cannot pick from the floor.
+  - Robot cannot place into dishwasher rack accurately;
+    cutlery + tableware go to a wash-staging surface instead.
 """
 
 import json
@@ -114,9 +114,6 @@ def _default_constants():
         "nav_retry_limit": 3,
         "scan_retry_limit": 2,
         "grasp_retry_limit": 2,
-        # --- Optional-goal flags (rulebook §Optional) ---
-        "do_floor_optional": False,
-        "do_dishwasher_place": False,
     }
 
 
@@ -209,10 +206,6 @@ MAX_RUNTIME_SEC       = float(constants["max_runtime_sec"])
 NAV_RETRY_LIMIT       = int(constants["nav_retry_limit"])
 SCAN_RETRY_LIMIT      = int(constants["scan_retry_limit"])
 GRASP_RETRY_LIMIT     = int(constants["grasp_retry_limit"])
-
-# --- Optional flags ---
-DO_FLOOR_OPTIONAL    = bool(constants["do_floor_optional"])
-DO_DISHWASHER_PLACE  = bool(constants["do_dishwasher_place"])
 
 # --- Service / action names ---
 ARM_SERVICE_NAME    = "arm_joint_service"
