@@ -122,6 +122,7 @@ KEY_ARM_HANDOVER = "hri_arm_handover"
 KEY_ARM_DROP = "hri_arm_drop"
 KEY_ARM_POINT_TO = "hri_arm_point_to"
 KEY_PERSONS = "hri_persons"
+KEY_PERSON_CENTROIDS = "hri_person_centroids"
 KEY_SEAT_RECOMMENDATION = "hri_seat_recommendation"
 KEY_SEAT_BBOX = "hri_seat_bbox"
 KEY_SEAT_POINT = "hri_seat_point"
@@ -135,3 +136,21 @@ KEY_GUEST1_FEATURES = "hri_guest1_features"
 KEY_GUEST2_NAME = "hri_guest2_name"
 KEY_GUEST2_DRINK = "hri_guest2_drink"
 KEY_GUEST2_FEATURES = "hri_guest2_features"
+
+# Follow-person subtree config — see `HRI/follow.py:createFollowPerson`.
+FOLLOW_CONFIG = dict(constants.get("follow", {}))
+FOLLOW_CONFIG.setdefault("lost_short_sec", 5.0)
+FOLLOW_CONFIG.setdefault("lost_long_sec", 15.0)
+FOLLOW_CONFIG.setdefault("n_nav_retry", 3)
+FOLLOW_CONFIG.setdefault("n_restart", 2)
+FOLLOW_CONFIG.setdefault("follow_timeout_sec", 2.0)
+FOLLOW_CONFIG.setdefault("target_frame", "map")
+FOLLOW_CONFIG.setdefault("target_point_topic", "/target_points")
+FOLLOW_CONFIG.setdefault("track_action_name", "track_person")
+FOLLOW_CONFIG.setdefault("follow_action_name", "tracking_server")
+FOLLOW_CONFIG.setdefault(
+    "announce_short", "Please stop and wait for Tinker to catch up."
+)
+FOLLOW_CONFIG.setdefault(
+    "announce_long", "I've lost you. Please come back in front of Tinker."
+)

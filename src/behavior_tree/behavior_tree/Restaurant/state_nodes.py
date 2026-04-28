@@ -73,8 +73,18 @@ class BtNode_AppendCustomerCandidate(py_trees.behaviour.Behaviour):
         return py_trees.common.Status.SUCCESS
 
 
-class BtNode_SelectNextCustomer(py_trees.behaviour.Behaviour):
-    """Select oldest valid queued customer and expose it as active target."""
+class BtNode_SelectNextQueuedCustomer(py_trees.behaviour.Behaviour):
+    """Select oldest valid queued customer and expose it as active target.
+
+    Previously named ``BtNode_SelectNextCustomer``. Renamed to disambiguate from
+    ``Restaurant.custumNodes.BtNode_SelectNextCustomer`` (the list-of-orders
+    variant used by ``restaurants_fake.py``).
+
+    Optional ``picture_path_key`` — if set, also writes the selected queue
+    entry's ``picture_path`` field (populated by ``BtNode_QueueWavingCandidates``)
+    to that blackboard key. Entries without a ``picture_path`` field resolve to
+    the empty string.
+    """
 
     def __init__(
         self,
@@ -83,8 +93,10 @@ class BtNode_SelectNextCustomer(py_trees.behaviour.Behaviour):
         queue_key: str,
         selected_pose_key: str,
         active_id_key: str,
+        picture_path_key: str = None,
     ):
         super().__init__(name=name)
+        self._picture_path_key = picture_path_key
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="queue",
@@ -106,6 +118,12 @@ class BtNode_SelectNextCustomer(py_trees.behaviour.Behaviour):
             access=py_trees.common.Access.WRITE,
             remap_to=_abs_key(active_id_key),
         )
+        if picture_path_key is not None:
+            self.blackboard.register_key(
+                key="picture_path_write",
+                access=py_trees.common.Access.WRITE,
+                remap_to=_abs_key(picture_path_key),
+            )
 
     def update(self) -> py_trees.common.Status:
         queue: List[Dict[str, Any]] = list(self.blackboard.queue or [])
@@ -117,11 +135,321 @@ class BtNode_SelectNextCustomer(py_trees.behaviour.Behaviour):
         selected = sorted(candidates, key=lambda item: (item["timestamp"], item["id"]))[0]
         self.blackboard.selected_pose = selected["pose"]
         self.blackboard.active_id_write = selected["id"]
+        if self._picture_path_key is not None:
+            self.blackboard.picture_path_write = selected.get("picture_path", "") or ""
         for item in queue:
             if item["id"] == selected["id"]:
                 item["status"] = "active"
         self.blackboard.queue_write = queue
         self.feedback_message = f"Selected caller id={selected['id']}"
+        return py_trees.common.Status.SUCCESS
+
+
+class BtNode_QueueWavingCandidates(py_trees.behaviour.Behaviour):
+    """Enqueue up to ``max_candidates`` waving persons (with matching picture paths).
+
+    Reads two parallel lists populated by ``BtNode_ScanForWavingPerson``:
+      - ``all_poses_key``    → list[PointStamped] (closest-first)
+      - ``all_pictures_key`` → list[str] filesystem paths (may be shorter or empty)
+
+    Each entry appended to ``queue_key`` has the shape::
+
+        {id, pose, picture_path, timestamp, confidence, status="queued"}
+
+    FAILURE if the pose list is empty or missing; SUCCESS otherwise.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        all_poses_key: str,
+        all_pictures_key: str,
+        queue_key: str,
+        active_id_key: str,
+        max_candidates: int = 2,
+        confidence: float = 1.0,
+    ):
+        super().__init__(name=name)
+        self.max_candidates = max_candidates
+        self.confidence = confidence
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="all_poses",
+            access=py_trees.common.Access.READ,
+            remap_to=_abs_key(all_poses_key),
+        )
+        self.blackboard.register_key(
+            key="all_pictures",
+            access=py_trees.common.Access.READ,
+            remap_to=_abs_key(all_pictures_key),
+        )
+        self.blackboard.register_key(
+            key="queue",
+            access=py_trees.common.Access.READ,
+            remap_to=_abs_key(queue_key),
+        )
+        self.blackboard.register_key(
+            key="queue_write",
+            access=py_trees.common.Access.WRITE,
+            remap_to=_abs_key(queue_key),
+        )
+        self.blackboard.register_key(
+            key="active_id",
+            access=py_trees.common.Access.READ,
+            remap_to=_abs_key(active_id_key),
+        )
+
+    def update(self) -> py_trees.common.Status:
+        try:
+            poses = list(self.blackboard.all_poses or [])
+        except Exception:
+            poses = []
+        if not poses:
+            self.feedback_message = "No waving poses to queue"
+            return py_trees.common.Status.FAILURE
+        try:
+            pictures = list(self.blackboard.all_pictures or [])
+        except Exception:
+            pictures = []
+
+        queue: List[Dict[str, Any]] = list(self.blackboard.queue or [])
+        next_id = 1 + max((item["id"] for item in queue), default=0)
+        try:
+            active_id = self.blackboard.active_id
+        except Exception:
+            active_id = None
+        if isinstance(active_id, int):
+            next_id = max(next_id, active_id + 1)
+
+        added = 0
+        now = time.time()
+        for idx, pose in enumerate(poses[: self.max_candidates]):
+            picture_path = pictures[idx] if idx < len(pictures) else ""
+            queue.append(
+                {
+                    "id": next_id + added,
+                    "pose": pose,
+                    "picture_path": picture_path or "",
+                    "timestamp": now + added * 1e-6,
+                    "confidence": float(self.confidence),
+                    "status": "queued",
+                }
+            )
+            added += 1
+        queue.sort(key=lambda item: (item["timestamp"], item["id"]))
+        self.blackboard.queue_write = queue
+        self.feedback_message = f"Queued {added} waving candidate(s)"
+        return py_trees.common.Status.SUCCESS
+
+
+class BtNode_RequireActiveCustomer(py_trees.behaviour.Behaviour):
+    """Guard: SUCCESS iff the active-customer slot is populated, else FAILURE.
+
+    Used after ``createApproachCustomer`` in the Phase-1 collect sequence, so
+    that when the approach Selector fell through to the partial-score branch
+    (which calls ``CloseActiveCustomer`` and sets ``active_customer_id=None``),
+    the containing Retry re-ticks instead of proceeding to take an order from
+    a nonexistent customer.
+    """
+
+    def __init__(self, name: str, *, active_id_key: str):
+        super().__init__(name=name)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="active_id",
+            access=py_trees.common.Access.READ,
+            remap_to=_abs_key(active_id_key),
+        )
+
+    def update(self) -> py_trees.common.Status:
+        try:
+            active_id = self.blackboard.active_id
+        except Exception:
+            active_id = None
+        if active_id is None:
+            self.feedback_message = "No active customer"
+            return py_trees.common.Status.FAILURE
+        self.feedback_message = f"Active customer id={active_id}"
+        return py_trees.common.Status.SUCCESS
+
+
+class BtNode_QueueHasQueued(py_trees.behaviour.Behaviour):
+    """Guard: SUCCESS iff ``customer_queue`` has at least one ``status="queued"`` entry.
+
+    Placed as the first child of the Phase-1 Detection Selector so scanning is
+    short-circuited when the queue already has pending candidates. This is the
+    dedup for same-person re-scans across Phase-1 iterations.
+    """
+
+    def __init__(self, name: str, *, queue_key: str):
+        super().__init__(name=name)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="queue",
+            access=py_trees.common.Access.READ,
+            remap_to=_abs_key(queue_key),
+        )
+
+    def update(self) -> py_trees.common.Status:
+        try:
+            queue = list(self.blackboard.queue or [])
+        except Exception:
+            queue = []
+        n = sum(1 for item in queue if item.get("status") == "queued")
+        if n == 0:
+            self.feedback_message = "Queue has no queued entries"
+            return py_trees.common.Status.FAILURE
+        self.feedback_message = f"Queue has {n} queued entries"
+        return py_trees.common.Status.SUCCESS
+
+
+class BtNode_OrderListNotEmpty(py_trees.behaviour.Behaviour):
+    """Guard: SUCCESS iff ``order_list`` is non-empty, else FAILURE.
+
+    Placed first in the Phase-2 barman-trip sequence so that when Phase-1
+    produced no orders (e.g., all detected customers were unreachable), the
+    parent Selector falls through to a "skipping barman" announcement instead
+    of making a pointless trip.
+    """
+
+    def __init__(self, name: str, *, order_list_key: str):
+        super().__init__(name=name)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="order_list",
+            access=py_trees.common.Access.READ,
+            remap_to=_abs_key(order_list_key),
+        )
+
+    def update(self) -> py_trees.common.Status:
+        try:
+            orders = list(self.blackboard.order_list or [])
+        except Exception:
+            orders = []
+        if not orders:
+            self.feedback_message = "Order list is empty"
+            return py_trees.common.Status.FAILURE
+        self.feedback_message = f"Order list has {len(orders)} order(s)"
+        return py_trees.common.Status.SUCCESS
+
+
+class BtNode_SplitOrderItems(py_trees.behaviour.Behaviour):
+    """Convert the raw customer order into a list of individual items.
+
+    ``BtNode_TakeOrder`` writes a string to ``KEY_CUSTOMER_ORDER``; this node
+    wraps it in a single-element list (or passes through a list if already one).
+    Writes to ``items_key``. Always SUCCESS.
+
+    **Deprecated** in the batched ``restaurants.py`` layout — ``BtNode_RecordOrder``
+    now normalizes items internally. Kept for backwards-compat; scheduled for
+    removal in a follow-up cleanup PR.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        order_key: str,
+        items_key: str,
+    ):
+        super().__init__(name=name)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="order",
+            access=py_trees.common.Access.READ,
+            remap_to=_abs_key(order_key),
+        )
+        self.blackboard.register_key(
+            key="items_write",
+            access=py_trees.common.Access.WRITE,
+            remap_to=_abs_key(items_key),
+        )
+
+    def update(self) -> py_trees.common.Status:
+        try:
+            raw = self.blackboard.order
+        except Exception:
+            raw = None
+        if raw is None or raw == "":
+            items: List[str] = []
+        elif isinstance(raw, str):
+            items = [raw]
+        else:
+            items = list(raw)
+        self.blackboard.items_write = items
+        self.feedback_message = f"Split order into {len(items)} item(s)"
+        return py_trees.common.Status.SUCCESS
+
+
+class BtNode_PopNextItem(py_trees.behaviour.Behaviour):
+    """Pop the first item off ``items_key`` and publish current-item fields.
+
+    Writes:
+      - ``current_item_key``         ← the popped item (str)
+      - ``current_item_summary_key`` ← "<item> for customer <active_id>"
+
+    FAILURE when the list is empty (parent loop terminates).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        items_key: str,
+        current_item_key: str,
+        current_item_summary_key: str,
+        active_id_key: str,
+    ):
+        super().__init__(name=name)
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="items_read",
+            access=py_trees.common.Access.READ,
+            remap_to=_abs_key(items_key),
+        )
+        self.blackboard.register_key(
+            key="items_write",
+            access=py_trees.common.Access.WRITE,
+            remap_to=_abs_key(items_key),
+        )
+        self.blackboard.register_key(
+            key="current_item",
+            access=py_trees.common.Access.WRITE,
+            remap_to=_abs_key(current_item_key),
+        )
+        self.blackboard.register_key(
+            key="current_item_summary",
+            access=py_trees.common.Access.WRITE,
+            remap_to=_abs_key(current_item_summary_key),
+        )
+        self.blackboard.register_key(
+            key="active_id",
+            access=py_trees.common.Access.READ,
+            remap_to=_abs_key(active_id_key),
+        )
+
+    def update(self) -> py_trees.common.Status:
+        try:
+            items = list(self.blackboard.items_read or [])
+        except Exception:
+            items = []
+        if not items:
+            self.feedback_message = "No more items"
+            return py_trees.common.Status.FAILURE
+        current = items.pop(0)
+        try:
+            active_id = self.blackboard.active_id
+        except Exception:
+            active_id = None
+        self.blackboard.items_write = items
+        self.blackboard.current_item = current
+        self.blackboard.current_item_summary = (
+            f"{current} for customer {active_id}"
+            if active_id is not None
+            else f"{current}"
+        )
+        self.feedback_message = f"Popped item: {current}"
         return py_trees.common.Status.SUCCESS
 
 

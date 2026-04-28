@@ -1,5 +1,141 @@
 # Changelog
 
+## [2.2.3] - 2026-04-19
+
+### 🧹 HRI intake fallback — drop deprecated `BtNode_PhraseExtraction`
+
+`HRI/hri.py:_create_get_info`'s fallback branch no longer imports or calls
+the service-based `BtNode_PhraseExtraction` (deprecated, emits
+`DeprecationWarning`). It now uses `BtNode_ListenAction` to capture raw
+speech into the same storage key, then reuses the existing
+`BtNode_Confirm` + `BtNode_GetConfirmationAction` tail. HRI is now
+completely off deprecated service-based audio nodes — all audio leaves in
+the HRI package are either action-based or wrap `TextToSpeech` (which has
+no action counterpart).
+
+Primary path behaviour is unchanged: on cross-check success (server
+status=0) the `Selector` short-circuits and the fallback never ticks,
+preserving the rulebook 4×15 "no non-essential questions" bonus.
+
+Scope limited to HRI; Receptionist, Restaurant demo, GPSR, help-me-carry,
+serve-breakfast, store-groceries, grasp-intel still call the deprecated
+node and will migrate when next touched.
+
+### Files modified
+- `behavior_tree/HRI/hri.py`
+
+---
+
+## [2.2.2] - 2026-04-19
+
+### 🧪 Standalone intro harness + mock-config catch-up
+
+- New `HRI/intro.py` + `hri-intro` console script. Seeds two mock guest
+  profiles on the blackboard and runs just `createTwoWayIntroduction`, so
+  the feature-match → pre-orient → announce path can be KEYPRESS-stepped
+  end-to-end without the full HRI task. Mirrors `hri-follow` / `hri-intake`.
+- `mock_config.json` — added missing class-name registrations so the new
+  harness runs under `BT_MOCK_MODE=true`:
+    - `announcement` subsystem: `BtNode_Introduce`, `BtNode_Confirm`.
+    - `vision` subsystem: `BtNode_TurnTo` (was inheriting from
+      `BtNode_TurnPanTilt` but class-name lookup doesn't walk the MRO).
+- `HRI/hri.py` — `_with_gaze_supervisor` migrated from the deprecated
+  `BtNode_HeadTrackingAction` shim to `BtNode_MaintainEyeContact` directly,
+  per the migration path documented in `.claude/rules/behavior-tree.md`.
+  Removes a DeprecationWarning on every HRI boot.
+
+---
+
+## [2.2.1] - 2026-04-19
+
+### ✨ Target-guided gaze during HRI introductions
+
+Partially fixes the rulebook 5.1 "look to the correct guest while talking
+about the other guest" 2×50 pts item. Previously the parallel-sibling
+`BtNode_MaintainEyeContact` locked onto whichever face was geometrically
+closest to the base — a coin flip for which of two seated guests got the
+right intro gaze.
+
+- `BtNode_FeatureMatching` — added `trim_last_person: bool = True` kwarg.
+  Default preserves Receptionist's "new guest just walked up, not seated
+  yet" behavior; `False` sends every persons's features so centroids come
+  back for all seated guests. Mock path now emits one fake centroid per
+  (non-trimmed) person instead of a single element.
+- `HRI/config.py` — new `KEY_PERSON_CENTROIDS` blackboard key.
+- `HRI/hri.py:createTwoWayIntroduction` — runs feature matching once with
+  `trim_last_person=False` to populate `KEY_PERSON_CENTROIDS`, then each
+  intro now does `BtNode_TurnTo(target_id)` → `BtNode_Introduce`
+  inside the existing gaze supervisor. Physically turning the head first
+  makes the target guest the closest face, so `MaintainEyeContact`
+  locks on the correct one.
+- Best-effort wrapping (`FailureIsSuccess` around feature matching and
+  turn-to) ensures the intro still fires if the scan fails — falls back
+  to previous closest-face behavior without crashing the tree.
+
+---
+
+## [2.2.0] - 2026-04-19
+
+### ✨ New — Action-based phrase extraction integrated into HRI intake
+
+Migrates the HRI name/drink capture flow from a confirmation-heavy
+service pipeline to a high-confidence-first action pipeline, to earn the
+RoboCup@Home 2026 rulebook's **4×15 "no non-essential questions"** bonus
+when the ASR cross-check agrees.
+
+#### New template node
+- `BtNode_PhraseExtractionAction` (`TemplateNodes/Audio.py`) wraps
+  `tk_24_audio`'s new `phrase_extraction_action`
+  (`tinker_audio_msgs/action/PhraseExtraction`). The server runs Whisper
+  + Qwen ASR sequentially and calls `goal_handle.succeed()` only on
+  server-status=0 (both engines agreed on the same wordlist entry);
+  every other status calls `goal_handle.abort()`. Terminal
+  `STATUS_SUCCEEDED` is therefore a high-confidence signal.
+
+#### HRI integration
+- `HRI/hri.py:_create_get_info` rewritten as
+  `Selector(Retry(2, primary), last-resort-fallback)`:
+  - **Primary** (up to 2 attempts): prompt → `BtNode_PhraseExtractionAction`.
+    On success, no confirmation question is asked — banks the no-nonessential-questions bonus.
+  - **Fallback** (one attempt, only when both primary attempts abort):
+    prompt → legacy `BtNode_PhraseExtraction` → `BtNode_Confirm` →
+    `BtNode_GetConfirmationAction`. Preserves partial-score coverage in
+    noisy environments, at the cost of the bonus for that field.
+- New `HRI/intake.py` + `hri-intake` console script — isolated harness
+  for the name/drink intake subtree. Same pattern as `hri-follow`.
+
+#### Messages / mock plumbing
+- `messages.py` imports `PhraseExtraction as PhraseExtractionAction` with
+  mock fallback.
+- `mock_messages.py` adds `PhraseExtractionAction(MockAction)` stub.
+- `mock_config.json` adds `"BtNode_PhraseExtractionAction": "KEYPRESS"`
+  under `audio_input.nodes`.
+
+#### Deprecations
+- `BtNode_PhraseExtraction` (service-based) now emits
+  `DeprecationWarning`, matching the `BtNode_Listen` /
+  `BtNode_GetConfirmation` retirement policy. HRI is the first migrated
+  consumer; Receptionist, Restaurant demo, GPSR, grasp-intel still call
+  the legacy node and will migrate when next touched.
+
+#### Fixes
+- `HRI/config.py` — `arm_pos_point_to` re-added to `HRI/constants.json`
+  so the eagerly-evaluated `.get(key, constants[other])` default in the
+  arm-pose loader succeeds. (Unrelated pose-tuning edits to
+  `HRI/constants.json` were made separately.)
+
+### Files modified
+- `behavior_tree/TemplateNodes/Audio.py`
+- `behavior_tree/messages.py`
+- `behavior_tree/mock_messages.py`
+- `behavior_tree/mock_config.json`
+- `behavior_tree/HRI/hri.py`
+- `behavior_tree/HRI/intake.py` *(new)*
+- `behavior_tree/HRI/constants.json` *(added `arm_pos_point_to` key)*
+- `setup.py` *(new `hri-intake` console script)*
+
+---
+
 ## [2.0.0] - 2026-01-18
 
 ### 🎉 Major Release - Complete Mock Mode Restructuring
@@ -59,9 +195,14 @@ All template nodes now have native mock support with automatic configuration che
 - BtNode_MoveArmJoint, BtNode_MoveArmSingle
 - BtNode_GripperAction, BtNode_PointTo
 
-**Navigation.py** (4 nodes)
-- BtNode_GotoAction, BtNode_FollowPerson
-- BtNode_ConvertGraspPose, BtNode_GoToLuggage
+**Navigation.py** (3 nodes)
+- BtNode_GotoAction, BtNode_ConvertGraspPose, BtNode_GoToLuggage
+
+**HRI/follow.py** (8 nodes, action-based follow-person subtree)
+- BtNode_TrackPersonAction, BtNode_FollowAction, BtNode_IsTargetVisible
+- BtNode_UpdateLossElapsed, BtNode_LossElapsedAtLeast, BtNode_WriteBBIfVisible
+- BtNode_FlagIsFalse, BtNode_SetFlag
+- `createFollowPerson(cfg)` factory; `hri-follow` console entry point
 
 #### Base Classes
 - **BaseBehaviors.py** - Updated ServiceHandler with:

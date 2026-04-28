@@ -282,11 +282,34 @@ class PhraseExtraction(MockService):
             super().__init__()
             self.wordlist = []
             self.timeout = 0.0
-    
+
     class Response(MockService.Response):
         def __init__(self):
             super().__init__()
             self.result = ""
+
+
+class PhraseExtractionAction(MockAction):
+    """Mock PhraseExtraction action (tk_24_audio `phrase_extraction_action`)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.timeout = 0.0
+            self.wordlist = []
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.error_message = ""
+            self.phrase = ""
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.progress = 0.0
+            self.status_message = ""
+            self.partial_transcription = ""
 
 
 class GetConfirmation(MockService):
@@ -392,36 +415,44 @@ class ListenAction(MockAction):
 
 
 class TrackPerson(MockAction):
-    """Mock TrackPerson action from tinker_vision_msgs_26."""
-
+    """Mock TrackPerson action (tk26_vision)."""
     class Goal(MockAction.Goal):
-        """Mock TrackPerson goal."""
         def __init__(self):
             super().__init__()
-            self.target_frame = "map"
+            self.target_frame = ""
+            self.target_point_topic = ""
             self.return_rgb_img = False
             self.return_depth_img = False
             self.return_segment = False
             self.debug = False
 
-    class Result(MockAction.Result):
-        """Mock TrackPerson result."""
-        def __init__(self):
-            super().__init__()
-            self.status = 0
-            self.message = "Mock tracking completed"
-
     class Feedback(MockAction.Feedback):
-        """Mock TrackPerson feedback."""
         def __init__(self):
             super().__init__()
             self.target_lost = False
-            self.target_track_id = 1
-            self.is_transformation_successful = True
-            self.target_position = None  # PointStamped
-            self.rgb_img = None
-            self.depth_img = None
-            self.segment_img = None
+            self.target_track_id = -1
+            self.is_transformation_successful = False
+            self.target_position = None
+
+
+class Follow(MockAction):
+    """Mock Follow action (tk26 tinker_nav_msgs)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.timeout = 2.0
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.result = 1
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.status = ""
+            self.point_header = None
+            self.nav_goal_header = None
 
 
 # Mock Navigation Actions (from nav2)

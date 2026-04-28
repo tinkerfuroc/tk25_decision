@@ -1,43 +1,28 @@
 {
-    "guest1_drink_position": "left",
-    "guest2_drink_position": "right",
     "pose_door": {
         "point": {
-            "x": -2.489453531222113,
-            "y": -4.136931173539899,
+            "x": -1.6912435751977497,
+            "y": -2.676942006819833,
             "z": 0.0
         },
         "orientation": {
             "x": 0.0,
             "y": 0.0,
-            "z": -0.9240175476756386,
-            "w": 0.38235006419183304
-        }
-    },  
-    "pose_sofa": {
-        "point": {
-            "x": 3.816523178444291,
-            "y": 0.32578435484968393,
-            "z": 0.0
-        },
-        "orientation": {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 0.6416077426296212,
-            "w": 0.7670329227599828
+            "z": -0.8944041454247412,
+            "w": -0.8944041454247412
         }
     },
-    "pose_drinks": {
+    "pose_sofa": {
         "point": {
-            "x": 3.816523178444291,
-            "y": 0.32578435484968393,
+            "x": -1.0312551401627483,
+            "y": 0.5219420690102469,
             "z": 0.0
         },
         "orientation": {
             "x": 0.0,
             "y": 0.0,
-            "z": 0.6416077426296212,
-            "w": 0.7670329227599828
+            "z": 0.46707933015603526,
+            "w": 0.8842154145574422
         }
     },
     "arm_pos_navigating": [
@@ -78,13 +63,16 @@
     ],
     "host_name": "John",
     "host_drink": "coffee",
-    "host_interest": "swimming",
     "drinks": [
         "water",
         "cola",
         "soft drink",
         "orange juice",
-        "milk"
+        "milk",
+        "coffee",
+        "tea",
+        "juice",
+        "lemonade"
     ],
     "names": [
         "Maria",
@@ -101,7 +89,12 @@
         "Joao",
         "Antonio",
         "Francisco",
-        "Carlos"
+        "Carlos",
+        "James",
+        "Michael",
+        "Sarah",
+        "Emma",
+        "Olivia"
     ],
     "follow": {
         "lost_short_sec": 5.0,

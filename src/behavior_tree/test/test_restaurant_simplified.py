@@ -48,7 +48,7 @@ def _install_stubs(monkeypatch):
 
     audio = types.ModuleType("behavior_tree.TemplateNodes.Audio")
     audio.BtNode_Announce = _SuccessNode
-    audio.BtNode_GetConfirmation = _SuccessNode
+    audio.BtNode_GetConfirmationAction = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Audio", audio)
 
     base = types.ModuleType("behavior_tree.TemplateNodes.BaseBehaviors")
