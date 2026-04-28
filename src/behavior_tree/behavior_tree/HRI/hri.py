@@ -409,8 +409,7 @@ def createEscortAndSeat(guest_idx: int):
     seat_recommend.add_child(
         BtNode_Announce(
             name=f"Announce seat recommendation guest {guest_idx}",
-            bb_source=KEY_SEAT_RECOMMENDATION,
-            message="Please sit here.",
+            bb_source=KEY_SEAT_RECOMMENDATION
         )
     )
     seat_recommend.add_child(
