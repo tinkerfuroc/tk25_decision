@@ -251,7 +251,7 @@ class BtNode_Drop(ServiceHandler):
     def __init__(self, 
                  name: str,
                  bb_source: str,
-                 service_name : str = "drop",
+                 service_name : str = "start_drop",
                  bin_point : PointStamped = None
                  ):
         """
@@ -637,10 +637,8 @@ class BtNode_PointTo(ServiceHandler):
                  service_name: str = "point_to_service"
                  ):
         super().__init__(name, service_name, ArmJointService)
-        # self.bb_key_point = bb_key_point
         self.bb_key_persons = bb_key_persons
         self.bb_key_points = bb_key_points
-        self.bb_keY_init_pose = bb_key_init_pose
         self.target_id = target_id
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(

@@ -15,14 +15,14 @@ from behavior_tree.TemplateNodes.Audio import (
     BtNode_PhraseExtractionAction,
 )
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle
+from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle, BtNode_PointTo
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_DoorDetection,
     BtNode_FeatureExtraction,
     BtNode_FeatureMatching,
     BtNode_MaintainEyeContact,
-    BtNode_SeatRecommend,
+    BtNode_SeatRecommendBbox,
     BtNode_TurnPanTilt,
     BtNode_TurnTo,
 )
@@ -35,6 +35,7 @@ from .config import (
     ARM_POS_DROP,
     ARM_POS_HANDOVER,
     ARM_POS_NAVIGATING,
+    ARM_POS_POINT_TO,
     DRINKS,
     FOLLOW_CONFIG,
     HOST_DRINK,
@@ -42,6 +43,7 @@ from .config import (
     KEY_ARM_DROP,
     KEY_ARM_HANDOVER,
     KEY_ARM_NAVIGATING,
+    KEY_ARM_POINT_TO,
     KEY_DOOR_POSE,
     KEY_DOOR_STATUS,
     KEY_GUEST1_DRINK,
@@ -52,6 +54,9 @@ from .config import (
     KEY_GUEST2_NAME,
     KEY_PERSONS,
     KEY_PERSON_CENTROIDS,
+    KEY_SEAT_BBOX,
+    KEY_SEAT_POINT,
+    KEY_SEAT_POINTS,
     KEY_SEAT_RECOMMENDATION,
     KEY_SOFA_POSE,
     NAMES,
@@ -85,6 +90,37 @@ class BtNode_MockSafetyCheck(py_trees.behaviour.Behaviour):
 
     def update(self) -> py_trees.common.Status:
         self.feedback_message = f"TODO mock path: {self.todo}"
+        return py_trees.common.Status.SUCCESS
+
+
+class BtNode_WrapPointAsList(py_trees.behaviour.Behaviour):
+    """Read a PointStamped from one blackboard key, write a 1-element list to another.
+
+    Adapts the single-point output of `BtNode_SeatRecommendBbox` to the
+    `list[PointStamped]` contract that `BtNode_PointTo` / `BtNode_TurnTo`
+    consume via `target_id` indexing.
+    """
+
+    def __init__(self, name: str, bb_source_key: str, bb_dest_key: str):
+        super().__init__(name=name)
+        self.blackboard = self.attach_blackboard_client(name=name)
+        self.blackboard.register_key(
+            key="src",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_source_key),
+        )
+        self.blackboard.register_key(
+            key="dst",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_dest_key),
+        )
+
+    def update(self) -> py_trees.common.Status:
+        pt = self.blackboard.src
+        if pt is None:
+            self.feedback_message = "No point on source key"
+            return py_trees.common.Status.FAILURE
+        self.blackboard.dst = [pt]
         return py_trees.common.Status.SUCCESS
 
 
@@ -137,6 +173,15 @@ def createConstantWriter():
             bb_source=None,
             bb_key=KEY_ARM_DROP,
             object=ARM_POS_DROP,
+        )
+    )
+    root.add_child(
+        BtNode_WriteToBlackboard(
+            name="Write arm point-to pose",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_ARM_POINT_TO,
+            object=ARM_POS_POINT_TO,
         )
     )
     root.add_child(
@@ -329,19 +374,54 @@ def createEscortAndSeat(guest_idx: int):
     )
     seat_recommend = py_trees.composites.Sequence(name=f"Seat recommend guest {guest_idx}", memory=True)
     seat_recommend.add_child(
-        BtNode_SeatRecommend(
+        BtNode_SeatRecommendBbox(
             name=f"Seat recommendation for guest {guest_idx}",
-            bb_dest_key=KEY_SEAT_RECOMMENDATION,
+            bb_recommendation_key=KEY_SEAT_RECOMMENDATION,
+            bb_bbox_key=KEY_SEAT_BBOX,
+            bb_point_key=KEY_SEAT_POINT,
             bb_source_key=KEY_PERSONS,
+            target_frame="base_link",
         )
     )
     seat_recommend.add_child(
-        BtNode_TurnPanTilt(name=f"Turn to seat direction guest {guest_idx}", x=45.0, y=25.0, speed=0.0)
+        BtNode_WrapPointAsList(
+            name=f"Wrap seat point as list guest {guest_idx}",
+            bb_source_key=KEY_SEAT_POINT,
+            bb_dest_key=KEY_SEAT_POINTS,
+        )
+    )
+    seat_recommend.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name=f"Arm point-to seat (best-effort) guest {guest_idx}",
+            child=py_trees.decorators.Retry(
+                name=f"Retry arm point-to seat guest {guest_idx}",
+                child=BtNode_PointTo(
+                    name=f"Point arm to seat guest {guest_idx}",
+                    bb_key_persons=KEY_PERSONS,
+                    bb_key_points=KEY_SEAT_POINTS,
+                    bb_key_init_pose=KEY_ARM_POINT_TO,
+                    target_id=0,
+                ),
+                num_failures=3,
+            ),
+        )
     )
     seat_recommend.add_child(
         BtNode_Announce(
             name=f"Announce seat recommendation guest {guest_idx}",
             bb_source=KEY_SEAT_RECOMMENDATION
+        )
+    )
+    seat_recommend.add_child(
+        py_trees.decorators.Retry(
+            name=f"Retry stow arm guest {guest_idx}",
+            child=BtNode_MoveArmSingle(
+                name=f"Stow arm after seat guest {guest_idx}",
+                service_name="arm_joint_service",
+                arm_pose_bb_key=KEY_ARM_NAVIGATING,
+                add_octomap=False,
+            ),
+            num_failures=3,
         )
     )
     escort.add_child(seat_recommend)

@@ -106,6 +106,7 @@ ARM_POS_HANDOVER = _arm_pose_reader(
     constants.get("arm_pos_handover", constants["arm_pos_point_to"])
 )
 ARM_POS_DROP = _arm_pose_reader(constants.get("arm_pos_drop", constants["arm_pos_navigating"]))
+ARM_POS_POINT_TO = _arm_pose_reader(constants["arm_pos_point_to"])
 
 HOST_NAME = constants.get("host_name", "Host")
 HOST_DRINK = constants.get("host_drink", "water")
@@ -119,9 +120,13 @@ KEY_DOOR_STATUS = "hri_door_status"
 KEY_ARM_NAVIGATING = "hri_arm_navigating"
 KEY_ARM_HANDOVER = "hri_arm_handover"
 KEY_ARM_DROP = "hri_arm_drop"
+KEY_ARM_POINT_TO = "hri_arm_point_to"
 KEY_PERSONS = "hri_persons"
 KEY_PERSON_CENTROIDS = "hri_person_centroids"
 KEY_SEAT_RECOMMENDATION = "hri_seat_recommendation"
+KEY_SEAT_BBOX = "hri_seat_bbox"
+KEY_SEAT_POINT = "hri_seat_point"
+KEY_SEAT_POINTS = "hri_seat_points"
 
 # Guest-specific memory keys
 KEY_GUEST1_NAME = "hri_guest1_name"

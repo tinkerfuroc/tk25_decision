@@ -8,7 +8,7 @@
 
 如果还没有setup，使用sudo权限运行`setup.sh`
 
-使用`tk23_vision`下`scripts`文件夹中的shell文件启动所需节点。
+使用`tk26_vision`下`scripts`文件夹中的shell文件启动所需节点（vision 已迁移至 `tk26_vision`，相机启动见 `src/tk26_vision/CAMERA_BRINGUP.md`）。
 以下是所需的脚本和脚本应该有的内容：
 脚本中被注释的内容可有可无，如果当前的脚本中没有被注释也可以（虽然可能会慢一点点）
 
@@ -37,7 +37,7 @@ gnome-terminal --tab -- zsh -c "source install/setup.zsh && ros2 launch navigati
 ```bash
 gnome-terminal --tab -- zsh -c "source install/setup.zsh && ros2 launch orbbec_camera femto_bolt.launch.py enable_colored_point_cloud:=true depth_registration:=true; exec zsh"
 # gnome-terminal --tab -- zsh -c "source install/setup.zsh && ros2 run object_detection service_sam --ros-args -p visualization_en:=false -p visualization_log_en:=true -p detection_topic_en:=false; exec zsh"
-# gnome-terminal --tab -- zsh -c "source ~/.zshrc && cd ~/tk25_ws/src/tk23_vision/src/lang-segment-anything && conda activate anygrasp && python tcp_server.py; exec zsh"
+# gnome-terminal --tab -- zsh -c "source ~/.zshrc && cd ~/tk25_ws/src/tk26_vision/src/lang-segment-anything && conda activate anygrasp && python tcp_server.py; exec zsh"
 gnome-terminal --tab -- zsh -c "source install/setup.zsh && ros2 run util door_detection; exec zsh"     
 gnome-terminal --tab -- zsh -c "source install/setup.zsh && ros2 run pan_tilt ctrl --ros-args -p device:=\"/dev/ttyUSB1\"; exec zsh"
 gnome-terminal --tab -- zsh -c "source install/setup.zsh && ros2 run pan_tilt ctrl --ros-args -p device:=\"/dev/ttyUSB0\"; exec zsh"

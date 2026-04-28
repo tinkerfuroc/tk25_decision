@@ -31,6 +31,8 @@
 #     Extracts visual features for person recognition.
 # BtNode_SeatRecommend
 #     Recommends a seat based on current scene.
+# BtNode_SeatRecommendBbox
+#     Seat recommendation that also returns bbox + 3D centroid of the seat.
 # BtNode_FeatureMatching
 #     Matches extracted features to known persons.
 # BtNode_GetPointCloud
@@ -54,11 +56,9 @@ import os
 import py_trees as pytree
 import time
 import math
+from typing import Any, Optional
 
-# from tinker_decision_msgs.srv import ObjectDetection
-# from tinker_vision_msgs.srv import ObjectDetection
-
-from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, FollowHeadAction, DetectWaving
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, SeatRecommendBbox, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, FollowHeadAction
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
 from std_msgs.msg import Header
@@ -616,6 +616,108 @@ class BtNode_SeatRecommend(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 
+class BtNode_SeatRecommendBbox(ServiceHandler):
+    """
+    Seat recommendation that also returns the bbox and 3D centroid of the seat.
+
+    Wraps `seat_recommend_bbox_service` (kimi_api/seat_recommend_bbox.py).
+    Writes three blackboard keys on success:
+      - recommendation : str   (prefixed with "Dear guest, ")
+      - bbox           : tinker_vision_msgs_26/BoundingBox
+      - point          : geometry_msgs/PointStamped (in `target_frame`)
+    """
+    def __init__(self,
+                 name: str,
+                 bb_recommendation_key: str,
+                 bb_bbox_key: str,
+                 bb_point_key: str,
+                 bb_source_key: str,
+                 service_name: str = "seat_recommend_bbox_service",
+                 use_orbbec: bool = True,
+                 target_frame: str = "base_link",
+                 ):
+        super(BtNode_SeatRecommendBbox, self).__init__(name, service_name, SeatRecommendBbox)
+
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="recommendation",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_recommendation_key)
+        )
+        self.blackboard.register_key(
+            key="bbox",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_bbox_key)
+        )
+        self.blackboard.register_key(
+            key="point",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_point_key)
+        )
+        self.blackboard.register_key(
+            key="persons",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key)
+        )
+
+        self.camera = "orbbec" if use_orbbec else "realsense"
+        self.target_frame = target_frame
+
+    def initialise(self):
+        super().initialise()
+
+        if self.mock_mode:
+            print(f"💺 MOCK: Seat recommendation (bbox) from {self.camera}")
+            self.blackboard.recommendation = "Dear guest, I recommend the seat on the left side of the table."
+            self.blackboard.bbox = BoundingBox(xmin=300, ymin=200, xmax=380, ymax=280)
+            mock_point = PointStamped()
+            mock_point.header.frame_id = self.target_frame
+            mock_point.point.x = 1.0
+            mock_point.point.y = 0.5
+            mock_point.point.z = 0.6
+            self.blackboard.point = mock_point
+            self.feedback_message = "MOCK: Seat-bbox recommendation completed"
+            return
+
+        request = SeatRecommendBbox.Request()
+        request.camera = self.camera
+        request.names = []
+        request.features = []
+        request.target_frame = self.target_frame
+        if self.blackboard.persons is not None:
+            # minus one because the newest registered person is not yet seated
+            for i in range(len(self.blackboard.persons) - 1):
+                request.names.append(self.blackboard.persons[i].name)
+                request.features.append(self.blackboard.persons[i].features)
+        self.response = self.call_service_async(request)
+        self.feedback_message = "Initialized seat-bbox recommendation"
+
+    def update(self) -> Status:
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
+        self.logger.debug("Updated SeatRecommendBbox")
+
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+
+        if self.response.done():
+            result: SeatRecommendBbox.Response = self.response.result()
+            if result.status == 0:
+                self.blackboard.recommendation = "Dear guest, " + result.recommendation
+                self.blackboard.bbox = result.bbox
+                self.blackboard.point = result.centroid
+                self.feedback_message = f"Recommendation: {result.recommendation}"
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Seat-bbox recommendation failed with error code {result.status}: {result.error_msg}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still getting seat-bbox recommendation..."
+            return pytree.common.Status.RUNNING
+
+
 class BtNode_FeatureMatching(ServiceHandler):
     """
     Matches extracted features to known persons.
@@ -1158,7 +1260,7 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
 
 class BtNode_MaintainEyeContact(ActionHandler):
     """
-    Wrap the HRI `follow_head_action` (tinker_vision_msgs.action.FollowHeadAction) to maintain
+    Wrap the HRI `follow_head_action` (tinker_vision_msgs_26.action.FollowHeadAction) to maintain
     eye-contact with the closest face. Server returns success after a single gaze lock.
 
     Feedback schema is `{pan, tilt}` — not the BT canonical `{stage, stage_name, status, delay_limit}`.
