@@ -351,7 +351,7 @@ def _with_gaze_supervisor(name: str, main_child: py_trees.behaviour.Behaviour):
 
     root_ = py_trees.composites.Sequence("gaze follow with end correction", memory=True)
     root_.add_child(root)
-    root_.add_child(name="Look to navigation direction", x=0.0, y=35.0, speed=0.0)
+    root_.add_child(BtNode_TurnPanTilt(name="Look to navigation direction", x=0.0, y=35.0, speed=0.0))
     return root_
 
 

@@ -82,15 +82,10 @@ def _default_constants():
         "arm_pos_placing":      [0.0, -30.0, 0.0, 60.0, 0.0, -90.0, 0.0],
         "arm_pos_fold_start":   [0.0, -40.0, 0.0, 55.0, 0.0, -80.0, 0.0],
 
-        "clothing_prompt": "t-shirt . folded shirt . cloth . laundry",
-
         "fold_cycles": 3,
 
         "max_runtime_sec": 390.0,
         "nav_retry_limit": 3,
-        "scan_retry_limit": 2,
-        "grasp_retry_limit": 2,
-        "fold_retry_limit": 1,
 
         # Hardware-aware flags
         "do_basket_transport": False,
@@ -99,11 +94,8 @@ def _default_constants():
         "do_pick_from_basket": False,
         "do_request_single_piece_via_handover": True,
         "do_fold_picked_pieces": True,
-        "do_stack_folded": True,
 
         # Caps
-        "max_picks_from_washer": 1,
-        "max_picks_from_basket": 0,
         "max_extra_folds": 2,
     }
 
@@ -165,13 +157,9 @@ ARM_POS_PICK_WASHER = [x / 180 * math.pi for x in constants["arm_pos_pick_washer
 ARM_POS_PLACING     = [x / 180 * math.pi for x in constants["arm_pos_placing"]]
 ARM_POS_FOLD_START  = [x / 180 * math.pi for x in constants["arm_pos_fold_start"]]
 
-CLOTHING_PROMPT     = str(constants["clothing_prompt"])
 FOLD_CYCLES         = int(constants["fold_cycles"])
 MAX_RUNTIME_SEC     = float(constants["max_runtime_sec"])
 NAV_RETRY_LIMIT     = int(constants["nav_retry_limit"])
-SCAN_RETRY_LIMIT    = int(constants["scan_retry_limit"])
-GRASP_RETRY_LIMIT   = int(constants["grasp_retry_limit"])
-FOLD_RETRY_LIMIT    = int(constants["fold_retry_limit"])
 
 DO_BASKET_TRANSPORT                  = bool(constants["do_basket_transport"])
 DO_REQUEST_WASHER_HELP               = bool(constants["do_request_washer_help"])
@@ -179,16 +167,10 @@ DO_PICK_FROM_WASHER                  = bool(constants["do_pick_from_washer"])
 DO_PICK_FROM_BASKET                  = bool(constants["do_pick_from_basket"])
 DO_REQUEST_SINGLE_PIECE_VIA_HANDOVER = bool(constants["do_request_single_piece_via_handover"])
 DO_FOLD_PICKED_PIECES                = bool(constants["do_fold_picked_pieces"])
-DO_STACK_FOLDED                      = bool(constants["do_stack_folded"])
 
-MAX_PICKS_FROM_WASHER = int(constants["max_picks_from_washer"])
-MAX_PICKS_FROM_BASKET = int(constants["max_picks_from_basket"])
-MAX_EXTRA_FOLDS       = int(constants["max_extra_folds"])
+MAX_EXTRA_FOLDS = int(constants["max_extra_folds"])
 
 ARM_SERVICE_NAME  = "arm_joint_service"
-GRASP_ACTION_NAME = "grasp"
-PLACE_ACTION_NAME = "place_action"
-FOLD_ACTION_NAME  = "fold_clothing_action"
 TARGET_FRAME      = "base_link"
 
 # ============================================================
@@ -215,13 +197,6 @@ KEY_ARM_FOLD_START  = "dl_arm_fold_start"
 
 KEY_TARGET_FRAME = "dl_target_frame"
 KEY_MAX_RUNTIME  = "dl_max_runtime_sec"
-
-KEY_VISION_RESULT      = "dl_vision_result"
-KEY_TABLE_IMG          = "dl_table_img"
-KEY_OBJ_SEG            = "dl_obj_seg"
-KEY_GRASP_ANNOUNCEMENT = "dl_grasp_announcement"
-KEY_GRASP_POSE         = "dl_grasp_pose"
-KEY_ENV_POINTS         = "dl_env_points"
 
 KEY_DOOR_STATUS     = "dl_door_status"
 KEY_SCORE_TRACE     = "dl_score_trace"

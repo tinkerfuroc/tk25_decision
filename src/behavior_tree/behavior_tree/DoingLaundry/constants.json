@@ -35,14 +35,9 @@
   "arm_pos_placing":     [0.0, -30.0, 0.0, 60.0, 0.0, -90.0, 0.0],
   "arm_pos_fold_start":  [0.0, -40.0, 0.0, 55.0, 0.0, -80.0, 0.0],
 
-  "clothing_prompt": "t-shirt . folded shirt . cloth . laundry",
-
   "fold_cycles": 3,
   "max_runtime_sec": 390.0,
   "nav_retry_limit": 3,
-  "scan_retry_limit": 2,
-  "grasp_retry_limit": 2,
-  "fold_retry_limit": 1,
 
   "do_basket_transport": false,
   "do_request_washer_help": true,
@@ -50,9 +45,6 @@
   "do_pick_from_basket": false,
   "do_request_single_piece_via_handover": true,
   "do_fold_picked_pieces": true,
-  "do_stack_folded": true,
 
-  "max_picks_from_washer": 1,
-  "max_picks_from_basket": 0,
   "max_extra_folds": 2
 }
