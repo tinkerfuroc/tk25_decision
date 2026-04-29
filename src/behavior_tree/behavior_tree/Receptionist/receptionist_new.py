@@ -87,10 +87,12 @@ KEY_HOST_NAME = "host_name"
 KEY_HOST_DRINK = "host_drink"
 KEY_HOST_INTEREST = "host_interest"
 KEY_HOST_FEATURES = "host_features"
+KEY_HOST_COMPARISON_IMAGE = "host_comparison_image"
 
 KEY_GUEST_NAME = "guest_name"
 KEY_GUEST_DRINK = "guest_drink"
 KEY_GUEST_FEATURES = "guest_features"
+KEY_GUEST_COMPARISON_IMAGE = "guest_comparison_image"
 KEY_GUEST1_INTEREST = "guest1_interest"
 KEY_GUEST2_INTEREST = "guest2_interest"
 KEY_COMMON_INTEREST = "common_interest"
@@ -185,11 +187,12 @@ def createGetDrinkAndSpeak(key_interest=None, idx_guest=1):
     root = py_trees.composites.Sequence(name="Get correct name and drink", memory=True)
     root.add_child(createGetInfo("favorite drink", KEY_GUEST_DRINK))
     root.add_child(BtNode_CombinePerson(
-        name="combine person's info", 
-        key_dest=KEY_PERSONS, 
-        key_name=KEY_GUEST_NAME, 
-        key_drink=KEY_GUEST_DRINK, 
+        name="combine person's info",
+        key_dest=KEY_PERSONS,
+        key_name=KEY_GUEST_NAME,
+        key_drink=KEY_GUEST_DRINK,
         key_features=KEY_GUEST_FEATURES,
+        key_image=KEY_GUEST_COMPARISON_IMAGE,
         key_intest=key_interest
         ))
     root.add_child(BtNode_TurnPanTilt(name="Turn head down to scan", x=0.0, y=20.0, speed=0.0))
@@ -214,15 +217,15 @@ def createGetNameAndDrink():
 def createRegisterFeatureOnly():
     root = py_trees.composites.Sequence(name="Register features of person in front", memory=True)
     root.add_child(BtNode_Announce(name="Ask to stand in front", bb_source=None, message="Stand one meter in front of me. Thank you"))
-    root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_GUEST_FEATURES))
+    root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_GUEST_FEATURES, bb_image_key=KEY_GUEST_COMPARISON_IMAGE))
     root.add_child(BtNode_Announce(name="Indicate follow", bb_source=None, message="Follow me"))
     return root
 
 def createRegisterFeature():
     root = py_trees.composites.Sequence(name="Register features of person in front", memory=True)
     root.add_child(BtNode_Announce(name="Ask to stand in front", bb_source=None, message="Stand one meter in front of me. Thank you"))
-    root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_GUEST_FEATURES))
-    root.add_child(BtNode_CombinePerson(name="combine person's info", key_dest=KEY_PERSONS, key_name=KEY_GUEST_NAME, key_drink=KEY_GUEST_DRINK, key_features=KEY_GUEST_FEATURES))
+    root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_GUEST_FEATURES, bb_image_key=KEY_GUEST_COMPARISON_IMAGE))
+    root.add_child(BtNode_CombinePerson(name="combine person's info", key_dest=KEY_PERSONS, key_name=KEY_GUEST_NAME, key_drink=KEY_GUEST_DRINK, key_features=KEY_GUEST_FEATURES, key_image=KEY_GUEST_COMPARISON_IMAGE))
     root.add_child(BtNode_Announce(name="Indicate follow", bb_source=None, message="Follow me"))
     return root
 
@@ -366,8 +369,8 @@ def createScanHostFeatures():
     if not DEBUG_NO_GOTO:
         root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))    
     root.add_child(BtNode_Announce(name="announce scanning host features", bb_source=None, message="Scanning host"))
-    root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_HOST_FEATURES))
-    root.add_child(BtNode_CombinePerson(name="combine host's info", key_dest=KEY_PERSONS, key_name=KEY_HOST_NAME, key_drink=KEY_HOST_DRINK, key_features=KEY_HOST_FEATURES))
+    root.add_child(BtNode_FeatureExtraction(name="extract features", bb_dest_key=KEY_HOST_FEATURES, bb_image_key=KEY_HOST_COMPARISON_IMAGE))
+    root.add_child(BtNode_CombinePerson(name="combine host's info", key_dest=KEY_PERSONS, key_name=KEY_HOST_NAME, key_drink=KEY_HOST_DRINK, key_features=KEY_HOST_FEATURES, key_image=KEY_HOST_COMPARISON_IMAGE))
     root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
     return root
 

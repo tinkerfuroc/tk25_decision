@@ -47,8 +47,10 @@ from .config import (
     KEY_DOOR_POSE,
     KEY_DOOR_STATUS,
     KEY_GUEST1_DRINK,
+    KEY_GUEST1_COMPARISON_IMAGE,
     KEY_GUEST1_FEATURES,
     KEY_GUEST1_NAME,
+    KEY_GUEST2_COMPARISON_IMAGE,
     KEY_GUEST2_DRINK,
     KEY_GUEST2_FEATURES,
     KEY_GUEST2_NAME,
@@ -116,7 +118,11 @@ class BtNode_WrapPointAsList(py_trees.behaviour.Behaviour):
         )
 
     def update(self) -> py_trees.common.Status:
-        pt = self.blackboard.src
+        try:
+            pt = self.blackboard.src
+        except KeyError:
+            self.feedback_message = "Source key not yet written"
+            return py_trees.common.Status.FAILURE
         if pt is None:
             self.feedback_message = "No point on source key"
             return py_trees.common.Status.FAILURE
@@ -191,6 +197,28 @@ def createConstantWriter():
             bb_source=None,
             bb_key=KEY_PERSONS,
             object=[],
+        )
+    )
+    # Pre-initialize feature-matching outputs so downstream readers
+    # (BtNode_TurnTo, BtNode_PointTo, BtNode_WrapPointAsList) see None
+    # instead of a missing-key blackboard exception when matching/seat
+    # recommendation has not yet succeeded.
+    root.add_child(
+        BtNode_WriteToBlackboard(
+            name="Initialize person centroids",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_PERSON_CENTROIDS,
+            object=None,
+        )
+    )
+    root.add_child(
+        BtNode_WriteToBlackboard(
+            name="Initialize seat point",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_SEAT_POINT,
+            object=None,
         )
     )
     return root
@@ -307,10 +335,12 @@ def createGuestIntake(guest_idx: int):
         name_key = KEY_GUEST1_NAME
         drink_key = KEY_GUEST1_DRINK
         feature_key = KEY_GUEST1_FEATURES
+        image_key = KEY_GUEST1_COMPARISON_IMAGE
     else:
         name_key = KEY_GUEST2_NAME
         drink_key = KEY_GUEST2_DRINK
         feature_key = KEY_GUEST2_FEATURES
+        image_key = KEY_GUEST2_COMPARISON_IMAGE
 
     root = py_trees.composites.Sequence(name=f"Guest {guest_idx} intake", memory=True)
     root.add_child(
@@ -322,7 +352,7 @@ def createGuestIntake(guest_idx: int):
     )
     root.add_child(_create_get_info("name", name_key, NAMES))
     root.add_child(_create_get_info("favorite drink", drink_key, DRINKS))
-    root.add_child(BtNode_FeatureExtraction(name=f"Extract guest {guest_idx} features", bb_dest_key=feature_key))
+    root.add_child(BtNode_FeatureExtraction(name=f"Extract guest {guest_idx} features", bb_dest_key=feature_key, bb_image_key=image_key))
     root.add_child(
         BtNode_CombinePerson(
             name=f"Store guest {guest_idx} profile",
@@ -330,6 +360,7 @@ def createGuestIntake(guest_idx: int):
             key_name=name_key,
             key_drink=drink_key,
             key_features=feature_key,
+            key_image=image_key,
         )
     )
     return root
@@ -372,8 +403,13 @@ def createEscortAndSeat(guest_idx: int):
             num_failures=5,
         )
     )
-    seat_recommend = py_trees.composites.Sequence(name=f"Seat recommend guest {guest_idx}", memory=True)
-    seat_recommend.add_child(
+    # Primary seat-recommend chain. Aborts cleanly (Sequence short-circuit)
+    # if SeatRecommendBbox or WrapPointAsList fails — at which point the
+    # outer Selector falls through to the fallback announce.
+    seat_recommend_primary = py_trees.composites.Sequence(
+        name=f"Seat recommend guest {guest_idx}", memory=True
+    )
+    seat_recommend_primary.add_child(
         BtNode_SeatRecommendBbox(
             name=f"Seat recommendation for guest {guest_idx}",
             bb_recommendation_key=KEY_SEAT_RECOMMENDATION,
@@ -383,14 +419,14 @@ def createEscortAndSeat(guest_idx: int):
             target_frame="base_link",
         )
     )
-    seat_recommend.add_child(
+    seat_recommend_primary.add_child(
         BtNode_WrapPointAsList(
             name=f"Wrap seat point as list guest {guest_idx}",
             bb_source_key=KEY_SEAT_POINT,
             bb_dest_key=KEY_SEAT_POINTS,
         )
     )
-    seat_recommend.add_child(
+    seat_recommend_primary.add_child(
         py_trees.decorators.FailureIsSuccess(
             name=f"Arm point-to seat (best-effort) guest {guest_idx}",
             child=py_trees.decorators.Retry(
@@ -406,13 +442,34 @@ def createEscortAndSeat(guest_idx: int):
             ),
         )
     )
-    seat_recommend.add_child(
+    seat_recommend_primary.add_child(
         BtNode_Announce(
             name=f"Announce seat recommendation guest {guest_idx}",
             bb_source=KEY_SEAT_RECOMMENDATION
         )
     )
-    seat_recommend.add_child(
+
+    # Fallback: when primary fails (no seat point or service unavailable),
+    # the guest still gets a verbal cue so the task continues.
+    seat_recommend_fallback = BtNode_Announce(
+        name=f"Fallback seat announcement guest {guest_idx}",
+        bb_source=None,
+        message=(
+            "I am sorry, I cannot identify a specific seat for you. "
+            "Please take any available seat near the others."
+        ),
+    )
+
+    seat_recommend = py_trees.composites.Selector(
+        name=f"Seat recommendation (best-effort) guest {guest_idx}",
+        memory=True,
+    )
+    seat_recommend.add_child(seat_recommend_primary)
+    seat_recommend.add_child(seat_recommend_fallback)
+
+    escort.add_child(seat_recommend)
+    # Stow arm always runs regardless of which seat-recommend branch ran.
+    escort.add_child(
         py_trees.decorators.Retry(
             name=f"Retry stow arm guest {guest_idx}",
             child=BtNode_MoveArmSingle(
@@ -424,7 +481,6 @@ def createEscortAndSeat(guest_idx: int):
             num_failures=3,
         )
     )
-    escort.add_child(seat_recommend)
     return _with_gaze_supervisor(f"Gaze-supervised escort guest {guest_idx}", escort)
 
 

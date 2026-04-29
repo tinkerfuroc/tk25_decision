@@ -28,6 +28,7 @@ class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
         key_name: str,
         key_drink: str,
         key_features: str,
+        key_image: str,
         key_intest: str = None
     ):
         super().__init__(name=name)
@@ -52,6 +53,11 @@ class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
             access=py_trees.common.Access.READ,
             # make sure to namespace it if not already
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_features)
+        )
+        self.blackboard.register_key(
+            key="comparison_image",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_image)
         )
         self.blackboard.register_key(
             key="person",
@@ -80,11 +86,23 @@ class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
         new_person.name = self.blackboard.person_name
         new_person.fav_drink = self.blackboard.drink
         new_person.features = self.blackboard.features
-        print(new_person.name, new_person.fav_drink, new_person.features)
-        self.feedback_message = f"name: {new_person.name}, drink: {new_person.fav_drink}, features: {new_person.features}"
+        new_person.comparison_image = self.blackboard.comparison_image
+        img = new_person.comparison_image
+        img_summary = (
+            f"{img.width}x{img.height}" if img is not None and getattr(img, "width", 0) else "empty"
+        )
+        print(new_person.name, new_person.fav_drink, new_person.features, f"image={img_summary}")
+        self.feedback_message = (
+            f"name: {new_person.name}, drink: {new_person.fav_drink}, "
+            f"features: {new_person.features}, image: {img_summary}"
+        )
         if self.has_interest:
             new_person.interests = self.blackboard.interest
-            self.feedback_message = f"name: {new_person.name}, drink: {new_person.fav_drink}, features: {new_person.features}, interest: {new_person.interests}"
+            self.feedback_message = (
+                f"name: {new_person.name}, drink: {new_person.fav_drink}, "
+                f"features: {new_person.features}, image: {img_summary}, "
+                f"interest: {new_person.interests}"
+            )
             
         persons = []
         if self.blackboard.person is not None:

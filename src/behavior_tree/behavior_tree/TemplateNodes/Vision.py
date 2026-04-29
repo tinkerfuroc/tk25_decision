@@ -467,9 +467,10 @@ class BtNode_FeatureExtraction(ServiceHandler):
     vectors that can be used for person identification or matching. The features
     are stored on the blackboard for use by matching nodes.
     """
-    def __init__(self, 
+    def __init__(self,
                  name: str,
                  bb_dest_key: str,
+                 bb_image_key: str,
                  service_name : str = "feature_extraction_service",
                  use_orbbec = True,
                  ):
@@ -481,6 +482,11 @@ class BtNode_FeatureExtraction(ServiceHandler):
             key="features",
             access=pytree.common.Access.WRITE,
             remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+        )
+        self.blackboard.register_key(
+            key="comparison_image",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_image_key)
         )
         if use_orbbec:
             self.camera = "orbbec"
@@ -494,34 +500,39 @@ class BtNode_FeatureExtraction(ServiceHandler):
 
         # Handle mock mode
         if self.mock_mode:
+            from sensor_msgs.msg import Image
             print(f"👁️  MOCK: Feature extraction from {self.camera}")
             self.feedback_message = f"MOCK: Feature extraction completed"
-            # Store mock features to blackboard
-            self.blackboard.features = [0.1, 0.2, 0.3, 0.4, 0.5]  # Mock feature vector
+            self.blackboard.features = "[mock features]"
+            self.blackboard.comparison_image = Image()
             return
-            
+
         request = FeatureExtraction.Request()
         request.camera = self.camera
         self.response = self.call_service_async(request)
 
         self.feedback_message = f"Initialized Feature Extraction"
-    
+
     def update(self) -> Status:
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-        
+
         # Check if response exists
         if self.response is None:
             self.feedback_message = "No response object"
             return pytree.common.Status.FAILURE
-            
+
         self.logger.debug(f"Updated FeatureExtraction")
         if self.response.done():
             result : FeatureExtraction.Response = self.response.result()
             if result.status == 0:
                 self.blackboard.features = result.feature
-                self.feedback_message = f"Features: {result.feature}"
+                self.blackboard.comparison_image = result.comparison_image
+                img = result.comparison_image
+                self.feedback_message = (
+                    f"Features: {result.feature} | image: {img.width}x{img.height}"
+                )
                 return pytree.common.Status.SUCCESS
             else:
                 self.feedback_message = f"Feature extration failed with error code {result.status}: {result.error_msg}"
@@ -793,18 +804,26 @@ class BtNode_FeatureMatching(ServiceHandler):
             self.feedback_message = f"MOCK: Feature matching → {n} centroid(s)"
             return
 
+        from sensor_msgs.msg import Image
         request = FeatureMatching.Request()
         request.camera = self.camera
-        request.features = [person.features for person in self.blackboard.persons]
+        persons = self.blackboard.persons
+        request.features = [p.features for p in persons]
+        request.comparison_images = [
+            p.comparison_image if p.comparison_image is not None else Image()
+            for p in persons
+        ]
         if self.trim_last_person:
             # Receptionist flow: the newest registered guest has not sat down yet
             # and won't match anything at the sofa scan, so drop them.
             request.features = request.features[:-1]
+            request.comparison_images = request.comparison_images[:-1]
         request.max_distance = self.max_distance
         request.target_frame = self.target_frame
         self.response = self.call_service_async(request)
         self.feedback_message = (
             f"Initialized feature matching (|features|={len(request.features)}, "
+            f"|images|={len(request.comparison_images)}, "
             f"trim_last={self.trim_last_person})"
         )
 
@@ -1088,22 +1107,42 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
         )
     
     def initialise(self) -> None:
-        if len(self.blackboard.persons) <= self.target_id:
-            self.feedback_message = f"Failed to initialize point_to"
+        try:
+            persons = self.blackboard.persons
+        except KeyError:
+            persons = None
+        try:
+            points = self.blackboard.points
+        except KeyError:
+            points = None
+
+        if (persons is None or len(persons) <= self.target_id
+                or points is None or len(points) <= self.target_id):
+            # Best-effort gaze: feature matching produced no PointStamped for
+            # this target. Skip publish; fast-success so the wrapping
+            # FailureIsSuccess sees a clean SUCCESS instead of a Python
+            # exception aborting the parent Sequence.
+            self.feedback_message = (
+                f"TurnTo skipped: persons={'None' if persons is None else len(persons)}, "
+                f"points={'None' if points is None else len(points)}, target_id={self.target_id}"
+            )
+            self.logger.info(self.feedback_message)
             self.response = None
-        else:
-            point = self.blackboard.points[self.target_id]
-            self.logger.info(f"Turning to point {point.point} with id {self.target_id} from blackboard {self.bb_key_points}")
-            x = math.atan2(-point.point.y, max(point.point.x-0.25, 0.01)) 
-            # x = math.atan2(self.blackboard.point.point.y, self.blackboard.point.point.x)
-            y = 20.0
-            msg = PanTiltCtrl()
-            msg.x = x / math.pi * 180.0  # convert to degrees
-            msg.y = y
-            msg.speed = self.speed
-            self.publisher.publish(msg)
-            self.logger.info(f"Publishing PanTiltCtrl with x: {x}, y: {y}, speed: {self.speed}")
-            self.feedback_message = f"Initialized TurnTo for point {point.point} with id {self.target_id} and pan tilt angle: x: {msg.x}, y: {msg.y}, speed: {self.speed}"
+            self.cnt = 999
+            return
+
+        point = points[self.target_id]
+        self.logger.info(f"Turning to point {point.point} with id {self.target_id} from blackboard {self.bb_key_points}")
+        x = math.atan2(-point.point.y, max(point.point.x-0.25, 0.01))
+        # x = math.atan2(self.blackboard.point.point.y, self.blackboard.point.point.x)
+        y = 20.0
+        msg = PanTiltCtrl()
+        msg.x = x / math.pi * 180.0  # convert to degrees
+        msg.y = y
+        msg.speed = self.speed
+        self.publisher.publish(msg)
+        self.logger.info(f"Publishing PanTiltCtrl with x: {x}, y: {y}, speed: {self.speed}")
+        self.feedback_message = f"Initialized TurnTo for point {point.point} with id {self.target_id} and pan tilt angle: x: {msg.x}, y: {msg.y}, speed: {self.speed}"
         self.cnt = 0
 
 

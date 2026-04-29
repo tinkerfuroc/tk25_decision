@@ -93,7 +93,7 @@ def create_decision_tree():
     # ------ 子分支 8: FeatureExtraction ------
     feature_seq = Sequence("feature_branch")
     feature_guard = BtNode_CheckIfMyTurn("check_feature", "feature", "bb/next_action")
-    feature_action = BtNode_FeatureExtraction("extract_features", bb_dest_key="bb/features")
+    feature_action = BtNode_FeatureExtraction("extract_features", bb_dest_key="bb/features", bb_image_key="bb/comparison_image")
     feature_update = BtNode_UpdateState("update_after_feature", completed_action="feature(...)",
                                        bb_state_key="bb/state")
     feature_seq.add_children([feature_guard, feature_action, feature_update])
