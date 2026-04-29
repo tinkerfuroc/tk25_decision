@@ -22,10 +22,10 @@ from behavior_tree.TemplateNodes.Vision import (
     BtNode_FeatureExtraction,
     BtNode_FeatureMatching,
     BtNode_MaintainEyeContact,
-    BtNode_SeatRecommendBbox,
     BtNode_TurnPanTilt,
     BtNode_TurnTo,
 )
+from behavior_tree.HRI.customNodes import BtNode_BestOfNSeatAndMatch
 from behavior_tree.Receptionist.customNodes import (
     BtNode_CombinePerson,
     BtNode_Confirm,
@@ -410,12 +410,15 @@ def createEscortAndSeat(guest_idx: int):
         name=f"Seat recommend guest {guest_idx}", memory=True
     )
     seat_recommend_primary.add_child(
-        BtNode_SeatRecommendBbox(
-            name=f"Seat recommendation for guest {guest_idx}",
+        BtNode_BestOfNSeatAndMatch(
+            name=f"Sweep best seat+match guest {guest_idx}",
+            bb_persons_key=KEY_PERSONS,
+            bb_centroids_key=KEY_PERSON_CENTROIDS,
             bb_recommendation_key=KEY_SEAT_RECOMMENDATION,
             bb_bbox_key=KEY_SEAT_BBOX,
             bb_point_key=KEY_SEAT_POINT,
-            bb_source_key=KEY_PERSONS,
+            pan_angles_deg=[-30.0, 0.0, 30.0],
+            tilt_deg=20.0,
             target_frame="base_link",
         )
     )

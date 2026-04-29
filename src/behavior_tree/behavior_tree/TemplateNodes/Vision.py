@@ -58,7 +58,7 @@ import time
 import math
 from typing import Any, Optional
 
-from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, SeatRecommendBbox, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, FollowHeadAction
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, SeatRecommendBbox, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, PanTiltCommand, BoundingBox, FollowHeadAction
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
 from std_msgs.msg import Header
@@ -1000,97 +1000,92 @@ class BtNode_DoorDetection(ServiceHandler):
 
 class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
     """
-    Controls the pan-tilt unit for camera orientation.
+    Publish an absolute pan-tilt target to the tk26 servo controller.
 
-    This node publishes pan-tilt control commands to orient the camera.
-    Unlike other vision nodes, this inherits directly from Behaviour since
-    it uses topic publishing rather than service calls.
+    Publishes `tinker_vision_msgs_26/PanTiltCommand` (mode=ABSOLUTE) to the
+    runtime command topic (`/pan_tilt_controller/cmd`). The legacy
+    `/pan_tilt_ctrl` topic + `PanTiltCtrl` message are no-ops against the
+    current `pan_tilt_controller` and have been retired.
 
-    Attributes:
-        x: Pan angle in degrees.
-        y: Tilt angle in degrees.
-        speed: Movement speed.
+    `x`, `y` are pan/tilt angles in degrees. `speed` is the servo
+    speed_raw value (0 lets the controller pick its default).
     """
+
+    PAN_TILT_COMMAND_TOPIC = "/pan_tilt_controller/cmd"
+
     def __init__(self, name: str, x: float = 0.0, y: float = 0.0, speed: float = 0.0):
         super().__init__(name)
         self.x = x
         self.y = y
         self.speed = speed
-        self.client = None
+        self.publisher = None
         self.mock_mode = is_node_mocked(self.__class__.__name__)
-    
+
     def setup(self, **kwargs) -> None:
-        # node should be passed down the tree from the root node
         try:
             self.node = kwargs['node']
         except KeyError as e:
             error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
-            raise KeyError(error_message) from e  # 'direct cause' traceability
-        
-        # Skip creating publisher in mock mode
-        if self.mock_mode:
-            print(f"MOCK MODE: Skipping pan/tilt publisher creation")
-            return
-        
-        # create publisher to a topic
-        self.publisher = self.node.create_publisher(PanTiltCtrl, "/pan_tilt_ctrl", 10)
+            raise KeyError(error_message) from e
 
+        if self.mock_mode:
+            print("MOCK MODE: Skipping pan/tilt publisher creation")
+            return
+
+        self.publisher = self.node.create_publisher(
+            PanTiltCommand, self.PAN_TILT_COMMAND_TOPIC, 1
+        )
+
+    def _build_command_msg(self, pan_deg: float, tilt_deg: float) -> "PanTiltCommand":
+        msg = PanTiltCommand()
+        msg.header = Header()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.mode = PanTiltCommand.ABSOLUTE
+        msg.pan_rad = float(pan_deg) * math.pi / 180.0
+        msg.tilt_rad = float(tilt_deg) * math.pi / 180.0
+        msg.speed_raw = int(self.speed)
+        msg.accel_raw = 0
+        return msg
 
     def initialise(self) -> None:
-        # Initialize counter regardless of mode
         self.cnt = 0
-        
-        # Skip ROS operations in mock mode
         if self.mock_mode:
             return
-            
-        # publish message
-        msg = PanTiltCtrl()
-        msg.x = self.x
-        msg.y = self.y
-        msg.speed = self.speed * 1.0  # convert to float, as the message expects a float
-
+        msg = self._build_command_msg(self.x, self.y)
         self.publisher.publish(msg)
-        self.logger.info(f"Publishing PanTiltCtrl with x: {self.x}, y: {self.y}, speed: {self.speed}")
-
-        # call wait_seconds to start the timer in a separate thread
-        # self.timer_future = asyncio.ensure_future(self.wait_seconds(2.0))
+        self.logger.info(
+            f"Publishing PanTiltCommand ABSOLUTE pan={self.x:+.2f}° "
+            f"tilt={self.y:+.2f}° speed_raw={int(self.speed)}"
+        )
 
     def update(self) -> Status:
-        # In mock mode, return success immediately
         if self.mock_mode:
-            self.logger.info("MOCK: PanTiltCtrl completed immediately")
+            self.logger.info("MOCK: PanTilt command completed immediately")
             return pytree.common.Status.SUCCESS
-            
-        # TODO: count 8 loops then return
-        # if self.timer_future.done():
+
         if self.cnt > 3:
-            # if the timer is done, cancel the future and return success
-            # self.timer_future.cancel()
             self.cnt = 0
-            self.logger.info("2 seconds passed, PanTiltCtrl finished")
+            self.logger.info("PanTilt settle window elapsed")
             return pytree.common.Status.SUCCESS
-        else:
-            self.cnt += 1
-            # if the timer is not done, return running
-            self.logger.info("PanTiltCtrl still running")
-            return pytree.common.Status.RUNNING
-    
+        self.cnt += 1
+        self.logger.info("PanTilt waiting for settle")
+        return pytree.common.Status.RUNNING
+
     async def wait_seconds(self, seconds):
         await asyncio.sleep(seconds)
         return True
-    
+
 
 class BtNode_TurnTo(BtNode_TurnPanTilt):
     """
-    Turn to a specific point relevant to 'base_link'
+    Turn to a specific point relevant to 'base_link'.
     """
     def __init__(self, name: str,
                  bb_key_persons: str,
                  bb_key_points: str,
                  target_id: int = 0,
                  ):
-        super().__init__(name, x=0, y=0, speed = 0.0)
+        super().__init__(name, x=0, y=0, speed=0.0)
         self.bb_key_persons = bb_key_persons
         self.bb_key_points = bb_key_points
         self.target_id = target_id
@@ -1105,7 +1100,7 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
             access=pytree.common.Access.READ,
             remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_points)
         )
-    
+
     def initialise(self) -> None:
         try:
             persons = self.blackboard.persons
@@ -1131,18 +1126,30 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
             self.cnt = 999
             return
 
+        if self.mock_mode:
+            self.cnt = 0
+            self.feedback_message = (
+                f"MOCK TurnTo for point {points[self.target_id].point} target_id={self.target_id}"
+            )
+            return
+
         point = points[self.target_id]
-        self.logger.info(f"Turning to point {point.point} with id {self.target_id} from blackboard {self.bb_key_points}")
-        x = math.atan2(-point.point.y, max(point.point.x-0.25, 0.01))
-        # x = math.atan2(self.blackboard.point.point.y, self.blackboard.point.point.x)
-        y = 20.0
-        msg = PanTiltCtrl()
-        msg.x = x / math.pi * 180.0  # convert to degrees
-        msg.y = y
-        msg.speed = self.speed
+        self.logger.info(
+            f"Turning to point {point.point} id={self.target_id} from blackboard {self.bb_key_points}"
+        )
+        pan_rad = math.atan2(-point.point.y, max(point.point.x - 0.25, 0.01))
+        pan_deg = pan_rad / math.pi * 180.0
+        tilt_deg = 20.0
+        msg = self._build_command_msg(pan_deg, tilt_deg)
         self.publisher.publish(msg)
-        self.logger.info(f"Publishing PanTiltCtrl with x: {x}, y: {y}, speed: {self.speed}")
-        self.feedback_message = f"Initialized TurnTo for point {point.point} with id {self.target_id} and pan tilt angle: x: {msg.x}, y: {msg.y}, speed: {self.speed}"
+        self.logger.info(
+            f"Publishing PanTiltCommand ABSOLUTE pan={pan_deg:+.2f}° "
+            f"tilt={tilt_deg:+.2f}° speed_raw={int(self.speed)}"
+        )
+        self.feedback_message = (
+            f"Initialized TurnTo for point {point.point} id={self.target_id} "
+            f"pan={pan_deg:+.2f}° tilt={tilt_deg:+.2f}°"
+        )
         self.cnt = 0
 
 
