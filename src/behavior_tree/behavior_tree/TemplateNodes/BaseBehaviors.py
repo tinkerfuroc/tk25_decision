@@ -424,7 +424,7 @@ class BtNode_WriteToBlackboard(py_trees.behaviour.Behaviour):
             error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
             raise KeyError(error_message) from e  # 'direct cause' traceability
 
-        if self.object is None:
+        if self.object is None and self.bb_source is not None:
             self.bb_read_client = self.attach_blackboard_client(name="WriteToBlackboard")
             self.bb_read_client.register_key(self.bb_source, access=py_trees.common.Access.READ)
 
@@ -432,9 +432,9 @@ class BtNode_WriteToBlackboard(py_trees.behaviour.Behaviour):
             self.logger.debug(f"Setup Write to Blackboard, reading from {self.bb_source}")
         else:
             self.logger.debug(f"Setup Write to Blackboard, object already provided")
-        
+
     def initialise(self) -> None:
-        if self.object is None:
+        if self.object is None and self.bb_source is not None:
             try:
                 self.object = self.bb_read_client.get(self.bb_source)
             except Exception as e:
