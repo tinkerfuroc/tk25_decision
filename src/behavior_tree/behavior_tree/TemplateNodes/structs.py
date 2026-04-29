@@ -43,8 +43,14 @@ class Person(object):
         The person's name, extracted via speech recognition.
     fav_drink : str or None
         The person's favorite drink preference.
-    features : list or None
-        Visual feature vector for person recognition/identification.
+    features : str or None
+        Text description of the person produced by the feature extraction
+        service (gender, age, hair, clothing). Used as a tiebreaker hint
+        during matching and as input to seat recommendation.
+    comparison_image : sensor_msgs.msg.Image or None
+        Tight crop of the person captured during feature extraction.
+        Used as the primary reference signal during image-vs-image
+        matching. None or zero-size when not yet captured.
     interests : str or None
         The person's stated interests for conversation matching.
 
@@ -61,4 +67,5 @@ class Person(object):
         self.name = None
         self.fav_drink = None
         self.features = None
+        self.comparison_image = None
         self.interests = None

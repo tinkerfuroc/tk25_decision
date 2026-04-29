@@ -640,6 +640,10 @@ class BtNode_PointTo(ServiceHandler):
         self.bb_key_persons = bb_key_persons
         self.bb_key_points = bb_key_points
         self.target_id = target_id
+        # Default value so the response-None failure branch in update() can
+        # safely format `self.angle` even when initialise skipped the
+        # happy-path assignment (e.g. missing or short points list).
+        self.angle = 0.0
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="persons",
@@ -666,8 +670,23 @@ class BtNode_PointTo(ServiceHandler):
     def initialise(self):
         super().initialise()
 
-        if len(self.blackboard.persons) <= self.target_id:
-            self.feedback_message = f"Failed to initialize point_to"
+        try:
+            persons = self.blackboard.persons
+        except KeyError:
+            persons = None
+        try:
+            points = self.blackboard.points
+        except KeyError:
+            points = None
+
+        if (persons is None or len(persons) <= self.target_id
+                or points is None or len(points) <= self.target_id):
+            # Feature matching did not produce a PointStamped for this target.
+            # Fast-fail cleanly; FailureIsSuccess wrappers in the BT can absorb.
+            self.feedback_message = (
+                f"PointTo skipped: persons={'None' if persons is None else len(persons)}, "
+                f"points={'None' if points is None else len(points)}, target_id={self.target_id}"
+            )
             self.response = None
         else:
             # Handle mock mode
@@ -675,9 +694,9 @@ class BtNode_PointTo(ServiceHandler):
                 self.feedback_message = f"MOCK: Pointed to target {self.target_id}"
                 print(f"👉 MOCK POINT TO: Target {self.target_id}")
                 return
-                
+
             # request = PointTo.Request()
-            point = self.blackboard.points[self.target_id]
+            point = points[self.target_id]
             # self.response = self.client.call_async(request)
 
             request = ArmJointService.Request()

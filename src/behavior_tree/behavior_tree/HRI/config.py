@@ -132,10 +132,12 @@ KEY_SEAT_POINTS = "hri_seat_points"
 KEY_GUEST1_NAME = "hri_guest1_name"
 KEY_GUEST1_DRINK = "hri_guest1_drink"
 KEY_GUEST1_FEATURES = "hri_guest1_features"
+KEY_GUEST1_COMPARISON_IMAGE = "hri_guest1_comparison_image"
 
 KEY_GUEST2_NAME = "hri_guest2_name"
 KEY_GUEST2_DRINK = "hri_guest2_drink"
 KEY_GUEST2_FEATURES = "hri_guest2_features"
+KEY_GUEST2_COMPARISON_IMAGE = "hri_guest2_comparison_image"
 
 # Follow-person subtree config — see `HRI/follow.py:createFollowPerson`.
 FOLLOW_CONFIG = dict(constants.get("follow", {}))
