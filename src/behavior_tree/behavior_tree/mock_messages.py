@@ -388,6 +388,16 @@ class PanTiltCommand(MockMessage):
         self.accel_raw = 0
 
 
+class PanTiltState(MockMessage):
+    """Mock PanTiltState message."""
+    def __init__(self):
+        super().__init__()
+        self.pan_rad = 0.0
+        self.tilt_rad = 0.0
+        self.connected = False
+        self.feedback_ok = False
+
+
 # Mock Vision Actions
 class Categorize(MockAction):
     """Mock Categorize action."""

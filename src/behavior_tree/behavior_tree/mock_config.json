@@ -24,6 +24,7 @@
           "BtNode_FeatureExtraction": "KEYPRESS",
           "BtNode_SeatRecommend": "KEYPRESS",
           "BtNode_SeatRecommendBbox": "KEYPRESS",
+          "BtNode_BestOfNSeatAndMatch": "IMMEDIATE",
           "BtNode_FeatureMatching": "KEYPRESS",
           "BtNode_GetPointCloud": "KEYPRESS",
           "BtNode_DoorDetection": "KEYPRESS",

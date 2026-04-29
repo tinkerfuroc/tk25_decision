@@ -61,7 +61,10 @@ def _install_stubs(monkeypatch):
     audio = types.ModuleType("behavior_tree.TemplateNodes.Audio")
     audio.BtNode_Announce = _SuccessNode
     audio.BtNode_GetConfirmation = _SuccessNode
+    audio.BtNode_GetConfirmationAction = _SuccessNode
+    audio.BtNode_ListenAction = _SuccessNode
     audio.BtNode_PhraseExtraction = _SuccessNode
+    audio.BtNode_PhraseExtractionAction = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Audio", audio)
 
     base = types.ModuleType("behavior_tree.TemplateNodes.BaseBehaviors")
@@ -71,6 +74,7 @@ def _install_stubs(monkeypatch):
     manip = types.ModuleType("behavior_tree.TemplateNodes.Manipulation")
     manip.BtNode_GripperAction = _SuccessNode
     manip.BtNode_MoveArmSingle = _SuccessNode
+    manip.BtNode_PointTo = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Manipulation", manip)
 
     nav = types.ModuleType("behavior_tree.TemplateNodes.Navigation")
@@ -80,9 +84,21 @@ def _install_stubs(monkeypatch):
     vision = types.ModuleType("behavior_tree.TemplateNodes.Vision")
     vision.BtNode_DoorDetection = _SuccessNode
     vision.BtNode_FeatureExtraction = _SuccessNode
+    vision.BtNode_FeatureMatching = _SuccessNode
+    vision.BtNode_MaintainEyeContact = _SuccessNode
     vision.BtNode_SeatRecommend = _SuccessNode
+    vision.BtNode_SeatRecommendBbox = _SuccessNode
     vision.BtNode_TurnPanTilt = _SuccessNode
+    vision.BtNode_TurnTo = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Vision", vision)
+
+    hri_custom = types.ModuleType("behavior_tree.HRI.customNodes")
+    hri_custom.BtNode_BestOfNSeatAndMatch = _SuccessNode
+    monkeypatch.setitem(sys.modules, "behavior_tree.HRI.customNodes", hri_custom)
+
+    follow = types.ModuleType("behavior_tree.HRI.follow")
+    follow.createFollowPerson = lambda *args, **kwargs: _SuccessNode(name="follow")
+    monkeypatch.setitem(sys.modules, "behavior_tree.HRI.follow", follow)
 
     receptionist_custom = types.ModuleType("behavior_tree.Receptionist.customNodes")
     receptionist_custom.BtNode_CombinePerson = _SuccessNode
