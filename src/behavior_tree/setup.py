@@ -15,6 +15,7 @@ setup(
         'behavior_tree': ['mock_config.json'],
         'behavior_tree.Receptionist': ['constants.json'],
         'behavior_tree.HRI': ['constants.json'],
+        'behavior_tree.Restaurant': ['constants.json'],
     },
     install_requires=['setuptools'],
     zip_safe=True,

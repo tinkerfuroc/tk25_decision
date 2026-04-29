@@ -26,7 +26,7 @@ from tinker_vision_msgs_26.action import TrackPerson
 
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WaitTicks
 
 
@@ -851,7 +851,7 @@ def createFollowPersonWithConfirmation(
     )
     
     # Get confirmation
-    confirm = BtNode_GetConfirmation(name="Get Confirmation")
+    confirm = BtNode_GetConfirmationAction(name="Get Confirmation")
     
     confirm_seq.add_child(wait)
     confirm_seq.add_child(ask)
@@ -930,7 +930,7 @@ def createFollowPersonComplete(
     ))
     
     # Get confirmation - FAILURE means not yet reached, continue following
-    follow_loop.add_child(BtNode_GetConfirmation(name="Get Confirmation"))
+    follow_loop.add_child(BtNode_GetConfirmationAction(name="Get Confirmation"))
     
     # Retry until confirmed
     follow_retry = py_trees.decorators.Retry(

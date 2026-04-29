@@ -11,7 +11,7 @@ from behavior_tree.TemplateNodes.Audio import (
     BtNode_Announce,
     BtNode_GetConfirmationAction,
     BtNode_ListenAction,
-    BtNode_PhraseExtraction,
+    BtNode_PhraseExtractionAction,
 )
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_ScanForWavingPerson,
@@ -152,7 +152,7 @@ def createCollectOneOrder():
     ))
     # Keep a phrase-extraction pass so downstream item iteration has something structured.
     # If PhraseExtraction returns a single string, IterateOrderItems will treat it as one item.
-    seq.add_child(BtNode_PhraseExtraction(
+    seq.add_child(BtNode_PhraseExtractionAction(
         name="Extract order phrase",
         wordlist=ORDER_WORDLIST,
         bb_dest_key=KEY_CUR_ORDER_ITEMS,

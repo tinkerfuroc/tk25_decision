@@ -3,7 +3,7 @@ from typing import List
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation, BtNode_Listen, BtNode_CompareInterest
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtractionAction, BtNode_GetConfirmationAction, BtNode_ListenAction, BtNode_CompareInterest
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection, BtNode_TurnTo
 from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
 
@@ -137,7 +137,7 @@ def createConstantWriter():
 
 def createListenToGuest(bb_dest_key:str, word_list: List[str]):
     root = py_trees.composites.Selector(name="Listen to guest", memory=True)
-    root.add_child(BtNode_PhraseExtraction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=7.0))
+    root.add_child(BtNode_PhraseExtractionAction(name="Listen to guest", bb_dest_key=bb_dest_key, wordlist=word_list, timeout=7.0))
     root.add_child(py_trees.decorators.SuccessIsFailure(name="success is failure", child=BtNode_Announce(name="Listen Failed, ask for repeat", bb_source=None, message="I'm sorry. Could you please repeat that louder and closer?")))
     return py_trees.decorators.Retry(name="retry", child=root, num_failures=10)
 
@@ -147,7 +147,7 @@ def createGetInfo(type:str, storage_key:str):
     loop.add_child(BtNode_Announce(name=f"Prompt for {type}", bb_source=None, message=f"Speak loudly and tell me your {type}"))
     loop.add_child(createListenToGuest(bb_dest_key=storage_key, word_list=names if type == "name" else drinks))
     loop.add_child(BtNode_Confirm(name=f"Confirm {type} prompt", key_confirmed=storage_key, type=type))
-    loop.add_child(BtNode_GetConfirmation(name=f"Get {type} confirmation", timeout=5.0))
+    loop.add_child(BtNode_GetConfirmationAction(name=f"Get {type} confirmation", timeout=5.0))
     root.add_child(py_trees.decorators.Retry(name="retry", child=loop, num_failures=10))
     return root
 
@@ -160,7 +160,7 @@ def createGetName():
 def createGetInterest(key_interest: str):
     root = py_trees.composites.Sequence("get interest", True)
     root.add_child(BtNode_Announce(name="Ask for interest", bb_source=None, message="What are you interested in?"))
-    root.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=key_interest, timeout=5.0))
+    root.add_child(BtNode_ListenAction(name="Listen to guest", bb_dest_key=key_interest, timeout=5.0))
     root.add_child(BtNode_Announce(name="Repeat interest", bb_source=key_interest, message="I heard you."))
     return root
 
@@ -422,7 +422,7 @@ def createToSofa(interest_key : str):
         get_interest_seq = py_trees.composites.Sequence(name="Get interest", memory=True)
         root.add_child(get_interest_seq)
         get_interest_seq.add_child(BtNode_Announce(name="Ask for interest", bb_source=None, message="What are you interested in?"))
-        get_interest_seq.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=interest_key, timeout=5.0))
+        get_interest_seq.add_child(BtNode_ListenAction(name="Listen to guest", bb_dest_key=interest_key, timeout=5.0))
         get_interest_seq.add_child(BtNode_Announce(name="Repeat interest", bb_source=interest_key, message="I heard you."))
         if (interest_key == KEY_GUEST2_INTEREST):
             get_interest_seq.add_child(BtNode_CompareInterest(name="Compare interest", bb_source_key1=KEY_GUEST1_INTEREST, bb_source_key2=KEY_GUEST2_INTEREST, bb_dest_key=KEY_COMMON_INTEREST))

@@ -2,7 +2,7 @@ import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_Listen
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction, BtNode_ListenAction
 from behavior_tree.TemplateNodes.Vision import BtNode_DoorDetection, BtNode_TurnPanTilt
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle, BtNode_GripperAction
 # from behavior_tree.StoringGroceries.customNodes import BtNode_FindObjTable, BtNode_GraspWithPose
@@ -105,17 +105,17 @@ def createGPSR():
     root.add_child(BtNode_Announce(name="Prompt for instruction", bb_source=None, message="Dear person, please give me your first command after the beep sound."))
     root.add_child(py_trees.timers.Timer("wait before listening", duration=5.0))
     root.add_child(BtNode_Announce(name=f"ask to confirm instruction", bb_source=None, message=f"Am I correct, your first command is {command1}"))
-    root.add_child(BtNode_GetConfirmation("confirm instruction1"))
+    root.add_child(BtNode_GetConfirmationAction("confirm instruction1"))
 
     root.add_child(BtNode_Announce(name="Prompt for instruction", bb_source=None, message="Dear person, please give me your second command after the beep sound."))
     root.add_child(py_trees.timers.Timer("wait before listening", duration=5.0))
     root.add_child(BtNode_Announce(name=f"ask to confirm instruction", bb_source=None, message=f"Am I correct, your second command is {command2}"))
-    root.add_child(BtNode_GetConfirmation("confirm instruction2"))
+    root.add_child(BtNode_GetConfirmationAction("confirm instruction2"))
 
     root.add_child(BtNode_Announce(name="Prompt for instruction", bb_source=None, message="Dear person, please give me your third command after the beep sound."))
     root.add_child(py_trees.timers.Timer("wait before listening", duration=5.0))
     root.add_child(BtNode_Announce(name=f"ask to confirm instruction", bb_source=None, message=f"Am I correct, your third command is {command3}"))
-    root.add_child(BtNode_GetConfirmation("confirm instruction3"))
+    root.add_child(BtNode_GetConfirmationAction("confirm instruction3"))
 
     # execution
     execution1 = py_trees.composites.Sequence("execute first command", True)
