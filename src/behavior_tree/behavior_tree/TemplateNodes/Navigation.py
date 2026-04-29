@@ -52,12 +52,14 @@ import rclpy
 import tf2_geometry_msgs
 from .BaseBehaviors import ServiceHandler
 from .ActionBase import ActionHandler
+from behavior_tree.config import is_node_mocked
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Quaternion
 
 # from behavior_tree.messages import Goto, GotoGrasp, ComputeGrasp
 from nav_msgs.msg import Odometry
-from behavior_tree.messages import NavigateToPose, SetLuggagePose, ComputeGrasp
+from behavior_tree.messages import NavigateToPose, SetLuggagePose, ComputeGrasp, FindApproachPose
+import math
 
 from tf2_ros.transform_listener import TransformListener
 from tf2_ros.buffer import Buffer
@@ -176,6 +178,249 @@ class BtNode_GotoAction(ActionHandler):
         self.feedback_timeout = 1000
         self.action_status = 0
         self.process_feedback(feedback)  
+
+
+class BtNode_FindApproachPose(ServiceHandler):
+    """
+    Compute a free, reachable, target-facing approach pose offset from a target point.
+
+    Reads a PoseStamped or PointStamped from the blackboard at ``bb_target_key``
+    (only the position/point is used; orientation is ignored — the planner
+    computes orientation to face the target). Calls the ``find_approach_pose``
+    service (``tinker_nav_msgs/srv/FindApproachPose``) and writes the resulting
+    PoseStamped to ``bb_approach_pose_key``. The downstream ``BtNode_GotoAction``
+    can then drive to that pose.
+
+    Mock mode: synthesizes a PoseStamped 0.7 m offset in the target frame's -x
+    direction and writes it directly. Skips the service call entirely so the
+    behavior tree can be tested without nav2 running.
+    """
+
+    def __init__(self,
+                 name: str,
+                 bb_target_key: str,
+                 bb_approach_pose_key: str,
+                 desired_distance: float = 0.7,
+                 min_distance: float = 0.45,
+                 max_distance: float = 1.2,
+                 num_angles: int = 16,
+                 check_reachability: bool = True,
+                 preferred_yaw_rad: float = float('nan'),
+                 facing_yaw_offset_rad: float = 0.0,
+                 service_name: str = "find_approach_pose"):
+        super().__init__(name, service_name, FindApproachPose)
+        self.bb_target_key = bb_target_key
+        self.bb_approach_pose_key = bb_approach_pose_key
+        self.desired_distance = float(desired_distance)
+        self.min_distance = float(min_distance)
+        self.max_distance = float(max_distance)
+        self.num_angles = int(num_angles)
+        self.check_reachability = bool(check_reachability)
+        self.preferred_yaw_rad = float(preferred_yaw_rad)
+        self.facing_yaw_offset_rad = float(facing_yaw_offset_rad)
+
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+        self.bb_read_client = self.attach_blackboard_client(name=f"FindApproachPoseRead")
+        self.bb_write_client = self.attach_blackboard_client(name=f"FindApproachPoseWrite")
+        self.bb_read_client.register_key(
+            "source",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_target_key)
+        )
+        self.bb_write_client.register_key(
+            "dest",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_approach_pose_key)
+        )
+        self.logger.debug(f"Setup BtNode_FindApproachPose")
+
+    def initialise(self) -> None:
+        super().initialise()
+        if self.mock_mode:
+            target = None
+            try:
+                target = self.bb_read_client.source
+            except Exception:
+                target = None
+            self.bb_write_client.dest = self._mock_offset_pose(target)
+            self.feedback_message = "MOCK: synthesized approach pose"
+            print(f"📍 MOCK FIND APPROACH POSE: synthesized offset")
+            return
+
+        try:
+            source = self.bb_read_client.source
+        except Exception as e:
+            self.feedback_message = f"Failed to read target from '{self.bb_target_key}': {e}"
+            self.response = None
+            return
+
+        target_point = self._coerce_to_point_stamped(source)
+        if target_point is None:
+            self.feedback_message = f"Unsupported target type: {type(source).__name__}"
+            self.response = None
+            return
+
+        request = FindApproachPose.Request()
+        request.target = target_point
+        request.desired_distance = float(self.desired_distance)
+        request.min_distance = float(self.min_distance)
+        request.max_distance = float(self.max_distance)
+        request.num_angles = int(self.num_angles)
+        request.check_reachability = bool(self.check_reachability)
+        request.preferred_yaw_rad = float(self.preferred_yaw_rad)
+        request.facing_yaw_offset_rad = float(self.facing_yaw_offset_rad)
+        request.timeout_sec = 0.0
+        # robot_pose_override empty header signals "use TF"
+        self.response = self.call_service_async(request)
+        self.feedback_message = (
+            f"Requested approach pose for target ({target_point.point.x:.2f}, "
+            f"{target_point.point.y:.2f}) in {target_point.header.frame_id}"
+        )
+
+    def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
+        if self.response is None:
+            return py_trees.common.Status.FAILURE
+        if not self.response.done():
+            self.feedback_message = "Computing approach pose..."
+            return py_trees.common.Status.RUNNING
+
+        result = self.response.result()
+        if result is None:
+            self.feedback_message = "Service call returned None"
+            return py_trees.common.Status.FAILURE
+        if result.status == 0:
+            self.bb_write_client.dest = result.pose
+            self.feedback_message = (
+                f"Approach pose at d={result.chosen_distance:.2f}, "
+                f"reachable={result.reachable}"
+            )
+            return py_trees.common.Status.SUCCESS
+        self.feedback_message = f"FindApproachPose failed: status={result.status} {result.errormsg}"
+        return py_trees.common.Status.FAILURE
+
+    @staticmethod
+    def _coerce_to_point_stamped(source):
+        """Accept PointStamped, PoseStamped, or anything with `.point`/`.pose.position`."""
+        if isinstance(source, PointStamped):
+            return source
+        if isinstance(source, PoseStamped):
+            ps = PointStamped()
+            ps.header = source.header
+            ps.point.x = source.pose.position.x
+            ps.point.y = source.pose.position.y
+            ps.point.z = source.pose.position.z
+            return ps
+        return None
+
+    @staticmethod
+    def _mock_offset_pose(target) -> 'PoseStamped':
+        """Synthetic 0.7 m offset along -x in target frame, identity orientation, target frame preserved."""
+        out = PoseStamped()
+        if target is None:
+            out.header.frame_id = "map"
+            out.pose.orientation.w = 1.0
+            return out
+        # Pull (x, y, z) + frame_id from either type
+        if hasattr(target, "point"):
+            out.header = target.header
+            out.pose.position.x = float(target.point.x) - 0.7
+            out.pose.position.y = float(target.point.y)
+            out.pose.position.z = float(target.point.z)
+        elif hasattr(target, "pose"):
+            out.header = target.header
+            out.pose.position.x = float(target.pose.position.x) - 0.7
+            out.pose.position.y = float(target.pose.position.y)
+            out.pose.position.z = float(target.pose.position.z)
+        else:
+            out.header.frame_id = "map"
+        out.pose.orientation.w = 1.0
+        return out
+
+
+class BtNode_CaptureCurrentPose(py_trees.behaviour.Behaviour):
+    """Look up the robot's current pose via TF and write it to a blackboard key.
+
+    Generic primitive for "remember where I am right now". Restaurant uses
+    this to snapshot the operator-placed start pose as the barman/anchor
+    position, instead of hardcoding map coordinates that go stale across
+    maps and competition setups.
+
+    Mock mode: writes a sentinel ``PoseStamped(frame_id="map", w=1)`` so any
+    downstream ``BtNode_GotoAction`` does not crash on an empty frame_id.
+    """
+
+    def __init__(self,
+                 name: str,
+                 bb_key: str,
+                 source_frame: str = "base_link",
+                 target_frame: str = "map",
+                 tf_timeout_sec: float = 1.0):
+        super().__init__(name=name)
+        self.bb_key = bb_key
+        self.source_frame = source_frame
+        self.target_frame = target_frame
+        self.tf_timeout_sec = float(tf_timeout_sec)
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
+        self.node = None
+        self.tf_buffer = None
+        self.tf_listener = None
+        self.bb_write = None
+
+    def setup(self, **kwargs):
+        self.node = kwargs.get('node')
+        if self.node is not None and not self.mock_mode:
+            self.tf_buffer = Buffer()
+            self.tf_listener = TransformListener(self.tf_buffer, self.node)
+        self.bb_write = self.attach_blackboard_client(name="CaptureCurrentPoseWrite")
+        self.bb_write.register_key(
+            "dest",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_key)
+        )
+        self.logger.debug(f"Setup BtNode_CaptureCurrentPose -> {self.bb_key}")
+
+    def update(self):
+        if self.mock_mode:
+            ps = PoseStamped()
+            ps.header.frame_id = self.target_frame
+            ps.pose.orientation.w = 1.0
+            self.bb_write.dest = ps
+            self.feedback_message = f"MOCK: synthetic origin pose at {self.target_frame}"
+            print(f"📌 MOCK CAPTURE POSE: wrote synthetic origin to '{self.bb_key}'")
+            return py_trees.common.Status.SUCCESS
+
+        if self.tf_buffer is None:
+            self.feedback_message = "TF buffer not initialised (setup not called?)"
+            return py_trees.common.Status.FAILURE
+
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.target_frame,
+                self.source_frame,
+                rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=self.tf_timeout_sec),
+            )
+        except Exception as e:
+            self.feedback_message = f"TF lookup '{self.target_frame}' <- '{self.source_frame}' failed: {e}"
+            return py_trees.common.Status.FAILURE
+
+        ps = PoseStamped()
+        ps.header.frame_id = self.target_frame
+        ps.header.stamp = self.node.get_clock().now().to_msg()
+        ps.pose.position.x = tf.transform.translation.x
+        ps.pose.position.y = tf.transform.translation.y
+        ps.pose.position.z = tf.transform.translation.z
+        ps.pose.orientation = tf.transform.rotation
+        self.bb_write.dest = ps
+        self.feedback_message = (
+            f"Captured pose ({ps.pose.position.x:.2f}, {ps.pose.position.y:.2f}) "
+            f"in '{self.target_frame}' -> '{self.bb_key}'"
+        )
+        return py_trees.common.Status.SUCCESS
 
 
 class BtNode_ConvertGraspPose(ServiceHandler):

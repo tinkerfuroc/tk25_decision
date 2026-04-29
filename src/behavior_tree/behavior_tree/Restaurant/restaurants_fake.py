@@ -6,7 +6,7 @@ import math
 import os
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
+from behavior_tree.TemplateNodes.Navigation import BtNode_CaptureCurrentPose, BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import (
     BtNode_Announce,
     BtNode_GetConfirmationAction,
@@ -44,22 +44,6 @@ except FileNotFoundError:
     raise
 
 
-def pose_reader(pose_dict):
-    return PoseStamped(
-        header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
-        pose=Pose(
-            position=Point(x=pose_dict["point"]["x"], y=pose_dict["point"]["y"], z=0.0),
-            orientation=Quaternion(
-                x=pose_dict["orientation"]["x"],
-                y=pose_dict["orientation"]["y"],
-                z=pose_dict["orientation"]["z"],
-                w=pose_dict["orientation"]["w"],
-            ),
-        ),
-    )
-
-
-pose_kitchen_bar = pose_reader(constants["pose_kitchen_bar"])
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
 ARM_POS_SERVING = [x / 180 * math.pi for x in constants["arm_pos_serving"]]
 STANDARD_OBJECTS = constants.get("standard_objects", [])
@@ -97,10 +81,15 @@ def createConstantWriter():
         name="Write constants to blackboard",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
-    root.add_child(BtNode_WriteToBlackboard(
-        name="Write kitchen bar pose",
-        bb_namespace="", bb_source=None,
-        bb_key=KEY_KITCHEN_BAR_POSE, object=pose_kitchen_bar,
+    # Barman/anchor pose = robot's pose at task start (operator placement),
+    # not a hardcoded map coordinate.
+    root.add_child(py_trees.decorators.Retry(
+        name="Retry capture task start pose",
+        child=BtNode_CaptureCurrentPose(
+            name="Capture task start pose as kitchen bar",
+            bb_key=KEY_KITCHEN_BAR_POSE,
+        ),
+        num_failures=3,
     ))
     root.add_child(BtNode_WriteToBlackboard(
         name="Write arm navigating pose",

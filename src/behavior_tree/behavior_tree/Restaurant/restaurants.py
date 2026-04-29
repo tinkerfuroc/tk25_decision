@@ -30,7 +30,7 @@ import py_trees
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
+from behavior_tree.TemplateNodes.Navigation import BtNode_CaptureCurrentPose, BtNode_FindApproachPose, BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_MaintainEyeContact,
     BtNode_ScanForWavingPerson,
@@ -61,6 +61,7 @@ from .config import (
     KEY_BARMAN_TEXT,
     KEY_CURRENT_ITEM,
     KEY_CURRENT_ITEM_SUMMARY,
+    KEY_CUSTOMER_APPROACH_POSE,
     KEY_CUSTOMER_LOCATION,
     KEY_CUSTOMER_ORDER,
     KEY_CUSTOMER_QUEUE,
@@ -72,7 +73,6 @@ from .config import (
     KEY_WAVING_CLOSEST_PERSON,
     KEY_WAVING_PERSON_PICTURES,
     KEY_WAVING_PERSON_POSES,
-    POSE_KITCHEN_BAR,
     constants,
 )
 from .state_nodes import (
@@ -90,6 +90,34 @@ from .state_nodes import (
 )
 
 
+def _approachCustomerSubtree(name: str = "Approach customer") -> py_trees.composites.Sequence:
+    """Find a costmap-free, target-facing approach pose then drive to it.
+
+    Replaces direct `BtNode_GotoAction(KEY_CUSTOMER_LOCATION)` calls so the
+    robot stops a polite distance from the customer rather than navigating
+    onto their position.
+    """
+    seq = py_trees.composites.Sequence(name=name, memory=True)
+    seq.add_child(
+        BtNode_FindApproachPose(
+            name=f"{name}: find pose",
+            bb_target_key=KEY_CUSTOMER_LOCATION,
+            bb_approach_pose_key=KEY_CUSTOMER_APPROACH_POSE,
+            desired_distance=0.7,
+            min_distance=0.45,
+            max_distance=1.2,
+            check_reachability=True,
+        )
+    )
+    seq.add_child(
+        BtNode_GotoAction(
+            name=f"{name}: drive",
+            key=KEY_CUSTOMER_APPROACH_POSE,
+        )
+    )
+    return seq
+
+
 def createConstantWriter():
     """Initialize static task constants and runtime state on blackboard."""
     root = py_trees.composites.Parallel(
@@ -97,7 +125,6 @@ def createConstantWriter():
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
     for name, key, value in (
-        ("Write kitchen bar location", KEY_KITCHEN_BAR_POSE, POSE_KITCHEN_BAR),
         ("Write arm navigating pose", KEY_ARM_NAVIGATING, ARM_POS_NAVIGATING),
         ("Write arm serving pose", KEY_ARM_SERVING, ARM_POS_SERVING),
         ("Initialize caller queue", KEY_CUSTOMER_QUEUE, []),
@@ -117,6 +144,19 @@ def createConstantWriter():
                 object=value,
             )
         )
+    # Barman/anchor pose = robot's pose at task start (operator placement),
+    # not a hardcoded map coordinate. Wrapped in Retry to absorb transient
+    # TF unavailability during bringup.
+    root.add_child(
+        py_trees.decorators.Retry(
+            name="Retry capture task start pose",
+            child=BtNode_CaptureCurrentPose(
+                name="Capture task start pose as kitchen bar",
+                bb_key=KEY_KITCHEN_BAR_POSE,
+            ),
+            num_failures=3,
+        )
+    )
     return root
 
 
@@ -209,7 +249,7 @@ def createApproachCustomer():
     success_path.add_child(
         py_trees.decorators.Retry(
             name="retry goto customer",
-            child=BtNode_GotoAction(name="Go to customer table", key=KEY_CUSTOMER_LOCATION),
+            child=_approachCustomerSubtree("Approach customer table"),
             num_failures=3,
         )
     )
@@ -296,7 +336,7 @@ def createTakeAndConfirmOrder():
         )
     )
 
-    maintain_eye_contact = BtNode_MaintainEyeContact(name="Maintain eye contact (order)", timeout=30.0)
+    maintain_eye_contact = BtNode_MaintainEyeContact(name="Maintain eye contact (order)")
     root_with_eye_contact = py_trees.composites.Parallel(
         name="Take order with eye contact",
         policy=py_trees.common.ParallelPolicy.SuccessOnSelected([root]),
@@ -403,7 +443,7 @@ def createDeliverOrder():
     normal.add_child(
         py_trees.decorators.Retry(
             name="retry return to customer",
-            child=BtNode_GotoAction(name="Return to customer table", key=KEY_CUSTOMER_LOCATION),
+            child=_approachCustomerSubtree("Return to customer table"),
             num_failures=3,
         )
     )
