@@ -1,3 +1,5 @@
+from urllib import request
+
 import py_trees
 import time
 from typing import List, Dict, Any, Optional
@@ -150,8 +152,8 @@ class BtNode_DetectTray(ServiceHandler):
     def __init__(self, 
                  name: str,
                  bb_dest_key: str,
-                 service_name: str = "object_detection"):
-        super().__init__(name, service_name, ObjectDetection)
+                 service_name: str = "object_detection_generalist"):
+        super().__init__(name, service_name, ObjectDetectionGeneralist)
         self.bb_dest_key = bb_dest_key
         
         self.blackboard = self.attach_blackboard_client(name=self.name)
@@ -162,9 +164,9 @@ class BtNode_DetectTray(ServiceHandler):
         )
     
     def initialise(self):
-        request = ObjectDetection.Request()
+        request = ObjectDetectionGeneralist.Request()
         request.prompt = "tray"
-        request.flags = "scan"
+        request.use_vlm_sam_fallback = True
         request.camera = "orbbec"
         request.target_frame = "map"
         self.response = self.client.call_async(request)
@@ -214,9 +216,9 @@ class BtNode_ScanForCallingCustomer(ServiceHandler):
     def __init__(self, 
                  name: str,
                  bb_dest_key: str,
-                 service_name: str = "object_detection",
+                 service_name: str = "object_detection_generalist",
                  timeout: float = 30.0):
-        super().__init__(name, service_name, ObjectDetection)
+        super().__init__(name, service_name, ObjectDetectionGeneralist)
         self.bb_dest_key = bb_dest_key
         self.timeout = timeout
         self.start_time = None
@@ -279,9 +281,9 @@ class BtNode_ScanForCallingCustomer(ServiceHandler):
         self.feedback_message = f"Camera initialized to horizontal, starting scan at position {self.current_position + 1}/{len(self.scan_positions)}"
     
     def start_detection(self):
-        request = ObjectDetection.Request()
+        request = ObjectDetectionGeneralist.Request()
         request.prompt = "person waving or calling"
-        request.flags = "detect_gesture"
+        request.use_vlm_sam_fallback = True
         request.camera = "orbbec"
         request.target_frame = "map"
         self.response = self.client.call_async(request)

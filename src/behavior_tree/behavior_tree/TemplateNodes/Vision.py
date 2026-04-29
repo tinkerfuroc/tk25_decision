@@ -58,7 +58,7 @@ import time
 import math
 from typing import Any, Optional
 
-from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, SeatRecommendBbox, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, PanTiltCommand, BoundingBox, FollowHeadAction
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, SeatRecommendBbox, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, PanTiltCommand, BoundingBox, FollowHeadAction, DetectWaving
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
 from std_msgs.msg import Header

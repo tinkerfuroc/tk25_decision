@@ -356,6 +356,35 @@ class ComputeGrasp(MockService):
     pass
 
 
+class FindApproachPose(MockService):
+    """Mock FindApproachPose service."""
+    class Request(MockService.Request):
+        def __init__(self):
+            super().__init__()
+            self.target = None
+            self.desired_distance = 0.0
+            self.min_distance = 0.0
+            self.max_distance = 0.0
+            self.num_angles = 0
+            self.check_reachability = False
+            self.preferred_yaw_rad = float('nan')
+            self.facing_yaw_offset_rad = 0.0
+            self.timeout_sec = 0.0
+            self.robot_pose_override = None
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.errormsg = ""
+            self.pose = None
+            self.chosen_distance = 0.0
+            self.score = 0.0
+            self.reachable = False
+            self.alternates = []
+            self.angle_to_target_rad = 0.0
+
+
 # Mock Vision Messages
 class Object(MockMessage):
     """Mock Object message."""
