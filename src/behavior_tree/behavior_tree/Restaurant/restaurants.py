@@ -149,7 +149,7 @@ def _create_waving_detection_pass():
 def _create_legacy_detection_pass():
     """Fallback detection: legacy calling-customer YOLO path (no pictures)."""
     seq = py_trees.composites.Sequence(name="Legacy detection pass", memory=True)
-    inner = py_trees.composites.Selector(name="Legacy detect selector", memory=False)
+    inner = py_trees.composites.Selector(name="Legacy detect selector", memory=True)
     inner.add_child(
         BtNode_DetectCallingCustomer(
             name="Direct detect calling customer",
@@ -180,7 +180,7 @@ def _create_legacy_detection_pass():
 def createDetectAndArbitrateCustomers():
     """Detect callers (only if queue dry) and select one active target via arbitration."""
     root = py_trees.composites.Sequence(name="Detect and arbitrate callers", memory=True)
-    detect = py_trees.composites.Selector(name="Detection strategy", memory=False)
+    detect = py_trees.composites.Selector(name="Detection strategy", memory=True)
     detect.add_child(
         BtNode_QueueHasQueued(
             name="Queue has queued entries?",
@@ -204,7 +204,7 @@ def createDetectAndArbitrateCustomers():
 
 def createApproachCustomer():
     """Reach selected customer; fallback to show-picture partial-score path if unreachable."""
-    root = py_trees.composites.Selector(name="Approach selected customer", memory=False)
+    root = py_trees.composites.Selector(name="Approach selected customer", memory=True)
     success_path = py_trees.composites.Sequence(name="Reach customer", memory=True)
     success_path.add_child(
         py_trees.decorators.Retry(
@@ -212,9 +212,6 @@ def createApproachCustomer():
             child=BtNode_GotoAction(name="Go to customer table", key=KEY_CUSTOMER_LOCATION),
             num_failures=3,
         )
-    )
-    success_path.add_child(
-        BtNode_MaintainEyeContact(name="Eye-contact (on arrival)")
     )
     success_path.add_child(
         BtNode_UpdateChecklistFlag(
@@ -264,7 +261,6 @@ def createApproachCustomer():
 def createTakeAndConfirmOrder():
     """Run customer-facing order intake and confirmation loop."""
     root = py_trees.composites.Sequence(name="Take and confirm order", memory=True)
-    root.add_child(BtNode_MaintainEyeContact(name="Eye-contact (order-taking)"))
     root.add_child(
         BtNode_Announce(
             name="Order engagement prompt",
@@ -299,12 +295,20 @@ def createTakeAndConfirmOrder():
             value=True,
         )
     )
-    return root
+
+    maintain_eye_contact = BtNode_MaintainEyeContact(name="Maintain eye contact (order)", timeout=30.0)
+    root_with_eye_contact = py_trees.composites.Parallel(
+        name="Take order with eye contact",
+        policy=py_trees.common.ParallelPolicy.SuccessOnSelected([root]),
+        children=[maintain_eye_contact, root]
+    )
+
+    return root_with_eye_contact
 
 
 def createOptionalTrayTransport():
     """Optional tray branch with direct-carry fallback (single announcement, pre-loop)."""
-    root = py_trees.composites.Selector(name="Optional tray transport", memory=False)
+    root = py_trees.composites.Selector(name="Optional tray transport", memory=True)
     tray_sequence = py_trees.composites.Sequence(name="Use tray transport", memory=True)
     tray_sequence.add_child(
         BtNode_DetectTray(
@@ -392,7 +396,7 @@ def createDeliverOrder():
 
     deliver_or_fallback = py_trees.composites.Selector(
         name="Deliver or fallback",
-        memory=False,
+        memory=True,
     )
 
     normal = py_trees.composites.Sequence(name="Normal delivery", memory=True)
@@ -403,7 +407,6 @@ def createDeliverOrder():
             num_failures=3,
         )
     )
-    normal.add_child(BtNode_MaintainEyeContact(name="Eye-contact (serving)"))
     normal.add_child(
         BtNode_MoveArmSingle(
             name="Arm to serving pose (at table)",
@@ -527,7 +530,7 @@ def createCollectOrdersPhase():
 
 def createBarmanPhase():
     """Phase 2: one bar trip for all collected orders. Gated on non-empty order list."""
-    root = py_trees.composites.Selector(name="Barman trip (gated)", memory=False)
+    root = py_trees.composites.Selector(name="Barman trip (gated)", memory=True)
 
     actual = py_trees.composites.Sequence(name="Actual barman trip", memory=True)
     actual.add_child(
@@ -634,6 +637,11 @@ def createRestaurantTask():
     )
 
     root.add_child(createCollectOrdersPhase())
+    root.add_child(BtNode_Announce(
+        name="Phase 1 complete announcement",
+        bb_source=None,
+        message="Order collection phase complete. I'll now proceed to the barman."
+    ))
     root.add_child(createOptionalTrayTransport())
     root.add_child(createBarmanPhase())
     root.add_child(createDeliverAllItemsPhase())
@@ -650,7 +658,7 @@ def createRestaurantTask():
 
 def restaurant():
     """Runtime entry for the default Restaurant strategy."""
-    run_tree(createRestaurantTask, period_ms=500.0, title="Restaurant")
+    run_tree(createRestaurantTask, period_ms=250.0, title="Restaurant")
 
 
 if __name__ == "__main__":
