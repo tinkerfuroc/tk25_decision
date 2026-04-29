@@ -1,6 +1,6 @@
 import py_trees
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WaitTicks
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
 
 def createPromptReached():
     """
@@ -10,7 +10,7 @@ def createPromptReached():
     root = py_trees.decorators.Retry(name="retry", child=prompt_seq, num_failures=-1)
 
     prompt_seq.add_child(BtNode_Announce(name="Ask if reached", bb_source=None, message="Have you reached your destination?"))
-    prompt_seq.add_child(BtNode_GetConfirmation(name="get confirmation"))
+    prompt_seq.add_child(BtNode_GetConfirmationAction(name="get confirmation"))
     prompt_seq.add_child(BtNode_WaitTicks(name="Wait 10 ticks", ticks=10))
 
     return root

@@ -4,10 +4,10 @@ import py_trees
 import time
 from typing import List, Dict, Any, Optional
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtractionAction
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 import math
-from behavior_tree.messages import ObjectDetectionGeneralist, TextToSpeech, Listen, PhraseExtraction, PanTiltCommand
+from behavior_tree.messages import ObjectDetectionGeneralist, TextToSpeech, Listen, PhraseExtractionAction, PanTiltCommand
 from geometry_msgs.msg import PointStamped, PoseStamped
 from std_msgs.msg import String
 
@@ -64,45 +64,29 @@ class BtNode_DetectCallingCustomer(ServiceHandler):
         else:
             return py_trees.common.Status.RUNNING
 
-class BtNode_TakeOrder(ServiceHandler):
-    def __init__(self, 
+class BtNode_TakeOrder(BtNode_PhraseExtractionAction):
+    """Restaurant order taking via tk_24_audio `phrase_extraction_action`.
+
+    Hardcoded menu wordlist; writes the matched phrase to ``bb_dest_key``.
+    """
+
+    MENU_WORDLIST = [
+        "apple", "banana", "orange", "milk", "coffee", "tea",
+        "water", "juice", "bread", "sandwich", "cake", "cookie",
+    ]
+
+    def __init__(self,
                  name: str,
                  bb_dest_key: str,
-                 service_name: str = "phrase_extraction_service",
-                 timeout: float = 15.0):
-        super().__init__(name, service_name, PhraseExtraction)
-        self.bb_dest_key = bb_dest_key
-        self.timeout = timeout
-        
-        self.blackboard = self.attach_blackboard_client(name=self.name)
-        self.blackboard.register_key(
-            key="customer_order",
-            access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+                 timeout: float = 15.0,
+                 action_name: str = "phrase_extraction_action"):
+        super().__init__(
+            name=name,
+            wordlist=self.MENU_WORDLIST,
+            bb_dest_key=bb_dest_key,
+            timeout=timeout,
+            action_name=action_name,
         )
-    
-    def initialise(self):
-        request = PhraseExtraction.Request()
-        request.timeout = self.timeout
-        request.wordlist = [
-            "apple", "banana", "orange", "milk", "coffee", "tea", 
-            "water", "juice", "bread", "sandwich", "cake", "cookie"
-        ]
-        self.response = self.client.call_async(request)
-        self.feedback_message = "Listening for customer order"
-    
-    def update(self):
-        if self.response.done():
-            result = self.response.result()
-            if result.status == 0:
-                self.blackboard.customer_order = result.phrase
-                self.feedback_message = f"Received order: {result.phrase}"
-                return py_trees.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Failed to understand order: {result.error_message}"
-                return py_trees.common.Status.FAILURE
-        else:
-            return py_trees.common.Status.RUNNING
 
 class BtNode_ConfirmOrder(BtNode_Announce):
     def __init__(self, 

@@ -2,7 +2,7 @@ import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_Listen
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
 from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
 from behavior_tree.TemplateNodes.Vision import  BtNode_DoorDetection 
 
@@ -81,7 +81,7 @@ def createQandA():
     # audio package should create a new node for general Q & A (just answering questions)
     # the node should accept a question (string) and an optional background_info (string)
     root = py_trees.composites.Sequence(name="Q & A", memory=True)
-    root.add_child(BtNode_Listen(name="listen", bb_dest_key=KEY_LISTEN_RESULT))
+    root.add_child(BtNode_ListenAction(name="listen", bb_dest_key=KEY_LISTEN_RESULT))
     # TODO: replace these announce nodes with a call to the audio node for Q & A (listen result as question, tinker_description as background_info)
     # announce the results with the call to audio instead
     root.add_child(BtNode_Announce(name="announce I heard you", bb_source=None, message="I hear you, you said"))

@@ -35,6 +35,7 @@ from behavior_tree.TemplateNodes.Vision import (
     BtNode_MaintainEyeContact,
     BtNode_ScanForWavingPerson,
     BtNode_ShowImage,
+    BtNode_TurnPanTilt
 )
 from behavior_tree.runtime import run_tree
 
@@ -147,7 +148,13 @@ def createConstantWriter():
     # Barman/anchor pose = robot's pose at task start (operator placement),
     # not a hardcoded map coordinate. Wrapped in Retry to absorb transient
     # TF unavailability during bringup.
-    root.add_child(
+    record_parallel = py_trees.composites.Parallel(name="parallel", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    record_parallel.add_child(BtNode_Announce(
+        name="Announce initialization",
+        bb_source=None,
+        message="Recording location of restaurant bar.",
+    ))
+    record_parallel.add_child(
         py_trees.decorators.Retry(
             name="Retry capture task start pose",
             child=BtNode_CaptureCurrentPose(
@@ -157,6 +164,7 @@ def createConstantWriter():
             num_failures=3,
         )
     )
+    root.add_child(record_parallel)
     return root
 
 
@@ -220,6 +228,11 @@ def _create_legacy_detection_pass():
 def createDetectAndArbitrateCustomers():
     """Detect callers (only if queue dry) and select one active target via arbitration."""
     root = py_trees.composites.Sequence(name="Detect and arbitrate callers", memory=True)
+    root.add_child(BtNode_TurnPanTilt(
+        "turn pan tilt forwards",
+        x=0.0,
+        y=35.0
+    ))
     detect = py_trees.composites.Selector(name="Detection strategy", memory=True)
     detect.add_child(
         BtNode_QueueHasQueued(

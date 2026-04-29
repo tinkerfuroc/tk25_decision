@@ -4,7 +4,7 @@ from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Drop
 from behavior_tree.TemplateNodes.Vision import BtNode_FindObj
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtractionAction
 
 from geometry_msgs.msg import PoseStamped, PointStamped, Pose, Quaternion, Point
 from std_msgs.msg import Header
@@ -78,16 +78,16 @@ def create_demo():
 
     root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Hi, I'm Tinker, you can instruct me to do tasks for you"))
-    root.add_child(py_trees.decorators.FailureIsSuccess(name="wrapper", child=BtNode_PhraseExtraction(name="Get command", wordlist=['table'], bb_dest_key=KEY_DUMMY, timeout=7.0)))
+    root.add_child(py_trees.decorators.FailureIsSuccess(name="wrapper", child=BtNode_PhraseExtractionAction(name="Get command", wordlist=['table'], bb_dest_key=KEY_DUMMY, timeout=7.0)))
     
     root.add_child(BtNode_Announce(name="Announce go to table", bb_source=None, message="Going to table"))
-    root.add_child(py_trees.decorators.FailureIsSuccess(name="wrapper", child=BtNode_PhraseExtraction(name="Get command", wordlist=['table'], bb_dest_key=KEY_DUMMY, timeout=20.0)))
+    root.add_child(py_trees.decorators.FailureIsSuccess(name="wrapper", child=BtNode_PhraseExtractionAction(name="Get command", wordlist=['table'], bb_dest_key=KEY_DUMMY, timeout=20.0)))
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="go to start middle", key=KEY_POSE_STARTING_MIDDLE), num_failures=5))
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="go to table", key=KEY_POSE_TABLE), num_failures=5))
     root.add_child(py_trees.decorators.Retry(name="retry grasp", child=createGraspOnce(), num_failures=5))
 
     root.add_child(BtNode_Announce(name="Announce go back", bb_source="", message="Going back to hand bottle over"))
-    root.add_child(py_trees.decorators.FailureIsSuccess(name="wrapper", child=BtNode_PhraseExtraction(name="Get command", wordlist=['table'], bb_dest_key=KEY_DUMMY, timeout=20.0)))
+    root.add_child(py_trees.decorators.FailureIsSuccess(name="wrapper", child=BtNode_PhraseExtractionAction(name="Get command", wordlist=['table'], bb_dest_key=KEY_DUMMY, timeout=20.0)))
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="turn 90 degrees", key=KEY_POSE_TABLE_MIDDLE), num_failures=5))
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction(name="go back", key=KEY_POSE_STARTING), num_failures=5))
     root.add_child(BtNode_Announce(name="Announce hand bottle over", bb_source="", message="Here is your water"))
