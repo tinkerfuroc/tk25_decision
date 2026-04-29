@@ -53,7 +53,7 @@ import py_trees as pytree
 # from tinker_decision_msgs.srv import Grasp, Drop
 # from tinker_decision_msgs.srv import ObjectDetection
 from geometry_msgs.msg import PointStamped, Pose, Point
-from behavior_tree.messages import Grasp, ObjectDetection, Drop, ArmJointService, Place, PointTo, JointMove, CartesianMove, GripperCommand
+from behavior_tree.messages import Grasp, ObjectDetection, Drop, ArmJointService, Place, JointMove, CartesianMove, GripperCommand
 from py_trees.common import Status
 from behavior_tree.Constants import SCAN_POSES
 import action_msgs.msg as action_msgs
@@ -634,7 +634,7 @@ class BtNode_PointTo(ServiceHandler):
                  bb_key_points: str,
                  bb_key_init_pose: str,
                  target_id: int = 0,
-                 service_name: str = "point_to_service"
+                 service_name: str = "arm_joint_service"
                  ):
         super().__init__(name, service_name, ArmJointService)
         self.bb_key_persons = bb_key_persons
@@ -695,9 +695,7 @@ class BtNode_PointTo(ServiceHandler):
                 print(f"👉 MOCK POINT TO: Target {self.target_id}")
                 return
 
-            # request = PointTo.Request()
             point = points[self.target_id]
-            # self.response = self.client.call_async(request)
 
             request = ArmJointService.Request()
             
