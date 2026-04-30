@@ -50,8 +50,10 @@ except (ImportError, ModuleNotFoundError):
 
 if _config.has_dependency('nav2_msgs'):
     from nav2_msgs.action import NavigateToPose
+    print("Using real nav2_msgs NavigateToPose")
 else:
     from behavior_tree.mock_messages import NavigateToPose
+    print("WARNING: nav2_msgs not found, using mock NavigateToPose !!!")
 
 if _config.has_dependency('control_msgs'):
     from control_msgs.action import GripperCommand

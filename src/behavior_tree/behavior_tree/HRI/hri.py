@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ast import main
 
 """HRI behavior tree composition.
 
@@ -54,6 +55,9 @@ from .config import (
     KEY_GUEST2_DRINK,
     KEY_GUEST2_FEATURES,
     KEY_GUEST2_NAME,
+    KEY_HOST_DRINK,
+    KEY_HOST_FEATURES,
+    KEY_HOST_NAME,
     KEY_PERSONS,
     KEY_PERSON_CENTROIDS,
     KEY_SEAT_BBOX,
@@ -199,26 +203,25 @@ def createConstantWriter():
             object=[],
         )
     )
-    # Pre-initialize feature-matching outputs so downstream readers
-    # (BtNode_TurnTo, BtNode_PointTo, BtNode_WrapPointAsList) see None
-    # instead of a missing-key blackboard exception when matching/seat
-    # recommendation has not yet succeeded.
+    # Host name + drink come from `constants.json` via config; seed them on
+    # the blackboard so `BtNode_CombinePerson` can read them when the host
+    # is scanned at task start.
     root.add_child(
         BtNode_WriteToBlackboard(
-            name="Initialize person centroids",
+            name="Write host name",
             bb_namespace="",
             bb_source=None,
-            bb_key=KEY_PERSON_CENTROIDS,
-            object=None,
+            bb_key=KEY_HOST_NAME,
+            object=HOST_NAME,
         )
     )
     root.add_child(
         BtNode_WriteToBlackboard(
-            name="Initialize seat point",
+            name="Write host drink",
             bb_namespace="",
             bb_source=None,
-            bb_key=KEY_SEAT_POINT,
-            object=None,
+            bb_key=KEY_HOST_DRINK,
+            object=HOST_DRINK,
         )
     )
     return root
@@ -227,6 +230,19 @@ def createConstantWriter():
 def createArrivalTrigger():
     """Try real door-trigger first, then fallback to mock trigger."""
     root = py_trees.composites.Selector(name="Arrival trigger", memory=False)
+    parallel_going = py_trees.composites.Parallel(name="Parallel go to door and announce", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    parallel_going.add_child(
+        py_trees.decorators.Retry(
+            name=f"Retry goto door for guest",
+            child=BtNode_GotoAction(name=f"Go to door for guest", key=KEY_DOOR_POSE),
+            num_failures=5,
+        )
+    )
+    parallel_going.add_child(BtNode_Announce(
+        name="Arrival announcement",
+        bb_source=None,
+        message="Going to check the door.",
+    ))
     real_trigger = py_trees.composites.Sequence(name="Door detection trigger", memory=True)
     real_trigger.add_child(
         py_trees.decorators.Retry(
@@ -239,9 +255,10 @@ def createArrivalTrigger():
         BtNode_Announce(
             name="Arrival detected announcement",
             bb_source=None,
-            message="I see a guest at the door.",
+            message="I see a guest.",
         )
     )
+    root.add_child(parallel_going)
     root.add_child(real_trigger)
     root.add_child(BtNode_MockArrivalTrigger())
     return root
@@ -329,6 +346,71 @@ def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
     return root
 
 
+def createScanHostFeatures():
+    """Navigate to sofa, scan the seated host, register them at index 0 of KEY_PERSONS.
+
+    Mirrors `Receptionist/receptionist_new.py:createScanHostFeatures`. Runs at
+    task start before the first guest arrival so SeatRecommend / FeatureMatching
+    treat the host as a known seated person. After this completes,
+    `KEY_PERSONS == [host]`; subsequent guest intakes append to indices 1, 2.
+    """
+    root = py_trees.composites.Sequence(name="Scan host features", memory=True)
+
+    paralllel_going = py_trees.composites.Parallel(
+        name="Parallel go to sofa and announce",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
+    )
+    paralllel_going.add_child(BtNode_Announce(
+        name="Host scan announcement",
+        bb_source=None,
+        message="Going to scan host",
+    ))
+    paralllel_going.add_child(
+        py_trees.decorators.Retry(
+            name="Retry goto sofa for host scan",
+            child=BtNode_GotoAction(name="Go to sofa for host scan", key=KEY_SOFA_POSE),
+            num_failures=5,
+        )
+    )
+    root.add_child(paralllel_going)
+    root.add_child(BtNode_TurnPanTilt(name="Look down at host", x=0.0, y=20.0, speed=0.0))
+    parallel_scan = py_trees.composites.Parallel(
+        name="Parallel host scan",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll()
+    )
+    parallel_scan.add_child(
+        BtNode_Announce(
+            name="Announce host scan",
+            bb_source=None,
+            message="Scanning host.",
+        )
+    )
+    parallel_scan.add_child(
+        py_trees.decorators.Retry(
+            name="Retry host feature extraction",
+            child=BtNode_FeatureExtraction(
+                name="Extract host features",
+                bb_dest_key=KEY_HOST_FEATURES,
+            ),
+            num_failures=3,
+        )
+    )
+    root.add_child(parallel_scan)
+    root.add_child(
+        BtNode_CombinePerson(
+            name="Register host profile",
+            key_dest=KEY_PERSONS,
+            key_name=KEY_HOST_NAME,
+            key_drink=KEY_HOST_DRINK,
+            key_features=KEY_HOST_FEATURES,
+        )
+    )
+    root.add_child(
+        BtNode_TurnPanTilt(name="Look forward after host scan", x=0.0, y=35.0, speed=0.0)
+    )
+    return root
+
+
 def createGuestIntake(guest_idx: int):
     """Collect name/drink/features for one guest at the door."""
     if guest_idx == 1:
@@ -343,15 +425,10 @@ def createGuestIntake(guest_idx: int):
         image_key = KEY_GUEST2_COMPARISON_IMAGE
 
     root = py_trees.composites.Sequence(name=f"Guest {guest_idx} intake", memory=True)
-    root.add_child(
-        py_trees.decorators.Retry(
-            name=f"Retry goto door for guest {guest_idx}",
-            child=BtNode_GotoAction(name=f"Go to door for guest {guest_idx}", key=KEY_DOOR_POSE),
-            num_failures=5,
-        )
-    )
     root.add_child(_create_get_info("name", name_key, NAMES))
     root.add_child(_create_get_info("favorite drink", drink_key, DRINKS))
+    root.add_child(BtNode_TurnPanTilt(name="loop up", x=0.0, y=45.0))
+    root.add_child(BtNode_Announce(name="announce stand in front of me", bb_source=None, message="Pleas stand directly in front of me so I can remember you."))
     root.add_child(BtNode_FeatureExtraction(name=f"Extract guest {guest_idx} features", bb_dest_key=feature_key, bb_image_key=image_key))
     root.add_child(
         BtNode_CombinePerson(
@@ -638,53 +715,57 @@ def createTwoWayIntroduction():
         )
     )
 
-    intro_1 = BtNode_Introduce(
-        name="Introduce guest1 to guest2",
-        key_person=KEY_PERSONS,
-        target_id=1,
-        introduced_id=0,
-        describe_introduced=True,
+    # KEY_PERSONS layout after host scan + both intakes: [host, guest1, guest2]
+    # → guest1 is index 1, guest2 is index 2.
+    intro1 = py_trees.composites.Sequence(name="Intro guest1 to guest2 with gaze", memory=True)
+    intro1.add_child(
+        BtNode_TurnPanTilt(name="Look at guest2", x=45.0, y=0.0, speed=0.0)
     )
-    intro_2 = BtNode_Introduce(
+    intro1.add_child(
+        BtNode_Introduce(
+            name="Introduce guest1 to guest2",
+            key_person=KEY_PERSONS,
+            target_id=2,
+            introduced_id=1,
+            describe_introduced=True,
+        )
+    )
+    maintain_gaze1 = BtNode_MaintainEyeContact(name="Maintain eye contact during intros")
+    parrallel_intro_gaze1 = py_trees.composites.Parallel(
+        name="Parallel intro1 and gaze",
+        policy=py_trees.common.ParallelPolicy.SuccessOnSelected([intro1]),
+        children=[intro1, maintain_gaze1]
+    )
+
+    intro2 = py_trees.composites.Sequence(name="Intro guest2 to guest1 with gaze", memory=True)
+    intro2.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name=f"Pre-orient at guest 1",
+            child=BtNode_TurnTo(
+                name=f"Look at guest1",
+                bb_key_persons=KEY_PERSONS,
+                bb_key_points=KEY_PERSON_CENTROIDS,
+                target_id=1,
+            ),
+        )
+    )
+    intro2.add_child(BtNode_Introduce(
         name="Introduce guest2 to guest1",
         key_person=KEY_PERSONS,
-        target_id=0,
-        introduced_id=1,
+        target_id=1,
+        introduced_id=2,
         describe_introduced=True,
+    ))
+    maintain_gaze = BtNode_MaintainEyeContact(name="Maintain eye contact during intros")
+    parrallel_intro_gaze = py_trees.composites.Parallel(
+        name="Parallel intro2 and gaze",
+        policy=py_trees.common.ParallelPolicy.SuccessOnSelected([intro2]),
+        children=[intro2, maintain_gaze]
     )
+    
+    root.add_child(parrallel_intro_gaze1)
+    root.add_child(parrallel_intro_gaze)
 
-    root.add_child(_intro_with_arm_and_gaze("Intro 1", intro_1, talk_to_id=1, introduce_id=0))
-    # Brief stow between intros: when Intro 1's parallel terminates on intro
-    # SUCCESS, the arm is mid-trajectory toward guest 0. Sending Intro 2's
-    # PointTo from a known pose avoids jerky guest-0→guest-1 transitions.
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="Retry stow arm between intros",
-            child=BtNode_MoveArmSingle(
-                name="Stow arm between intros",
-                service_name="arm_joint_service",
-                arm_pose_bb_key=KEY_ARM_NAVIGATING,
-                add_octomap=False,
-            ),
-            num_failures=3,
-        )
-    )
-    root.add_child(_intro_with_arm_and_gaze("Intro 2", intro_2, talk_to_id=0, introduce_id=1))
-
-    # Restore arm + head for the bag-flow phase.
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="Retry stow arm after intros",
-            child=BtNode_MoveArmSingle(
-                name="Stow arm after intros",
-                service_name="arm_joint_service",
-                arm_pose_bb_key=KEY_ARM_NAVIGATING,
-                add_octomap=False,
-            ),
-            num_failures=3,
-        )
-    )
-    root.add_child(BtNode_TurnPanTilt(name="Look forward after intros", x=0.0, y=35.0, speed=0.0))
     return root
 
 
@@ -762,6 +843,7 @@ def createHRITask():
             num_failures=3,
         )
     )
+    root.add_child(createScanHostFeatures())
     root.add_child(createArrivalTrigger())
     root.add_child(createGuestIntake(1))
     root.add_child(createEscortAndSeat(1))
