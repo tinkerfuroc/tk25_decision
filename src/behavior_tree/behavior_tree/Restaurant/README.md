@@ -358,9 +358,9 @@ The demo tree uses a distinct, flatter model — no queue, just a list of orders
 ## Constants and hardcoded values
 
 - `constants.json` is read at **tree construction time** (known bug: absolute `/home/tinker/...` path; see rule `.claude/rules/behavior-tree.md#hardcoded-paths-in-task-scripts`).
-  - `pose_kitchen_bar` — `PoseStamped` in map frame, fed to every `Goto(KITCHEN_BAR_POSE)`.
   - `arm_pos_navigating`, `arm_pos_serving` — degrees in JSON, converted to radians at load.
   - `standard_objects` — used as `wordlist` for `BtNode_PhraseExtraction`.
+- The barman/kitchen-bar pose is **not** stored in constants — it is captured at task start by `BtNode_CaptureCurrentPose` (TF lookup `map ← base_link`) and written to `KEY_KITCHEN_BAR_POSE`. Place the robot at the bar before starting the task.
 - `DETECT_WAVING_THRESHOLD_M = 8.0` — waving-detection radius. Raise if the venue is large.
 - `MaintainEyeContact._feedback_timeout_secs = 30.0` — gaze lock tolerance. The server usually returns success within a few seconds.
 - `GetConfirmationAction` timeouts: 10 s for order confirmation, 60 s for barman item placement, 120 s for barman order readout (rulebook cap).

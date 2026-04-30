@@ -2,7 +2,7 @@ import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_Listen
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction, BtNode_ListenAction
 from behavior_tree.TemplateNodes.Vision import BtNode_DoorDetection, BtNode_TurnPanTilt
 
 from .custom_nodes import BtNode_ScanForWavingPerson, BtNode_ScanForWavingPersonNew
@@ -110,10 +110,10 @@ def createGetCommand(key_dest, confirmed_message="Starting execution"):
     get_command = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
     get_command.add_child(BtNode_Announce(name=f"Prompt for getting command", bb_source=None, message=f"Please speak to me after the beep sound. Tell me your command."))
     get_command.add_child(BtNode_WaitTicks("wait for 1.5 second", 6))
-    get_command.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=key_dest, timeout=10.0))
+    get_command.add_child(BtNode_ListenAction(name="Listen to guest", bb_dest_key=key_dest, timeout=10.0))
     get_command.add_child(BtNode_Announce(name=f"ask to confirm command", bb_source=key_dest, message=f"Am I correct, you command is "))
     get_command.add_child(BtNode_WaitTicks("wait for 2.5 second", 10))
-    get_command.add_child(BtNode_GetConfirmation("confirm instruction"))
+    get_command.add_child(BtNode_GetConfirmationAction("confirm instruction"))
     get_command.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message=confirmed_message))
 
     root.add_child(py_trees.decorators.Retry("retry", get_command, 100))
