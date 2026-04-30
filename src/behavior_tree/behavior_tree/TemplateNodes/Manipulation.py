@@ -189,10 +189,11 @@ class BtNode_Grasp(ActionHandler):
     """
     Node for grasping an object with a specific prompt
     """
-    def __init__(self, 
+    def __init__(self,
                  name: str,
                  bb_source: str,
                  action_name : str = "grasp",
+                 bb_key_object_label : str = None,
                  ):
         """
         executed when creating tree diagram, therefor very minimal
@@ -200,8 +201,10 @@ class BtNode_Grasp(ActionHandler):
         Args:
             name: name of the node (to be displayed in the tree)
             bb_source: blackboard key to a str prompt
-            service_name: name of the service running Grasp
-            prompt: optional, if given, skips reading from blackboard
+            action_name: name of the action running Grasp
+            bb_key_object_label: blackboard key to a str object label
+                (e.g. "plate", "bowl"); if None, falls back to
+                vision_result.objects[0].cls, then empty string
         """
         super(BtNode_Grasp, self).__init__(name, Grasp, action_name, bb_source, wait_for_server_timeout_sec=-3)
         self.blackboard = self.attach_blackboard_client(name=self.name)
@@ -210,7 +213,14 @@ class BtNode_Grasp(ActionHandler):
             access=pytree.common.Access.READ,
             remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source)
         )
-    
+        self._bb_key_object_label = bb_key_object_label
+        if bb_key_object_label is not None:
+            self.blackboard.register_key(
+                key="object_label",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_object_label)
+            )
+
     def send_goal(self):
         try:
             goal = Grasp.Goal()
@@ -218,8 +228,16 @@ class BtNode_Grasp(ActionHandler):
             goal.rgb_image = self.blackboard.vision_result.rgb_image
             goal.depth_image = self.blackboard.vision_result.depth_image
             goal.segments = self.blackboard.vision_result.segments
+            # Resolve object_label: explicit bb key > vision_result.objects[0].cls > ""
+            if self._bb_key_object_label is not None:
+                goal.object_label = str(self.blackboard.object_label or "")
+            else:
+                try:
+                    goal.object_label = str(self.blackboard.vision_result.objects[0].cls)
+                except (AttributeError, IndexError):
+                    goal.object_label = ""
             self.send_goal_request(goal)
-            self.feedback_message = f"Sent grasp goal with header {goal.header} and segments {len(goal.segments)}"
+            self.feedback_message = f"Sent grasp goal with header {goal.header}, segments {len(goal.segments)}, label '{goal.object_label}'"
         except Exception as e:
             self.feedback_message = f"Failed to send grasp goal; error: {e}"
             self.logger.error(f"Failed to send grasp goal; error: {e}")
