@@ -92,10 +92,6 @@ def _install_stubs(monkeypatch):
     vision.BtNode_TurnTo = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Vision", vision)
 
-    hri_custom = types.ModuleType("behavior_tree.HRI.customNodes")
-    hri_custom.BtNode_BestOfNSeatAndMatch = _SuccessNode
-    monkeypatch.setitem(sys.modules, "behavior_tree.HRI.customNodes", hri_custom)
-
     follow = types.ModuleType("behavior_tree.HRI.follow")
     follow.createFollowPerson = lambda *args, **kwargs: _SuccessNode(name="follow")
     monkeypatch.setitem(sys.modules, "behavior_tree.HRI.follow", follow)
