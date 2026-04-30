@@ -14,7 +14,7 @@ import py_trees
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
+from behavior_tree.TemplateNodes.Navigation import BtNode_CaptureCurrentPose, BtNode_FindApproachPose, BtNode_GotoAction
 from behavior_tree.runtime import run_tree
 
 from .custumNodes import (
@@ -38,13 +38,13 @@ from .config import (
     KEY_BATCH_SIZE_LIMIT,
     KEY_CURRENT_BATCH_INDEX,
     KEY_CUSTOMER_BATCH,
+    KEY_CUSTOMER_APPROACH_POSE,
     KEY_CUSTOMER_LOCATION,
     KEY_CUSTOMER_ORDER,
     KEY_KITCHEN_BAR_POSE,
     KEY_ORDER_CHECKLIST,
     KEY_PICKUP_VERIFIED,
     KEY_TRAY_LOCATION,
-    POSE_KITCHEN_BAR,
     constants,
 )
 from .state_nodes import (
@@ -92,19 +92,52 @@ class BtNode_BuildBatchDetectionSummary(py_trees.behaviour.Behaviour):
         return py_trees.common.Status.SUCCESS
 
 
+def _approachCustomerSubtree(name: str = "Approach customer") -> py_trees.composites.Sequence:
+    """Find a costmap-free, target-facing approach pose then drive to it.
+
+    Replaces direct `BtNode_GotoAction(KEY_CUSTOMER_LOCATION)` calls so the
+    robot stops a polite distance from the customer rather than navigating
+    onto their position. The find step is mocked IMMEDIATE; the goto step
+    keeps its KEYPRESS mock for operator-in-the-loop dry runs.
+    """
+    seq = py_trees.composites.Sequence(name=name, memory=True)
+    seq.add_child(
+        BtNode_FindApproachPose(
+            name=f"{name}: find pose",
+            bb_target_key=KEY_CUSTOMER_LOCATION,
+            bb_approach_pose_key=KEY_CUSTOMER_APPROACH_POSE,
+            desired_distance=0.7,
+            min_distance=0.45,
+            max_distance=1.2,
+            check_reachability=True,
+        )
+    )
+    seq.add_child(
+        BtNode_GotoAction(
+            name=f"{name}: drive",
+            key=KEY_CUSTOMER_APPROACH_POSE,
+        )
+    )
+    return seq
+
+
 def createConstantWriter():
     """Write static task constants and initial runtime flags to blackboard."""
     root = py_trees.composites.Parallel(
         name="Write constants to blackboard",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
+    # Barman/anchor pose = robot's pose at task start (operator placement),
+    # not a hardcoded map coordinate. Wrapped in Retry to absorb transient
+    # TF unavailability during bringup.
     root.add_child(
-        BtNode_WriteToBlackboard(
-            name="Write kitchen bar location",
-            bb_namespace="",
-            bb_source=None,
-            bb_key=KEY_KITCHEN_BAR_POSE,
-            object=POSE_KITCHEN_BAR,
+        py_trees.decorators.Retry(
+            name="Retry capture task start pose",
+            child=BtNode_CaptureCurrentPose(
+                name="Capture task start pose as kitchen bar",
+                bb_key=KEY_KITCHEN_BAR_POSE,
+            ),
+            num_failures=3,
         )
     )
     root.add_child(
@@ -269,7 +302,7 @@ def _createCollectOneCustomerOrder():
     success_path.add_child(
         py_trees.decorators.Retry(
             name="Retry goto customer",
-            child=BtNode_GotoAction(name="Go to customer table", key=KEY_CUSTOMER_LOCATION),
+            child=_approachCustomerSubtree("Approach customer table"),
             num_failures=3,
         )
     )
@@ -492,7 +525,7 @@ def _createServeOneCustomer():
     serve_sequence.add_child(
         py_trees.decorators.Retry(
             name="Retry return to customer",
-            child=BtNode_GotoAction(name="Return to customer table", key=KEY_CUSTOMER_LOCATION),
+            child=_approachCustomerSubtree("Return to customer table"),
             num_failures=3,
         )
     )

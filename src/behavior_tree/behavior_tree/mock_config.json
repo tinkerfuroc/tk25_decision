@@ -61,7 +61,9 @@
           "BtNode_ConvertGraspPose": "KEYPRESS",
           "BtNode_GoToLuggage": "KEYPRESS",
           "BtNode_GotoAction": "KEYPRESS",
-          "BtNode_FollowAction": "KEYPRESS"
+          "BtNode_FollowAction": "KEYPRESS",
+          "BtNode_FindApproachPose": "IMMEDIATE",
+          "BtNode_CaptureCurrentPose": "IMMEDIATE"
         }
       },
       "audio_input": {

@@ -4,7 +4,7 @@ import math
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_GoToLuggage
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
 from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_TurnPanTilt
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_GripperAction
 from behavior_tree.StoringGroceries.customNodes import BtNode_GraspWithPose
@@ -311,7 +311,7 @@ def createFollowWithTrackPerson(
     ))
     
     # Get confirmation - FAILURE means not yet reached, continue following
-    follow_confirm_loop.add_child(BtNode_GetConfirmation(name="Get Destination Confirmation"))
+    follow_confirm_loop.add_child(BtNode_GetConfirmationAction(name="Get Destination Confirmation"))
     
     # Wrap in retry decorator - keeps looping until confirmed
     follow_retry = py_trees.decorators.Retry(

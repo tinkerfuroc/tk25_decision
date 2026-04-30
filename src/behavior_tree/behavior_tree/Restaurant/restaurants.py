@@ -30,11 +30,12 @@ import py_trees
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
+from behavior_tree.TemplateNodes.Navigation import BtNode_CaptureCurrentPose, BtNode_FindApproachPose, BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_MaintainEyeContact,
     BtNode_ScanForWavingPerson,
     BtNode_ShowImage,
+    BtNode_TurnPanTilt
 )
 from behavior_tree.runtime import run_tree
 
@@ -61,6 +62,7 @@ from .config import (
     KEY_BARMAN_TEXT,
     KEY_CURRENT_ITEM,
     KEY_CURRENT_ITEM_SUMMARY,
+    KEY_CUSTOMER_APPROACH_POSE,
     KEY_CUSTOMER_LOCATION,
     KEY_CUSTOMER_ORDER,
     KEY_CUSTOMER_QUEUE,
@@ -72,7 +74,6 @@ from .config import (
     KEY_WAVING_CLOSEST_PERSON,
     KEY_WAVING_PERSON_PICTURES,
     KEY_WAVING_PERSON_POSES,
-    POSE_KITCHEN_BAR,
     constants,
 )
 from .state_nodes import (
@@ -90,6 +91,34 @@ from .state_nodes import (
 )
 
 
+def _approachCustomerSubtree(name: str = "Approach customer") -> py_trees.composites.Sequence:
+    """Find a costmap-free, target-facing approach pose then drive to it.
+
+    Replaces direct `BtNode_GotoAction(KEY_CUSTOMER_LOCATION)` calls so the
+    robot stops a polite distance from the customer rather than navigating
+    onto their position.
+    """
+    seq = py_trees.composites.Sequence(name=name, memory=True)
+    seq.add_child(
+        BtNode_FindApproachPose(
+            name=f"{name}: find pose",
+            bb_target_key=KEY_CUSTOMER_LOCATION,
+            bb_approach_pose_key=KEY_CUSTOMER_APPROACH_POSE,
+            desired_distance=0.7,
+            min_distance=0.45,
+            max_distance=1.2,
+            check_reachability=True,
+        )
+    )
+    seq.add_child(
+        BtNode_GotoAction(
+            name=f"{name}: drive",
+            key=KEY_CUSTOMER_APPROACH_POSE,
+        )
+    )
+    return seq
+
+
 def createConstantWriter():
     """Initialize static task constants and runtime state on blackboard."""
     root = py_trees.composites.Parallel(
@@ -97,7 +126,6 @@ def createConstantWriter():
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
     for name, key, value in (
-        ("Write kitchen bar location", KEY_KITCHEN_BAR_POSE, POSE_KITCHEN_BAR),
         ("Write arm navigating pose", KEY_ARM_NAVIGATING, ARM_POS_NAVIGATING),
         ("Write arm serving pose", KEY_ARM_SERVING, ARM_POS_SERVING),
         ("Initialize caller queue", KEY_CUSTOMER_QUEUE, []),
@@ -117,6 +145,26 @@ def createConstantWriter():
                 object=value,
             )
         )
+    # Barman/anchor pose = robot's pose at task start (operator placement),
+    # not a hardcoded map coordinate. Wrapped in Retry to absorb transient
+    # TF unavailability during bringup.
+    record_parallel = py_trees.composites.Parallel(name="parallel", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
+    record_parallel.add_child(BtNode_Announce(
+        name="Announce initialization",
+        bb_source=None,
+        message="Recording location of restaurant bar.",
+    ))
+    record_parallel.add_child(
+        py_trees.decorators.Retry(
+            name="Retry capture task start pose",
+            child=BtNode_CaptureCurrentPose(
+                name="Capture task start pose as kitchen bar",
+                bb_key=KEY_KITCHEN_BAR_POSE,
+            ),
+            num_failures=3,
+        )
+    )
+    root.add_child(record_parallel)
     return root
 
 
@@ -149,7 +197,7 @@ def _create_waving_detection_pass():
 def _create_legacy_detection_pass():
     """Fallback detection: legacy calling-customer YOLO path (no pictures)."""
     seq = py_trees.composites.Sequence(name="Legacy detection pass", memory=True)
-    inner = py_trees.composites.Selector(name="Legacy detect selector", memory=False)
+    inner = py_trees.composites.Selector(name="Legacy detect selector", memory=True)
     inner.add_child(
         BtNode_DetectCallingCustomer(
             name="Direct detect calling customer",
@@ -180,7 +228,12 @@ def _create_legacy_detection_pass():
 def createDetectAndArbitrateCustomers():
     """Detect callers (only if queue dry) and select one active target via arbitration."""
     root = py_trees.composites.Sequence(name="Detect and arbitrate callers", memory=True)
-    detect = py_trees.composites.Selector(name="Detection strategy", memory=False)
+    root.add_child(BtNode_TurnPanTilt(
+        "turn pan tilt forwards",
+        x=0.0,
+        y=35.0
+    ))
+    detect = py_trees.composites.Selector(name="Detection strategy", memory=True)
     detect.add_child(
         BtNode_QueueHasQueued(
             name="Queue has queued entries?",
@@ -204,17 +257,14 @@ def createDetectAndArbitrateCustomers():
 
 def createApproachCustomer():
     """Reach selected customer; fallback to show-picture partial-score path if unreachable."""
-    root = py_trees.composites.Selector(name="Approach selected customer", memory=False)
+    root = py_trees.composites.Selector(name="Approach selected customer", memory=True)
     success_path = py_trees.composites.Sequence(name="Reach customer", memory=True)
     success_path.add_child(
         py_trees.decorators.Retry(
             name="retry goto customer",
-            child=BtNode_GotoAction(name="Go to customer table", key=KEY_CUSTOMER_LOCATION),
+            child=_approachCustomerSubtree("Approach customer table"),
             num_failures=3,
         )
-    )
-    success_path.add_child(
-        BtNode_MaintainEyeContact(name="Eye-contact (on arrival)")
     )
     success_path.add_child(
         BtNode_UpdateChecklistFlag(
@@ -264,7 +314,6 @@ def createApproachCustomer():
 def createTakeAndConfirmOrder():
     """Run customer-facing order intake and confirmation loop."""
     root = py_trees.composites.Sequence(name="Take and confirm order", memory=True)
-    root.add_child(BtNode_MaintainEyeContact(name="Eye-contact (order-taking)"))
     root.add_child(
         BtNode_Announce(
             name="Order engagement prompt",
@@ -299,12 +348,20 @@ def createTakeAndConfirmOrder():
             value=True,
         )
     )
-    return root
+
+    maintain_eye_contact = BtNode_MaintainEyeContact(name="Maintain eye contact (order)")
+    root_with_eye_contact = py_trees.composites.Parallel(
+        name="Take order with eye contact",
+        policy=py_trees.common.ParallelPolicy.SuccessOnSelected([root]),
+        children=[maintain_eye_contact, root]
+    )
+
+    return root_with_eye_contact
 
 
 def createOptionalTrayTransport():
     """Optional tray branch with direct-carry fallback (single announcement, pre-loop)."""
-    root = py_trees.composites.Selector(name="Optional tray transport", memory=False)
+    root = py_trees.composites.Selector(name="Optional tray transport", memory=True)
     tray_sequence = py_trees.composites.Sequence(name="Use tray transport", memory=True)
     tray_sequence.add_child(
         BtNode_DetectTray(
@@ -392,18 +449,17 @@ def createDeliverOrder():
 
     deliver_or_fallback = py_trees.composites.Selector(
         name="Deliver or fallback",
-        memory=False,
+        memory=True,
     )
 
     normal = py_trees.composites.Sequence(name="Normal delivery", memory=True)
     normal.add_child(
         py_trees.decorators.Retry(
             name="retry return to customer",
-            child=BtNode_GotoAction(name="Return to customer table", key=KEY_CUSTOMER_LOCATION),
+            child=_approachCustomerSubtree("Return to customer table"),
             num_failures=3,
         )
     )
-    normal.add_child(BtNode_MaintainEyeContact(name="Eye-contact (serving)"))
     normal.add_child(
         BtNode_MoveArmSingle(
             name="Arm to serving pose (at table)",
@@ -527,7 +583,7 @@ def createCollectOrdersPhase():
 
 def createBarmanPhase():
     """Phase 2: one bar trip for all collected orders. Gated on non-empty order list."""
-    root = py_trees.composites.Selector(name="Barman trip (gated)", memory=False)
+    root = py_trees.composites.Selector(name="Barman trip (gated)", memory=True)
 
     actual = py_trees.composites.Sequence(name="Actual barman trip", memory=True)
     actual.add_child(
@@ -634,6 +690,11 @@ def createRestaurantTask():
     )
 
     root.add_child(createCollectOrdersPhase())
+    root.add_child(BtNode_Announce(
+        name="Phase 1 complete announcement",
+        bb_source=None,
+        message="Order collection phase complete. I'll now proceed to the barman."
+    ))
     root.add_child(createOptionalTrayTransport())
     root.add_child(createBarmanPhase())
     root.add_child(createDeliverAllItemsPhase())
@@ -650,7 +711,7 @@ def createRestaurantTask():
 
 def restaurant():
     """Runtime entry for the default Restaurant strategy."""
-    run_tree(createRestaurantTask, period_ms=500.0, title="Restaurant")
+    run_tree(createRestaurantTask, period_ms=250.0, title="Restaurant")
 
 
 if __name__ == "__main__":
