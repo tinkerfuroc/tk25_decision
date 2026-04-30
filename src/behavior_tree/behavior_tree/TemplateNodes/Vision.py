@@ -1102,7 +1102,7 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         now = time.time()
         if state is None or not getattr(state, 'feedback_ok', False):
             if now > self._settle_deadline:
-                self.logger.warn("PanTilt settle timeout (no feedback); proceeding")
+                print("PanTilt settle timeout (no feedback); proceeding")
                 return pytree.common.Status.SUCCESS
             return pytree.common.Status.RUNNING
 
@@ -1116,7 +1116,7 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
             self._settle_count = 0
 
         if now > self._settle_deadline:
-            self.logger.warn(
+            print(
                 f"PanTilt settle timeout (pan_err={pan_err:.2f}°, "
                 f"tilt_err={tilt_err:.2f}°); proceeding"
             )
