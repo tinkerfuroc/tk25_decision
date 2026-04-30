@@ -243,7 +243,6 @@ class BtNode_SelectNextItem(py_trees.behaviour.Behaviour):
         pose_trash_bin_key: str,
         pose_cabinet_key: str,
         point_wash_staging_key: str,
-        point_trash_bin_key: str,
         point_cabinet_default_key: str,
     ):
         super().__init__(name=name)
@@ -261,7 +260,6 @@ class BtNode_SelectNextItem(py_trees.behaviour.Behaviour):
             "pose_trash":          (pose_trash_bin_key,        py_trees.common.Access.READ),
             "pose_cabinet":        (pose_cabinet_key,          py_trees.common.Access.READ),
             "point_wash":          (point_wash_staging_key,    py_trees.common.Access.READ),
-            "point_trash":         (point_trash_bin_key,       py_trees.common.Access.READ),
             "point_cabinet":       (point_cabinet_default_key, py_trees.common.Access.READ),
         }
         for local, (bb_key, access) in bindings.items():
@@ -285,7 +283,8 @@ class BtNode_SelectNextItem(py_trees.behaviour.Behaviour):
             self.blackboard.active_target_point = self.blackboard.point_wash
         elif cls == "trash":
             self.blackboard.active_target_pose = self.blackboard.pose_trash
-            self.blackboard.active_target_point = self.blackboard.point_trash
+            # Trash drop uses joint-space arm move (KEY_ARM_TRASH); no Cartesian point.
+            self.blackboard.active_target_point = None
         else:  # cabinet
             self.blackboard.active_target_pose = self.blackboard.pose_cabinet
             self.blackboard.active_target_point = self.blackboard.point_cabinet

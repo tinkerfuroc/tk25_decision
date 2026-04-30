@@ -58,9 +58,17 @@ from py_trees.common import Status
 
 # from tinker_decision_msgs.srv import Announce, WaitForStart
 from behavior_tree.messages import (
-    TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction,
-    GetConfirmation, Listen, CompareInterest, GraspRequest,
-    GetConfirmationAction, ListenAction, PhraseExtractionAction,
+    TTSCnRequest,
+    TextToSpeech,
+    WaitForStart,
+    PhraseExtraction,
+    GetConfirmation,
+    Listen,
+    CompareInterest,
+    GraspRequest,
+    GetConfirmationAction,
+    ListenAction,
+    PhraseExtractionAction,
 )
 
 from .BaseBehaviors import ServiceHandler
@@ -70,16 +78,20 @@ from behavior_tree.messages import action_msgs
 
 from typing import Optional
 
+
 class BtNode_TTSCN(ServiceHandler):
     """
     Node for making a Chinese audio announcement (Text-to-Speech in Chinese).
     Returns SUCCESS once the TTS CN service finishes speaking.
     """
-    def __init__(self, 
-                 name: str,
-                 bb_source: str,
-                 service_name: str = "ttscn_service",
-                 message: Optional[str] = None):
+
+    def __init__(
+        self,
+        name: str,
+        bb_source: str,
+        service_name: str = "ttscn_service",
+        message: Optional[str] = None,
+    ):
         """
         Args:
             name: Name of the node (to be displayed in the tree).
@@ -89,23 +101,25 @@ class BtNode_TTSCN(ServiceHandler):
         """
         # Call parent initializer
         super(BtNode_TTSCN, self).__init__(name, service_name, TTSCnRequest)
-        
+
         # Store parameters
         self.bb_source = bb_source
         self.bb_read_client = None
         self.given_msg = message
-        
+
         if self.bb_source is not None:
             self.blackboard = self.attach_blackboard_client(name=self.name)
             self.blackboard.register_key(
                 key="announcement_msg",
                 access=pytree.common.Access.READ,
-                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source)
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", self.bb_source
+                ),
             )
 
     def setup(self, **kwargs):
         super().setup(**kwargs)
-        
+
         # If no announcement message is given, set up a blackboard client to read from given key
         if self.bb_source is not None:
             self.logger.debug(f"Setup TTS_CN, reading from {self.bb_source}")
@@ -143,7 +157,7 @@ class BtNode_TTSCN(ServiceHandler):
                     self.announce_msg = self.given_msg + " " + read_msg
                 else:
                     self.announce_msg = read_msg
-                
+
             except Exception as e:
                 self.feedback_message = f"TTS_CN reading message failed"
                 raise e
@@ -162,17 +176,19 @@ class BtNode_TTSCN(ServiceHandler):
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         if self.response is None:
             return pytree.common.Status.FAILURE
-            
+
         self.logger.debug(f"Update TTS_CN: {self.announce_msg}")
-        
+
         # If the service call is done, check its status
         if self.response.done():
             # If status is 0, all is well, return success
             if self.response.result().status == 0:
-                self.feedback_message = f"Finished announcing in Chinese: {self.announce_msg}"
+                self.feedback_message = (
+                    f"Finished announcing in Chinese: {self.announce_msg}"
+                )
                 return pytree.common.Status.SUCCESS
             else:
                 # Update feedback message with the error and return failure
@@ -188,12 +204,14 @@ class BtNode_Announce(ServiceHandler):
     """
     Node for making an audio announcement, returns SUCCESS once announcement finished
     """
-    def __init__(self, 
-                 name : str,
-                 bb_source : str,
-                 service_name : str = "announce",
-                 message : str = None
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        bb_source: str,
+        service_name: str = "announce",
+        message: str | None = None,
+    ):
         """
         Args:
             name: name of the node (to be displayed in the tree)
@@ -204,7 +222,7 @@ class BtNode_Announce(ServiceHandler):
 
         # call parent initializer
         super(BtNode_Announce, self).__init__(name, service_name, TextToSpeech)
-        
+
         # store parameters
         self.bb_source = bb_source
         self.bb_read_client = None
@@ -214,12 +232,13 @@ class BtNode_Announce(ServiceHandler):
         if self.bb_source is not None:
             self.blackboard = self.attach_blackboard_client(name=self.name)
             self.blackboard.register_key(
-                key = "announcement_msg",
+                key="announcement_msg",
                 access=pytree.common.Access.READ,
-                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source)
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", self.bb_source
+                ),
             )
 
-    
     def setup(self, **kwargs):
         print(self.service_type)
         super().setup(**kwargs)
@@ -232,7 +251,7 @@ class BtNode_Announce(ServiceHandler):
             self.logger.debug(f"Setup Announce, reading from {self.bb_source}")
         else:
             self.logger.debug(f"Setup Announce for message {self.given_msg}")
-    
+
     def initialise(self):
         super().initialise()
 
@@ -248,7 +267,7 @@ class BtNode_Announce(ServiceHandler):
                     self.announce_msg = self.given_msg + " " + read_msg
                 else:
                     self.announce_msg = read_msg
-                
+
             except Exception as e:
                 self.feedback_message = f"Announce reading message failed"
                 raise e
@@ -273,12 +292,12 @@ class BtNode_Announce(ServiceHandler):
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-        
+
         # Check if response exists (should always exist in non-mock mode)
         if self.response is None:
             self.feedback_message = "No response object"
             return pytree.common.Status.FAILURE
-            
+
         self.logger.debug(f"Update Announce {self.announce_msg}")
         # if the service is done, check its status
         if self.response.done():
@@ -300,17 +319,15 @@ class BtNode_WaitForStart(ServiceHandler):
     """
     Node to wait for an audio signal to start task, returns success once signal is received
     """
-    def __init__(self, 
-                 name : str,
-                 service_name : str = "wait_for_start"
-                 ):
+
+    def __init__(self, name: str, service_name: str = "wait_for_start"):
         super(BtNode_WaitForStart, self).__init__(name, service_name, WaitForStart)
-    
+
     def setup(self, **kwargs):
         super().setup(**kwargs)
 
         self.logger.debug(f"Setup waiting for start")
-    
+
     def initialise(self):
         super().initialise()
 
@@ -319,7 +336,7 @@ class BtNode_WaitForStart(ServiceHandler):
             self.feedback_message = "MOCK: Wait for start signal received"
             print(f"🎬 MOCK WAIT FOR START: Signal received")
             return
-            
+
         request = WaitForStart.Request()
         request.timeout = 15.0
         self.response = self.call_service_async(request)
@@ -329,10 +346,10 @@ class BtNode_WaitForStart(ServiceHandler):
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         if self.response is None:
             return pytree.common.Status.FAILURE
-            
+
         self.logger.debug(f"Update wait for start")
         if self.response.done():
             if self.response.result().status == 0:
@@ -350,14 +367,16 @@ class BtNode_GraspRequest(ServiceHandler):
     """
     Node to handle grasp request using speech input, returns success once the object is successfully grasped.
     """
-    def __init__(self, 
-                 name: str,
-                 object_names: list,
-                 object_codes: list,
-                 bb_dest_key: str,
-                 service_name: str = "grasp_request",  # Corrected service name
-                 timeout: float = 15.0
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        object_names: list,
+        object_codes: list,
+        bb_dest_key: str,
+        service_name: str = "grasp_request",  # Corrected service name
+        timeout: float = 15.0,
+    ):
         """
         Args:
             name: Name of the node (to be displayed in the tree).
@@ -369,22 +388,22 @@ class BtNode_GraspRequest(ServiceHandler):
         """
         # Call parent initializer
         super(BtNode_GraspRequest, self).__init__(name, service_name, GraspRequest)
-        
+
         # Store parameters
         self.object_names = object_names
         self.object_codes = object_codes
         self.bb_dest_key = bb_dest_key
-        
+
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="matched_object_code",
             access=pytree.common.Access.WRITE,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_dest_key)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_dest_key),
         )
-        
+
         self.timeout = timeout
         self.response = None
-    
+
     def initialise(self):
         """
         Initializes the grasp request and sends the request to the service.
@@ -394,22 +413,31 @@ class BtNode_GraspRequest(ServiceHandler):
         # Handle mock mode
         if self.mock_mode:
             import random
-            mock_code = random.choice(self.object_codes) if self.object_codes else "mock_object_001"
+
+            mock_code = (
+                random.choice(self.object_codes)
+                if self.object_codes
+                else "mock_object_001"
+            )
             self.blackboard.matched_object_code = mock_code
             self.feedback_message = f"MOCK: Grasped object with code {mock_code}"
-            print(f"🎯 MOCK GRASP REQUEST: Selected '{mock_code}' from {self.object_names}")
+            print(
+                f"🎯 MOCK GRASP REQUEST: Selected '{mock_code}' from {self.object_names}"
+            )
             return
-            
+
         # Create request and populate object names and codes
         request = GraspRequest.Request()
         request.object_names = self.object_names
         request.object_codes = self.object_codes
-        
+
         # Send the request to the service
         self.response = self.call_service_async(request)
-        
-        self.feedback_message = f"Initialized grasp request for objects: {', '.join(self.object_names)}"
-    
+
+        self.feedback_message = (
+            f"Initialized grasp request for objects: {', '.join(self.object_names)}"
+        )
+
     def update(self) -> Status:
         """
         Updates the status of the grasp request.
@@ -418,16 +446,18 @@ class BtNode_GraspRequest(ServiceHandler):
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         if self.response is None:
             return pytree.common.Status.FAILURE
-            
+
         if self.response.done():
             if self.response.result().status == 0:
                 # Successful grasp
                 matched_object_code = self.response.result().matched_object_code
                 self.blackboard.matched_object_code = matched_object_code
-                self.feedback_message = f"Successfully grasped object with code: {matched_object_code}"
+                self.feedback_message = (
+                    f"Successfully grasped object with code: {matched_object_code}"
+                )
                 return pytree.common.Status.SUCCESS
             else:
                 # Failure in grasp
@@ -450,31 +480,35 @@ class BtNode_PhraseExtraction(ServiceHandler):
     `phrase_extraction_service` will be retired once all task trees (GPSR,
     Receptionist, Restaurant demo, grasp-intel) have been migrated.
     """
-    def __init__(self,
-                 name : str,
-                 wordlist : list,
-                 bb_dest_key : str,
-                 service_name : str = "phrase_extraction_service",
-                 timeout : float = 15.0
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        wordlist: list,
+        bb_dest_key: str,
+        service_name: str = "phrase_extraction_service",
+        timeout: float = 15.0,
+    ):
         warnings.warn(
             "BtNode_PhraseExtraction is deprecated; use BtNode_PhraseExtractionAction "
             "(tk_24_audio added action-based `phrase_extraction_action`).",
             DeprecationWarning,
             stacklevel=2,
         )
-        super(BtNode_PhraseExtraction, self).__init__(name, service_name, PhraseExtraction)
+        super(BtNode_PhraseExtraction, self).__init__(
+            name, service_name, PhraseExtraction
+        )
 
         self.wordlist = wordlist
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="phrase",
             access=pytree.common.Access.WRITE,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key),
         )
         self.timeout = timeout
         self.node = None
-    
+
     def initialise(self):
         super().initialise()
 
@@ -482,12 +516,17 @@ class BtNode_PhraseExtraction(ServiceHandler):
         if self.mock_mode:
             # In mock mode, randomly select a word from the wordlist
             import random
-            mock_result = random.choice(self.wordlist) if self.wordlist else "mock_phrase"
+
+            mock_result = (
+                random.choice(self.wordlist) if self.wordlist else "mock_phrase"
+            )
             self.blackboard.phrase = mock_result
             self.feedback_message = f"MOCK: Extracted phrase '{mock_result}'"
-            print(f"🎤 MOCK PHRASE EXTRACTION: '{mock_result}' (from wordlist: {self.wordlist[:3]}...)")
+            print(
+                f"🎤 MOCK PHRASE EXTRACTION: '{mock_result}' (from wordlist: {self.wordlist[:3]}...)"
+            )
             return
-        
+
         request = PhraseExtraction.Request()
         request.timeout = self.timeout
         request.wordlist = self.wordlist
@@ -498,16 +537,18 @@ class BtNode_PhraseExtraction(ServiceHandler):
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-        
+
         # Check if response exists
         if self.response is None:
             self.feedback_message = "No response object"
             return pytree.common.Status.FAILURE
-            
+
         self.logger.debug(f"Update phrase extraction")
         if self.response.done():
             if self.response.result().status == 0:
-                self.feedback_message = f"Extracted phrase: {self.response.result().phrase}"
+                self.feedback_message = (
+                    f"Extracted phrase: {self.response.result().phrase}"
+                )
                 self.blackboard.phrase = self.response.result().phrase
                 return pytree.common.Status.SUCCESS
             else:
@@ -517,27 +558,32 @@ class BtNode_PhraseExtraction(ServiceHandler):
             self.feedback_message = "Still extracting phrase..."
             return pytree.common.Status.RUNNING
 
+
 class BtNode_TargetExtraction(ServiceHandler):
     """
     Node to extract a grasp target from a given speech, returns success once phrase is extracted
     """
-    def __init__(self, 
-                 name : str,
-                 bb_dest_key : str,
-                 service_name : str = "target_extraction_service",
-                 timeout : float = 15.0
-                 ):
-        super(BtNode_TargetExtraction, self).__init__(name, service_name, PhraseExtraction)
+
+    def __init__(
+        self,
+        name: str,
+        bb_dest_key: str,
+        service_name: str = "target_extraction_service",
+        timeout: float = 15.0,
+    ):
+        super(BtNode_TargetExtraction, self).__init__(
+            name, service_name, PhraseExtraction
+        )
 
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="target",
             access=pytree.common.Access.WRITE,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key),
         )
         self.timeout = timeout
         self.node = None
-    
+
     def initialise(self):
         super().initialise()
 
@@ -548,7 +594,7 @@ class BtNode_TargetExtraction(ServiceHandler):
             self.feedback_message = f"MOCK: Extracted target '{mock_target}'"
             print(f"🎯 MOCK TARGET EXTRACTION: '{mock_target}'")
             return
-            
+
         request = PhraseExtraction.Request()
         request.timeout = self.timeout
         request.wordlist = []
@@ -559,14 +605,16 @@ class BtNode_TargetExtraction(ServiceHandler):
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         if self.response is None:
             return pytree.common.Status.FAILURE
-            
+
         self.logger.debug(f"Update target extraction")
         if self.response.done():
             if self.response.result().status == 0:
-                self.feedback_message = f"Extracted target: {self.response.result().phrase}"
+                self.feedback_message = (
+                    f"Extracted target: {self.response.result().phrase}"
+                )
                 self.blackboard.target = self.response.result().phrase
                 return pytree.common.Status.SUCCESS
             else:
@@ -576,6 +624,7 @@ class BtNode_TargetExtraction(ServiceHandler):
             self.feedback_message = "Still extracting target..."
             return pytree.common.Status.RUNNING
 
+
 class BtNode_GetConfirmation(ServiceHandler):
     """
     DEPRECATED: use BtNode_GetConfirmationAction. The tk_24_audio package has
@@ -584,34 +633,40 @@ class BtNode_GetConfirmation(ServiceHandler):
     trees (GPSR, EGPSR, Receptionist, Restaurant, help-me-carry, serve-breakfast,
     store-groceries) have been migrated.
     """
-    def __init__(self,
-                 name : str,
-                 service_name : str = "get_confirmation_service",
-                 timeout : float = 15.0
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        service_name: str = "get_confirmation_service",
+        timeout: float = 15.0,
+    ):
         warnings.warn(
             "BtNode_GetConfirmation is deprecated; use BtNode_GetConfirmationAction "
             "(tk_24_audio migrated to action `get_confirmation_action`).",
             DeprecationWarning,
             stacklevel=2,
         )
-        super(BtNode_GetConfirmation, self).__init__(name, service_name, GetConfirmation)
+        super(BtNode_GetConfirmation, self).__init__(
+            name, service_name, GetConfirmation
+        )
         self.timeout = timeout
-    
+
     def setup(self, **kwargs):
         super().setup(**kwargs)
 
         self.logger.debug(f"Setup getting confirmation")
-    
+
     def initialise(self):
         super().initialise()
 
         # Handle mock mode via shared input controller
         if self.mock_mode:
             self.feedback_message = "MOCK: Press Enter to confirm"
-            print("✅ MOCK GET CONFIRMATION: Press Enter to confirm (will return SUCCESS)")
+            print(
+                "✅ MOCK GET CONFIRMATION: Press Enter to confirm (will return SUCCESS)"
+            )
             return
-            
+
         request = GetConfirmation.Request()
         request.timeout = self.timeout
         self.response = self.call_service_async(request)
@@ -621,14 +676,16 @@ class BtNode_GetConfirmation(ServiceHandler):
         # Handle mock mode via shared input controller
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         if self.response is None:
             return pytree.common.Status.FAILURE
-            
+
         self.logger.debug(f"Update get confirmation")
         if self.response.done():
             if self.response.result().status == 0:
-                self.feedback_message = f"Got confirmation: {self.response.result().confirmed}"
+                self.feedback_message = (
+                    f"Got confirmation: {self.response.result().confirmed}"
+                )
                 if self.response.result().confirmed:
                     return pytree.common.Status.SUCCESS
                 else:
@@ -639,10 +696,10 @@ class BtNode_GetConfirmation(ServiceHandler):
         else:
             self.feedback_message = "Still getting confirmation..."
             return pytree.common.Status.RUNNING
-    
+
     def terminate(self, new_status: Status) -> None:
         super().terminate(new_status)
-        
+
 
 class BtNode_Listen(ServiceHandler):
     """
@@ -655,12 +712,14 @@ class BtNode_Listen(ServiceHandler):
     Receptionist, Restaurant, help-me-carry, serve-breakfast, store-groceries)
     have been migrated.
     """
-    def __init__(self,
-                 name: str,
-                 bb_dest_key: str,
-                 service_name = "listen_service",
-                 timeout : float = 5.0
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        bb_dest_key: str,
+        service_name="listen_service",
+        timeout: float = 5.0,
+    ):
         warnings.warn(
             "BtNode_Listen is deprecated; use BtNode_ListenAction "
             "(tk_24_audio migrated to action `listen_action`).",
@@ -672,10 +731,10 @@ class BtNode_Listen(ServiceHandler):
         self.blackboard.register_key(
             key="message",
             access=pytree.common.Access.WRITE,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key),
         )
         self.timeout = timeout
-    
+
     def initialise(self):
         super().initialise()
 
@@ -686,20 +745,20 @@ class BtNode_Listen(ServiceHandler):
             self.feedback_message = f"MOCK: Listened and got '{mock_message}'"
             print(f"👂 MOCK LISTEN: '{mock_message}'")
             return
-            
+
         request = Listen.Request()
         request.timeout = self.timeout
         self.response = self.call_service_async(request)
         self.feedback_message = f"Initialized listen"
-    
+
     def update(self):
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         if self.response is None:
             return Status.FAILURE
-            
+
         self.logger.debug(f"Update listen")
         if self.response.done():
             if self.response.result().status == 0:
@@ -713,6 +772,7 @@ class BtNode_Listen(ServiceHandler):
             self.feedback_message = "Still listening..."
             return Status.RUNNING
 
+
 class BtNode_CompareInterest(ServiceHandler):
     """
     Compares interests between two statements for conversation matching.
@@ -721,30 +781,32 @@ class BtNode_CompareInterest(ServiceHandler):
     them to find common interests or topics. The result is stored on the
     blackboard for use in conversation or announcement nodes.
     """
-    def __init__(self,
-                 name: str,
-                 bb_source_key1: str,
-                 bb_source_key2: str,
-                 bb_dest_key: str,
-                 service_name = "compare_interest_service",
-                 timeout : float = 5.0
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        bb_source_key1: str,
+        bb_source_key2: str,
+        bb_dest_key: str,
+        service_name="compare_interest_service",
+        timeout: float = 5.0,
+    ):
         super().__init__(name, service_name, CompareInterest)
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="first_statement",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key1)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key1),
         )
         self.blackboard.register_key(
             key="second_statement",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key2)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key2),
         )
         self.blackboard.register_key(
             key="result",
             access=pytree.common.Access.WRITE,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key),
         )
         self.timeout = timeout
 
@@ -758,27 +820,29 @@ class BtNode_CompareInterest(ServiceHandler):
             self.feedback_message = f"MOCK: Common interest is '{mock_interest}'"
             print(f"🤝 MOCK COMPARE INTEREST: Found '{mock_interest}'")
             return
-            
+
         request = CompareInterest.Request()
         request.first_statement = self.blackboard.first_statement
         request.sec_statement = self.blackboard.second_statement
         self.response = self.call_service_async(request)
         self.feedback_message = f"Initialized Compare Interest"
-    
+
     def update(self):
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         if self.response is None:
             return Status.FAILURE
-            
+
         self.logger.debug(f"Update compare interest")
         if self.response.done():
             if self.response.result().status == 0:
                 self.blackboard.result = self.response.result().common_interest
                 self.logger.debug(f"Compare interest result: {self.blackboard.result}")
-                self.feedback_message = f"Compare interest result: {self.response.result().common_interest}"
+                self.feedback_message = (
+                    f"Compare interest result: {self.response.result().common_interest}"
+                )
                 return Status.SUCCESS
             else:
                 self.feedback_message = f"Compare interest failed with error code {self.response.result().status}: {self.response.result().error_message}"
@@ -790,6 +854,7 @@ class BtNode_CompareInterest(ServiceHandler):
 
 class _MockFuture:
     """Stand-in future used in ActionHandler mock paths — always reports done."""
+
     def done(self):
         return True
 
@@ -809,13 +874,20 @@ class BtNode_GetConfirmationAction(ActionHandler):
     drop `_feedback_timeout_secs` back to ~15.
     """
 
-    def __init__(self,
-                 name: str,
-                 timeout: float = 15.0,
-                 action_name: str = "get_confirmation_action",
-                 wait_for_server_timeout_sec: float = -3.0):
-        super().__init__(name, GetConfirmationAction, action_name, key=None,
-                         wait_for_server_timeout_sec=wait_for_server_timeout_sec)
+    def __init__(
+        self,
+        name: str,
+        timeout: float = 15.0,
+        action_name: str = "get_confirmation_action",
+        wait_for_server_timeout_sec: float = -3.0,
+    ):
+        super().__init__(
+            name,
+            GetConfirmationAction,
+            action_name,
+            key=None,
+            wait_for_server_timeout_sec=wait_for_server_timeout_sec,
+        )
         self.timeout = timeout
         self._feedback_timeout_secs = max(self.timeout + 5.0, 30.0)
 
@@ -834,9 +906,9 @@ class BtNode_GetConfirmationAction(ActionHandler):
         self.last_feedback_time = time.time()
         self.feedback_timeout = self._feedback_timeout_secs
         self.action_status = 0
-        progress = getattr(feedback, 'progress', 0.0)
-        status_message = getattr(feedback, 'status_message', '')
-        partial = getattr(feedback, 'partial_transcription', '')
+        progress = getattr(feedback, "progress", 0.0)
+        status_message = getattr(feedback, "status_message", "")
+        partial = getattr(feedback, "partial_transcription", "")
         self.feedback_message = (
             f"confirmation progress={progress:.2f} {status_message}"
             + (f" [partial: '{partial}']" if partial else "")
@@ -844,11 +916,13 @@ class BtNode_GetConfirmationAction(ActionHandler):
 
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            err = getattr(getattr(self.result_message, 'result', None), 'error_message', '')
+            err = getattr(
+                getattr(self.result_message, "result", None), "error_message", ""
+            )
             self.feedback_message = f"GetConfirmation action did not succeed ({self.result_status_string}): {err}"
             return Status.FAILURE
         result = self.result_message.result
-        if getattr(result, 'confirmed', False):
+        if getattr(result, "confirmed", False):
             self.feedback_message = "Got confirmation: True"
             return Status.SUCCESS
         self.feedback_message = "Got confirmation: False"
@@ -863,18 +937,27 @@ class BtNode_ListenAction(ActionHandler):
     On success, writes `result.message` to the blackboard at `bb_dest_key`.
     """
 
-    def __init__(self,
-                 name: str,
-                 bb_dest_key: str,
-                 timeout: float = 5.0,
-                 action_name: str = "listen_action",
-                 wait_for_server_timeout_sec: float = -3.0):
-        super().__init__(name, ListenAction, action_name, key=None,
-                         wait_for_server_timeout_sec=wait_for_server_timeout_sec)
+    def __init__(
+        self,
+        name: str,
+        bb_dest_key: str,
+        timeout: float = 5.0,
+        action_name: str = "listen_action",
+        wait_for_server_timeout_sec: float = -3.0,
+    ):
+        super().__init__(
+            name,
+            ListenAction,
+            action_name,
+            key=None,
+            wait_for_server_timeout_sec=wait_for_server_timeout_sec,
+        )
         self.timeout = timeout
         self._feedback_timeout_secs = max(self.timeout + 10.0, 30.0)
         self.bb_dest_key = bb_dest_key
-        self.message_blackboard = self.attach_blackboard_client(name=f"{self.name}_ListenAction")
+        self.message_blackboard = self.attach_blackboard_client(
+            name=f"{self.name}_ListenAction"
+        )
         self.message_blackboard.register_key(
             key="message",
             access=pytree.common.Access.WRITE,
@@ -898,21 +981,24 @@ class BtNode_ListenAction(ActionHandler):
         self.last_feedback_time = time.time()
         self.feedback_timeout = self._feedback_timeout_secs
         self.action_status = 0
-        progress = getattr(feedback, 'progress', 0.0)
-        status_message = getattr(feedback, 'status_message', '')
-        partial = getattr(feedback, 'partial_transcription', '')
-        self.feedback_message = (
-            f"listen progress={progress:.2f} {status_message}"
-            + (f" [partial: '{partial}']" if partial else "")
+        progress = getattr(feedback, "progress", 0.0)
+        status_message = getattr(feedback, "status_message", "")
+        partial = getattr(feedback, "partial_transcription", "")
+        self.feedback_message = f"listen progress={progress:.2f} {status_message}" + (
+            f" [partial: '{partial}']" if partial else ""
         )
 
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            err = getattr(getattr(self.result_message, 'result', None), 'error_message', '')
-            self.feedback_message = f"Listen action did not succeed ({self.result_status_string}): {err}"
+            err = getattr(
+                getattr(self.result_message, "result", None), "error_message", ""
+            )
+            self.feedback_message = (
+                f"Listen action did not succeed ({self.result_status_string}): {err}"
+            )
             return Status.FAILURE
         result = self.result_message.result
-        if getattr(result, 'status', 0) != 0:
+        if getattr(result, "status", 0) != 0:
             self.feedback_message = f"Listen failed with code {result.status}: {getattr(result, 'error_message', '')}"
             return Status.FAILURE
         self.message_blackboard.message = result.message
@@ -938,21 +1024,30 @@ class BtNode_PhraseExtractionAction(ActionHandler):
     override pattern as `BtNode_GetConfirmationAction` / `BtNode_ListenAction`.
     """
 
-    def __init__(self,
-                 name: str,
-                 wordlist: list,
-                 bb_dest_key: str,
-                 timeout: float = 7.0,
-                 action_name: str = "phrase_extraction_action",
-                 wait_for_server_timeout_sec: float = -3.0):
-        super().__init__(name, PhraseExtractionAction, action_name, key=None,
-                         wait_for_server_timeout_sec=wait_for_server_timeout_sec)
+    def __init__(
+        self,
+        name: str,
+        wordlist: list,
+        bb_dest_key: str,
+        timeout: float = 7.0,
+        action_name: str = "phrase_extraction_action",
+        wait_for_server_timeout_sec: float = -3.0,
+    ):
+        super().__init__(
+            name,
+            PhraseExtractionAction,
+            action_name,
+            key=None,
+            wait_for_server_timeout_sec=wait_for_server_timeout_sec,
+        )
         self.wordlist = list(wordlist)
         self.timeout = timeout
         # Whisper + Qwen ASR run sequentially after recording; give margin.
         self._feedback_timeout_secs = max(self.timeout + 15.0, 30.0)
         self.bb_dest_key = bb_dest_key
-        self._bb = self.attach_blackboard_client(name=f"{self.name}_PhraseExtractionAction")
+        self._bb = self.attach_blackboard_client(
+            name=f"{self.name}_PhraseExtractionAction"
+        )
         self._bb.register_key(
             key="phrase",
             access=pytree.common.Access.WRITE,
@@ -962,9 +1057,12 @@ class BtNode_PhraseExtractionAction(ActionHandler):
     def send_goal(self):
         if self.mock_mode:
             import random
+
             picked = random.choice(self.wordlist) if self.wordlist else "mock_phrase"
             self._bb.phrase = picked
-            self.feedback_message = f"MOCK: picked '{picked}' from {self.wordlist[:3]}..."
+            self.feedback_message = (
+                f"MOCK: picked '{picked}' from {self.wordlist[:3]}..."
+            )
             print(f"🎤 MOCK PHRASE EXTRACTION (action): '{picked}'")
             self.send_goal_future = _MockFuture()
             return
@@ -982,25 +1080,24 @@ class BtNode_PhraseExtractionAction(ActionHandler):
         self.last_feedback_time = time.time()
         self.feedback_timeout = self._feedback_timeout_secs
         self.action_status = 0
-        progress = getattr(feedback, 'progress', 0.0)
-        status_message = getattr(feedback, 'status_message', '')
-        partial = getattr(feedback, 'partial_transcription', '')
-        self.feedback_message = (
-            f"phrase progress={progress:.2f} {status_message}"
-            + (f" [partial: '{partial}']" if partial else "")
+        progress = getattr(feedback, "progress", 0.0)
+        status_message = getattr(feedback, "status_message", "")
+        partial = getattr(feedback, "partial_transcription", "")
+        self.feedback_message = f"phrase progress={progress:.2f} {status_message}" + (
+            f" [partial: '{partial}']" if partial else ""
         )
 
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            result = getattr(self.result_message, 'result', None)
-            status = getattr(result, 'status', -1)
-            err = getattr(result, 'error_message', '')
+            result = getattr(self.result_message, "result", None)
+            status = getattr(result, "status", -1)
+            err = getattr(result, "error_message", "")
             self.feedback_message = (
                 f"PhraseExtraction aborted (action={self.result_status_string}, "
                 f"server status={status}): {err}"
             )
             return Status.FAILURE
-        phrase = getattr(self.result_message.result, 'phrase', '')
+        phrase = getattr(self.result_message.result, "phrase", "")
         self._bb.phrase = phrase
         self.feedback_message = f"extracted high-confidence phrase: '{phrase}'"
         return Status.SUCCESS
