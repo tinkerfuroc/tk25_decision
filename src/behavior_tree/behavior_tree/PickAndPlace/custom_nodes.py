@@ -1,34 +1,40 @@
+from __future__ import annotations
+
+"""PickAndPlace-specific BT nodes — copied from StoringGroceries to avoid cross-task imports.
+
+These are functionally identical to the StoringGroceries originals.
+"""
+
 from typing import Any
-import py_trees
-import textwrap
-from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.messages import ObjectDetection, Categorize
-from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
-from geometry_msgs.msg import Pose
 
 import action_msgs.msg as action_msgs
+import py_trees
+
+from behavior_tree.TemplateNodes.ActionBase import ActionHandler
+from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
+from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
+from behavior_tree.messages import Categorize, ObjectDetection
+from geometry_msgs.msg import Pose
+
 
 class BtNode_FindObjTable(ServiceHandler):
-    """
-    Find object on table
-    """
+    """Find object on table using YOLO detection service."""
 
-    def __init__(self, name: str,
-                 bb_key_prompt: str,
-                 bb_key_image: str,
-                 bb_key_segment: str,
-                 bb_key_result: str,
-                 bb_key_announcement: str,
-                 bb_key_object_label: str = None,
-                 target_frame: str = "base_link",
-                 use_realsense: bool = True,
-                 service_name = "object_detection_yolo",
-                 service_type = ObjectDetection,
-                 ):
-        super(BtNode_FindObjTable, self).__init__(name=name,
-                                                  service_name=service_name,
-                                                  service_type=service_type)
+    def __init__(
+        self,
+        name: str,
+        bb_key_prompt: str,
+        bb_key_image: str,
+        bb_key_segment: str,
+        bb_key_result: str,
+        bb_key_announcement: str,
+        bb_key_object_label: str = None,
+        target_frame: str = "base_link",
+        use_realsense: bool = True,
+        service_name="object_detection_yolo",
+        service_type=ObjectDetection,
+    ):
+        super().__init__(name=name, service_name=service_name, service_type=service_type)
         self.bb_key_prompt = bb_key_prompt
         self.bb_key_image = bb_key_image
         self.bb_key_segment = bb_key_segment
@@ -36,33 +42,33 @@ class BtNode_FindObjTable(ServiceHandler):
         self.blackboard.register_key(
             key="prompt",
             access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_prompt)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_prompt),
         )
         self.blackboard.register_key(
             key="image",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_image)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_image),
         )
         self.blackboard.register_key(
             key="segmentation",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_segment)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_segment),
         )
         self.blackboard.register_key(
             key="result",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_result)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_result),
         )
         self.blackboard.register_key(
             key="announcement_msg",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_announcement)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_announcement),
         )
         if bb_key_object_label is not None:
             self.blackboard.register_key(
                 key="object_label",
                 access=py_trees.common.Access.WRITE,
-                remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_object_label)
+                remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_object_label),
             )
         self.use_realsense = use_realsense
 
@@ -70,15 +76,10 @@ class BtNode_FindObjTable(ServiceHandler):
         request = ObjectDetection.Request()
         request.prompt = self.blackboard.prompt
         request.flags = "find_for_grasp|request_image|request_segmentation"
-        if self.use_realsense:
-            request.camera = "realsense"
-        else:
-            request.camera = "orbecc"
+        request.camera = "realsense" if self.use_realsense else "orbecc"
         self.response = self.client.call_async(request)
-        self.logger.debug(f"Initialized FindObjTable with prompt: {self.blackboard.prompt}")
 
     def update(self):
-        self.logger.debug(f"Updating FindObjTable with prompt: {self.blackboard.prompt}")
         if self.response.done():
             if self.response.result().status == 0:
                 response = self.response.result()
@@ -93,7 +94,10 @@ class BtNode_FindObjTable(ServiceHandler):
                 self.feedback_message = f"Found object: {response.objects[0].cls}"
                 return py_trees.common.Status.SUCCESS
             else:
-                self.feedback_message = f"Failed to find object with {self.response.result().status} and error message {self.response.result().error_msg}"
+                self.feedback_message = (
+                    f"Failed to find object with {self.response.result().status} "
+                    f"and error message {self.response.result().error_msg}"
+                )
                 return py_trees.common.Status.FAILURE
         else:
             self.feedback_message = "Waiting for response from find object service"
@@ -101,70 +105,74 @@ class BtNode_FindObjTable(ServiceHandler):
 
 
 class BtNode_CategorizeGrocery(ActionHandler):
-    def __init__(self,
-                 name: str,
-                 n_layers: int,
-                 bb_key_prompt: str,
-                 bb_key_image: str,
-                 bb_key_segment: str,
-                 bb_target_frame: str,
-                 bb_key_result_point: str,
-                 bb_key_env_points: str,
-                 bb_key_reason: str,
-                 bb_key_shelf_left: str,
-                 bb_key_shelf_right: str,
-                 action_name: str = 'grocery_categorize',
-                 wait_for_server_timeout_sec: float = -3
-                 ):
-        super(BtNode_CategorizeGrocery, self).__init__(name, Categorize, action_name, None, wait_for_server_timeout_sec)
+    """Categorize grocery item for cabinet shelf placement."""
+
+    def __init__(
+        self,
+        name: str,
+        n_layers: int,
+        bb_key_prompt: str,
+        bb_key_image: str,
+        bb_key_segment: str,
+        bb_target_frame: str,
+        bb_key_result_point: str,
+        bb_key_env_points: str,
+        bb_key_reason: str,
+        bb_key_shelf_left: str,
+        bb_key_shelf_right: str,
+        action_name: str = "grocery_categorize",
+        wait_for_server_timeout_sec: float = -3,
+    ):
+        super().__init__(
+            name, Categorize, action_name, None, wait_for_server_timeout_sec
+        )
         self.n_layers = n_layers
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="prompt",
             access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_prompt)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_prompt),
         )
         self.blackboard.register_key(
             key="image",
             access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_image)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_image),
         )
         self.blackboard.register_key(
             key="segmentation",
             access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_segment)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_segment),
         )
         self.blackboard.register_key(
             key="target_frame",
             access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_target_frame)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_target_frame),
         )
         self.blackboard.register_key(
             key="shelf_left",
             access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_shelf_left)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_shelf_left),
         )
         self.blackboard.register_key(
             key="shelf_right",
             access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_shelf_right)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_shelf_right),
         )
         self.blackboard.register_key(
             key="env_points",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_env_points)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_env_points),
         )
         self.blackboard.register_key(
             key="result_point",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_result_point)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_result_point),
         )
         self.blackboard.register_key(
             key="reason",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_reason)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_reason),
         )
-
 
     def send_goal(self):
         try:
@@ -177,25 +185,29 @@ class BtNode_CategorizeGrocery(ActionHandler):
             goal.pt_shelf_left = self.blackboard.shelf_left
             goal.pt_shelf_right = self.blackboard.shelf_right
             self.send_goal_request(goal)
-            self.logger.debug(f"Sent goal to categorize grocery with prompt: {self.blackboard.prompt}")
             self.feedback_message = f"Sent goal to categorize grocery with prompt: {self.blackboard.prompt}"
         except Exception as e:
             self.feedback_message = f"Failed to send goal: {e}"
-            self.logger.debug(f"Failed to send goal: {e}")
             return py_trees.common.Status.FAILURE
-    
+
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            self.feedback_message = f"Categorize grocery failed with status: {self.result_status} and error message {self.result_message.result.error_msg}"
+            self.feedback_message = (
+                f"Categorize grocery failed with status: {self.result_status} "
+                f"and error message {self.result_message.result.error_msg}"
+            )
             return py_trees.common.Status.FAILURE
         else:
             result = self.result_message.result
             self.blackboard.result_point = result.place_point
             self.blackboard.env_points = result.env_points
             self.blackboard.reason = result.place_reason
-            self.feedback_message = f"Categorize grocery succeeded with target layer {result.shelf_layer} and target point {result.place_point}"
+            self.feedback_message = (
+                f"Categorize grocery succeeded with target layer {result.shelf_layer} "
+                f"and target point {result.place_point}"
+            )
             return py_trees.common.Status.SUCCESS
-    
+
     def feedback_callback(self, msg):
         feedback = msg.feedback
         if feedback.status != 0:
@@ -205,33 +217,41 @@ class BtNode_CategorizeGrocery(ActionHandler):
 
 
 class BtNode_GraspWithPose(BtNode_Grasp):
-    def __init__(self, name: str,
-                 bb_key_vision_res: str,
-                 bb_key_pose: str,
-                 action_name: str = "grasp",
-                 bb_key_object_label: str = None):
-        super().__init__(name, bb_key_vision_res, action_name, bb_key_object_label=bb_key_object_label)
+    """Grasp object and write grasp pose to blackboard for downstream Place."""
+
+    def __init__(
+        self,
+        name: str,
+        bb_key_vision_res: str,
+        bb_key_pose: str,
+        action_name: str = "grasp",
+        bb_key_object_label: str = None,
+    ):
+        super().__init__(
+            name, bb_key_vision_res, action_name, bb_key_object_label=bb_key_object_label
+        )
         self.blackboard.register_key(
             key="pose",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_pose)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_pose),
         )
-    
+
     def process_result(self):
         try:
             if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
                 result = self.result_message.result
-                self.feedback_message = f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}"
-                self.logger.debug(f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}")
+                self.feedback_message = (
+                    f"Grasp failed with status: {self.result_status}, "
+                    f"stage: {result.stage}, error: {result.error_msg}"
+                )
                 return py_trees.common.Status.FAILURE
             else:
-                # Grasp.Result 不再返回 grasp_pose；下游 Place 的 orientation 留空即可，
-                # pick_and_place server 会回退到它在 Pick 里缓存的 last_grasp_orientation_
+                # Grasp.Result no longer returns grasp_pose; downstream Place's
+                # orientation stays empty — pick_and_place server falls back to
+                # cached last_grasp_orientation_.
                 self.blackboard.pose = Pose()
                 self.feedback_message = "Grasp succeeded"
-                self.logger.debug("Grasp succeeded")
                 return py_trees.common.Status.SUCCESS
         except Exception as e:
             self.feedback_message = f"Failed to process grasp result: {e}"
-            self.logger.debug(f"Failed to process grasp result: {e}")
             return py_trees.common.Status.FAILURE
