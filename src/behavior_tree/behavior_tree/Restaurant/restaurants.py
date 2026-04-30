@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import rclpy
+
 """Standard Restaurant behavior tree composition.
 
 Shape: **batched three-phase pipeline**, mirroring ``restaurants_fake.py``.
@@ -25,6 +27,7 @@ from two modules:
     this module introduces.
 """
 
+from behavior_tree.PickAndPlace.config import Header, Header, Point, Point, Pose, PoseStamped, Quaternion
 import py_trees
 
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
@@ -100,6 +103,13 @@ def _approachCustomerSubtree(name: str = "Approach customer") -> py_trees.compos
     """
     seq = py_trees.composites.Sequence(name=name, memory=True)
     seq.add_child(
+        BtNode_Announce(
+            name="Calculating customer position",
+            bb_source=None,
+            message="Calculating customer position.",
+        )
+    )
+    seq.add_child(
         BtNode_FindApproachPose(
             name=f"{name}: find pose",
             bb_target_key=KEY_CUSTOMER_LOCATION,
@@ -110,6 +120,11 @@ def _approachCustomerSubtree(name: str = "Approach customer") -> py_trees.compos
             check_reachability=True,
         )
     )
+    seq.add_child(BtNode_Announce(
+        name=f"{name}: announce",
+        bb_source=None,
+        message="Approaching customer.",
+    ))
     seq.add_child(
         BtNode_GotoAction(
             name=f"{name}: drive",
@@ -154,22 +169,45 @@ def createConstantWriter():
         bb_source=None,
         message="Recording location of restaurant bar.",
     ))
-    record_parallel.add_child(
-        py_trees.decorators.Retry(
-            name="Retry capture task start pose",
-            child=BtNode_CaptureCurrentPose(
-                name="Capture task start pose as kitchen bar",
-                bb_key=KEY_KITCHEN_BAR_POSE,
+    # record_parallel.add_child(
+    #     py_trees.decorators.Retry(
+    #         name="Retry capture task start pose",
+    #         child=BtNode_CaptureCurrentPose(
+    #             name="Capture task start pose as kitchen bar",
+    #             bb_key=KEY_KITCHEN_BAR_POSE,
+    #         ),
+    #         num_failures=3,
+    #     )
+    # )
+    record_parallel.add_child(BtNode_WriteToBlackboard(
+        name="Write task start pose as kitchen bar",
+        bb_namespace="",
+        bb_source=None,
+        bb_key=KEY_KITCHEN_BAR_POSE,
+        object=PoseStamped(
+            header=Header(stamp=rclpy.time.Time().to_msg(), frame_id="map"),
+            pose=Pose(
+                position=Point(
+                    x=0.0,
+                    y=0.0,
+                    z=0.0,
+                ),
+                orientation=Quaternion(
+                    x=0.0,
+                    y=0.0,
+                    z=0.0,
+                    w=1.0
+                ),
             ),
-            num_failures=3,
         )
-    )
+    ))
     root.add_child(record_parallel)
     return root
 
 
 def _create_waving_detection_pass():
     """Primary detection: tk26 waving-person service with per-person picture crops."""
+    root = py_trees.composites.Parallel(name="scan and announce", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     seq = py_trees.composites.Sequence(name="Waving detection pass", memory=True)
     seq.add_child(
         BtNode_ScanForWavingPerson(
@@ -191,11 +229,18 @@ def _create_waving_detection_pass():
             max_candidates=2,
         )
     )
-    return seq
+    root.add_child(seq)
+    root.add_child(BtNode_Announce(
+        name="Announce waving detection",
+        bb_source=None,
+        message="Scanning for waving customers",)
+    )
+    return root
 
 
 def _create_legacy_detection_pass():
     """Fallback detection: legacy calling-customer YOLO path (no pictures)."""
+    root = py_trees.composites.Parallel(name="legacy detect and announce", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     seq = py_trees.composites.Sequence(name="Legacy detection pass", memory=True)
     inner = py_trees.composites.Selector(name="Legacy detect selector", memory=True)
     inner.add_child(
@@ -222,16 +267,22 @@ def _create_legacy_detection_pass():
             confidence=0.7,
         )
     )
-    return seq
+    root.add_child(seq)
+    root.add_child(BtNode_Announce(
+        name="Announce legacy detection",
+        bb_source=None,
+        message="Scanning for customers with legacy detection..",)
+    )
+    return root
 
 
-def createDetectAndArbitrateCustomers():
+def createDetectAndArbitrateCustomers(x: float = 0.0, y: float = 35.0):
     """Detect callers (only if queue dry) and select one active target via arbitration."""
     root = py_trees.composites.Sequence(name="Detect and arbitrate callers", memory=True)
     root.add_child(BtNode_TurnPanTilt(
         "turn pan tilt forwards",
-        x=0.0,
-        y=35.0
+        x=x,
+        y=y
     ))
     detect = py_trees.composites.Selector(name="Detection strategy", memory=True)
     detect.add_child(
@@ -243,6 +294,12 @@ def createDetectAndArbitrateCustomers():
     detect.add_child(_create_waving_detection_pass())
     detect.add_child(_create_legacy_detection_pass())
     root.add_child(detect)
+    root.add_child(
+        BtNode_QueueHasQueued(
+            name="Queue has queued entries?",
+            queue_key=KEY_CUSTOMER_QUEUE,
+        )
+    )
     root.add_child(
         BtNode_SelectNextQueuedCustomer(
             name="Select next caller",
@@ -538,7 +595,10 @@ def createCollectOneOrder():
             pickup_verified_key=KEY_PICKUP_VERIFIED,
         )
     )
-    root.add_child(createDetectAndArbitrateCustomers())
+    scan_for_customers = py_trees.composites.Selector(name="Scan for customers", memory=True)
+    for scan_pos in [(0.0, 35.0), (30.0, 35.0), (-30.0, 35.0)]:
+        scan_for_customers.add_child(createDetectAndArbitrateCustomers(x=scan_pos[0], y=scan_pos[1]))
+    root.add_child(scan_for_customers)
     root.add_child(createApproachCustomer())
     root.add_child(
         BtNode_RequireActiveCustomer(

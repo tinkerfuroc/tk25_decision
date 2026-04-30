@@ -265,6 +265,7 @@ KEY_OBJ_SEG            = "pp_obj_seg"
 KEY_VISION_RESULT      = "pp_vision_result"
 KEY_GRASP_ANNOUNCEMENT = "pp_grasp_announcement"
 KEY_GRASP_POSE         = "pp_grasp_pose"
+KEY_OBJECT_LABEL      = "pp_object_label"
 KEY_ENV_POINTS         = "pp_env_points"
 KEY_PLACE_REASON       = "pp_place_reason"
 
