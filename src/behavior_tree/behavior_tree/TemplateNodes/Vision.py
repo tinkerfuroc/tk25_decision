@@ -1321,8 +1321,10 @@ class BtNode_MaintainEyeContact(ActionHandler):
                  ):
         super().__init__(name, FollowHeadAction, action_name, None, wait_for_server_timeout_sec)
         self._feedback_timeout_secs = feedback_timeout_secs
+        self._cancel_pending = False
 
     def send_goal(self):
+        self._cancel_pending = False
         if self.mock_mode:
             self.feedback_message = "MOCK: eye-contact goal sent"
             class MockFuture:
@@ -1344,6 +1346,17 @@ class BtNode_MaintainEyeContact(ActionHandler):
         tilt = getattr(feedback, "tilt", None)
         self.feedback_message = f"eye-contact: pan={pan}, tilt={tilt}"
 
+    def goal_response_callback(self, future):
+        super().goal_response_callback(future)
+        # Pre-acceptance terminate window: if the parallel cancelled this
+        # node before the server accepted the goal, the base-class cancel
+        # in terminate() was a no-op (goal_handle was still None). Now that
+        # we finally have a handle, cancel so the server doesn't keep
+        # gazing after this node is INVALID.
+        if self._cancel_pending and self.goal_handle is not None:
+            self.send_cancel_request()
+            self._cancel_pending = False
+
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = f"Eye-contact action failed with status {self.result_status}"
@@ -1356,8 +1369,18 @@ class BtNode_MaintainEyeContact(ActionHandler):
         return pytree.common.Status.FAILURE
 
     def terminate(self, new_status: pytree.common.Status):
-        if not self.mock_mode and self.goal_handle is not None:
-            self.send_cancel_request()
+        # On RUNNING→INVALID (parallel cut us off), the base class already
+        # sends a cancel when `goal_handle` is set. If the goal is still
+        # in flight (`send_goal_future` not yet resolved), defer the cancel
+        # to `goal_response_callback` so the server is reliably stopped.
+        if (
+            not self.mock_mode
+            and self.status == pytree.common.Status.RUNNING
+            and new_status == pytree.common.Status.INVALID
+            and self.goal_handle is None
+            and self.send_goal_future is not None
+        ):
+            self._cancel_pending = True
         super().terminate(new_status)
 
 
