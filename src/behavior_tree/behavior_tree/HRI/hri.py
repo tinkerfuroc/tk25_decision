@@ -557,8 +557,8 @@ def createEscortAndSeat(guest_idx: int):
         )
     )
     seat_recommend_primary.add_child(BtNode_TurnPanTilt(name=f"Look at guest", x=90.0, y=45.0, speed=0.0))
-    recommen_audio = py_trees.composites.Sequence(name=f"Announce recommendation with eye contact guest {guest_idx}", memory=True)
-    recommen_audio.add_child(
+    recommend_audio = py_trees.composites.Sequence(name=f"Announce recommendation with eye contact guest {guest_idx}", memory=True)
+    recommend_audio.add_child(
         py_trees.decorators.FailureIsSuccess(
             name=f"Arm point-to seat (best-effort) guest {guest_idx}",
             child=py_trees.decorators.Retry(
@@ -574,7 +574,7 @@ def createEscortAndSeat(guest_idx: int):
             ),
         )
     )
-    recommen_audio.add_child(
+    recommend_audio.add_child(
         BtNode_Announce(
             name=f"Announce seat recommendation guest {guest_idx}",
             bb_source=None,
@@ -585,8 +585,8 @@ def createEscortAndSeat(guest_idx: int):
         name=f"Maintain eye contact guest {guest_idx}")
     recommend_with_eye_contact = py_trees.composites.Parallel(
         name=f"Recommend seat with eye contact guest {guest_idx}",
-        policy=py_trees.common.ParallelPolicy.SuccessOnSelected([recommen_audio]),
-        children=[recommen_audio, track_person],
+        policy=py_trees.common.ParallelPolicy.SuccessOnSelected([recommend_audio]),
+        children=[recommend_audio, track_person],
     )
     seat_recommend_primary.add_child(recommend_with_eye_contact)
 
