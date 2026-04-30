@@ -54,14 +54,16 @@ import os
 import py_trees as pytree
 import time
 import math
+from typing import Any, Optional
 
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, FollowHeadAction
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
 from py_trees.common import Status
+import action_msgs.msg as action_msgs
 
 from .BaseBehaviors import ServiceHandler
 from .ActionBase import ActionHandler
@@ -713,6 +715,7 @@ class BtNode_FeatureMatching(ServiceHandler):
         # Check if response exists
         if self.response is None:
             self.feedback_message = "No response object"
+            self.blackboard.centroids = []  # Clear centroids on failure
             return pytree.common.Status.FAILURE
             
         if self.response.done():
@@ -729,6 +732,7 @@ class BtNode_FeatureMatching(ServiceHandler):
                 return pytree.common.Status.SUCCESS
             else:
                 self.feedback_message = f"Feature Matching failed with error code {result.status}: {result.error_msg}"
+                self.blackboard.centroids = []  # Clear centroids on failure
                 return pytree.common.Status.FAILURE
         else:
             self.feedback_message = "Still matching features..."
@@ -1167,9 +1171,12 @@ class BtNode_MaintainEyeContact(ActionHandler):
                  action_name: str = "follow_head_action",
                  feedback_timeout_secs: float = 30.0,
                  wait_for_server_timeout_sec: float = -3.0,
+                 follow_timeout:float=30.0
                  ):
         super().__init__(name, FollowHeadAction, action_name, None, wait_for_server_timeout_sec)
         self._feedback_timeout_secs = feedback_timeout_secs
+        self._follow_timeout = follow_timeout
+        self.start_time = None
 
     def send_goal(self):
         if self.mock_mode:
@@ -1183,6 +1190,13 @@ class BtNode_MaintainEyeContact(ActionHandler):
         goal.start_following = True
         self.send_goal_request(goal)
         self.feedback_message = "Eye-contact goal sent"
+        self.start_time = time.time()
+
+    def update(self) -> Status:
+        if time.time() - self.start_time > self._follow_timeout:
+            self.feedback_message = "Eye-contact follow timeout reached"
+            return pytree.common.Status.SUCCESS
+        return super().update()
 
     def feedback_callback(self, msg: Any):
         feedback = msg.feedback
