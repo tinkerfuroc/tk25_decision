@@ -58,7 +58,8 @@ from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Quaternion
 
 # from behavior_tree.messages import Goto, GotoGrasp, ComputeGrasp
 from nav_msgs.msg import Odometry
-from behavior_tree.messages import NavigateToPose, SetLuggagePose, ComputeGrasp, FindApproachPose
+from behavior_tree.messages import NavigateToPose, SetLuggagePose, ComputeGrasp
+# from behavior_tree.messages import FindApproachPose
 import math
 
 from tf2_ros.transform_listener import TransformListener
@@ -180,165 +181,165 @@ class BtNode_GotoAction(ActionHandler):
         self.process_feedback(feedback)  
 
 
-class BtNode_FindApproachPose(ServiceHandler):
-    """
-    Compute a free, reachable, target-facing approach pose offset from a target point.
+# class BtNode_FindApproachPose(ServiceHandler):
+#     """
+#     Compute a free, reachable, target-facing approach pose offset from a target point.
 
-    Reads a PoseStamped or PointStamped from the blackboard at ``bb_target_key``
-    (only the position/point is used; orientation is ignored — the planner
-    computes orientation to face the target). Calls the ``find_approach_pose``
-    service (``tinker_nav_msgs/srv/FindApproachPose``) and writes the resulting
-    PoseStamped to ``bb_approach_pose_key``. The downstream ``BtNode_GotoAction``
-    can then drive to that pose.
+#     Reads a PoseStamped or PointStamped from the blackboard at ``bb_target_key``
+#     (only the position/point is used; orientation is ignored — the planner
+#     computes orientation to face the target). Calls the ``find_approach_pose``
+#     service (``tinker_nav_msgs/srv/FindApproachPose``) and writes the resulting
+#     PoseStamped to ``bb_approach_pose_key``. The downstream ``BtNode_GotoAction``
+#     can then drive to that pose.
 
-    Mock mode: synthesizes a PoseStamped 0.7 m offset in the target frame's -x
-    direction and writes it directly. Skips the service call entirely so the
-    behavior tree can be tested without nav2 running.
-    """
+#     Mock mode: synthesizes a PoseStamped 0.7 m offset in the target frame's -x
+#     direction and writes it directly. Skips the service call entirely so the
+#     behavior tree can be tested without nav2 running.
+#     """
 
-    def __init__(self,
-                 name: str,
-                 bb_target_key: str,
-                 bb_approach_pose_key: str,
-                 desired_distance: float = 0.7,
-                 min_distance: float = 0.45,
-                 max_distance: float = 1.2,
-                 num_angles: int = 16,
-                 check_reachability: bool = True,
-                 preferred_yaw_rad: float = float('nan'),
-                 facing_yaw_offset_rad: float = 0.0,
-                 service_name: str = "find_approach_pose"):
-        super().__init__(name, service_name, FindApproachPose)
-        self.bb_target_key = bb_target_key
-        self.bb_approach_pose_key = bb_approach_pose_key
-        self.desired_distance = float(desired_distance)
-        self.min_distance = float(min_distance)
-        self.max_distance = float(max_distance)
-        self.num_angles = int(num_angles)
-        self.check_reachability = bool(check_reachability)
-        self.preferred_yaw_rad = float(preferred_yaw_rad)
-        self.facing_yaw_offset_rad = float(facing_yaw_offset_rad)
+#     def __init__(self,
+#                  name: str,
+#                  bb_target_key: str,
+#                  bb_approach_pose_key: str,
+#                  desired_distance: float = 0.7,
+#                  min_distance: float = 0.45,
+#                  max_distance: float = 1.2,
+#                  num_angles: int = 16,
+#                  check_reachability: bool = True,
+#                  preferred_yaw_rad: float = float('nan'),
+#                  facing_yaw_offset_rad: float = 0.0,
+#                  service_name: str = "find_approach_pose"):
+#         super().__init__(name, service_name, FindApproachPose)
+#         self.bb_target_key = bb_target_key
+#         self.bb_approach_pose_key = bb_approach_pose_key
+#         self.desired_distance = float(desired_distance)
+#         self.min_distance = float(min_distance)
+#         self.max_distance = float(max_distance)
+#         self.num_angles = int(num_angles)
+#         self.check_reachability = bool(check_reachability)
+#         self.preferred_yaw_rad = float(preferred_yaw_rad)
+#         self.facing_yaw_offset_rad = float(facing_yaw_offset_rad)
 
-    def setup(self, **kwargs):
-        ServiceHandler.setup(self, **kwargs)
-        self.bb_read_client = self.attach_blackboard_client(name=f"FindApproachPoseRead")
-        self.bb_write_client = self.attach_blackboard_client(name=f"FindApproachPoseWrite")
-        self.bb_read_client.register_key(
-            "source",
-            access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_target_key)
-        )
-        self.bb_write_client.register_key(
-            "dest",
-            access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_approach_pose_key)
-        )
-        self.logger.debug(f"Setup BtNode_FindApproachPose")
+#     def setup(self, **kwargs):
+#         ServiceHandler.setup(self, **kwargs)
+#         self.bb_read_client = self.attach_blackboard_client(name=f"FindApproachPoseRead")
+#         self.bb_write_client = self.attach_blackboard_client(name=f"FindApproachPoseWrite")
+#         self.bb_read_client.register_key(
+#             "source",
+#             access=py_trees.common.Access.READ,
+#             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_target_key)
+#         )
+#         self.bb_write_client.register_key(
+#             "dest",
+#             access=py_trees.common.Access.WRITE,
+#             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_approach_pose_key)
+#         )
+#         self.logger.debug(f"Setup BtNode_FindApproachPose")
 
-    def initialise(self) -> None:
-        super().initialise()
-        if self.mock_mode:
-            target = None
-            try:
-                target = self.bb_read_client.source
-            except Exception:
-                target = None
-            self.bb_write_client.dest = self._mock_offset_pose(target)
-            self.feedback_message = "MOCK: synthesized approach pose"
-            print(f"📍 MOCK FIND APPROACH POSE: synthesized offset")
-            return
+#     def initialise(self) -> None:
+#         super().initialise()
+#         if self.mock_mode:
+#             target = None
+#             try:
+#                 target = self.bb_read_client.source
+#             except Exception:
+#                 target = None
+#             self.bb_write_client.dest = self._mock_offset_pose(target)
+#             self.feedback_message = "MOCK: synthesized approach pose"
+#             print(f"📍 MOCK FIND APPROACH POSE: synthesized offset")
+#             return
 
-        try:
-            source = self.bb_read_client.source
-        except Exception as e:
-            self.feedback_message = f"Failed to read target from '{self.bb_target_key}': {e}"
-            self.response = None
-            return
+#         try:
+#             source = self.bb_read_client.source
+#         except Exception as e:
+#             self.feedback_message = f"Failed to read target from '{self.bb_target_key}': {e}"
+#             self.response = None
+#             return
 
-        target_point = self._coerce_to_point_stamped(source)
-        if target_point is None:
-            self.feedback_message = f"Unsupported target type: {type(source).__name__}"
-            self.response = None
-            return
+#         target_point = self._coerce_to_point_stamped(source)
+#         if target_point is None:
+#             self.feedback_message = f"Unsupported target type: {type(source).__name__}"
+#             self.response = None
+#             return
 
-        request = FindApproachPose.Request()
-        request.target = target_point
-        request.desired_distance = float(self.desired_distance)
-        request.min_distance = float(self.min_distance)
-        request.max_distance = float(self.max_distance)
-        request.num_angles = int(self.num_angles)
-        request.check_reachability = bool(self.check_reachability)
-        request.preferred_yaw_rad = float(self.preferred_yaw_rad)
-        request.facing_yaw_offset_rad = float(self.facing_yaw_offset_rad)
-        request.timeout_sec = 0.0
-        # robot_pose_override empty header signals "use TF"
-        self.response = self.call_service_async(request)
-        self.feedback_message = (
-            f"Requested approach pose for target ({target_point.point.x:.2f}, "
-            f"{target_point.point.y:.2f}) in {target_point.header.frame_id}"
-        )
+#         request = FindApproachPose.Request()
+#         request.target = target_point
+#         request.desired_distance = float(self.desired_distance)
+#         request.min_distance = float(self.min_distance)
+#         request.max_distance = float(self.max_distance)
+#         request.num_angles = int(self.num_angles)
+#         request.check_reachability = bool(self.check_reachability)
+#         request.preferred_yaw_rad = float(self.preferred_yaw_rad)
+#         request.facing_yaw_offset_rad = float(self.facing_yaw_offset_rad)
+#         request.timeout_sec = 0.0
+#         # robot_pose_override empty header signals "use TF"
+#         self.response = self.call_service_async(request)
+#         self.feedback_message = (
+#             f"Requested approach pose for target ({target_point.point.x:.2f}, "
+#             f"{target_point.point.y:.2f}) in {target_point.header.frame_id}"
+#         )
 
-    def update(self):
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
+#     def update(self):
+#         if self.mock_mode:
+#             return self.wait_for_keypress_in_mock()
 
-        if self.response is None:
-            return py_trees.common.Status.FAILURE
-        if not self.response.done():
-            self.feedback_message = "Computing approach pose..."
-            return py_trees.common.Status.RUNNING
+#         if self.response is None:
+#             return py_trees.common.Status.FAILURE
+#         if not self.response.done():
+#             self.feedback_message = "Computing approach pose..."
+#             return py_trees.common.Status.RUNNING
 
-        result = self.response.result()
-        if result is None:
-            self.feedback_message = "Service call returned None"
-            return py_trees.common.Status.FAILURE
-        if result.status == 0:
-            self.bb_write_client.dest = result.pose
-            self.feedback_message = (
-                f"Approach pose at d={result.chosen_distance:.2f}, "
-                f"reachable={result.reachable}"
-            )
-            return py_trees.common.Status.SUCCESS
-        self.feedback_message = f"FindApproachPose failed: status={result.status} {result.errormsg}"
-        return py_trees.common.Status.FAILURE
+#         result = self.response.result()
+#         if result is None:
+#             self.feedback_message = "Service call returned None"
+#             return py_trees.common.Status.FAILURE
+#         if result.status == 0:
+#             self.bb_write_client.dest = result.pose
+#             self.feedback_message = (
+#                 f"Approach pose at d={result.chosen_distance:.2f}, "
+#                 f"reachable={result.reachable}"
+#             )
+#             return py_trees.common.Status.SUCCESS
+#         self.feedback_message = f"FindApproachPose failed: status={result.status} {result.errormsg}"
+#         return py_trees.common.Status.FAILURE
 
-    @staticmethod
-    def _coerce_to_point_stamped(source):
-        """Accept PointStamped, PoseStamped, or anything with `.point`/`.pose.position`."""
-        if isinstance(source, PointStamped):
-            return source
-        if isinstance(source, PoseStamped):
-            ps = PointStamped()
-            ps.header = source.header
-            ps.point.x = source.pose.position.x
-            ps.point.y = source.pose.position.y
-            ps.point.z = source.pose.position.z
-            return ps
-        return None
+#     @staticmethod
+#     def _coerce_to_point_stamped(source):
+#         """Accept PointStamped, PoseStamped, or anything with `.point`/`.pose.position`."""
+#         if isinstance(source, PointStamped):
+#             return source
+#         if isinstance(source, PoseStamped):
+#             ps = PointStamped()
+#             ps.header = source.header
+#             ps.point.x = source.pose.position.x
+#             ps.point.y = source.pose.position.y
+#             ps.point.z = source.pose.position.z
+#             return ps
+#         return None
 
-    @staticmethod
-    def _mock_offset_pose(target) -> 'PoseStamped':
-        """Synthetic 0.7 m offset along -x in target frame, identity orientation, target frame preserved."""
-        out = PoseStamped()
-        if target is None:
-            out.header.frame_id = "map"
-            out.pose.orientation.w = 1.0
-            return out
-        # Pull (x, y, z) + frame_id from either type
-        if hasattr(target, "point"):
-            out.header = target.header
-            out.pose.position.x = float(target.point.x) - 0.7
-            out.pose.position.y = float(target.point.y)
-            out.pose.position.z = float(target.point.z)
-        elif hasattr(target, "pose"):
-            out.header = target.header
-            out.pose.position.x = float(target.pose.position.x) - 0.7
-            out.pose.position.y = float(target.pose.position.y)
-            out.pose.position.z = float(target.pose.position.z)
-        else:
-            out.header.frame_id = "map"
-        out.pose.orientation.w = 1.0
-        return out
+#     @staticmethod
+#     def _mock_offset_pose(target) -> 'PoseStamped':
+#         """Synthetic 0.7 m offset along -x in target frame, identity orientation, target frame preserved."""
+#         out = PoseStamped()
+#         if target is None:
+#             out.header.frame_id = "map"
+#             out.pose.orientation.w = 1.0
+#             return out
+#         # Pull (x, y, z) + frame_id from either type
+#         if hasattr(target, "point"):
+#             out.header = target.header
+#             out.pose.position.x = float(target.point.x) - 0.7
+#             out.pose.position.y = float(target.point.y)
+#             out.pose.position.z = float(target.point.z)
+#         elif hasattr(target, "pose"):
+#             out.header = target.header
+#             out.pose.position.x = float(target.pose.position.x) - 0.7
+#             out.pose.position.y = float(target.pose.position.y)
+#             out.pose.position.z = float(target.pose.position.z)
+#         else:
+#             out.header.frame_id = "map"
+#         out.pose.orientation.w = 1.0
+#         return out
 
 
 class BtNode_CaptureCurrentPose(py_trees.behaviour.Behaviour):

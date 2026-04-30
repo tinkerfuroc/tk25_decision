@@ -61,7 +61,7 @@ from typing import Any, Optional
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, FollowHeadAction
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, PanTiltCommand, PanTiltState, FollowHeadAction, SeatRecommendBbox, DetectWaving
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
 from std_msgs.msg import Header
@@ -745,7 +745,7 @@ class BtNode_FeatureMatching(ServiceHandler):
                  bb_persons_key: str,
                  service_name: str = "feature_matching_service",
                  use_orbbec: bool = True,
-                 max_distance: float = 2.0,
+                 max_distance: float = 6.0,
                  target_frame: str = "base_link",
                  trim_last_person: bool = True,
                  ):
@@ -1013,9 +1013,19 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
 
     `x`, `y` are pan/tilt angles in degrees. `speed` is the servo
     speed_raw value (0 lets the controller pick its default).
+
+    `update()` holds RUNNING until `/pan_tilt_controller/state` reports
+    `feedback_ok` and `|state - cmd| < SETTLE_EPS_DEG` for
+    `SETTLE_SAMPLES_REQUIRED` consecutive samples, OR until
+    `SETTLE_TIMEOUT_SEC` elapses (in which case it warns and returns
+    SUCCESS so a stuck servo doesn't block the whole tree).
     """
 
-    PAN_TILT_COMMAND_TOPIC = "/pan_tilt_controller/cmd"
+    PAN_TILT_COMMAND_TOPIC  = "/pan_tilt_controller/cmd"
+    PAN_TILT_STATE_TOPIC    = "/pan_tilt_controller/state"
+    SETTLE_EPS_DEG          = 1.0
+    SETTLE_SAMPLES_REQUIRED = 2
+    SETTLE_TIMEOUT_SEC      = 2.0
 
     def __init__(self, name: str, x: float = 0.0, y: float = 0.0, speed: float = 0.0):
         super().__init__(name)
@@ -1023,6 +1033,13 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self.y = y
         self.speed = speed
         self.publisher = None
+        self.state_sub = None
+        self._latest_state = None
+        self._cmd_pan_deg = x
+        self._cmd_tilt_deg = y
+        self._settle_count = 0
+        self._settle_deadline = None
+        self._skip_settle = False
         self.mock_mode = is_node_mocked(self.__class__.__name__)
 
     def setup(self, **kwargs) -> None:
@@ -1039,6 +1056,12 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self.publisher = self.node.create_publisher(
             PanTiltCommand, self.PAN_TILT_COMMAND_TOPIC, 1
         )
+        self.state_sub = self.node.create_subscription(
+            PanTiltState, self.PAN_TILT_STATE_TOPIC, self._state_cb, 10
+        )
+
+    def _state_cb(self, msg: "PanTiltState") -> None:
+        self._latest_state = msg
 
     def _build_command_msg(self, pan_deg: float, tilt_deg: float) -> "PanTiltCommand":
         msg = PanTiltCommand()
@@ -1051,9 +1074,17 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         msg.accel_raw = 0
         return msg
 
+    def _arm_settle(self, pan_deg: float, tilt_deg: float) -> None:
+        """Record the commanded target and reset the settle predicate."""
+        self._cmd_pan_deg = pan_deg
+        self._cmd_tilt_deg = tilt_deg
+        self._settle_count = 0
+        self._settle_deadline = time.time() + self.SETTLE_TIMEOUT_SEC
+        self._skip_settle = False
+
     def initialise(self) -> None:
-        self.cnt = 0
         if self.mock_mode:
+            self._skip_settle = True
             return
         msg = self._build_command_msg(self.x, self.y)
         self.publisher.publish(msg)
@@ -1061,18 +1092,35 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
             f"Publishing PanTiltCommand ABSOLUTE pan={self.x:+.2f}° "
             f"tilt={self.y:+.2f}° speed_raw={int(self.speed)}"
         )
+        self._arm_settle(self.x, self.y)
 
     def update(self) -> Status:
-        if self.mock_mode:
-            self.logger.info("MOCK: PanTilt command completed immediately")
+        if self.mock_mode or self._skip_settle:
             return pytree.common.Status.SUCCESS
 
-        if self.cnt > 3:
-            self.cnt = 0
-            self.logger.info("PanTilt settle window elapsed")
+        state = self._latest_state
+        now = time.time()
+        if state is None or not getattr(state, 'feedback_ok', False):
+            if now > self._settle_deadline:
+                self.logger.warn("PanTilt settle timeout (no feedback); proceeding")
+                return pytree.common.Status.SUCCESS
+            return pytree.common.Status.RUNNING
+
+        pan_err  = abs(math.degrees(state.pan_rad)  - self._cmd_pan_deg)
+        tilt_err = abs(math.degrees(state.tilt_rad) - self._cmd_tilt_deg)
+        if pan_err < self.SETTLE_EPS_DEG and tilt_err < self.SETTLE_EPS_DEG:
+            self._settle_count += 1
+            if self._settle_count >= self.SETTLE_SAMPLES_REQUIRED:
+                return pytree.common.Status.SUCCESS
+        else:
+            self._settle_count = 0
+
+        if now > self._settle_deadline:
+            self.logger.warn(
+                f"PanTilt settle timeout (pan_err={pan_err:.2f}°, "
+                f"tilt_err={tilt_err:.2f}°); proceeding"
+            )
             return pytree.common.Status.SUCCESS
-        self.cnt += 1
-        self.logger.info("PanTilt waiting for settle")
         return pytree.common.Status.RUNNING
 
     async def wait_seconds(self, seconds):
@@ -1127,11 +1175,11 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
             )
             self.logger.info(self.feedback_message)
             self.response = None
-            self.cnt = 999
+            self._skip_settle = True
             return
 
         if self.mock_mode:
-            self.cnt = 0
+            self._skip_settle = True
             self.feedback_message = (
                 f"MOCK TurnTo for point {points[self.target_id].point} target_id={self.target_id}"
             )
@@ -1154,7 +1202,7 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
             f"Initialized TurnTo for point {point.point} id={self.target_id} "
             f"pan={pan_deg:+.2f}° tilt={tilt_deg:+.2f}°"
         )
-        self.cnt = 0
+        self._arm_settle(pan_deg, tilt_deg)
 
 
 class BtNode_ScanForWavingPerson(ServiceHandler):
