@@ -377,23 +377,27 @@ def createScanHostFeatures():
     """
     root = py_trees.composites.Sequence(name="Scan host features", memory=True)
 
-    paralllel_going = py_trees.composites.Parallel(
+    parallel_going = py_trees.composites.Parallel(
         name="Parallel go to sofa and announce",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
-    paralllel_going.add_child(BtNode_Announce(
+    parallel_going.add_child(BtNode_Announce(
         name="Host scan announcement",
         bb_source=None,
         message="Going to scan host",
     ))
-    paralllel_going.add_child(
+    parallel_going.add_child(
         py_trees.decorators.Retry(
             name="Retry goto sofa for host scan",
             child=BtNode_GotoAction(name="Go to sofa for host scan", key=KEY_SOFA_POSE),
             num_failures=5,
         )
     )
-    root.add_child(paralllel_going)
+    parallel_going = py_trees.composites.Parallel(
+        name="Parallel host scan",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll()
+    )
+    root.add_child(parallel_going)
     root.add_child(BtNode_TurnPanTilt(name="Look down at host", x=0.0, y=20.0, speed=0.0))
     parallel_scan = py_trees.composites.Parallel(
         name="Parallel host scan",

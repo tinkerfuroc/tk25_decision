@@ -191,34 +191,40 @@ class BtNode_GotoAction(ActionHandler):
 #     service (``tinker_nav_msgs/srv/FindApproachPose``) and writes the resulting
 #     PoseStamped to ``bb_approach_pose_key``. The downstream ``BtNode_GotoAction``
 #     can then drive to that pose.
+    # """
+    # Mock mode: synthesizes a PoseStamped 0.7 m offset in the target frame's -x
+    # direction and writes it directly. Skips the service call entirely so the
+    # behavior tree can be tested without nav2 running.
 
-#     Mock mode: synthesizes a PoseStamped 0.7 m offset in the target frame's -x
-#     direction and writes it directly. Skips the service call entirely so the
-#     behavior tree can be tested without nav2 running.
-#     """
+    # Reachability is opt-in (``check_reachability=False`` by default). Nav2 will
+    # refuse unreachable goals at NavigateToPose time anyway, and pre-validation
+    # via ``ComputePathToPose`` adds up to ``top_k_reachability *
+    # reachability_timeout_sec`` (≈4 s) per call. Set ``check_reachability=True``
+    # explicitly when fast-failing on unreachable poses matters more than latency.
+    # """
 
-#     def __init__(self,
-#                  name: str,
-#                  bb_target_key: str,
-#                  bb_approach_pose_key: str,
-#                  desired_distance: float = 0.7,
-#                  min_distance: float = 0.45,
-#                  max_distance: float = 1.2,
-#                  num_angles: int = 16,
-#                  check_reachability: bool = True,
-#                  preferred_yaw_rad: float = float('nan'),
-#                  facing_yaw_offset_rad: float = 0.0,
-#                  service_name: str = "find_approach_pose"):
-#         super().__init__(name, service_name, FindApproachPose)
-#         self.bb_target_key = bb_target_key
-#         self.bb_approach_pose_key = bb_approach_pose_key
-#         self.desired_distance = float(desired_distance)
-#         self.min_distance = float(min_distance)
-#         self.max_distance = float(max_distance)
-#         self.num_angles = int(num_angles)
-#         self.check_reachability = bool(check_reachability)
-#         self.preferred_yaw_rad = float(preferred_yaw_rad)
-#         self.facing_yaw_offset_rad = float(facing_yaw_offset_rad)
+    # def __init__(self,
+    #              name: str,
+    #              bb_target_key: str,
+    #              bb_approach_pose_key: str,
+    #              desired_distance: float = 0.7,
+    #              min_distance: float = 0.45,
+    #              max_distance: float = 1.2,
+    #              num_angles: int = 16,
+    #              check_reachability: bool = False,
+    #              preferred_yaw_rad: float = float('nan'),
+    #              facing_yaw_offset_rad: float = 0.0,
+    #              service_name: str = "find_approach_pose"):
+    #     super().__init__(name, service_name, FindApproachPose)
+    #     self.bb_target_key = bb_target_key
+    #     self.bb_approach_pose_key = bb_approach_pose_key
+    #     self.desired_distance = float(desired_distance)
+    #     self.min_distance = float(min_distance)
+    #     self.max_distance = float(max_distance)
+    #     self.num_angles = int(num_angles)
+    #     self.check_reachability = bool(check_reachability)
+    #     self.preferred_yaw_rad = float(preferred_yaw_rad)
+    #     self.facing_yaw_offset_rad = float(facing_yaw_offset_rad)
 
 #     def setup(self, **kwargs):
 #         ServiceHandler.setup(self, **kwargs)
@@ -370,21 +376,30 @@ class BtNode_CaptureCurrentPose(py_trees.behaviour.Behaviour):
         self.tf_buffer = None
         self.tf_listener = None
         self.bb_write = None
-
-    def setup(self, **kwargs):
-        self.node = kwargs.get('node')
-        if self.node is not None and not self.mock_mode:
-            self.tf_buffer = Buffer()
-            self.tf_listener = TransformListener(self.tf_buffer, self.node)
         self.bb_write = self.attach_blackboard_client(name="CaptureCurrentPoseWrite")
         self.bb_write.register_key(
             "dest",
             access=py_trees.common.Access.WRITE,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_key)
         )
+        self.time_now = None
+        self.wait_ticks = 0
+    
+    def initialise(self):
+        self.time_now = self.node.get_clock().now()
+        self.wait_ticks = 0
+        return super().initialise()
+
+    def setup(self, **kwargs):
+        self.node = kwargs.get('node')
+        if self.node is not None and not self.mock_mode:
+            self.tf_buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10))
+            self.tf_listener = TransformListener(self.tf_buffer, self.node)
         self.logger.debug(f"Setup BtNode_CaptureCurrentPose -> {self.bb_key}")
+        return super().setup(**kwargs)
 
     def update(self):
+        self.wait_ticks += 1
         if self.mock_mode:
             ps = PoseStamped()
             ps.header.frame_id = self.target_frame
@@ -399,6 +414,9 @@ class BtNode_CaptureCurrentPose(py_trees.behaviour.Behaviour):
             return py_trees.common.Status.FAILURE
 
         try:
+            # rclpy.time.Time() (zero stamp) = "latest available transform".
+            # Passing now() risks ExtrapolationException when amcl/robot_state_publisher
+            # lag the wall clock by a few ms.
             tf = self.tf_buffer.lookup_transform(
                 self.target_frame,
                 self.source_frame,
@@ -407,11 +425,14 @@ class BtNode_CaptureCurrentPose(py_trees.behaviour.Behaviour):
             )
         except Exception as e:
             self.feedback_message = f"TF lookup '{self.target_frame}' <- '{self.source_frame}' failed: {e}"
-            return py_trees.common.Status.FAILURE
+            if self.wait_ticks < 10:
+                return py_trees.common.Status.RUNNING
+            else:
+                return py_trees.common.Status.FAILURE
 
         ps = PoseStamped()
         ps.header.frame_id = self.target_frame
-        ps.header.stamp = self.node.get_clock().now().to_msg()
+        ps.header.stamp = self.time_now.to_msg()
         ps.pose.position.x = tf.transform.translation.x
         ps.pose.position.y = tf.transform.translation.y
         ps.pose.position.z = tf.transform.translation.z
