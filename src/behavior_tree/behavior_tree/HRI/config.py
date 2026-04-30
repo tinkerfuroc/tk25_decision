@@ -123,6 +123,11 @@ KEY_PERSONS = "hri_persons"
 KEY_PERSON_CENTROIDS = "hri_person_centroids"
 KEY_SEAT_RECOMMENDATION = "hri_seat_recommendation"
 
+# Host-specific memory keys (host is scanned at task start while seated on sofa)
+KEY_HOST_NAME = "hri_host_name"
+KEY_HOST_DRINK = "hri_host_drink"
+KEY_HOST_FEATURES = "hri_host_features"
+
 # Guest-specific memory keys
 KEY_GUEST1_NAME = "hri_guest1_name"
 KEY_GUEST1_DRINK = "hri_guest1_drink"

@@ -1,28 +1,28 @@
 {
     "pose_door": {
         "point": {
-            "x": -1.6912435751977497,
-            "y": -2.676942006819833,
+            "x": 5.123981462188995,
+            "y": -1.3990913590511413,
             "z": 0.0
         },
         "orientation": {
             "x": 0.0,
             "y": 0.0,
-            "z": -0.8944041454247412,
-            "w": -0.8944041454247412
+            "z": -0.7659544057554138,
+            "w": 0.6428948967785255
         }
     },
     "pose_sofa": {
         "point": {
-            "x": -1.0312551401627483,
-            "y": 0.5219420690102469,
+            "x": 3.3172076202831393,
+            "y": 1.8083885240443145,
             "z": 0.0
         },
         "orientation": {
             "x": 0.0,
             "y": 0.0,
-            "z": 0.46707933015603526,
-            "w": 0.8842154145574422
+            "z": 0.6820811482963306,
+            "w": 0.7312764915808241
         }
     },
     "arm_pos_navigating": [
@@ -75,26 +75,16 @@
         "lemonade"
     ],
     "names": [
-        "Maria",
-        "Ana",
-        "Francisca",
-        "Antonia",
-        "Adriana",
-        "Juliana",
-        "Marcia",
-        "Fernanda",
-        "Patricia",
-        "Aline",
-        "Jose",
-        "Joao",
-        "Antonio",
-        "Francisco",
-        "Carlos",
-        "James",
-        "Michael",
-        "Sarah",
-        "Emma",
-        "Olivia"
+        "Jack",
+        "John",
+        "Allen",
+        "Richard",
+        "Mike",
+        "Grace",
+        "Linda",
+        "Lucy",
+        "Lily",
+        "Jennier"
     ],
     "follow": {
         "lost_short_sec": 5.0,
