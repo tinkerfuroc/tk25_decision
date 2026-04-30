@@ -132,6 +132,7 @@ KEY_SEAT_POINTS = "hri_seat_points"
 KEY_HOST_NAME = "hri_host_name"
 KEY_HOST_DRINK = "hri_host_drink"
 KEY_HOST_FEATURES = "hri_host_features"
+KEY_HOST_COMPARISON_IMAGE = "hri_host_comparison_image"
 
 # Guest-specific memory keys
 KEY_GUEST1_NAME = "hri_guest1_name"

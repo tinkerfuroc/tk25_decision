@@ -699,14 +699,17 @@ class BtNode_PointTo(ServiceHandler):
 
             request = ArmJointService.Request()
             
-            request.joint0 = self.blackboard.arm_joint_pose[0]
+            request.joint0 = math.atan2(point.point.y, point.point.x)
+            self.node.get_logger().info(f"Calculated joint0 angle {request.joint0} to point at target {self.target_id} with coordinates ({point.point.x}, {point.point.y})")
+            if request.joint0 < -math.pi/2 or request.joint0 > math.pi/2:
+                self.node.get_logger().warning(f"Calculated joint0 angle {request.joint0} is out of expected range [-pi/2, pi/2]")
             request.joint1 = self.blackboard.arm_joint_pose[1]
             request.joint2 = self.blackboard.arm_joint_pose[2]
             request.joint3 = self.blackboard.arm_joint_pose[3]
             request.joint4 = self.blackboard.arm_joint_pose[4]
             request.joint5 = self.blackboard.arm_joint_pose[5]
             request.joint6 = self.blackboard.arm_joint_pose[6]
-            request.joint0 = math.atan2(point.point.y, point.point.x)
+            
             self.angle = math.atan2(point.point.y, point.point.x)
             request.add_octomap = False
 

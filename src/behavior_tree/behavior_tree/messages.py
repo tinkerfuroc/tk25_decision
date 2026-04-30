@@ -36,7 +36,8 @@ else:
     from behavior_tree.mock_messages import PhraseExtractionAction
 
 if _config.has_dependency('tinker_nav_msgs'):
-    from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp, FindApproachPose
+    from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp
+    # from tinker_nav_msgs.srv import FindApproachPose
 else:
     from behavior_tree.mock_messages import SetLuggagePose, ComputeGrasp, FindApproachPose
 
