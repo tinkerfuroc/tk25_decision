@@ -322,7 +322,7 @@ def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
     primary = py_trees.decorators.Retry(
         name=f"Retry high-conf {field_name}",
         child=primary_loop,
-        num_failures=2,
+        num_failures=10
     )
 
     fallback = py_trees.composites.Sequence(
@@ -337,8 +337,9 @@ def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
         )
     )
     fallback.add_child(
-        BtNode_ListenAction(
-            name=f"Fallback listen {field_name}",
+        BtNode_PhraseExtractionAction(
+            name=f"High-conf extract {field_name}",
+            wordlist=word_list,
             bb_dest_key=storage_key,
             timeout=7.0,
         )
@@ -498,17 +499,6 @@ def createEscortAndSeat(guest_idx: int):
     vision_branch = py_trees.composites.Sequence(
         name=f"Scan seated personnel guest {guest_idx}", memory=True
     )
-    # vision_branch.add_child(
-    #     py_trees.decorators.FailureIsSuccess(
-    #         name=f"Match seated centroids (best-effort) guest {guest_idx}",
-    #         child=BtNode_FeatureMatching(
-    #             name=f"Match seated guest features {guest_idx}",
-    #             bb_dest_key=KEY_PERSON_CENTROIDS,
-    #             bb_persons_key=KEY_PERSONS,
-    #             target_frame="base_link",
-    #         ),
-    #     )
-    # )
     vision_branch.add_child(
         BtNode_SeatRecommendBbox(
             name=f"Seat recommend (bbox) guest {guest_idx}",
@@ -519,10 +509,6 @@ def createEscortAndSeat(guest_idx: int):
             target_frame="base_link",
         )
     )
-    # vision_branch.add_child(BtNode_Announce(
-    #     name=f"Announce scanning result guest {guest_idx}",
-    #     bb_source=KEY_SEAT_RECOMMENDATION,
-    # ))
 
 
     audio_branch = py_trees.composites.Sequence(
@@ -567,7 +553,8 @@ def createEscortAndSeat(guest_idx: int):
         )
     )
     seat_recommend_primary.add_child(BtNode_TurnPanTilt(name=f"Look at guest", x=90.0, y=45.0, speed=0.0))
-    seat_recommend_primary.add_child(
+    recommen_audio = py_trees.composites.Sequence(name=f"Announce recommendation with eye contact guest {guest_idx}", memory=True)
+    recommen_audio.add_child(
         py_trees.decorators.FailureIsSuccess(
             name=f"Arm point-to seat (best-effort) guest {guest_idx}",
             child=py_trees.decorators.Retry(
@@ -583,13 +570,21 @@ def createEscortAndSeat(guest_idx: int):
             ),
         )
     )
-    seat_recommend_primary.add_child(
+    recommen_audio.add_child(
         BtNode_Announce(
             name=f"Announce seat recommendation guest {guest_idx}",
             bb_source=None,
             message="Please sit here.",
         )
     )
+    track_person = BtNode_MaintainEyeContact(
+        name=f"Maintain eye contact guest {guest_idx}")
+    recommend_with_eye_contact = py_trees.composites.Parallel(
+        name=f"Recommend seat with eye contact guest {guest_idx}",
+        policy=py_trees.common.ParallelPolicy.SuccessOnSelected([recommen_audio]),
+        children=[recommen_audio, track_person],
+    )
+    seat_recommend_primary.add_child(recommend_with_eye_contact)
 
     # Fallback: when primary fails (no seat point or service unavailable),
     # the guest still gets a verbal cue so the task continues.
@@ -799,6 +794,7 @@ def createBagFlow():
     root.add_child(BtNode_GripperAction(name="Open gripper to drop bag", open_gripper=True))
     root.add_child(BtNode_MockSafetyCheck(name="Drop confirmation detector TODO", todo="replace with bag-drop detector"))
     root.add_child(BtNode_GripperAction(name="Close gripper after drop", open_gripper=False))
+    root.add_child(BtNode_MoveArmSingle(name="move arm back to navigation pose", service_name="arm_joint_service", arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     return root
 
 
