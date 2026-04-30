@@ -53,7 +53,7 @@ import py_trees as pytree
 # from tinker_decision_msgs.srv import Grasp, Drop
 # from tinker_decision_msgs.srv import ObjectDetection
 from geometry_msgs.msg import PointStamped, Pose, Point
-from behavior_tree.messages import Grasp, ObjectDetection, Drop, ArmJointService, Place, JointMove, CartesianMove, GripperCommand
+from behavior_tree.messages import Grasp, ObjectDetection, Drop, ArmJointService, Place, JointMove, CartesianMove, GripperCommand, FoldClothing
 from py_trees.common import Status
 from behavior_tree.Constants import SCAN_POSES
 import action_msgs.msg as action_msgs
@@ -357,6 +357,87 @@ class BtNode_Drop(ServiceHandler):
         else:
             self.feedback_message = "Still dropping object..."
             return pytree.common.Status.RUNNING
+
+class BtNode_FoldClothing(ActionHandler):
+    """
+    Folds a piece of clothing on a target point.
+
+    Sends a `FoldClothing` action goal carrying:
+      - target_point: PointStamped where the cloth currently sits / should be folded
+      - object_label: cloth class hint (e.g. "shirt", "towel"), routed via blackboard
+      - env_points: latest environment PointCloud2 for collision avoidance
+      - fold_cycles: number of fold passes the action should perform
+    """
+    def __init__(self,
+                 name: str,
+                 bb_key_target_point: str,
+                 bb_key_object_label: str = None,
+                 bb_key_env_points: str = None,
+                 fold_cycles: int = 3,
+                 action_name: str = "fold_clothing_action",
+                 ):
+        super().__init__(name, FoldClothing, action_name, None, wait_for_server_timeout_sec=-3)
+        self.fold_cycles = int(fold_cycles)
+        self._bb_key_object_label = bb_key_object_label
+        self._bb_key_env_points = bb_key_env_points
+
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="target_point",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_target_point),
+        )
+        if bb_key_object_label is not None:
+            self.blackboard.register_key(
+                key="object_label",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_object_label),
+            )
+        if bb_key_env_points is not None:
+            self.blackboard.register_key(
+                key="env_points",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_env_points),
+            )
+
+    def send_goal(self):
+        try:
+            goal = FoldClothing.Goal()
+            goal.target_point = self.blackboard.target_point
+            goal.fold_cycles = self.fold_cycles
+            if self._bb_key_object_label is not None:
+                goal.object_label = str(self.blackboard.object_label or "")
+            else:
+                goal.object_label = ""
+            if self._bb_key_env_points is not None:
+                try:
+                    goal.env_points = self.blackboard.env_points
+                except Exception:
+                    pass
+            self.send_goal_request(goal)
+            self.feedback_message = (
+                f"Sent fold goal at {self.blackboard.target_point} "
+                f"label='{goal.object_label}' cycles={self.fold_cycles}"
+            )
+        except Exception as e:
+            self.feedback_message = f"Failed to send fold goal; error: {e}"
+            self.logger.error(f"Failed to send fold goal; error: {e}")
+            return pytree.common.Status.FAILURE
+
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            err = getattr(getattr(self, "result_message", None), "result", None)
+            err_msg = getattr(err, "error_msg", "") if err is not None else ""
+            self.feedback_message = (
+                f"Fold failed with status: {self.result_status}, error: {err_msg}"
+            )
+            return pytree.common.Status.FAILURE
+        self.feedback_message = "Fold succeeded"
+        return pytree.common.Status.SUCCESS
+
+    def feedback_callback(self, msg: Any):
+        return super().feedback_callback(msg)
+
 
 class BtNode_Place(ActionHandler):
     """

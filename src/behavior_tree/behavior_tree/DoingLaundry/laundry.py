@@ -22,12 +22,16 @@ import py_trees
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import (
+    BtNode_FoldClothing,
+    BtNode_Grasp,
     BtNode_GripperAction,
     BtNode_MoveArmSingle,
 )
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_DoorDetection,
+    BtNode_GetPointCloud,
+    BtNode_ScanFor,
     BtNode_TurnPanTilt,
 )
 from behavior_tree.TemplateNodes.WaitKeyPress import BtNode_WaitKeyboardPress
@@ -40,11 +44,15 @@ from .config import (
     ARM_POS_PLACING,
     ARM_POS_SCAN,
     ARM_SERVICE_NAME,
+    CLOTHING_SCAN_PROMPT,
     DO_FOLD_PICKED_PIECES,
     DO_PICK_FROM_BASKET,
     DO_PICK_FROM_WASHER,
     DO_REQUEST_WASHER_HELP,
+    FOLD_ACTION_NAME,
     FOLD_CYCLES,
+    GRASP_ACTION_NAME,
+    GRASP_RETRY_LIMIT,
     KEY_ARM_FOLD_START,
     KEY_ARM_NAVIGATING,
     KEY_ARM_PICK_BASKET,
@@ -52,8 +60,11 @@ from .config import (
     KEY_ARM_PLACING,
     KEY_ARM_SCAN,
     KEY_DOOR_STATUS,
+    KEY_ENV_POINTS,
     KEY_FOLD_COUNT,
+    KEY_GRASP_ANNOUNCEMENT,
     KEY_MAX_RUNTIME,
+    KEY_OBJECT_LABEL,
     KEY_PHASE_DEADLINE,
     KEY_POINT_BASKET_TOP,
     KEY_POINT_TABLE_FOLD_ZONE,
@@ -68,9 +79,11 @@ from .config import (
     KEY_STACK_COUNT,
     KEY_SUMMARY_MESSAGE,
     KEY_TARGET_FRAME,
+    KEY_VISION_RESULT,
     MAX_EXTRA_FOLDS,
     MAX_RUNTIME_SEC,
     NAV_RETRY_LIMIT,
+    OBJECT_LABEL_CLOTHING,
     POINT_BASKET_TOP,
     POINT_TABLE_FOLD_ZONE,
     POINT_TABLE_STACK_ZONE,
@@ -80,11 +93,11 @@ from .config import (
     POSE_FOLDING_TABLE,
     POSE_LAUNDRY_AREA,
     POSE_WASHING_MACHINE,
+    SCAN_RETRY_LIMIT,
     TARGET_FRAME,
 )
 from .state_nodes import (
     BtNode_BuildCompletionSummary,
-    BtNode_FoldClothing,
     BtNode_IncrementCounter,
     BtNode_InitTaskState,
     BtNode_RecordCompletion,
@@ -119,6 +132,7 @@ def createConstantWriter() -> py_trees.composites.Parallel:
         ("Write arm fold start",       KEY_ARM_FOLD_START,        ARM_POS_FOLD_START),
         ("Write target frame",         KEY_TARGET_FRAME,          TARGET_FRAME),
         ("Write max runtime",          KEY_MAX_RUNTIME,           MAX_RUNTIME_SEC),
+        ("Write clothing object label", KEY_OBJECT_LABEL,         OBJECT_LABEL_CLOTHING),
     ]
     for name, key, value in writes:
         root.add_child(
@@ -151,6 +165,45 @@ def _gripperOpenSafe(name: str = "Open gripper"):
         name=f"Best-effort {name}",
         child=BtNode_GripperAction(name=name, open_gripper=True),
     )
+
+
+def _visionGraspClothing(label_suffix: str) -> py_trees.composites.Sequence:
+    """Scan + vision grasp with object_label='clothing'.
+
+    Used as the *primary* attempt for washer/basket pickup before falling
+    through to the operator-handover branch. Uses the canonical generalist
+    detection service (`object_detection_yolo` is the default for ScanFor;
+    callers can retarget via the node's `service_name` arg if needed).
+    """
+    seq = py_trees.composites.Sequence(name=f"Vision grasp ({label_suffix})", memory=True)
+    seq.add_child(_moveArmRetry(f"Arm to scan ({label_suffix})", KEY_ARM_SCAN, add_octomap=True))
+    seq.add_child(BtNode_TurnPanTilt(name=f"Tilt down ({label_suffix})", x=0.0, y=20.0))
+    seq.add_child(
+        py_trees.decorators.Retry(
+            name=f"Retry scan clothing ({label_suffix})",
+            child=BtNode_ScanFor(
+                name=f"Scan for clothing ({label_suffix})",
+                bb_source=None,
+                bb_key=KEY_VISION_RESULT,
+                object=CLOTHING_SCAN_PROMPT,
+                transform_to_map=False,
+            ),
+            num_failures=SCAN_RETRY_LIMIT,
+        )
+    )
+    seq.add_child(
+        py_trees.decorators.Retry(
+            name=f"Retry grasp clothing ({label_suffix})",
+            child=BtNode_Grasp(
+                name=f"Grasp clothing ({label_suffix})",
+                bb_source=KEY_VISION_RESULT,
+                bb_key_object_label=KEY_OBJECT_LABEL,
+                action_name=GRASP_ACTION_NAME,
+            ),
+            num_failures=GRASP_RETRY_LIMIT,
+        )
+    )
+    return seq
 
 
 def _requestOperatorHelp(
@@ -278,6 +331,24 @@ def createWasherRetrievalPhase() -> py_trees.behaviour.Behaviour:
         root.add_child(door)
 
     pick = py_trees.composites.Selector(name="Pick clothing from washer", memory=False)
+
+    # Primary: real vision grasp. Object label 'clothing' is written to the
+    # blackboard by the constant writer and threaded into BtNode_Grasp.
+    vision_pick = py_trees.composites.Sequence(name="Vision pick (washer)", memory=True)
+    vision_pick.add_child(_visionGraspClothing("washer"))
+    vision_pick.add_child(_moveArmRetry("Arm to nav (post-vision pick)", KEY_ARM_NAVIGATING))
+    vision_pick.add_child(
+        BtNode_RecordCompletion(
+            name="Record washer vision pick bonus",
+            score_trace_key=KEY_SCORE_TRACE,
+            action_label="washer_pick",
+            points=300,
+            success=True,
+        )
+    )
+    pick.add_child(vision_pick)
+
+    # Fallback: operator handover (existing behaviour).
     pick_ok = py_trees.composites.Sequence(name="Handover pick", memory=True)
     pick_ok.add_child(_moveArmRetry("Arm to washer pick pose", KEY_ARM_PICK_WASHER))
     pick_ok.add_child(_gripperOpenSafe("Open gripper for handover"))
@@ -356,23 +427,40 @@ def createBasketPickPhase() -> py_trees.behaviour.Behaviour:
             num_failures=NAV_RETRY_LIMIT,
         )
     )
-    root.add_child(_moveArmRetry("Arm to basket pick pose", KEY_ARM_PICK_BASKET))
-    root.add_child(_gripperOpenSafe("Open for basket handover"))
-    root.add_child(
+    pick = py_trees.composites.Selector(name="Pick clothing from basket", memory=False)
+
+    vision_pick = py_trees.composites.Sequence(name="Vision pick (basket)", memory=True)
+    vision_pick.add_child(_visionGraspClothing("basket"))
+    vision_pick.add_child(_moveArmRetry("Arm to nav (post-vision basket)", KEY_ARM_NAVIGATING))
+    vision_pick.add_child(
+        BtNode_RecordCompletion(
+            name="Record basket vision pick bonus",
+            score_trace_key=KEY_SCORE_TRACE,
+            action_label="basket_pick",
+            points=100,
+            success=True,
+        )
+    )
+    pick.add_child(vision_pick)
+
+    handover = py_trees.composites.Sequence(name="Basket handover pick", memory=True)
+    handover.add_child(_moveArmRetry("Arm to basket pick pose", KEY_ARM_PICK_BASKET))
+    handover.add_child(_gripperOpenSafe("Open for basket handover"))
+    handover.add_child(
         _requestOperatorHelp(
             prompt="Please hand me one piece of clothing from the basket, then press s.",
             record_label="basket_handover",
             record_points=-40,
         )
     )
-    root.add_child(
+    handover.add_child(
         py_trees.decorators.Retry(
             name="Retry close gripper (basket)",
             child=BtNode_GripperAction(name="Close gripper on basket cloth", open_gripper=False),
             num_failures=2,
         )
     )
-    root.add_child(
+    handover.add_child(
         BtNode_RecordCompletion(
             name="Record basket pick bonus",
             score_trace_key=KEY_SCORE_TRACE,
@@ -381,6 +469,8 @@ def createBasketPickPhase() -> py_trees.behaviour.Behaviour:
             success=True,
         )
     )
+    pick.add_child(handover)
+    root.add_child(pick)
     root.add_child(
         py_trees.decorators.Retry(
             name="Retry goto folding table (basket)",
@@ -411,6 +501,16 @@ def createPrimaryFoldPhase() -> py_trees.composites.Sequence:
         )
     )
     root.add_child(_moveArmRetry("Arm to fold start", KEY_ARM_FOLD_START))
+    root.add_child(
+        py_trees.decorators.Retry(
+            name="Retry env point cloud (primary fold)",
+            child=BtNode_GetPointCloud(
+                name="Get env point cloud (primary fold)",
+                bb_point_cloud_key=KEY_ENV_POINTS,
+            ),
+            num_failures=2,
+        )
+    )
     root.add_child(BtNode_Announce(name="Announce primary fold", bb_source=None,
                                    message="Folding the cloth on the table."))
 
@@ -422,7 +522,10 @@ def createPrimaryFoldPhase() -> py_trees.composites.Sequence:
         BtNode_FoldClothing(
             name="Fold primary cloth",
             bb_key_target_point=KEY_POINT_TABLE_FOLD_ZONE,
+            bb_key_object_label=KEY_OBJECT_LABEL,
+            bb_key_env_points=KEY_ENV_POINTS,
             fold_cycles=FOLD_CYCLES,
+            action_name=FOLD_ACTION_NAME,
         )
     )
     direct.add_child(BtNode_IncrementCounter(name="Inc fold count (primary)",
@@ -451,7 +554,10 @@ def createPrimaryFoldPhase() -> py_trees.composites.Sequence:
         BtNode_FoldClothing(
             name="Fold primary cloth (post-help)",
             bb_key_target_point=KEY_POINT_TABLE_FOLD_ZONE,
+            bb_key_object_label=KEY_OBJECT_LABEL,
+            bb_key_env_points=KEY_ENV_POINTS,
             fold_cycles=FOLD_CYCLES,
+            action_name=FOLD_ACTION_NAME,
         )
     )
     helped.add_child(BtNode_IncrementCounter(name="Inc fold count (primary, helped)",
@@ -498,6 +604,16 @@ def _processOneExtraFold() -> py_trees.composites.Selector:
     direct.add_child(BtNode_TimeoutCutoverChecker(name="Check cutover (extra)",
                                                   phase_deadline_key=KEY_PHASE_DEADLINE))
     direct.add_child(_moveArmRetry("Arm to fold start (extra)", KEY_ARM_FOLD_START))
+    direct.add_child(
+        py_trees.decorators.Retry(
+            name="Retry env point cloud (extra fold)",
+            child=BtNode_GetPointCloud(
+                name="Get env point cloud (extra fold)",
+                bb_point_cloud_key=KEY_ENV_POINTS,
+            ),
+            num_failures=2,
+        )
+    )
 
     fold_or_help = py_trees.composites.Selector(name="Fold or help-fold (extra)", memory=False)
     fold_direct = py_trees.composites.Sequence(name="Try fold action (extra)", memory=True)
@@ -505,7 +621,10 @@ def _processOneExtraFold() -> py_trees.composites.Selector:
         BtNode_FoldClothing(
             name="Fold extra cloth",
             bb_key_target_point=KEY_POINT_TABLE_STACK_ZONE,
+            bb_key_object_label=KEY_OBJECT_LABEL,
+            bb_key_env_points=KEY_ENV_POINTS,
             fold_cycles=FOLD_CYCLES,
+            action_name=FOLD_ACTION_NAME,
         )
     )
     fold_direct.add_child(BtNode_IncrementCounter(name="Inc fold count (extra)",
@@ -533,7 +652,10 @@ def _processOneExtraFold() -> py_trees.composites.Selector:
         BtNode_FoldClothing(
             name="Fold extra cloth (post-help)",
             bb_key_target_point=KEY_POINT_TABLE_STACK_ZONE,
+            bb_key_object_label=KEY_OBJECT_LABEL,
+            bb_key_env_points=KEY_ENV_POINTS,
             fold_cycles=FOLD_CYCLES,
+            action_name=FOLD_ACTION_NAME,
         )
     )
     fold_helped.add_child(BtNode_IncrementCounter(name="Inc fold count (extra, helped)",
