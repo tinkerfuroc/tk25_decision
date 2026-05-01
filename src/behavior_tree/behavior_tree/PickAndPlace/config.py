@@ -108,7 +108,9 @@ constants = _load_constants()
 
 # --- Materialize PoseStamped / PointStamped ---
 POSE_KITCHEN_ENTRY = _pose_reader(constants["pose_kitchen_entry"])
-POSE_TABLE = _pose_reader(constants["pose_table"])
+# Single source pose for the cleanup loop; pose_table_2..6 stay in JSON as
+# future hooks for a multi-table sweep.
+POSE_TABLE = _pose_reader(constants["pose_table_1"])
 POSE_WASH_STAGING = _pose_reader(constants["pose_wash_staging"])
 POSE_TRASH_BIN = _pose_reader(constants["pose_trash_bin"])
 POSE_CABINET = _pose_reader(constants["pose_cabinet"])
@@ -125,14 +127,16 @@ POINT_SHELF_LEFT = _point_reader(constants["point_shelf_left"])
 POINT_SHELF_RIGHT = _point_reader(constants["point_shelf_right"])
 
 # --- Arm joint configs (radians) ---
+# One arm pose per destination — set names mirror constants.json:
+#   arm_pos_navigating: stowed for base motion
+#   arm_pos_table:      look-down at the dining table for scan / re-acquire / breakfast place
+#   arm_pos_cabinet:    cabinet shelf scan + place (orbbec octomap before this move)
+#   arm_pos_wash:       wash-staging surface place (realsense env_points)
+#   arm_pos_trash:      reach over the bin for drop
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
-ARM_POS_SCAN = [x / 180 * math.pi for x in constants["arm_pos_scan"]]
-ARM_POS_SCAN_CABINET = [x / 180 * math.pi for x in constants["arm_pos_scan_cabinet"]]
-ARM_POS_PLACING = [x / 180 * math.pi for x in constants["arm_pos_placing"]]
-ARM_POS_PLACING_CABINET = [
-    x / 180 * math.pi for x in constants["arm_pos_placing_cabinet"]
-]
-ARM_POS_DROP = [x / 180 * math.pi for x in constants["arm_pos_drop"]]
+ARM_POS_TABLE = [x / 180 * math.pi for x in constants["arm_pos_table"]]
+ARM_POS_CABINET = [x / 180 * math.pi for x in constants["arm_pos_cabinet"]]
+ARM_POS_WASH = [x / 180 * math.pi for x in constants["arm_pos_wash"]]
 ARM_POS_TRASH = [x / 180 * math.pi for x in constants["arm_pos_trash"]]
 
 # --- Label sets ---
@@ -184,12 +188,11 @@ KEY_POINT_PLACING_DYNAMIC = "pp_point_placing_dynamic"
 
 # Arm poses
 KEY_ARM_NAVIGATING = "pp_arm_navigating"
-KEY_ARM_SCAN = "pp_arm_scan"
-KEY_ARM_SCAN_CABINET = "pp_arm_scan_cabinet"
-KEY_ARM_PLACING = "pp_arm_placing"
-KEY_ARM_PLACING_CABINET = "pp_arm_placing_cabinet"
-KEY_ARM_DROP = "pp_arm_drop"
+KEY_ARM_TABLE = "pp_arm_table"
+KEY_ARM_CABINET = "pp_arm_cabinet"
+KEY_ARM_WASH = "pp_arm_wash"
 KEY_ARM_TRASH = "pp_arm_trash"
+KEY_ARM_WASH_DROP = "arm_wash_drop"
 
 # Misc constants
 KEY_TARGET_FRAME = "pp_target_frame"
@@ -222,3 +225,10 @@ KEY_SCORE_TRACE = "pp_score_trace"
 KEY_PHASE_DEADLINE = "pp_phase_deadline"
 KEY_SUMMARY_MESSAGE = "pp_summary_message"
 KEY_DOOR_STATUS = "pp_door_status"
+
+
+# OTHER
+KEY_IMG_SHELF = "pp_img_shelf"
+KEY_SCAN_RESULTS_SHELF = "scan_result_shelf"
+KEY_SCAN_RESULTS_TABLE = "scan_result_table"
+KEY_ANNOUNCEMENT_MSG = "announcement_msg"
