@@ -53,7 +53,17 @@ import py_trees as pytree
 # from tinker_decision_msgs.srv import Grasp, Drop
 # from tinker_decision_msgs.srv import ObjectDetection
 from geometry_msgs.msg import PointStamped, Pose, Point
-from behavior_tree.messages import Grasp, ObjectDetection, Drop, ArmJointService, Place, JointMove, CartesianMove, GripperCommand
+from behavior_tree.messages import (
+    Grasp,
+    ObjectDetection,
+    Drop,
+    ArmJointService,
+    Place,
+    JointMove,
+    CartesianMove,
+    GripperCommand,
+    FoldClothing,
+)
 from py_trees.common import Status
 from behavior_tree.Constants import SCAN_POSES
 import action_msgs.msg as action_msgs
@@ -63,6 +73,7 @@ from .BaseBehaviors import ServiceHandler
 from .ActionBase import ActionHandler
 import math
 
+
 class BtNode_CartesianMove(ActionHandler):
     """
     Moves the arm using Cartesian (end-effector) control with point cloud.
@@ -71,24 +82,27 @@ class BtNode_CartesianMove(ActionHandler):
     collision avoidance. It moves the end-effector to a target point
     while avoiding obstacles in the environment.
     """
-    def __init__(self,
-                 name: str,
-                 bb_key_pointcloud: str,
-                 bb_key_point: str,
-                 action_name="cartesian_move_action"
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        bb_key_pointcloud: str,
+        bb_key_point: str,
+        action_name="cartesian_move_action",
+    ):
         super().__init__(name, CartesianMove, action_name, None)
         self.blackboard = self.attach_blackboard_client(name)
         self.blackboard.register_key(
             key="pointcloud",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_pointcloud)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_pointcloud),
         )
         self.blackboard.register_key(
             key="point",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_point)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_point),
         )
+
     def send_goal(self):
         try:
             point = self.blackboard.point
@@ -104,23 +118,34 @@ class BtNode_CartesianMove(ActionHandler):
         except Exception as e:
             self.feedback_message = "ERROR: invalid point!"
             return pytree.common.Status.FAILURE
+
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            self.feedback_message = f"CartesianMove feedback received with status: {self.result_status}"
-            self.logger.debug(f"CartesianMove feedback received with status: {self.result_status}")
+            self.feedback_message = (
+                f"CartesianMove feedback received with status: {self.result_status}"
+            )
+            self.logger.debug(
+                f"CartesianMove feedback received with status: {self.result_status}"
+            )
             return pytree.common.Status.FAILURE
         else:
             result = self.result_message.result
             if result.success:
-                self.feedback_message = f"CartesianMove feedback received with success: {result.success}"
+                self.feedback_message = (
+                    f"CartesianMove feedback received with success: {result.success}"
+                )
                 self.logger.debug(f"CartesianMove feedback received with success")
                 return pytree.common.Status.SUCCESS
             else:
                 self.feedback_message = f"CartesianMove feedback received with success: {result.success} and error message {result.error_msg}"
-                self.logger.debug(f"CartesianMove feedback received with success: {result.success} and error message {result.error_msg}")
+                self.logger.debug(
+                    f"CartesianMove feedback received with success: {result.success} and error message {result.error_msg}"
+                )
                 return pytree.common.Status.FAILURE
+
     def feedback_callback(self, msg):
         return super().feedback_callback(msg)
+
 
 class BtNode_MoveArmJointPC(ActionHandler):
     """
@@ -130,23 +155,29 @@ class BtNode_MoveArmJointPC(ActionHandler):
     for collision avoidance. It moves the arm to a specified joint
     configuration while avoiding obstacles.
     """
-    def __init__(self,
-                 name: str,
-                 bb_key_pointcloud: str,
-                 bb_key_arm_pose: str,
-                 action_name : str = "joint_move_action"):
-        super().__init__(name, JointMove, action_name, None, wait_for_server_timeout_sec=-3)
+
+    def __init__(
+        self,
+        name: str,
+        bb_key_pointcloud: str,
+        bb_key_arm_pose: str,
+        action_name: str = "joint_move_action",
+    ):
+        super().__init__(
+            name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
+        )
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="pointcloud",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_pointcloud)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_pointcloud),
         )
         self.blackboard.register_key(
             key="arm_pose",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_arm_pose)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_arm_pose),
         )
+
     def send_goal(self):
         try:
             goal = JointMove.Goal()
@@ -160,27 +191,41 @@ class BtNode_MoveArmJointPC(ActionHandler):
             goal.joint5 = arm_pose[5]
             goal.joint6 = arm_pose[6]
             self.send_goal_request(goal)
-            self.feedback_message = f"Sent move arm joint pc goal with pointcloud and arm pose"
-            self.logger.debug(f"Sent move arm joint pc goal with pointcloud and arm pose")
+            self.feedback_message = (
+                f"Sent move arm joint pc goal with pointcloud and arm pose"
+            )
+            self.logger.debug(
+                f"Sent move arm joint pc goal with pointcloud and arm pose"
+            )
         except Exception as e:
             self.feedback_message = f"Failed to send move arm joint pc goal; error: {e}"
             self.logger.error(f"Failed to send move arm joint pc goal; error: {e}")
             return pytree.common.Status.FAILURE
+
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            self.feedback_message = f"MoveArmJointPC feedback received with status: {self.result_status}"
-            self.logger.debug(f"MoveArmJointPC feedback received with status: {self.result_status}")
+            self.feedback_message = (
+                f"MoveArmJointPC feedback received with status: {self.result_status}"
+            )
+            self.logger.debug(
+                f"MoveArmJointPC feedback received with status: {self.result_status}"
+            )
             return pytree.common.Status.FAILURE
         else:
             result = self.result_message.result
             if result.success:
-                self.feedback_message = f"MoveArmJointPC feedback received with success: {result.success}"
+                self.feedback_message = (
+                    f"MoveArmJointPC feedback received with success: {result.success}"
+                )
                 self.logger.debug(f"MoveArmJointPC feedback received with success")
                 return pytree.common.Status.SUCCESS
             else:
                 self.feedback_message = f"MoveArmJointPC feedback received with success: {result.success} and error message {result.error_msg}"
-                self.logger.debug(f"MoveArmJointPC feedback received with success: {result.success} and error message {result.error_msg}")
+                self.logger.debug(
+                    f"MoveArmJointPC feedback received with success: {result.success} and error message {result.error_msg}"
+                )
                 return pytree.common.Status.FAILURE
+
     def feedback_callback(self, msg):
         return super().feedback_callback(msg)
 
@@ -189,12 +234,14 @@ class BtNode_Grasp(ActionHandler):
     """
     Node for grasping an object with a specific prompt
     """
-    def __init__(self,
-                 name: str,
-                 bb_source: str,
-                 action_name : str = "grasp",
-                 bb_key_object_label : str = None,
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        bb_source: str,
+        action_name: str = "grasp_action",
+        bb_key_object_label: str = None,
+    ):
         """
         executed when creating tree diagram, therefor very minimal
 
@@ -206,19 +253,23 @@ class BtNode_Grasp(ActionHandler):
                 (e.g. "plate", "bowl"); if None, falls back to
                 vision_result.objects[0].cls, then empty string
         """
-        super(BtNode_Grasp, self).__init__(name, Grasp, action_name, bb_source, wait_for_server_timeout_sec=-3)
+        super(BtNode_Grasp, self).__init__(
+            name, Grasp, action_name, bb_source, wait_for_server_timeout_sec=-3
+        )
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="vision_result",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source),
         )
         self._bb_key_object_label = bb_key_object_label
         if bb_key_object_label is not None:
             self.blackboard.register_key(
                 key="object_label",
                 access=pytree.common.Access.READ,
-                remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_object_label)
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", bb_key_object_label
+                ),
             )
 
     def send_goal(self):
@@ -233,7 +284,9 @@ class BtNode_Grasp(ActionHandler):
                 goal.object_label = str(self.blackboard.object_label or "")
             else:
                 try:
-                    goal.object_label = str(self.blackboard.vision_result.objects[0].cls)
+                    goal.object_label = str(
+                        self.blackboard.vision_result.objects[0].cls
+                    )
                 except (AttributeError, IndexError):
                     goal.object_label = ""
             self.send_goal_request(goal)
@@ -247,7 +300,9 @@ class BtNode_Grasp(ActionHandler):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
             result = self.result_message.result
             self.feedback_message = f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}"
-            self.logger.debug(f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}")
+            self.logger.debug(
+                f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}"
+            )
             return pytree.common.Status.FAILURE
         else:
             self.feedback_message = "Grasp succeeded"
@@ -266,18 +321,20 @@ class BtNode_Drop(ServiceHandler):
     to drop an object. The drop location can be read from the blackboard
     or specified directly.
     """
-    def __init__(self, 
-                 name: str,
-                 bb_source: str,
-                 service_name : str = "start_drop",
-                 bin_point : PointStamped = None
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        bb_source: str,
+        service_name: str = "start_drop",
+        bin_point: PointStamped = None,
+    ):
         """
         executed when creating tree diagram, therefor very minimal
         Args:
             name: the name of the pytree node
             bb_source: path to the key in blackboard containing a geometry_msgs/PointStamped object of the pos of trash can
-            service_name: name of the service of type tinker_decision_msgs/Drop     
+            service_name: name of the service of type tinker_decision_msgs/Drop
         """
         super(BtNode_Drop, self).__init__(name, service_name, Drop)
         self.bb_source = bb_source
@@ -287,14 +344,15 @@ class BtNode_Drop(ServiceHandler):
         if self.bin_point is None:
             self.blackboard = self.attach_blackboard_client(name=self.name)
             self.blackboard.register_key(
-                key = "drop_point",
+                key="drop_point",
                 access=pytree.common.Access.READ,
-                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_source)
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", self.bb_source
+                ),
             )
         else:
             self.blackboard = None
             assert isinstance(self.bin_point, PointStamped)
-
 
     def setup(self, **kwargs):
         """
@@ -320,7 +378,7 @@ class BtNode_Drop(ServiceHandler):
             self.feedback_message = "MOCK: Dropped object successfully"
             print(f"📦 MOCK DROP: Object dropped")
             return
-            
+
         if self.bin_point is None:
             try:
                 self.bin_point = self.blackboard.drop_point
@@ -342,10 +400,10 @@ class BtNode_Drop(ServiceHandler):
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         if self.response is None:
             return pytree.common.Status.FAILURE
-            
+
         self.logger.debug(f"Update Drop")
         if self.response.done():
             if self.response.result().status == 0:
@@ -358,6 +416,98 @@ class BtNode_Drop(ServiceHandler):
             self.feedback_message = "Still dropping object..."
             return pytree.common.Status.RUNNING
 
+
+class BtNode_FoldClothing(ActionHandler):
+    """
+    Folds a piece of clothing on a target point.
+
+    Sends a `FoldClothing` action goal carrying:
+      - target_point: PointStamped where the cloth currently sits / should be folded
+      - object_label: cloth class hint (e.g. "shirt", "towel"), routed via blackboard
+      - env_points: latest environment PointCloud2 for collision avoidance
+      - fold_cycles: number of fold passes the action should perform
+    """
+
+    def __init__(
+        self,
+        name: str,
+        bb_key_target_point: str,
+        bb_key_object_label: str = None,
+        bb_key_env_points: str = None,
+        fold_cycles: int = 3,
+        action_name: str = "fold_clothing_action",
+    ):
+        super().__init__(
+            name, FoldClothing, action_name, None, wait_for_server_timeout_sec=-3
+        )
+        self.fold_cycles = int(fold_cycles)
+        self._bb_key_object_label = bb_key_object_label
+        self._bb_key_env_points = bb_key_env_points
+
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="target_point",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name(
+                "/", bb_key_target_point
+            ),
+        )
+        if bb_key_object_label is not None:
+            self.blackboard.register_key(
+                key="object_label",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", bb_key_object_label
+                ),
+            )
+        if bb_key_env_points is not None:
+            self.blackboard.register_key(
+                key="env_points",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", bb_key_env_points
+                ),
+            )
+
+    def send_goal(self):
+        try:
+            goal = FoldClothing.Goal()
+            goal.target_point = self.blackboard.target_point
+            goal.fold_cycles = self.fold_cycles
+            if self._bb_key_object_label is not None:
+                goal.object_label = str(self.blackboard.object_label or "")
+            else:
+                goal.object_label = ""
+            if self._bb_key_env_points is not None:
+                try:
+                    goal.env_points = self.blackboard.env_points
+                except Exception:
+                    pass
+            self.send_goal_request(goal)
+            self.feedback_message = (
+                f"Sent fold goal at {self.blackboard.target_point} "
+                f"label='{goal.object_label}' cycles={self.fold_cycles}"
+            )
+        except Exception as e:
+            self.feedback_message = f"Failed to send fold goal; error: {e}"
+            self.logger.error(f"Failed to send fold goal; error: {e}")
+            return pytree.common.Status.FAILURE
+
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            err = getattr(getattr(self, "result_message", None), "result", None)
+            err_msg = getattr(err, "error_msg", "") if err is not None else ""
+            self.feedback_message = (
+                f"Fold failed with status: {self.result_status}, error: {err_msg}"
+            )
+            return pytree.common.Status.FAILURE
+        self.feedback_message = "Fold succeeded"
+        return pytree.common.Status.SUCCESS
+
+    def feedback_callback(self, msg: Any):
+        return super().feedback_callback(msg)
+
+
 class BtNode_Place(ActionHandler):
     """
     Places an object at a target location.
@@ -366,32 +516,36 @@ class BtNode_Place(ActionHandler):
     avoidance. It takes the target point, current grasp pose, and
     environment point cloud to plan and execute the place motion.
     """
-    def __init__(self, 
-                 name: str,
-                 bb_key_point: str,
-                 bb_key_pose: str,
-                 bb_key_env_points: str,
-                 action_name : str = "place_action",
-                 ):
-        super(BtNode_Place, self).__init__(name, Place, action_name, None, wait_for_server_timeout_sec=-3)
+
+    def __init__(
+        self,
+        name: str,
+        bb_key_point: str,
+        bb_key_pose: str,
+        bb_key_env_points: str,
+        action_name: str = "place_action",
+    ):
+        super(BtNode_Place, self).__init__(
+            name, Place, action_name, None, wait_for_server_timeout_sec=-3
+        )
         self.bb_key_point = bb_key_point
         self.bb_key_pose = bb_key_pose
 
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
-            key = "target_point",
+            key="target_point",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_key_point)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_key_point),
         )
         self.blackboard.register_key(
-            key = "grasp_pose",
+            key="grasp_pose",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_key_pose)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_key_pose),
         )
         self.blackboard.register_key(
             key="env_points",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_env_points)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_env_points),
         )
 
     def send_goal(self):
@@ -402,17 +556,23 @@ class BtNode_Place(ActionHandler):
             goal.env_points = self.blackboard.env_points
             self.send_goal_request(goal)
             self.feedback_message = f"Sent place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}"
-            self.logger.debug(f"Sent place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}")
+            self.logger.debug(
+                f"Sent place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}"
+            )
         except Exception as e:
             self.feedback_message = f"Failed to send place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}; error: {e}"
-            self.logger.error(f"Failed to send place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}; error: {e}")
+            self.logger.error(
+                f"Failed to send place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}; error: {e}"
+            )
             return pytree.common.Status.FAILURE
 
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
             result = self.result_message.result
             self.feedback_message = f"Place failed with status: {self.result_status}, error: {result.error_msg}"
-            self.logger.debug(f"Place failed with status: {self.result_status}, error: {result.error_msg}")
+            self.logger.debug(
+                f"Place failed with status: {self.result_status}, error: {result.error_msg}"
+            )
             return pytree.common.Status.FAILURE
         else:
             self.feedback_message = "Place succeeded"
@@ -423,10 +583,14 @@ class BtNode_Place(ActionHandler):
         feedback = msg.feedback
         if feedback.status != 0:
             self.feedback_message = f"ERROR:  {feedback.status} - {feedback.message}"
-            self.logger.error(f"Place feedback received with error: {feedback.status} - {feedback.message}")
+            self.logger.error(
+                f"Place feedback received with error: {feedback.status} - {feedback.message}"
+            )
         else:
             self.feedback_message = f"INFO:  {feedback.status} - {feedback.message}"
-            self.logger.debug(f"Place feedback received with info: {feedback.status} - {feedback.message}")
+            self.logger.debug(
+                f"Place feedback received with info: {feedback.status} - {feedback.message}"
+            )
 
 
 class BtNode_MoveArm(ServiceHandler):
@@ -437,20 +601,25 @@ class BtNode_MoveArm(ServiceHandler):
     operations. It reads an index from the blackboard and moves to the
     corresponding pose, incrementing the index for the next iteration.
     """
-    def __init__(self, name: str, 
-                 service_name: str, 
-                #  arm_joint_pose: list[float]
-                 arm_pose_bb_key
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        service_name: str,
+        #  arm_joint_pose: list[float]
+        arm_pose_bb_key,
+    ):
         super().__init__(name, service_name, ArmJointService)
         self.arm_pose_bb_key = arm_pose_bb_key
         self.arm_joint_pose = None
-    
+
     def setup(self, **kwargs):
         ServiceHandler.setup(self, **kwargs)
 
         self.bb_write_client = self.attach_blackboard_client(name="MoveArm Read")
-        self.bb_write_client.register_key(self.arm_pose_bb_key, access=pytree.common.Access.WRITE)
+        self.bb_write_client.register_key(
+            self.arm_pose_bb_key, access=pytree.common.Access.WRITE
+        )
 
         # debugger info (shown with DebugVisitor)
         self.logger.debug(f"Setup MoveArm, reading from {self.arm_pose_bb_key}")
@@ -474,13 +643,15 @@ class BtNode_MoveArm(ServiceHandler):
 
         # Handle mock mode
         if self.mock_mode:
-            self.bb_write_client.set(self.arm_pose_bb_key, self.arm_pose_idx + 1, overwrite=True)
+            self.bb_write_client.set(
+                self.arm_pose_bb_key, self.arm_pose_idx + 1, overwrite=True
+            )
             self.feedback_message = f"MOCK: Moved arm to pose {self.arm_joint_pose}"
             print(f"🦾 MOCK MOVE ARM JOINT: Pose {self.arm_pose_idx}")
             return
 
         request = ArmJointService.Request()
-        
+
         request.joint0 = self.arm_joint_pose[0]
         request.joint1 = self.arm_joint_pose[1]
         request.joint2 = self.arm_joint_pose[2]
@@ -492,20 +663,24 @@ class BtNode_MoveArm(ServiceHandler):
 
         self.response = self.call_service_async(request)
 
-        self.feedback_message = f"Initialized move arm joint for joints {self.arm_joint_pose}"
-    
+        self.feedback_message = (
+            f"Initialized move arm joint for joints {self.arm_joint_pose}"
+        )
+
     def update(self) -> Status:
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         if self.response is None:
             return pytree.common.Status.FAILURE
-            
+
         self.logger.debug(f"Update move arm joint")
         if self.response.done():
             # increase counter
-            self.bb_write_client.set(self.arm_pose_bb_key, self.arm_pose_idx + 1, overwrite=True)
+            self.bb_write_client.set(
+                self.arm_pose_bb_key, self.arm_pose_idx + 1, overwrite=True
+            )
 
             if self.response.result().success:
                 self.feedback_message = f"Move arm Successful"
@@ -526,12 +701,15 @@ class BtNode_MoveArmSingle(ServiceHandler):
     blackboard. Unlike BtNode_MoveArm, it does not iterate through
     multiple poses.
     """
-    def __init__(self, name: str, 
-                 service_name: str, 
-                #  arm_joint_pose: list[float]
-                 arm_pose_bb_key: str,
-                 add_octomap: bool = False
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        service_name: str,
+        #  arm_joint_pose: list[float]
+        arm_pose_bb_key: str,
+        add_octomap: bool = False,
+    ):
         super().__init__(name, service_name, ArmJointService)
         self.arm_pose_bb_key = arm_pose_bb_key
         self.add_octomap = add_octomap
@@ -539,9 +717,9 @@ class BtNode_MoveArmSingle(ServiceHandler):
         self.blackboard.register_key(
             key="arm_joint_pose",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", arm_pose_bb_key)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", arm_pose_bb_key),
         )
-    
+
     def setup(self, **kwargs):
         ServiceHandler.setup(self, **kwargs)
 
@@ -558,7 +736,7 @@ class BtNode_MoveArmSingle(ServiceHandler):
             return
 
         request = ArmJointService.Request()
-        
+
         request.joint0 = self.blackboard.arm_joint_pose[0]
         request.joint1 = self.blackboard.arm_joint_pose[1]
         request.joint2 = self.blackboard.arm_joint_pose[2]
@@ -570,18 +748,20 @@ class BtNode_MoveArmSingle(ServiceHandler):
 
         self.response = self.call_service_async(request)
 
-        self.feedback_message = f"Initialized move arm joint for joints {self.blackboard.arm_joint_pose}"
-    
+        self.feedback_message = (
+            f"Initialized move arm joint for joints {self.blackboard.arm_joint_pose}"
+        )
+
     def update(self) -> Status:
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-        
+
         # Check if response exists
         if self.response is None:
             self.feedback_message = "No response object"
             return pytree.common.Status.FAILURE
-            
+
         self.logger.debug(f"Update move arm joint")
         if self.response.done():
             if self.response.result().success:
@@ -591,7 +771,9 @@ class BtNode_MoveArmSingle(ServiceHandler):
                 self.feedback_message = f"Move arm failed"
                 return pytree.common.Status.FAILURE
         else:
-            self.feedback_message = f"Still moving arm to {self.blackboard.arm_joint_pose}..."
+            self.feedback_message = (
+                f"Still moving arm to {self.blackboard.arm_joint_pose}..."
+            )
             return pytree.common.Status.RUNNING
 
 
@@ -603,18 +785,22 @@ class BtNode_GripperAction(ActionHandler):
     open_gripper parameter. It uses the standard ROS2 gripper action
     interface.
     """
-    def __init__(self, 
-                 name: str, 
-                 open_gripper: bool, 
-                 action_name: str = '/xarm_gripper/gripper_action', 
-                 wait_for_server_timeout_sec: float = -3,
-                 ):
-        super().__init__(name, GripperCommand, action_name, None, wait_for_server_timeout_sec)
+
+    def __init__(
+        self,
+        name: str,
+        open_gripper: bool,
+        action_name: str = "/xarm_gripper/gripper_action",
+        wait_for_server_timeout_sec: float = -3,
+    ):
+        super().__init__(
+            name, GripperCommand, action_name, None, wait_for_server_timeout_sec
+        )
         if open_gripper:
             self.goal = 0.0
         else:
             self.goal = 0.8
-    
+
     def send_goal(self):
         try:
             goal = GripperCommand.Goal()
@@ -623,12 +809,14 @@ class BtNode_GripperAction(ActionHandler):
             self.send_goal_request(goal)
             self.feedback_message = f"Sent gripper goal {self.goal}"
         except Exception as e:
-            self.feedback_message = f"Failed to send gripper goal {self.goal}; error: {e}"
+            self.feedback_message = (
+                f"Failed to send gripper goal {self.goal}; error: {e}"
+            )
             pass
-    
+
     def feedback_callback(self, msg):
         pass
-    
+
     def process_result(self):
         return pytree.common.Status.SUCCESS
         # if self.result_message.result.position:
@@ -636,7 +824,7 @@ class BtNode_GripperAction(ActionHandler):
         #     return pytree.common.Status.SUCCESS
         # else:
         #     self.feedback_message = f"Gripper action failed"
-        #     return pytree.common.Status.FAILURE    
+        #     return pytree.common.Status.FAILURE
 
 
 class BtNode_PointTo(ServiceHandler):
@@ -647,13 +835,16 @@ class BtNode_PointTo(ServiceHandler):
     It reads the target's position from the blackboard and computes an
     appropriate arm configuration for pointing.
     """
-    def __init__(self, name: str,
-                 bb_key_persons: str,
-                 bb_key_points: str,
-                 bb_key_init_pose: str,
-                 target_id: int = 0,
-                 service_name: str = "arm_joint_service"
-                 ):
+
+    def __init__(
+        self,
+        name: str,
+        bb_key_persons: str,
+        bb_key_points: str,
+        bb_key_init_pose: str,
+        target_id: int = 0,
+        service_name: str = "arm_joint_service",
+    ):
         super().__init__(name, service_name, ArmJointService)
         self.bb_key_persons = bb_key_persons
         self.bb_key_points = bb_key_points
@@ -666,19 +857,19 @@ class BtNode_PointTo(ServiceHandler):
         self.blackboard.register_key(
             key="persons",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_persons)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_persons),
         )
         self.blackboard.register_key(
             key="points",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_points)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_points),
         )
         self.blackboard.register_key(
             key="arm_joint_pose",
             access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_init_pose)
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_init_pose),
         )
-    
+
     def setup(self, **kwargs):
         ServiceHandler.setup(self, **kwargs)
 
@@ -697,8 +888,12 @@ class BtNode_PointTo(ServiceHandler):
         except KeyError:
             points = None
 
-        if (persons is None or len(persons) <= self.target_id
-                or points is None or len(points) <= self.target_id):
+        if (
+            persons is None
+            or len(persons) <= self.target_id
+            or points is None
+            or len(points) <= self.target_id
+        ):
             # Feature matching did not produce a PointStamped for this target.
             # Fast-fail cleanly; FailureIsSuccess wrappers in the BT can absorb.
             self.feedback_message = (
@@ -734,12 +929,12 @@ class BtNode_PointTo(ServiceHandler):
             self.response = self.call_service_async(request)
 
             self.feedback_message = f"Initialized point to for joints {self.angle}"
-    
+
     def update(self) -> Status:
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         self.logger.debug(f"Update point to")
         if self.response is None:
             self.feedback_message = f"Point To failed for joints {self.angle}"

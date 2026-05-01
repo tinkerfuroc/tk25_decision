@@ -61,7 +61,7 @@ from typing import Any, Optional
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, PanTiltCommand, PanTiltState, FollowHeadAction, SeatRecommendBbox, DetectWaving
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, PanTiltCommand, PanTiltState, FollowHeadAction, SeatRecommendBbox, DetectWaving, PlacingLocation
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import PointStamped
 from std_msgs.msg import Header
@@ -196,6 +196,124 @@ class BtNode_ScanFor(ServiceHandler):
         else:
             self.feedback_message = "Still scanning..."
             return pytree.common.Status.RUNNING
+
+
+class BtNode_ScanForGeneralist(ServiceHandler):
+    """
+    Scans for objects via the generalist detection service.
+
+    Uses tk26 `tinker_vision_msgs_26/srv/ObjectDetectionGeneralist` (boolean
+    flag schema) on `/object_detection_generalist`. Open-vocabulary prompts
+    are supported through the YOLO-World / Gemini + FastSAM fallback when
+    `use_vlm_sam_fallback=True`.
+    """
+
+    def __init__(self,
+                 name: str,
+                 bb_source: Optional[str],
+                 bb_key: str,
+                 service_name: str = "object_detection_generalist",
+                 object: Optional[str] = None,
+                 use_orbbec: bool = True,
+                 transform_to_map: bool = False,
+                 use_vlm_sam_fallback: bool = True,
+                 force_vlm_sam: bool = False,
+                 sort_closest: bool = False,
+                 sort_highest: bool = False,
+                 return_rgb_image: bool = False,
+                 return_depth_image: bool = False,
+                 return_segments: bool = False,
+                 ):
+        super(BtNode_ScanForGeneralist, self).__init__(name, service_name, ObjectDetectionGeneralist)
+        self.bb_key = bb_key
+        self.bb_source = bb_source
+        self.object = object
+        self.use_orbbec = use_orbbec
+        self.transform_to_map = transform_to_map
+        self.use_vlm_sam_fallback = use_vlm_sam_fallback
+        self.force_vlm_sam = force_vlm_sam
+        self.sort_closest = sort_closest
+        self.sort_highest = sort_highest
+        self.return_rgb_image = return_rgb_image
+        self.return_depth_image = return_depth_image
+        self.return_segments = return_segments
+        self.read = self.object is None
+
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+        self.bb_write_client = self.attach_blackboard_client(name="ScanForGeneralist")
+        self.bb_write_client.register_key(self.bb_key, access=pytree.common.Access.WRITE)
+
+        if self.read:
+            self.bb_read_client = self.attach_blackboard_client(name="ScanForGeneralist Read")
+            self.bb_read_client.register_key(self.bb_source, access=pytree.common.Access.READ)
+            self.logger.debug(f"Setup ScanForGeneralist, reading from {self.bb_source}")
+        else:
+            self.logger.debug(f"Setup ScanForGeneralist, for {self.object}")
+
+    def initialise(self) -> None:
+        super().initialise()
+
+        if self.mock_mode:
+            if self.read:
+                try:
+                    self.object = self.bb_read_client.get(self.bb_source)
+                    assert isinstance(self.object, str)
+                except Exception as e:
+                    self.feedback_message = "ScanForGeneralist reading object name failed"
+                    raise e
+            print(f"🔍 MOCK: Scanning (generalist) for {self.object}")
+            from behavior_tree.mock_messages import MockMessage
+            mock_result = MockMessage()
+            mock_result.status = 0
+            mock_result.objects = []
+            self.bb_write_client.set(self.bb_key, mock_result, overwrite=True)
+            self.feedback_message = f"MOCK: ScanForGeneralist for {self.object}"
+            return
+
+        if self.read:
+            try:
+                self.object = self.bb_read_client.get(self.bb_source)
+                assert isinstance(self.object, str)
+            except Exception as e:
+                self.feedback_message = "ScanForGeneralist reading object name failed"
+                raise e
+
+        request = ObjectDetectionGeneralist.Request()
+        request.prompt = self.object
+        request.camera = "orbbec" if self.use_orbbec else "realsense"
+        request.target_frame = "map" if self.transform_to_map else ""
+        request.sort_closest = self.sort_closest
+        request.sort_highest = self.sort_highest
+        request.return_rgb_image = self.return_rgb_image
+        request.return_depth_image = self.return_depth_image
+        request.return_segments = self.return_segments
+        request.force_vlm_sam = self.force_vlm_sam
+        request.use_vlm_sam_fallback = self.use_vlm_sam_fallback
+
+        self.response = self.call_service_async(request)
+        self.feedback_message = f"Initialized ScanForGeneralist for {self.object}"
+
+    def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+
+        if self.response.done():
+            result = self.response.result()
+            if result.status == 0:
+                self.bb_write_client.set(self.bb_key, result, overwrite=True)
+                self.feedback_message = f"Generalist found objects, stored to {self.bb_key} (source={result.detection_source})"
+                return pytree.common.Status.SUCCESS
+            self.feedback_message = (
+                f"ScanForGeneralist for {self.object} failed status={result.status}: {result.error_msg}"
+            )
+            return pytree.common.Status.FAILURE
+        self.feedback_message = "Still scanning (generalist)..."
+        return pytree.common.Status.RUNNING
 
 
 class BtNode_TrackPerson(ServiceHandler):
@@ -932,6 +1050,106 @@ class BtNode_GetPointCloud(ServiceHandler):
         else:
             self.feedback_message = "Still getting point cloud..."
             return pytree.common.Status.RUNNING
+
+
+class BtNode_FindPlacingLocation(ServiceHandler):
+    """
+    Calls /placing_location (VLM-only) to find an empty spot on a desktop.
+
+    Reads either a literal item description or a string from a blackboard key
+    and writes the best-ranked PointStamped to ``bb_key_point``. If the VLM
+    finds nothing usable, the node fails so a parent Retry/Selector can react.
+    """
+
+    def __init__(self,
+                 name: str,
+                 bb_key_point: str,
+                 bb_source_item: Optional[str] = None,
+                 item_description: Optional[str] = None,
+                 service_name: str = "placing_location",
+                 use_orbbec: bool = True,
+                 target_frame: str = "map",
+                 max_candidates: int = 3,
+                 ):
+        super().__init__(name, service_name, PlacingLocation)
+        self.bb_key_point = bb_key_point
+        self.bb_source_item = bb_source_item
+        self.item_description = item_description
+        self.target_frame = target_frame
+        self.max_candidates = int(max_candidates)
+        self.camera = "orbbec" if use_orbbec else "realsense"
+        if bb_source_item is None and not item_description:
+            raise ValueError(
+                "BtNode_FindPlacingLocation requires bb_source_item or item_description"
+            )
+
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+        self.bb_write = self.attach_blackboard_client(name="FindPlacingLocation Write")
+        self.bb_write.register_key(self.bb_key_point, access=pytree.common.Access.WRITE)
+        if self.bb_source_item is not None:
+            self.bb_read = self.attach_blackboard_client(name="FindPlacingLocation Read")
+            self.bb_read.register_key(self.bb_source_item, access=pytree.common.Access.READ)
+
+    def initialise(self) -> None:
+        super().initialise()
+
+        item = self.item_description
+        if self.bb_source_item is not None:
+            try:
+                item = self.bb_read.get(self.bb_source_item)
+            except Exception:
+                item = self.item_description
+        if not isinstance(item, str) or not item.strip():
+            self.feedback_message = "FindPlacingLocation: empty item_description"
+            self.response = None
+            self._invalid = True
+            return
+        self._invalid = False
+
+        if self.mock_mode:
+            mock_point = PointStamped()
+            mock_point.header = Header(frame_id=self.target_frame)
+            mock_point.point.x = 0.5
+            mock_point.point.y = 0.0
+            mock_point.point.z = 0.7
+            self.bb_write.set(self.bb_key_point, mock_point, overwrite=True)
+            self.feedback_message = f"MOCK: placing point for '{item}'"
+            self.response = None
+            return
+
+        request = PlacingLocation.Request()
+        request.camera = self.camera
+        request.item_description = item
+        request.target_frame = self.target_frame
+        request.max_candidates = self.max_candidates
+        request.return_rgb_image = False
+        request.return_debug_overlay = False
+        self.response = self.call_service_async(request)
+        self.feedback_message = f"Initialized FindPlacingLocation for '{item}'"
+
+    def update(self):
+        if getattr(self, "_invalid", False):
+            return pytree.common.Status.FAILURE
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+        if self.response is None:
+            return pytree.common.Status.FAILURE
+        if not self.response.done():
+            self.feedback_message = "Waiting for placing-location service..."
+            return pytree.common.Status.RUNNING
+        result = self.response.result()
+        if result.status != 0 or not result.candidate_points:
+            self.feedback_message = (
+                f"PlacingLocation failed (status={result.status}): "
+                f"{getattr(result, 'error_msg', '')}"
+            )
+            return pytree.common.Status.FAILURE
+        self.bb_write.set(self.bb_key_point, result.candidate_points[0], overwrite=True)
+        self.feedback_message = (
+            f"Placing point set ({len(result.candidate_points)} candidate(s))"
+        )
+        return pytree.common.Status.SUCCESS
 
 
 class BtNode_DoorDetection(ServiceHandler):

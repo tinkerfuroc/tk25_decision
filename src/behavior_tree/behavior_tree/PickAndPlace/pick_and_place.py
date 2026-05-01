@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-"""Pick and Place — main task deciding tree (RoboCup@Home 2026 §5.2).
+"""Pick and Place — main mission tree (RoboCup@Home 2026 §5.2).
 
-Tidy table → 3-class destination dispatch (wash_staging / trash / cabinet),
-then assemble breakfast (bowl, spoon, cereal, milk) on the table.
+Mirrors the Restaurant / HRI single-file mission idiom: phase factories at
+module top-level, mission assembly is a flat sequence of `create*Phase()`
+calls, blackboard initialisation lives in `createConstantWriter()`.
 
-Hardware-aware deviations from the rulebook (see RULEBOOK_PLAN.md):
+Hardware-aware deviations from the rulebook (see `RULEBOOK_PLAN.md`):
   * Cutlery + tableware go to a wash-staging surface, not the dishwasher rack.
   * Floor pickup is skipped.
+
+Vision: every detection call uses the tk26 generalist service
+(`/object_detection_generalist`,
+`tinker_vision_msgs_26/srv/ObjectDetectionGeneralist`).
 """
 
 import py_trees
@@ -15,7 +20,6 @@ import py_trees
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import (
-    BtNode_Drop,
     BtNode_GripperAction,
     BtNode_MoveArmSingle,
     BtNode_Place,
@@ -24,20 +28,18 @@ from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_DoorDetection,
     BtNode_GetPointCloud,
-    BtNode_ScanFor,
+    BtNode_ScanForGeneralist,
     BtNode_TurnPanTilt,
-)
-from behavior_tree.StoringGroceries.customNodes import (
-    BtNode_CategorizeGrocery,
-    BtNode_FindObjTable,
-    BtNode_GraspWithPose,
 )
 
 from .config import (
     ARM_POS_DROP,
     ARM_POS_NAVIGATING,
     ARM_POS_PLACING,
+    ARM_POS_PLACING_CABINET,
     ARM_POS_SCAN,
+    ARM_POS_SCAN_CABINET,
+    ARM_POS_TRASH,
     ARM_SERVICE_NAME,
     DESIGNATED_TRASH_LABELS,
     GRASP_ACTION_NAME,
@@ -51,6 +53,9 @@ from .config import (
     KEY_ARM_NAVIGATING,
     KEY_ARM_PLACING,
     KEY_ARM_SCAN,
+    KEY_ARM_SCAN_CABINET,
+    KEY_ARM_PLACING_CABINET,
+    KEY_ARM_TRASH,
     KEY_BREAKFAST_QUEUE,
     KEY_DOOR_STATUS,
     KEY_ENV_POINTS,
@@ -58,6 +63,7 @@ from .config import (
     KEY_GRASP_POSE,
     KEY_INVENTORY_TABLE,
     KEY_MAX_RUNTIME,
+    KEY_OBJECT_LABEL,
     KEY_OBJ_SEG,
     KEY_PHASE_DEADLINE,
     KEY_PLACE_REASON,
@@ -69,7 +75,6 @@ from .config import (
     KEY_POINT_KITCHEN_SURFACE,
     KEY_POINT_SHELF_LEFT,
     KEY_POINT_SHELF_RIGHT,
-    KEY_POINT_TRASH_BIN,
     KEY_POINT_WASH_STAGING,
     KEY_POSE_CABINET,
     KEY_POSE_KITCHEN_ENTRY,
@@ -84,8 +89,8 @@ from .config import (
     KEY_VISION_RESULT,
     KEY_WORK_QUEUE,
     MAX_RUNTIME_SEC,
-    N_LAYERS,
     NAV_RETRY_LIMIT,
+    N_LAYERS,
     PLACE_ACTION_NAME,
     POINT_BREAKFAST_BOWL,
     POINT_BREAKFAST_CEREAL,
@@ -95,7 +100,6 @@ from .config import (
     POINT_KITCHEN_SURFACE,
     POINT_SHELF_LEFT,
     POINT_SHELF_RIGHT,
-    POINT_TRASH_BIN,
     POINT_WASH_STAGING,
     POSE_CABINET,
     POSE_KITCHEN_ENTRY,
@@ -107,6 +111,11 @@ from .config import (
     TABLE_SCAN_PROMPT,
     TARGET_FRAME,
     WASH_STAGING_LABELS,
+)
+from .custom_nodes import (
+    BtNode_CategorizeGrocery,
+    BtNode_FindObjTable,
+    BtNode_GraspWithPose,
 )
 from .state_nodes import (
     BtNode_BuildBreakfastQueue,
@@ -122,8 +131,7 @@ from .state_nodes import (
     BtNode_TimeoutCutoverChecker,
 )
 
-
-MAX_CLEANUP_ITERATIONS = 12  # rulebook caps Pick at 12× and Place at 12×
+MAX_CLEANUP_ITERATIONS = 12  # rulebook caps Pick at 12x and Place at 12x
 BREAKFAST_ITEM_COUNT = 4
 
 
@@ -138,35 +146,118 @@ def createConstantWriter() -> py_trees.composites.Parallel:
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
     writes = [
-        ("Write kitchen entry pose",   KEY_POSE_KITCHEN_ENTRY,  POSE_KITCHEN_ENTRY),
-        ("Write table pose",           KEY_POSE_TABLE,          POSE_TABLE),
-        ("Write wash-staging pose",    KEY_POSE_WASH_STAGING,   POSE_WASH_STAGING),
-        ("Write trash bin pose",       KEY_POSE_TRASH_BIN,      POSE_TRASH_BIN),
-        ("Write cabinet pose",         KEY_POSE_CABINET,        POSE_CABINET),
-        ("Write kitchen shelf pose",   KEY_POSE_KITCHEN_SHELF,  POSE_KITCHEN_SHELF),
-        ("Write wash-staging point",   KEY_POINT_WASH_STAGING,  POINT_WASH_STAGING),
-        ("Write trash bin point",      KEY_POINT_TRASH_BIN,     POINT_TRASH_BIN),
-        ("Write cabinet default pt",   KEY_POINT_CABINET_DEFAULT, POINT_CABINET_DEFAULT),
-        ("Write kitchen surface pt",   KEY_POINT_KITCHEN_SURFACE, POINT_KITCHEN_SURFACE),
-        ("Write breakfast bowl pt",    KEY_POINT_BREAKFAST_BOWL,   POINT_BREAKFAST_BOWL),
-        ("Write breakfast spoon pt",   KEY_POINT_BREAKFAST_SPOON,  POINT_BREAKFAST_SPOON),
-        ("Write breakfast cereal pt",  KEY_POINT_BREAKFAST_CEREAL, POINT_BREAKFAST_CEREAL),
-        ("Write breakfast milk pt",    KEY_POINT_BREAKFAST_MILK,   POINT_BREAKFAST_MILK),
-        ("Write shelf left point",     KEY_POINT_SHELF_LEFT,    POINT_SHELF_LEFT),
-        ("Write shelf right point",    KEY_POINT_SHELF_RIGHT,   POINT_SHELF_RIGHT),
-        ("Write arm navigating",       KEY_ARM_NAVIGATING,      ARM_POS_NAVIGATING),
-        ("Write arm scan",             KEY_ARM_SCAN,            ARM_POS_SCAN),
-        ("Write arm placing",          KEY_ARM_PLACING,         ARM_POS_PLACING),
-        ("Write arm drop",             KEY_ARM_DROP,            ARM_POS_DROP),
-        ("Write target frame",         KEY_TARGET_FRAME,        TARGET_FRAME),
-        ("Write max runtime",          KEY_MAX_RUNTIME,         MAX_RUNTIME_SEC),
+        ("Write kitchen entry pose", KEY_POSE_KITCHEN_ENTRY, POSE_KITCHEN_ENTRY),
+        ("Write table pose", KEY_POSE_TABLE, POSE_TABLE),
+        ("Write wash-staging pose", KEY_POSE_WASH_STAGING, POSE_WASH_STAGING),
+        ("Write trash bin pose", KEY_POSE_TRASH_BIN, POSE_TRASH_BIN),
+        ("Write cabinet pose", KEY_POSE_CABINET, POSE_CABINET),
+        ("Write kitchen shelf pose", KEY_POSE_KITCHEN_SHELF, POSE_KITCHEN_SHELF),
+        ("Write wash-staging point", KEY_POINT_WASH_STAGING, POINT_WASH_STAGING),
+        ("Write cabinet default pt", KEY_POINT_CABINET_DEFAULT, POINT_CABINET_DEFAULT),
+        ("Write kitchen surface pt", KEY_POINT_KITCHEN_SURFACE, POINT_KITCHEN_SURFACE),
+        ("Write breakfast bowl pt", KEY_POINT_BREAKFAST_BOWL, POINT_BREAKFAST_BOWL),
+        ("Write breakfast spoon pt", KEY_POINT_BREAKFAST_SPOON, POINT_BREAKFAST_SPOON),
+        (
+            "Write breakfast cereal pt",
+            KEY_POINT_BREAKFAST_CEREAL,
+            POINT_BREAKFAST_CEREAL,
+        ),
+        ("Write breakfast milk pt", KEY_POINT_BREAKFAST_MILK, POINT_BREAKFAST_MILK),
+        ("Write shelf left point", KEY_POINT_SHELF_LEFT, POINT_SHELF_LEFT),
+        ("Write shelf right point", KEY_POINT_SHELF_RIGHT, POINT_SHELF_RIGHT),
+        ("Write arm navigating", KEY_ARM_NAVIGATING, ARM_POS_NAVIGATING),
+        ("Write arm scan", KEY_ARM_SCAN, ARM_POS_SCAN),
+        ("Write arm scan cabinet", KEY_ARM_SCAN_CABINET, ARM_POS_SCAN_CABINET),
+        ("Write arm placing", KEY_ARM_PLACING, ARM_POS_PLACING),
+        ("Write arm placing cabinet", KEY_ARM_PLACING_CABINET, ARM_POS_PLACING_CABINET),
+        ("Write arm drop", KEY_ARM_DROP, ARM_POS_DROP),
+        ("Write arm trash", KEY_ARM_TRASH, ARM_POS_TRASH),
+        ("Write target frame", KEY_TARGET_FRAME, TARGET_FRAME),
+        ("Write max runtime", KEY_MAX_RUNTIME, MAX_RUNTIME_SEC),
     ]
     for name, key, value in writes:
         root.add_child(
             BtNode_WriteToBlackboard(
-                name=name, bb_namespace="", bb_source=None, bb_key=key, object=value,
+                name=name,
+                bb_namespace="",
+                bb_source=None,
+                bb_key=key,
+                object=value,
             )
         )
+    return root
+
+
+# --------------------------------------------------------------------------- #
+# Shared helpers
+# --------------------------------------------------------------------------- #
+
+
+def _moveArmRetry(
+    name: str,
+    arm_pose_key: str,
+    *,
+    add_octomap: bool = False,
+    retries: int = 2,
+) -> py_trees.decorators.Retry:
+    return py_trees.decorators.Retry(
+        name=f"Retry {name}",
+        child=BtNode_MoveArmSingle(
+            name=name,
+            service_name=ARM_SERVICE_NAME,
+            arm_pose_bb_key=arm_pose_key,
+            add_octomap=add_octomap,
+        ),
+        num_failures=retries,
+    )
+
+
+def _gripperOpenSafe(name: str) -> py_trees.decorators.FailureIsSuccess:
+    return py_trees.decorators.FailureIsSuccess(
+        name=f"Best-effort {name}",
+        child=BtNode_GripperAction(name=name, open_gripper=True),
+    )
+
+
+def _findAndGrasp() -> py_trees.composites.Sequence:
+    """FindObjTable (generalist) -> announce -> GraspWithPose."""
+    root = py_trees.composites.Sequence(name="Find and grasp", memory=True)
+    root.add_child(
+        py_trees.decorators.Retry(
+            name="Retry FindObjTable",
+            child=BtNode_FindObjTable(
+                name="Find active object",
+                bb_key_prompt=KEY_ACTIVE_PROMPT,
+                bb_key_image=KEY_TABLE_IMG,
+                bb_key_segment=KEY_OBJ_SEG,
+                bb_key_result=KEY_VISION_RESULT,
+                bb_key_announcement=KEY_GRASP_ANNOUNCEMENT,
+                bb_key_object_label=KEY_OBJECT_LABEL,
+                use_vlm_sam_fallback=True,
+            ),
+            num_failures=SCAN_RETRY_LIMIT,
+        )
+    )
+    grasp_sequence = py_trees.composites.Sequence(
+        name="Announce then grasp", memory=True
+    )
+    grasp_sequence.add_child(
+        BtNode_Announce(name="Announce grasping", bb_source=KEY_GRASP_ANNOUNCEMENT)
+    )
+    grasp_sequence.add_child(
+        py_trees.decorators.Retry(
+            name="Retry grasp",
+            child=BtNode_GraspWithPose(
+                name="Grasp active object",
+                bb_key_vision_res=KEY_VISION_RESULT,
+                bb_key_pose=KEY_GRASP_POSE,
+                action_name=GRASP_ACTION_NAME,
+                bb_key_object_label=KEY_OBJECT_LABEL,
+            ),
+            num_failures=GRASP_RETRY_LIMIT,
+        )
+    )
+    root.add_child(grasp_sequence)
     return root
 
 
@@ -174,29 +265,40 @@ def createConstantWriter() -> py_trees.composites.Parallel:
 # Phase: enter kitchen
 # --------------------------------------------------------------------------- #
 
+
 def createEnterKitchen() -> py_trees.composites.Sequence:
     root = py_trees.composites.Sequence(name="Enter kitchen", memory=True)
     root.add_child(
         py_trees.decorators.Retry(
             name="Retry door detection",
-            child=BtNode_DoorDetection(name="Wait for door open", bb_door_state_key=KEY_DOOR_STATUS),
+            child=BtNode_DoorDetection(
+                name="Wait for door open",
+                bb_door_state_key=KEY_DOOR_STATUS,
+            ),
             num_failures=999,
         )
     )
     parallel = py_trees.composites.Parallel(
-        name="Enter parallel", policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
+        name="Enter parallel",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
     parallel.add_child(
-        BtNode_Announce(name="Announce entering kitchen", bb_source=None, message="Entering kitchen.")
-    )
-    parallel.add_child(BtNode_TurnPanTilt(name="Tilt head forward", x=0.0, y=20.0))
-    parallel.add_child(
-        py_trees.decorators.Retry(
-            name="Retry goto kitchen entry",
-            child=BtNode_GotoAction(name="Go to kitchen entry", key=KEY_POSE_KITCHEN_ENTRY),
-            num_failures=NAV_RETRY_LIMIT,
+        BtNode_Announce(
+            name="Announce entering kitchen",
+            bb_source=None,
+            message="Entering kitchen.",
         )
     )
+    parallel.add_child(BtNode_TurnPanTilt(name="Tilt head forward", x=0.0, y=20.0))
+    # parallel.add_child(
+    #     py_trees.decorators.Retry(
+    #         name="Retry goto kitchen entry",
+    #         child=BtNode_GotoAction(
+    #             name="Go to kitchen entry", key=KEY_POSE_KITCHEN_ENTRY,
+    #         ),
+    #         num_failures=NAV_RETRY_LIMIT,
+    #     )
+    # )
     root.add_child(parallel)
     root.add_child(
         py_trees.decorators.Retry(
@@ -209,33 +311,25 @@ def createEnterKitchen() -> py_trees.composites.Sequence:
 
 
 # --------------------------------------------------------------------------- #
-# Phase: scan and classify table items
+# Phase: scan + classify table
 # --------------------------------------------------------------------------- #
+
 
 def createTableScanPhase() -> py_trees.composites.Sequence:
     root = py_trees.composites.Sequence(name="Scan + classify table", memory=True)
-    root.add_child(BtNode_TurnPanTilt(name="Tilt head down", x=0.0, y=25.0))
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="Retry arm to scan",
-            child=BtNode_MoveArmSingle(
-                name="Move arm to scan",
-                service_name=ARM_SERVICE_NAME,
-                arm_pose_bb_key=KEY_ARM_SCAN,
-                add_octomap=False,
-            ),
-            num_failures=2,
-        )
-    )
+    # root.add_child(BtNode_TurnPanTilt(name="Tilt head down", x=0.0, y=25.0))
+    root.add_child(_moveArmRetry("Arm to scan", KEY_ARM_SCAN, add_octomap=False))
     root.add_child(
         py_trees.decorators.Retry(
             name="Retry table scan",
-            child=BtNode_ScanFor(
+            child=BtNode_ScanForGeneralist(
                 name="Scan dining table",
                 bb_source=None,
                 bb_key=KEY_VISION_RESULT,
                 object=TABLE_SCAN_PROMPT,
                 transform_to_map=True,
+                use_vlm_sam_fallback=True,
+                use_orbbec=False,
             ),
             num_failures=SCAN_RETRY_LIMIT,
         )
@@ -263,68 +357,9 @@ def createTableScanPhase() -> py_trees.composites.Sequence:
 # Phase: cleanup loop
 # --------------------------------------------------------------------------- #
 
-def _moveArmRetry(name: str, arm_pose_key: str, *, add_octomap: bool = False, retries: int = 2):
-    return py_trees.decorators.Retry(
-        name=f"Retry {name}",
-        child=BtNode_MoveArmSingle(
-            name=name,
-            service_name=ARM_SERVICE_NAME,
-            arm_pose_bb_key=arm_pose_key,
-            add_octomap=add_octomap,
-        ),
-        num_failures=retries,
-    )
-
-
-def _gripperOpenSafe(name: str):
-    return py_trees.decorators.FailureIsSuccess(
-        name=f"Best-effort {name}",
-        child=BtNode_GripperAction(name=name, open_gripper=True),
-    )
-
-
-def _findAndGrasp() -> py_trees.composites.Sequence:
-    """FindObjTable → GraspWithPose, with grasp-pose written to KEY_GRASP_POSE."""
-    root = py_trees.composites.Sequence(name="Find and grasp", memory=True)
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="Retry FindObjTable",
-            child=BtNode_FindObjTable(
-                name="Find active object",
-                bb_key_prompt=KEY_ACTIVE_PROMPT,
-                bb_key_image=KEY_TABLE_IMG,
-                bb_key_segment=KEY_OBJ_SEG,
-                bb_key_result=KEY_VISION_RESULT,
-                bb_key_announcement=KEY_GRASP_ANNOUNCEMENT,
-            ),
-            num_failures=SCAN_RETRY_LIMIT,
-        )
-    )
-    grasp_parallel = py_trees.composites.Parallel(
-        name="Announce + grasp",
-        policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
-    )
-    grasp_parallel.add_child(
-        BtNode_Announce(name="Announce grasping", bb_source=KEY_GRASP_ANNOUNCEMENT)
-    )
-    grasp_parallel.add_child(
-        py_trees.decorators.Retry(
-            name="Retry grasp",
-            child=BtNode_GraspWithPose(
-                name="Grasp active object",
-                bb_key_vision_res=KEY_VISION_RESULT,
-                bb_key_pose=KEY_GRASP_POSE,
-                action_name=GRASP_ACTION_NAME,
-            ),
-            num_failures=GRASP_RETRY_LIMIT,
-        )
-    )
-    root.add_child(grasp_parallel)
-    return root
-
 
 def _washStagingBranch() -> py_trees.composites.Sequence:
-    """Cutlery + tableware → safe surface near the dishwasher (NOT into the rack)."""
+    """Cutlery + tableware -> safe surface near the dishwasher (NOT into the rack)."""
     root = py_trees.composites.Sequence(name="Wash-staging branch", memory=True)
     root.add_child(
         BtNode_IsActiveClass(
@@ -336,7 +371,9 @@ def _washStagingBranch() -> py_trees.composites.Sequence:
     root.add_child(
         py_trees.decorators.Retry(
             name="Retry goto wash-staging",
-            child=BtNode_GotoAction(name="Go to wash staging", key=KEY_POSE_WASH_STAGING),
+            child=BtNode_GotoAction(
+                name="Go to wash staging", key=KEY_POSE_WASH_STAGING
+            ),
             num_failures=NAV_RETRY_LIMIT,
         )
     )
@@ -344,7 +381,10 @@ def _washStagingBranch() -> py_trees.composites.Sequence:
     root.add_child(
         py_trees.decorators.Retry(
             name="Retry env point cloud",
-            child=BtNode_GetPointCloud(name="Get env point cloud", bb_point_cloud_key=KEY_ENV_POINTS),
+            child=BtNode_GetPointCloud(
+                name="Get env point cloud",
+                bb_point_cloud_key=KEY_ENV_POINTS,
+            ),
             num_failures=2,
         )
     )
@@ -363,13 +403,17 @@ def _washStagingBranch() -> py_trees.composites.Sequence:
     )
     root.add_child(_gripperOpenSafe("Open gripper"))
     root.add_child(
-        BtNode_Announce(name="Announce wash staged", bb_source=None, message="Placed on wash staging.")
+        BtNode_Announce(
+            name="Announce wash staged",
+            bb_source=None,
+            message="Placed on wash staging.",
+        )
     )
     return root
 
 
 def _trashBranch() -> py_trees.composites.Sequence:
-    """Trash → drop in trash bin (rulebook §3 allows drop only into a designated bin)."""
+    """Trash -> drop in trash bin (rulebook §3 allows drop only into a designated bin)."""
     root = py_trees.composites.Sequence(name="Trash branch", memory=True)
     root.add_child(
         BtNode_IsActiveClass(
@@ -385,22 +429,21 @@ def _trashBranch() -> py_trees.composites.Sequence:
             num_failures=NAV_RETRY_LIMIT,
         )
     )
-    root.add_child(_moveArmRetry("Arm to drop", KEY_ARM_DROP))
+    # root.add_child(_moveArmRetry("Arm to drop (approach)", KEY_ARM_DROP))
+    root.add_child(_moveArmRetry("Arm to trash (over bin)", KEY_ARM_TRASH))
+    root.add_child(_gripperOpenSafe("Release into trash"))
     root.add_child(
-        py_trees.decorators.Retry(
-            name="Retry drop in bin",
-            child=BtNode_Drop(name="Drop in bin", bb_source=KEY_POINT_TRASH_BIN),
-            num_failures=2,
+        BtNode_Announce(
+            name="Announce dropped trash",
+            bb_source=None,
+            message="Dropped in trash.",
         )
-    )
-    root.add_child(
-        BtNode_Announce(name="Announce dropped trash", bb_source=None, message="Dropped in trash.")
     )
     return root
 
 
 def _cabinetBranch() -> py_trees.composites.Sequence:
-    """Other objects → cabinet shelf grouped by similarity (Categorize action)."""
+    """Other objects -> cabinet shelf grouped by similarity (Categorize action)."""
     root = py_trees.composites.Sequence(name="Cabinet branch", memory=True)
     root.add_child(
         BtNode_IsActiveClass(
@@ -416,7 +459,9 @@ def _cabinetBranch() -> py_trees.composites.Sequence:
             num_failures=NAV_RETRY_LIMIT,
         )
     )
-    root.add_child(_moveArmRetry("Arm to scan (cabinet)", KEY_ARM_SCAN, add_octomap=False))
+    root.add_child(
+        _moveArmRetry("Arm to scan (cabinet)", KEY_ARM_SCAN_CABINET, add_octomap=False)
+    )
     root.add_child(BtNode_TurnPanTilt(name="Tilt head down (cabinet)", x=0.0, y=25.0))
     categorize_parallel = py_trees.composites.Parallel(
         name="Announce + categorize",
@@ -445,8 +490,14 @@ def _cabinetBranch() -> py_trees.composites.Sequence:
         )
     )
     root.add_child(categorize_parallel)
-    root.add_child(_moveArmRetry("Arm to placing (cabinet)", KEY_ARM_PLACING, add_octomap=True))
-    root.add_child(BtNode_Announce(name="Announce shelf reason", bb_source=KEY_PLACE_REASON))
+    root.add_child(
+        _moveArmRetry(
+            "Arm to placing (cabinet)", KEY_ARM_PLACING_CABINET, add_octomap=False
+        )
+    )
+    root.add_child(
+        BtNode_Announce(name="Announce shelf reason", bb_source=KEY_PLACE_REASON)
+    )
     root.add_child(
         py_trees.decorators.Retry(
             name="Retry place on shelf",
@@ -465,7 +516,7 @@ def _cabinetBranch() -> py_trees.composites.Sequence:
 
 
 def _serveToDestination() -> py_trees.composites.Selector:
-    """Three-branch destination selector — exactly one branch matches per item."""
+    """Three-branch destination selector -- exactly one branch matches per item."""
     selector = py_trees.composites.Selector(name="Destination policy", memory=False)
     selector.add_child(_washStagingBranch())
     selector.add_child(_trashBranch())
@@ -477,10 +528,15 @@ def _processOneCleanupItem() -> py_trees.composites.Sequence:
     root = py_trees.composites.Sequence(name="Process one cleanup item", memory=True)
     root.add_child(
         BtNode_TimeoutCutoverChecker(
-            name="Check runtime cutover", phase_deadline_key=KEY_PHASE_DEADLINE,
+            name="Check runtime cutover",
+            phase_deadline_key=KEY_PHASE_DEADLINE,
         )
     )
-    root.add_child(BtNode_HasPendingWork(name="Has pending cleanup item", work_queue_key=KEY_WORK_QUEUE))
+    root.add_child(
+        BtNode_HasPendingWork(
+            name="Has pending cleanup item", work_queue_key=KEY_WORK_QUEUE
+        )
+    )
     root.add_child(
         BtNode_SelectNextItem(
             name="Select next cleanup item",
@@ -495,7 +551,6 @@ def _processOneCleanupItem() -> py_trees.composites.Sequence:
             pose_trash_bin_key=KEY_POSE_TRASH_BIN,
             pose_cabinet_key=KEY_POSE_CABINET,
             point_wash_staging_key=KEY_POINT_WASH_STAGING,
-            point_trash_bin_key=KEY_POINT_TRASH_BIN,
             point_cabinet_default_key=KEY_POINT_CABINET_DEFAULT,
         )
     )
@@ -506,11 +561,15 @@ def _processOneCleanupItem() -> py_trees.composites.Sequence:
     success.add_child(
         py_trees.decorators.Retry(
             name="Retry goto source",
-            child=BtNode_GotoAction(name="Go to source area", key=KEY_ACTIVE_SOURCE_POSE),
+            child=BtNode_GotoAction(
+                name="Go to source area", key=KEY_ACTIVE_SOURCE_POSE
+            ),
             num_failures=NAV_RETRY_LIMIT,
         )
     )
-    success.add_child(_moveArmRetry("Arm to scan (cleanup)", KEY_ARM_SCAN, add_octomap=True))
+    success.add_child(
+        _moveArmRetry("Arm to scan (cleanup)", KEY_ARM_SCAN, add_octomap=False)
+    )
     success.add_child(_findAndGrasp())
     success.add_child(_moveArmRetry("Arm to nav (post-grasp)", KEY_ARM_NAVIGATING))
     success.add_child(_serveToDestination())
@@ -525,9 +584,13 @@ def _processOneCleanupItem() -> py_trees.composites.Sequence:
         )
     )
 
-    failure = py_trees.composites.Sequence(name="Cleanup failure continuation", memory=True)
+    failure = py_trees.composites.Sequence(
+        name="Cleanup failure continuation", memory=True
+    )
     failure.add_child(
-        BtNode_Announce(name="Announce skip", bb_source=None, message="Skipping this item.")
+        BtNode_Announce(
+            name="Announce skip", bb_source=None, message="Skipping this item."
+        )
     )
     failure.add_child(_gripperOpenSafe("Release any partial grasp"))
     failure.add_child(
@@ -557,8 +620,8 @@ def _processOneCleanupItem() -> py_trees.composites.Sequence:
     return root
 
 
-def createCleanupLoop() -> py_trees.composites.Selector:
-    """Repeat _processOneCleanupItem until the queue is empty or timeout cutover."""
+def createCleanupPhase() -> py_trees.composites.Selector:
+    """Repeat cleanup processing until queue is empty or runtime cutover hits."""
     root = py_trees.composites.Selector(name="Cleanup loop", memory=False)
     root.add_child(
         py_trees.decorators.Repeat(
@@ -584,7 +647,10 @@ def _processOneBreakfastItem() -> py_trees.composites.Sequence:
         )
     )
     root.add_child(
-        BtNode_HasPendingWork(name="Has pending breakfast item", work_queue_key=KEY_BREAKFAST_QUEUE)
+        BtNode_HasPendingWork(
+            name="Has pending breakfast item",
+            work_queue_key=KEY_BREAKFAST_QUEUE,
+        )
     )
     root.add_child(
         BtNode_SelectNextBreakfastItem(
@@ -609,13 +675,19 @@ def _processOneBreakfastItem() -> py_trees.composites.Sequence:
     success.add_child(
         py_trees.decorators.Retry(
             name="Retry goto breakfast source",
-            child=BtNode_GotoAction(name="Go to breakfast source", key=KEY_ACTIVE_SOURCE_POSE),
+            child=BtNode_GotoAction(
+                name="Go to breakfast source", key=KEY_ACTIVE_SOURCE_POSE
+            ),
             num_failures=NAV_RETRY_LIMIT,
         )
     )
-    success.add_child(_moveArmRetry("Arm to scan (breakfast)", KEY_ARM_SCAN, add_octomap=True))
+    success.add_child(
+        _moveArmRetry("Arm to scan (breakfast)", KEY_ARM_SCAN, add_octomap=False)
+    )
     success.add_child(_findAndGrasp())
-    success.add_child(_moveArmRetry("Arm to nav (post-grasp breakfast)", KEY_ARM_NAVIGATING))
+    success.add_child(
+        _moveArmRetry("Arm to nav (post-grasp breakfast)", KEY_ARM_NAVIGATING)
+    )
     success.add_child(
         py_trees.decorators.Retry(
             name="Retry goto table for breakfast",
@@ -623,11 +695,16 @@ def _processOneBreakfastItem() -> py_trees.composites.Sequence:
             num_failures=NAV_RETRY_LIMIT,
         )
     )
-    success.add_child(_moveArmRetry("Arm to placing (breakfast)", KEY_ARM_PLACING))
+    success.add_child(
+        _moveArmRetry("Arm to placing (breakfast)", KEY_ARM_PLACING, add_octomap=True)
+    )
     success.add_child(
         py_trees.decorators.Retry(
             name="Retry env point cloud (breakfast)",
-            child=BtNode_GetPointCloud(name="Get env pc (breakfast)", bb_point_cloud_key=KEY_ENV_POINTS),
+            child=BtNode_GetPointCloud(
+                name="Get env pc (breakfast)",
+                bb_point_cloud_key=KEY_ENV_POINTS,
+            ),
             num_failures=2,
         )
     )
@@ -656,7 +733,9 @@ def _processOneBreakfastItem() -> py_trees.composites.Sequence:
         )
     )
 
-    failure = py_trees.composites.Sequence(name="Breakfast failure continuation", memory=True)
+    failure = py_trees.composites.Sequence(
+        name="Breakfast failure continuation", memory=True
+    )
     failure.add_child(
         BtNode_Announce(
             name="Announce breakfast skip",
@@ -707,7 +786,11 @@ def createBreakfastPhase() -> py_trees.composites.Sequence:
         )
     )
     root.add_child(
-        BtNode_Announce(name="Announce breakfast", bb_source=None, message="Setting up breakfast.")
+        BtNode_Announce(
+            name="Announce breakfast",
+            bb_source=None,
+            message="Setting up breakfast.",
+        )
     )
     loop = py_trees.composites.Selector(name="Breakfast loop", memory=False)
     loop.add_child(
@@ -723,10 +806,38 @@ def createBreakfastPhase() -> py_trees.composites.Sequence:
 
 
 # --------------------------------------------------------------------------- #
-# Top-level
+# Phase: completion summary
 # --------------------------------------------------------------------------- #
 
+
+def createCompletionPhase() -> py_trees.composites.Sequence:
+    root = py_trees.composites.Sequence(name="Completion summary", memory=True)
+    root.add_child(
+        BtNode_BuildCompletionSummary(
+            name="Build completion summary",
+            score_trace_key=KEY_SCORE_TRACE,
+            summary_key=KEY_SUMMARY_MESSAGE,
+        )
+    )
+    root.add_child(
+        BtNode_Announce(
+            name="Announce summary", bb_source=KEY_SUMMARY_MESSAGE, message=None
+        )
+    )
+    return root
+
+
+# --------------------------------------------------------------------------- #
+# Top-level mission
+# --------------------------------------------------------------------------- #
+
+
 def createPickAndPlaceTask() -> py_trees.composites.Selector:
+    """Top-level Pick and Place mission tree.
+
+    Wraps the flat phase sequence in a Selector + Timeout decorator so a
+    runtime cutover terminates with an announcement instead of crashing.
+    """
     mission = py_trees.composites.Sequence(name="PickAndPlace mission", memory=True)
     mission.add_child(createConstantWriter())
     mission.add_child(
@@ -742,24 +853,20 @@ def createPickAndPlaceTask() -> py_trees.composites.Selector:
     )
     mission.add_child(_moveArmRetry("Arm to nav (startup)", KEY_ARM_NAVIGATING))
     mission.add_child(
-        BtNode_Announce(name="Announce start", bb_source=None, message="Starting pick and place.")
+        BtNode_Announce(
+            name="Announce start", bb_source=None, message="Starting pick and place."
+        )
     )
     mission.add_child(createEnterKitchen())
     mission.add_child(createTableScanPhase())
-    mission.add_child(createCleanupLoop())
+    mission.add_child(createCleanupPhase())
     mission.add_child(createBreakfastPhase())
-    mission.add_child(
-        BtNode_BuildCompletionSummary(
-            name="Build completion summary",
-            score_trace_key=KEY_SCORE_TRACE,
-            summary_key=KEY_SUMMARY_MESSAGE,
-        )
-    )
-    mission.add_child(
-        BtNode_Announce(name="Announce summary", bb_source=KEY_SUMMARY_MESSAGE, message=None)
-    )
+    mission.add_child(createCompletionPhase())
 
-    root = py_trees.composites.Selector(name="PickAndPlace root timeout guard", memory=False)
+    root = py_trees.composites.Selector(
+        name="PickAndPlace root timeout guard",
+        memory=False,
+    )
     root.add_child(
         py_trees.decorators.Timeout(
             name="Global runtime timeout",
