@@ -9,15 +9,16 @@
     }
   },
   "mock_mode": {
-    "enabled": false,
+    "enabled": true,
     "auto_detect": false,
     "subsystems": {
       "vision": {
-        "enabled": false,
+        "enabled": true,
         "announce_movement": false,
         "description": "Per-node mock mode for vision nodes. Allowed values: NO_MOCK, KEYPRESS, TELEOP, IMMEDIATE",
         "nodes": {
           "BtNode_ScanFor": "KEYPRESS",
+          "BtNode_ScanForGeneralist": "KEYPRESS",
           "BtNode_TrackPerson": "KEYPRESS",
           "BtNode_TrackPersonAction": "KEYPRESS",
           "BtNode_FindObj": "KEYPRESS",
@@ -34,7 +35,8 @@
           "BtNode_ShowImage": "KEYPRESS",
           "BtNode_FindObjTable": "KEYPRESS",
           "BtNode_CategorizeGrocery": "KEYPRESS",
-          "BtNode_FoldClothing": "KEYPRESS"
+          "BtNode_FoldClothing": "KEYPRESS",
+          "BtNode_GetImage": "KEYPRESS"
         }
       },
       "manipulation": {
@@ -42,14 +44,14 @@
         "announce_movement": false,
         "description": "Per-node mock mode for manipulation nodes. Set TELEOP for interactive arm control.",
         "nodes": {
-          "BtNode_Grasp": "TELEOP",
-          "BtNode_GraspWithPose": "TELEOP",
-          "BtNode_Place": "TELEOP",
-          "BtNode_Drop": "TELEOP",
-          "BtNode_MoveArmJoint": "TELEOP",
-          "BtNode_MoveArmSingle": "TELEOP",
-          "BtNode_GripperAction": "TELEOP",
-          "BtNode_PointTo": "TELEOP"
+          "BtNode_Grasp": "KEYPRESS",
+          "BtNode_GraspWithPose": "KEYPRESS",
+          "BtNode_Place": "KEYPRESS",
+          "BtNode_Drop": "KEYPRESS",
+          "BtNode_MoveArmJoint": "KEYPRESS",
+          "BtNode_MoveArmSingle": "KEYPRESS",
+          "BtNode_GripperAction": "KEYPRESS",
+          "BtNode_PointTo": "KEYPRESS"
         }
       },
       "navigation": {
@@ -84,7 +86,7 @@
         }
       },
       "announcement": {
-        "enabled": false,
+        "enabled": true,
         "announce_movement": false,
         "description": "Per-node mock mode for TTS nodes",
         "nodes": {

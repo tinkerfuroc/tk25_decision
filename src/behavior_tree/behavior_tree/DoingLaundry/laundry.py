@@ -235,13 +235,14 @@ def _requestOperatorHelp(
 
 def createEnterArena() -> py_trees.composites.Sequence:
     root = py_trees.composites.Sequence(name="Enter arena", memory=True)
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="Retry door detection",
-            child=BtNode_DoorDetection(name="Wait for arena door open", bb_door_state_key=KEY_DOOR_STATUS),
-            num_failures=999,
-        )
-    )
+    # root.add_child(
+    #     py_trees.decorators.Retry(
+    #         name="Retry door detection",
+    #         child=BtNode_DoorDetection(name="Wait for arena door open", bb_door_state_key=KEY_DOOR_STATUS),
+    #         num_failures=999,
+    #     )
+    # )
+    root.add_child(py_trees.timers.Timer(name="Wait before entering arena", duration=3.0))
     parallel = py_trees.composites.Parallel(
         name="Enter parallel", policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
@@ -249,31 +250,24 @@ def createEnterArena() -> py_trees.composites.Sequence:
         BtNode_Announce(name="Announce entering laundry area", bb_source=None,
                         message="Entering laundry area.")
     )
-    parallel.add_child(BtNode_TurnPanTilt(name="Tilt head forward", x=0.0, y=20.0))
+    parallel.add_child(BtNode_TurnPanTilt(name="Tilt head forward", x=0.0, y=20.0)) #TODO: pan-tilt degree
     parallel.add_child(
         py_trees.decorators.Retry(
-            name="Retry goto arena entry",
-            child=BtNode_GotoAction(name="Go to arena entry", key=KEY_POSE_ARENA_ENTRY),
+            name="Retry goto laundry area",
+            child=BtNode_GotoAction(name="Go to laundry area", key=KEY_POSE_LAUNDRY_AREA), #TODO: make sure the laundry place 
             num_failures=NAV_RETRY_LIMIT,
         )
     )
     root.add_child(parallel)
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="Retry goto laundry area",
-            child=BtNode_GotoAction(name="Go to laundry area", key=KEY_POSE_LAUNDRY_AREA),
-            num_failures=NAV_RETRY_LIMIT,
-        )
-    )
-    root.add_child(
-        BtNode_RecordCompletion(
-            name="Record nav to laundry",
-            score_trace_key=KEY_SCORE_TRACE,
-            action_label="nav_to_laundry",
-            points=15,
-            success=True,
-        )
-    )
+    # root.add_child(
+    #     BtNode_RecordCompletion(
+    #         name="Record nav to laundry",
+    #         score_trace_key=KEY_SCORE_TRACE,
+    #         action_label="nav_to_laundry",
+    #         points=15,
+    #         success=True,
+    #     )
+    # )
     return root
 
 
@@ -334,10 +328,10 @@ def createWasherRetrievalPhase() -> py_trees.behaviour.Behaviour:
 
     # Primary: real vision grasp. Object label 'clothing' is written to the
     # blackboard by the constant writer and threaded into BtNode_Grasp.
-    vision_pick = py_trees.composites.Sequence(name="Vision pick (washer)", memory=True)
-    vision_pick.add_child(_visionGraspClothing("washer"))
-    vision_pick.add_child(_moveArmRetry("Arm to nav (post-vision pick)", KEY_ARM_NAVIGATING))
-    vision_pick.add_child(
+    pick_basket = py_trees.composites.Sequence(name="Vision pick (washer)", memory=True)
+    pick_basket.add_child(_visionGraspClothing("washer"))
+    pick_basket.add_child(_moveArmRetry("Arm to nav (post-vision pick)", KEY_ARM_NAVIGATING))
+    pick_basket.add_child(
         BtNode_RecordCompletion(
             name="Record washer vision pick bonus",
             score_trace_key=KEY_SCORE_TRACE,
@@ -346,7 +340,7 @@ def createWasherRetrievalPhase() -> py_trees.behaviour.Behaviour:
             success=True,
         )
     )
-    pick.add_child(vision_pick)
+    pick.add_child(pick_basket)
 
     # Fallback: operator handover (existing behaviour).
     pick_ok = py_trees.composites.Sequence(name="Handover pick", memory=True)
@@ -412,75 +406,63 @@ def createWasherRetrievalPhase() -> py_trees.behaviour.Behaviour:
 # --------------------------------------------------------------------------- #
 # Phase: basket fallback (default off)
 # --------------------------------------------------------------------------- #
+def createClothPickPhase() -> py_trees.behaviour.Behaviour:
+    root = py_trees.composites.Sequence(name="Cloth in basket pick", memory=True)
+    
+    pick_shirt = py_trees.composites.Sequence(name="Pick shirt from basket", memory=True)
+    pick_shirt.add_child(_visionGraspClothing("shirt"))
+    pick_shirt.add_child(BtNode_GripperAction(name="Open gripper on shirt", open_gripper=True))
+    root.add_child(pick_shirt)
+
+    return root
 
 def createBasketPickPhase() -> py_trees.behaviour.Behaviour:
-    if not DO_PICK_FROM_BASKET:
-        return py_trees.behaviours.Success(name="Basket pick skipped (flag off)")
-
     root = py_trees.composites.Sequence(name="Basket pick", memory=True)
-    root.add_child(BtNode_TimeoutCutoverChecker(name="Check cutover (basket)",
-                                                phase_deadline_key=KEY_PHASE_DEADLINE))
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="Retry goto basket",
-            child=BtNode_GotoAction(name="Go to basket", key=KEY_POSE_BASKET),
-            num_failures=NAV_RETRY_LIMIT,
-        )
-    )
-    pick = py_trees.composites.Selector(name="Pick clothing from basket", memory=False)
 
-    vision_pick = py_trees.composites.Sequence(name="Vision pick (basket)", memory=True)
-    vision_pick.add_child(_visionGraspClothing("basket"))
-    vision_pick.add_child(_moveArmRetry("Arm to nav (post-vision basket)", KEY_ARM_NAVIGATING))
-    vision_pick.add_child(
-        BtNode_RecordCompletion(
-            name="Record basket vision pick bonus",
-            score_trace_key=KEY_SCORE_TRACE,
-            action_label="basket_pick",
-            points=100,
-            success=True,
-        )
-    )
-    pick.add_child(vision_pick)
+    pick_basket = py_trees.composites.Sequence(name="Vision pick (basket)", memory=True)
+    pick_basket.add_child(_visionGraspClothing("basket"))
+    pick_basket.add_child(pick_basket)
+    root.add_child(pick_basket)
 
-    handover = py_trees.composites.Sequence(name="Basket handover pick", memory=True)
-    handover.add_child(_moveArmRetry("Arm to basket pick pose", KEY_ARM_PICK_BASKET))
-    handover.add_child(_gripperOpenSafe("Open for basket handover"))
-    handover.add_child(
-        _requestOperatorHelp(
-            prompt="Please hand me one piece of clothing from the basket, then press s.",
-            record_label="basket_handover",
-            record_points=-40,
-        )
-    )
-    handover.add_child(
-        py_trees.decorators.Retry(
-            name="Retry close gripper (basket)",
-            child=BtNode_GripperAction(name="Close gripper on basket cloth", open_gripper=False),
-            num_failures=2,
-        )
-    )
-    handover.add_child(
-        BtNode_RecordCompletion(
-            name="Record basket pick bonus",
-            score_trace_key=KEY_SCORE_TRACE,
-            action_label="basket_pick",
-            points=100,
-            success=True,
-        )
-    )
-    pick.add_child(handover)
-    root.add_child(pick)
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="Retry goto folding table (basket)",
-            child=BtNode_GotoAction(name="Go to folding table", key=KEY_POSE_FOLDING_TABLE),
-            num_failures=NAV_RETRY_LIMIT,
-        )
-    )
-    root.add_child(_moveArmRetry("Arm to placing (basket carry)", KEY_ARM_PLACING))
-    root.add_child(_gripperOpenSafe("Drop basket cloth on stack zone"))
     return root
+    # handover = py_trees.composites.Sequence(name="Basket handover pick", memory=True)
+    # handover.add_child(_moveArmRetry("Arm to basket pick pose", KEY_ARM_PICK_BASKET))
+    # handover.add_child(_gripperOpenSafe("Open for basket handover"))
+    # handover.add_child(
+    #     _requestOperatorHelp(
+    #         prompt="Please hand me one piece of clothing from the basket, then press s.",
+    #         record_label="basket_handover",
+    #         record_points=-40,
+    #     )
+    # )
+    # handover.add_child(
+    #     py_trees.decorators.Retry(
+    #         name="Retry close gripper (basket)",
+    #         child=BtNode_GripperAction(name="Close gripper on basket cloth", open_gripper=False),
+    #         num_failures=2,
+    #     )
+    # )
+    # handover.add_child(
+    #     BtNode_RecordCompletion(
+    #         name="Record basket pick bonus",
+    #         score_trace_key=KEY_SCORE_TRACE,
+    #         action_label="basket_pick",
+    #         points=100,
+    #         success=True,
+    #     )
+    # )
+    # pick.add_child(handover)
+    # root.add_child(pick)
+    # root.add_child(
+    #     py_trees.decorators.Retry(
+    #         name="Retry goto folding table (basket)",
+    #         child=BtNode_GotoAction(name="Go to folding table", key=KEY_POSE_FOLDING_TABLE),
+    #         num_failures=NAV_RETRY_LIMIT,
+    #     )
+    # )
+    # root.add_child(_moveArmRetry("Arm to placing (basket carry)", KEY_ARM_PLACING))
+    # root.add_child(_gripperOpenSafe("Drop basket cloth on stack zone"))
+    # return root
 
 
 # --------------------------------------------------------------------------- #
@@ -698,38 +680,48 @@ def createExtraFoldPhase() -> py_trees.behaviour.Behaviour:
 # --------------------------------------------------------------------------- #
 
 def createDoingLaundryTask() -> py_trees.composites.Selector:
-    mission = py_trees.composites.Sequence(name="DoingLaundry mission", memory=True)
-    mission.add_child(createConstantWriter())
-    mission.add_child(
-        BtNode_InitTaskState(
-            name="Initialize task state",
-            score_trace_key=KEY_SCORE_TRACE,
-            phase_deadline_key=KEY_PHASE_DEADLINE,
-            max_runtime_key=KEY_MAX_RUNTIME,
-            fold_count_key=KEY_FOLD_COUNT,
-            stack_count_key=KEY_STACK_COUNT,
-        )
-    )
-    mission.add_child(_moveArmRetry("Arm to nav (startup)", KEY_ARM_NAVIGATING))
-    mission.add_child(
+    root = py_trees.composites.Sequence(name="DoingLaundry root", memory=True)
+    root.add_child(createConstantWriter())
+    # root.add_child(
+    #     BtNode_InitTaskState(
+    #         name="Initialize task state",
+    #         score_trace_key=KEY_SCORE_TRACE,
+    #         phase_deadline_key=KEY_PHASE_DEADLINE,
+    #         max_runtime_key=KEY_MAX_RUNTIME,
+    #         fold_count_key=KEY_FOLD_COUNT,
+    #         stack_count_key=KEY_STACK_COUNT,
+    #     )
+    # )
+    root.add_child(_moveArmRetry("Arm to nav (startup)", KEY_ARM_NAVIGATING))
+    root.add_child(
         BtNode_Announce(name="Announce start", bb_source=None,
                         message="Starting doing laundry.")
     )
-    mission.add_child(createEnterArena())
-    mission.add_child(py_trees.decorators.FailureIsSuccess(
-        name="Washer phase best-effort", child=createWasherRetrievalPhase(),
+    root.add_child(createEnterArena()) # Going to basket
+
+    root.add_child(py_trees.decorators.FailureIsSuccess(
+        name="Pick clothes in basket", child=createClothPickPhase(), # Picking cloth then drop
     ))
-    if DO_PICK_FROM_BASKET:
-        mission.add_child(py_trees.decorators.FailureIsSuccess(
-            name="Basket phase best-effort", child=createBasketPickPhase(),
-        ))
-    mission.add_child(py_trees.decorators.FailureIsSuccess(
+    root.add_child(py_trees.decorators.FailureIsSuccess(
+        name="Pick clothes in basket", child=createBasketPickPhase(), # Picking basket for transport
+    ))
+    root.add_child(_moveArmRetry("Arm to nav (post-vision basket)", KEY_ARM_NAVIGATING)) 
+    root.add_child(
+        py_trees.decorators.Retry(
+            name=f"Retry goto folding table",
+            child=BtNode_GotoAction(name=f"Go to folding table", key=KEY_POSE_FOLDING_TABLE),
+            num_failures=5,
+        )    
+    )
+    
+
+    root.add_child(py_trees.decorators.FailureIsSuccess(
         name="Primary fold best-effort", child=createPrimaryFoldPhase(),
     ))
-    mission.add_child(py_trees.decorators.FailureIsSuccess(
+    root.add_child(py_trees.decorators.FailureIsSuccess(
         name="Extra folds best-effort", child=createExtraFoldPhase(),
     ))
-    mission.add_child(
+    root.add_child(
         BtNode_BuildCompletionSummary(
             name="Build completion summary",
             score_trace_key=KEY_SCORE_TRACE,
@@ -738,20 +730,7 @@ def createDoingLaundryTask() -> py_trees.composites.Selector:
             summary_key=KEY_SUMMARY_MESSAGE,
         )
     )
-    mission.add_child(
+    root.add_child(
         BtNode_Announce(name="Announce summary", bb_source=KEY_SUMMARY_MESSAGE, message=None)
-    )
-
-    root = py_trees.composites.Selector(name="DoingLaundry root timeout guard", memory=False)
-    root.add_child(
-        py_trees.decorators.Timeout(
-            name="Global runtime timeout",
-            child=mission,
-            duration=MAX_RUNTIME_SEC,
-        )
-    )
-    root.add_child(
-        BtNode_Announce(name="Announce timeout", bb_source=None,
-                        message="Time is up. Ending laundry task.")
     )
     return root

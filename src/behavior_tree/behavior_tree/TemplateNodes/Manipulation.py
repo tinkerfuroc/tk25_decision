@@ -47,7 +47,7 @@
 # arm control for testing and development without real hardware.
 #
 
-from typing import Any
+from typing import Any, Optional
 import py_trees as pytree
 
 # from tinker_decision_msgs.srv import Grasp, Drop
@@ -238,9 +238,10 @@ class BtNode_Grasp(ActionHandler):
     def __init__(
         self,
         name: str,
-        bb_source: str,
-        action_name: str = "grasp_action",
-        bb_key_object_label: str = None,
+        bb_source: Optional[str] = None,
+        action_name: str = "start_grasp",
+        bb_key_vision_res: Optional[str] = None,
+        bb_key_object_label: Optional[str] = None,
     ):
         """
         executed when creating tree diagram, therefor very minimal
@@ -257,11 +258,15 @@ class BtNode_Grasp(ActionHandler):
             name, Grasp, action_name, bb_source, wait_for_server_timeout_sec=-3
         )
         self.blackboard = self.attach_blackboard_client(name=self.name)
-        self.blackboard.register_key(
-            key="vision_result",
-            access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source),
-        )
+        self._bb_key_vision_res = bb_key_vision_res
+        if bb_key_vision_res is not None:
+            self.blackboard.register_key(
+                key="vision_result",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", bb_key_vision_res
+                ),
+            )
         self._bb_key_object_label = bb_key_object_label
         if bb_key_object_label is not None:
             self.blackboard.register_key(
@@ -705,9 +710,9 @@ class BtNode_MoveArmSingle(ServiceHandler):
     def __init__(
         self,
         name: str,
-        service_name: str,
-        #  arm_joint_pose: list[float]
         arm_pose_bb_key: str,
+        service_name: str = "arm_joint_service",
+        #  arm_joint_pose: list[float]
         add_octomap: bool = False,
     ):
         super().__init__(name, service_name, ArmJointService)
@@ -911,18 +916,22 @@ class BtNode_PointTo(ServiceHandler):
             point = points[self.target_id]
 
             request = ArmJointService.Request()
-            
+
             request.joint0 = math.atan2(point.point.y, point.point.x)
-            self.node.get_logger().info(f"Calculated joint0 angle {request.joint0} to point at target {self.target_id} with coordinates ({point.point.x}, {point.point.y})")
-            if request.joint0 < -math.pi/2 or request.joint0 > math.pi/2:
-                self.node.get_logger().warning(f"Calculated joint0 angle {request.joint0} is out of expected range [-pi/2, pi/2]")
+            self.node.get_logger().info(
+                f"Calculated joint0 angle {request.joint0} to point at target {self.target_id} with coordinates ({point.point.x}, {point.point.y})"
+            )
+            if request.joint0 < -math.pi / 2 or request.joint0 > math.pi / 2:
+                self.node.get_logger().warning(
+                    f"Calculated joint0 angle {request.joint0} is out of expected range [-pi/2, pi/2]"
+                )
             request.joint1 = self.blackboard.arm_joint_pose[1]
             request.joint2 = self.blackboard.arm_joint_pose[2]
             request.joint3 = self.blackboard.arm_joint_pose[3]
             request.joint4 = self.blackboard.arm_joint_pose[4]
             request.joint5 = self.blackboard.arm_joint_pose[5]
             request.joint6 = self.blackboard.arm_joint_pose[6]
-            
+
             self.angle = math.atan2(point.point.y, point.point.x)
             request.add_octomap = False
 

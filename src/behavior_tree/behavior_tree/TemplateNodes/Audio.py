@@ -208,9 +208,9 @@ class BtNode_Announce(ServiceHandler):
     def __init__(
         self,
         name: str,
-        bb_source: str,
+        bb_source: Optional[str],
         service_name: str = "announce",
-        message: str | None = None,
+        message: Optional[str] = None,
     ):
         """
         Args:
