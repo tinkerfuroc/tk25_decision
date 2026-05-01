@@ -67,7 +67,7 @@ import py_trees
 from py_trees.common import Status
 import threading
 from rclpy.node import Node
-from typing import Any
+from typing import Any, Optional
 from behavior_tree.config import (
     is_node_mocked,
     announce_node_action,
@@ -117,11 +117,12 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
 
     """
 
-    def __init__(self,
-                 name: str,
-                 service_name: str,
-                 service_type: Any,
-                 ):
+    def __init__(
+        self,
+        name: str,
+        service_name: str,
+        service_type: Any,
+    ):
         """Initialize the ServiceHandler.
 
         Parameters
@@ -140,7 +141,9 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         # Check if this specific node should be mocked
         # Use the class name to determine mock status
         self.mock_mode = is_node_mocked(self.__class__.__name__)
-        self.mock_interaction_mode = get_node_mock_interaction_mode(self.__class__.__name__)
+        self.mock_interaction_mode = get_node_mock_interaction_mode(
+            self.__class__.__name__
+        )
         self.mock_subsystem = get_node_subsystem_name(self.__class__.__name__)
 
         # Guard the data for thread safety
@@ -148,8 +151,8 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
 
         self.node: Node = None
 
-        self.response = None    # Future object for receiving response
-        self.client = None      # Service client
+        self.response = None  # Future object for receiving response
+        self.client = None  # Service client
 
         # For mock mode keyboard press
         self._mock_pressed = False
@@ -183,21 +186,30 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         KeyError
             If 'node' is not found in kwargs.
         """
-        print("Setting up service handler %s for node name %s" % (self.service_name, self.name))
+        print(
+            "Setting up service handler %s for node name %s"
+            % (self.service_name, self.name)
+        )
         # node should be passed down the tree from the root node
         try:
-            self.node : Node = kwargs['node']
+            self.node: Node = kwargs["node"]
         except KeyError as e:
-            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
+            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(
+                self.name, self.__class__.__name__
+            )
             raise KeyError(error_message) from e  # 'direct cause' traceability
 
         # If the service type originates from our mock_messages module but the node
         # wasn't explicitly marked as mocked in the config, force mock mode here so
         # we don't attempt to create a real ROS client for a non-ROS type.
         if not self.mock_mode:
-            service_mod = getattr(self.service_type, '__module__', '')
-            if isinstance(service_mod, str) and service_mod.startswith('behavior_tree.mock_messages'):
-                print(f"WARNING: Service type for {self.service_name} comes from mock_messages; forcing mock mode to avoid creating client.")
+            service_mod = getattr(self.service_type, "__module__", "")
+            if isinstance(service_mod, str) and service_mod.startswith(
+                "behavior_tree.mock_messages"
+            ):
+                print(
+                    f"WARNING: Service type for {self.service_name} comes from mock_messages; forcing mock mode to avoid creating client."
+                )
                 self.mock_mode = True
 
         # Skip creating service client in mock mode
@@ -216,7 +228,9 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
                     print(f"⚠ {warn}")
                     if self.node is not None:
                         self.node.get_logger().warning(warn)
-            print(f"MOCK MODE: Skipping service client creation for {self.service_name}")
+            print(
+                f"MOCK MODE: Skipping service client creation for {self.service_name}"
+            )
             return
 
         # create the service client and wait until it connects
@@ -224,7 +238,7 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         self.client = self.node.create_client(self.service_type, self.service_name)
         print("Created client for service %s" % self.service_name)
         while not self.client.wait_for_service(timeout_sec=1.0):
-            self.logger.debug('service not available, waiting again...')
+            self.logger.debug("service not available, waiting again...")
         print("Finished setting up service handler")
 
     def initialise(self):
@@ -246,7 +260,11 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             self.response = None  # Clear response for mock mode
             # if self.clearing_policy == py_trees.common.ClearingPolicy.ON_INITIALISE:
             #     self.msg = None
-        if self.mock_mode and self.mock_interaction_mode == "teleop" and self._mock_teleop_node is not None:
+        if (
+            self.mock_mode
+            and self.mock_interaction_mode == "teleop"
+            and self._mock_teleop_node is not None
+        ):
             self._mock_teleop_node.initialise()
         elif self.mock_mode and self.mock_interaction_mode == "teleop":
             warn = (
@@ -300,13 +318,19 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             if self._mock_tick_counter <= self._mock_auto_ticks_required:
                 self.feedback_message = f"MOCK: auto-completing ({self._mock_tick_counter}/{self._mock_auto_ticks_required})"
                 return py_trees.common.Status.RUNNING
-            if should_announce_movement(self.__class__.__name__) and is_mock_tts_active():
+            if (
+                should_announce_movement(self.__class__.__name__)
+                and is_mock_tts_active()
+            ):
                 self.feedback_message = "MOCK: waiting for TTS broadcast"
                 return py_trees.common.Status.RUNNING
             self.feedback_message = "MOCK: auto-complete finished"
             return py_trees.common.Status.SUCCESS
 
-        if self.mock_interaction_mode == "teleop" and self._mock_teleop_node is not None:
+        if (
+            self.mock_interaction_mode == "teleop"
+            and self._mock_teleop_node is not None
+        ):
             if not self._mock_announced:
                 announce_node_action(self.name, self.__class__.__name__)
                 self._mock_announced = True
@@ -320,11 +344,11 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
                 else:
                     self.feedback_message = "MOCK: Teleop active"
             return status
-        
+
         if not self._mock_announced:
             announce_node_action(self.name, self.__class__.__name__)
             self._mock_announced = True
-            
+
         key = self._mock_input_controller.pop_key(
             self.mock_subsystem,
             consumer_id=self._mock_consumer_id,
@@ -367,7 +391,7 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             print(f"⚠ WARNING: {warn}")
             if self.node is not None:
                 self.node.get_logger().warning(warn)
-    
+
     def terminate(self, new_status):
         """
         Clean up terminal settings if in mock mode.
@@ -384,7 +408,7 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
             except Exception:
                 pass
         super().terminate(new_status)
-    
+
     def update(self):
         """
         Default update for mock mode - return SUCCESS immediately.
@@ -399,13 +423,14 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
 
 
 class BtNode_WriteToBlackboard(py_trees.behaviour.Behaviour):
-    def __init__(self,
-                 name: str,
-                 bb_namespace: str,
-                 bb_key: str,
-                 bb_source: str,
-                 object: Any = None
-                 ):
+    def __init__(
+        self,
+        name: str,
+        bb_namespace: str,
+        bb_key: str,
+        bb_source: Optional[str],
+        object: Any = None,
+    ):
         super(BtNode_WriteToBlackboard, self).__init__(name=name)
         self.bb_namespace = bb_namespace
         self.bb_key = bb_key
@@ -413,23 +438,35 @@ class BtNode_WriteToBlackboard(py_trees.behaviour.Behaviour):
         self.object = object
 
         # attaches a blackboard (more like a shared memory section with key-value pair references) under the namespace Locations
-        self.bb_write_client = self.attach_blackboard_client(name=f"Write {self.name}", namespace=self.bb_namespace)
-         # register a key with the name of the object, with this client having write access
-        self.bb_write_client.register_key(self.bb_key, access=py_trees.common.Access.WRITE)
-    
+        self.bb_write_client = self.attach_blackboard_client(
+            name=f"Write {self.name}", namespace=self.bb_namespace
+        )
+        # register a key with the name of the object, with this client having write access
+        self.bb_write_client.register_key(
+            self.bb_key, access=py_trees.common.Access.WRITE
+        )
+
     def setup(self, **kwargs: Any) -> None:
         try:
-            self.node : Node = kwargs['node']
+            self.node: Node = kwargs["node"]
         except KeyError as e:
-            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
+            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(
+                self.name, self.__class__.__name__
+            )
             raise KeyError(error_message) from e  # 'direct cause' traceability
 
         if self.object is None and self.bb_source is not None:
-            self.bb_read_client = self.attach_blackboard_client(name="WriteToBlackboard")
-            self.bb_read_client.register_key(self.bb_source, access=py_trees.common.Access.READ)
+            self.bb_read_client = self.attach_blackboard_client(
+                name="WriteToBlackboard"
+            )
+            self.bb_read_client.register_key(
+                self.bb_source, access=py_trees.common.Access.READ
+            )
 
             # debugger info (shown with DebugVisitor)
-            self.logger.debug(f"Setup Write to Blackboard, reading from {self.bb_source}")
+            self.logger.debug(
+                f"Setup Write to Blackboard, reading from {self.bb_source}"
+            )
         else:
             self.logger.debug(f"Setup Write to Blackboard, object already provided")
 
@@ -441,14 +478,18 @@ class BtNode_WriteToBlackboard(py_trees.behaviour.Behaviour):
                 self.feedback_message = f"Write to blackboard reading object failed"
                 raise e
 
-        self.logger.debug(f"Setup write for namespace {self.bb_namespace}, key {self.bb_key}")
-    
+        self.logger.debug(
+            f"Setup write for namespace {self.bb_namespace}, key {self.bb_key}"
+        )
+
     def update(self) -> Status:
         self.logger.debug(f"Update writing to blackboard")
 
         try:
             self.bb_write_client.set(self.bb_key, self.object, overwrite=True)
-            self.feedback_message = f"Success writing to namespace {self.bb_namespace}, key {self.bb_key}"
+            self.feedback_message = (
+                f"Success writing to namespace {self.bb_namespace}, key {self.bb_key}"
+            )
             return py_trees.common.Status.SUCCESS
         except Exception as e:
             self.feedback_message = f"Writing to blackboard failed: {e}"
@@ -456,65 +497,83 @@ class BtNode_WriteToBlackboard(py_trees.behaviour.Behaviour):
 
 
 class BtNode_ClearBlackboard(py_trees.behaviour.Behaviour):
-    def __init__(self,
-                 name: str,
-                 bb_namespace: str,
-                 bb_key: str,
-                 ):
+    def __init__(
+        self,
+        name: str,
+        bb_namespace: str,
+        bb_key: str,
+    ):
         super(BtNode_ClearBlackboard, self).__init__(name=name)
         self.bb_namespace = bb_namespace
         self.bb_key = bb_key
-    
+
     def setup(self, **kwargs: Any) -> None:
         try:
-            self.node : Node = kwargs['node']
+            self.node: Node = kwargs["node"]
         except KeyError as e:
-            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
+            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(
+                self.name, self.__class__.__name__
+            )
             raise KeyError(error_message) from e  # 'direct cause' traceability
 
         # attaches a blackboard (more like a shared memory section with key-value pair references) under the namespace Locations
-        self.bb_write_client = self.attach_blackboard_client(name=f"Write {self.name}", namespace=self.bb_namespace)
-         # register a key with the name of the object, with this client having write access
-        self.bb_write_client.register_key(self.bb_key, access=py_trees.common.Access.WRITE)
+        self.bb_write_client = self.attach_blackboard_client(
+            name=f"Write {self.name}", namespace=self.bb_namespace
+        )
+        # register a key with the name of the object, with this client having write access
+        self.bb_write_client.register_key(
+            self.bb_key, access=py_trees.common.Access.WRITE
+        )
 
-        self.logger.debug(f"Clear blackboard setup for namespace {self.bb_namespace}: {self.bb_key}")
-        
+        self.logger.debug(
+            f"Clear blackboard setup for namespace {self.bb_namespace}: {self.bb_key}"
+        )
+
     def initialise(self) -> None:
-        self.logger.debug(f"Setup write for namespace {self.bb_namespace}, key {self.bb_key}")
-    
+        self.logger.debug(
+            f"Setup write for namespace {self.bb_namespace}, key {self.bb_key}"
+        )
+
     def update(self) -> Status:
         self.logger.debug(f"Update writing to blackboard")
 
         try:
             self.bb_write_client.set(self.bb_key, None, overwrite=True)
-            self.feedback_message = "Success clearing namespace {self.bb_namespace}, key {self.bb_key}"
+            self.feedback_message = (
+                "Success clearing namespace {self.bb_namespace}, key {self.bb_key}"
+            )
             return py_trees.common.Status.SUCCESS
         except Exception as e:
             self.feedback_message = f"Clearing blackboard failed: {e}"
-            return py_trees.common.Status.FAILURE    
+            return py_trees.common.Status.FAILURE
 
 
 class BtNode_CheckIfEmpty(py_trees.behaviour.Behaviour):
-    def __init__(self,
-                 name: str,
-                 bb_source: str,
-                 ):
+    def __init__(
+        self,
+        name: str,
+        bb_source: str,
+    ):
         super(BtNode_CheckIfEmpty, self).__init__(name=name)
         self.bb_source = bb_source
-    
+
     def setup(self, **kwargs: Any) -> None:
         try:
-            self.node : Node = kwargs['node']
+            self.node: Node = kwargs["node"]
         except KeyError as e:
-            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
+            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(
+                self.name, self.__class__.__name__
+            )
             raise KeyError(error_message) from e  # 'direct cause' traceability
 
         self.bb_read_client = self.attach_blackboard_client(name="WriteToBlackboard")
-        self.bb_read_client.register_key(self.bb_source, access=py_trees.common.Access.READ)
+        self.bb_read_client.register_key(
+            self.bb_source, access=py_trees.common.Access.READ
+        )
 
         # debugger info (shown with DebugVisitor)
         self.logger.debug(f"Setup Check if empty for {self.bb_source}")
-        
+
     def initialise(self) -> None:
         try:
             self.object = self.bb_read_client.get(self.bb_source)
@@ -523,7 +582,7 @@ class BtNode_CheckIfEmpty(py_trees.behaviour.Behaviour):
             raise e
 
         self.logger.debug(f"Checking {self.bb_namespace}, key {self.bb_key}")
-    
+
     def update(self) -> Status:
         self.logger.debug(f"Updating check blackboard")
 
@@ -536,42 +595,35 @@ class BtNode_CheckIfEmpty(py_trees.behaviour.Behaviour):
 
 
 class BtNode_WaitTicks(py_trees.behaviour.Behaviour):
-    def __init__(
-            self,
-            name: str,
-            ticks: int
-    ):
+    def __init__(self, name: str, ticks: int):
         super().__init__(name)
         self.n_ticks = ticks
         self.counter = 0
-    
+
     def initialise(self) -> None:
         self.counter = 0
-    
+
     def update(self) -> Status:
         self.counter += 1
-        
+
         if self.counter > self.n_ticks:
             return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
-        
+
+
 class BtNode_WaitKeyboardPress(py_trees.behaviour.Behaviour):
-    def __init__(
-            self,
-            name: str,
-            key: str = None
-    ):
+    def __init__(self, name: str, key: str = None):
         super().__init__(name)
         self.key = key
         self.pressed = False
-    
+
     def initialise(self) -> None:
         self.pressed = False
         if self.key:
             print(f"Press '{self.key}' to continue...")
         else:
-            print('Press any key to continue...')
+            print("Press any key to continue...")
 
     def update(self) -> Status:
         import sys

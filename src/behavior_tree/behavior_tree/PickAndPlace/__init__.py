@@ -1,4 +1,3 @@
-from .pick_and_place import createPickAndPlaceTask
+from .pick_and_place import pickAndPlaceShortened
 
-
-__all__ = ["createPickAndPlaceTask"]
+__all__ = ["pickAndPlaceShortened"]
