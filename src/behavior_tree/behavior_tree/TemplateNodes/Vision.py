@@ -245,6 +245,10 @@ class BtNode_ScanForGeneralist(ServiceHandler):
         self.bb_write_client.register_key(self.bb_key, access=pytree.common.Access.WRITE)
 
         if self.read:
+            if self.bb_source is None:
+                self.read = False
+                self.object = "object"
+                self.logger.warning("no object or valid bb_souce given, using 'object'")
             self.bb_read_client = self.attach_blackboard_client(name="ScanForGeneralist Read")
             self.bb_read_client.register_key(self.bb_source, access=pytree.common.Access.READ)
             self.logger.debug(f"Setup ScanForGeneralist, reading from {self.bb_source}")
