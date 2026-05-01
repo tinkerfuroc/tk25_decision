@@ -9,7 +9,7 @@
     }
   },
   "mock_mode": {
-    "enabled": false,
+    "enabled": true,
     "auto_detect": false,
     "subsystems": {
       "vision": {
@@ -38,7 +38,7 @@
         }
       },
       "manipulation": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": false,
         "description": "Per-node mock mode for manipulation nodes. Set TELEOP for interactive arm control.",
         "nodes": {
@@ -67,7 +67,7 @@
         }
       },
       "audio_input": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": false,
         "description": "Per-node mock mode for audio input nodes (not announcement)",
         "nodes": {
@@ -105,7 +105,7 @@
     }
   },
   "keyboard_control": {
-    "enabled": false,
+    "enabled": true,
     "description": "When false, KEYPRESS mode degrades to IMMEDIATE"
   },
   "mock_keyboard": {

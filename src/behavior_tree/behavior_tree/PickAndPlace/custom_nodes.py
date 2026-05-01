@@ -89,7 +89,7 @@ class BtNode_FindObjTable(ServiceHandler):
         request.sort_closest = True
         request.sort_highest = False
         request.return_rgb_image = True
-        request.return_depth_image = False
+        request.return_depth_image = True
         request.return_segments = True
         request.force_vlm_sam = False
         request.use_vlm_sam_fallback = self.use_vlm_sam_fallback
