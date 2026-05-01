@@ -170,8 +170,16 @@ DO_FOLD_PICKED_PIECES                = bool(constants["do_fold_picked_pieces"])
 
 MAX_EXTRA_FOLDS = int(constants["max_extra_folds"])
 
-ARM_SERVICE_NAME  = "arm_joint_service"
-TARGET_FRAME      = "base_link"
+ARM_SERVICE_NAME    = "arm_joint_service"
+GRASP_ACTION_NAME   = "grasp"
+FOLD_ACTION_NAME    = "fold_clothing_action"
+TARGET_FRAME        = "base_link"
+
+# Object label used for vision detection + grasp + fold goals.
+OBJECT_LABEL_CLOTHING = "clothing"
+CLOTHING_SCAN_PROMPT  = "clothing"
+SCAN_RETRY_LIMIT      = int(constants.get("scan_retry_limit", 2))
+GRASP_RETRY_LIMIT     = int(constants.get("grasp_retry_limit", 2))
 
 # ============================================================
 # Blackboard keys
@@ -204,3 +212,9 @@ KEY_PHASE_DEADLINE  = "dl_phase_deadline"
 KEY_SUMMARY_MESSAGE = "dl_summary_message"
 KEY_FOLD_COUNT      = "dl_fold_count"
 KEY_STACK_COUNT     = "dl_stack_count"
+
+# Vision + grasp scratch (used by scan-then-grasp clothing branch).
+KEY_VISION_RESULT      = "dl_vision_result"
+KEY_OBJECT_LABEL       = "dl_object_label"
+KEY_GRASP_ANNOUNCEMENT = "dl_grasp_announcement"
+KEY_ENV_POINTS         = "dl_env_points"

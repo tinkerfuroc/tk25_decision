@@ -192,6 +192,15 @@ class DetectWaving(MockService):
     pass
 
 
+class PlacingLocation(MockService):
+    """Mock PlacingLocation service."""
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.candidate_points = []
+            self.candidate_bboxes = []
+
+
 # Mock Arm Services
 class Drop(MockService):
     """Mock Drop service."""
@@ -242,6 +251,23 @@ class JointMove(MockAction):
             self.joint5 = 0.0
             self.joint6 = 0.0
             self.env_points = []
+
+
+class FoldClothing(MockAction):
+    """Mock FoldClothing action."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.target_point = None
+            self.object_label = ""
+            self.fold_cycles = 0
+            self.env_points = []
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.success = False
+            self.error_msg = ""
 
 
 class CartesianMove(MockAction):

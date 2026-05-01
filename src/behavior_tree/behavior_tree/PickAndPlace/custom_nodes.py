@@ -13,12 +13,18 @@ import py_trees
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
-from behavior_tree.messages import Categorize, ObjectDetection
+from behavior_tree.messages import Categorize, ObjectDetectionGeneralist
 from geometry_msgs.msg import Pose
 
 
 class BtNode_FindObjTable(ServiceHandler):
-    """Find object on table using YOLO detection service."""
+    """Find object on table using the generalist detection service.
+
+    Uses `tinker_vision_msgs_26/srv/ObjectDetectionGeneralist` on
+    `/object_detection_generalist`. Open-vocab prompts fall through to the
+    YOLO-World / Gemini + FastSAM path when `use_vlm_sam_fallback=True`.
+    Sorts closest-first so the nearest match is the grasp candidate.
+    """
 
     def __init__(
         self,
@@ -31,8 +37,9 @@ class BtNode_FindObjTable(ServiceHandler):
         bb_key_object_label: str = None,
         target_frame: str = "base_link",
         use_realsense: bool = True,
-        service_name="object_detection_yolo",
-        service_type=ObjectDetection,
+        service_name: str = "object_detection_generalist",
+        service_type=ObjectDetectionGeneralist,
+        use_vlm_sam_fallback: bool = True,
     ):
         super().__init__(name=name, service_name=service_name, service_type=service_type)
         self.bb_key_prompt = bb_key_prompt
@@ -71,12 +78,21 @@ class BtNode_FindObjTable(ServiceHandler):
                 remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_object_label),
             )
         self.use_realsense = use_realsense
+        self.target_frame = target_frame
+        self.use_vlm_sam_fallback = use_vlm_sam_fallback
 
     def initialise(self):
-        request = ObjectDetection.Request()
+        request = ObjectDetectionGeneralist.Request()
         request.prompt = self.blackboard.prompt
-        request.flags = "find_for_grasp|request_image|request_segmentation"
-        request.camera = "realsense" if self.use_realsense else "orbecc"
+        request.camera = "realsense" if self.use_realsense else "orbbec"
+        request.target_frame = self.target_frame
+        request.sort_closest = True
+        request.sort_highest = False
+        request.return_rgb_image = True
+        request.return_depth_image = False
+        request.return_segments = True
+        request.force_vlm_sam = False
+        request.use_vlm_sam_fallback = self.use_vlm_sam_fallback
         self.response = self.client.call_async(request)
 
     def update(self):
