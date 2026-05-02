@@ -1250,7 +1250,18 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
     SETTLE_SAMPLES_REQUIRED = 1
     SETTLE_TIMEOUT_SEC      = 2.0
 
-    def __init__(self, name: str, x: float = 0.0, y: float = 0.0, speed: float = 0.0):
+    def __init__(self, 
+                 name: str, 
+                 x: float = 0.0, 
+                 y: float = 0.0, 
+                 speed: float = 0.0,
+                 x_key: Optional[str] = None,
+                 y_key: Optional[str] = None,
+                 speed_key: Optional[str] = None,
+                 ):
+        """
+        x_key and y_key takes in RADIANS. x and y are in DEGREES.
+        """
         super().__init__(name)
         self.x = x
         self.y = y
@@ -1263,6 +1274,9 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self._settle_count = 0
         self._settle_deadline = None
         self._skip_settle = False
+        self.x_key = x_key
+        self.y_key = y_key
+        self.speed_key = speed_key
         self.mock_mode = is_node_mocked(self.__class__.__name__)
 
     def setup(self, **kwargs) -> None:
@@ -1275,6 +1289,26 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         if self.mock_mode:
             print("MOCK MODE: Skipping pan/tilt publisher creation")
             return
+    
+        self.bb_read_client = self.attach_blackboard_client(name=self.name + " Blackboard Read")
+        if self.x_key:
+            self.bb_read_client.register_key(
+                key="x",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.x_key) if self.x_key else None
+            )
+        if self.y_key:
+            self.bb_read_client.register_key(
+                key="y",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.y_key) if self.y_key else None
+            )
+        if self.speed_key:
+            self.bb_read_client.register_key(
+                key="speed",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.speed_key) if self.speed_key else None
+            )
 
         self.publisher = self.node.create_publisher(
             PanTiltCommand, self.PAN_TILT_COMMAND_TOPIC, 1
@@ -1306,9 +1340,17 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self._skip_settle = False
 
     def initialise(self) -> None:
+        if self.bb_read_client.exists("x"):
+            self.x = self.bb_read_client.get("x") / math.pi * 180.0
+        if self.bb_read_client.exists("y"):
+            self.y = self.bb_read_client.get("y") / math.pi * 180.0
+        if self.bb_read_client.exists("speed"):
+            self.speed = self.bb_read_client.get("speed")
+
         if self.mock_mode:
             self._skip_settle = True
             return
+        
         msg = self._build_command_msg(self.x, self.y)
         self.publisher.publish(msg)
         self.logger.info(
