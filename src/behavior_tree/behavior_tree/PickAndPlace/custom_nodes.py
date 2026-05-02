@@ -228,9 +228,6 @@ class BtNode_FindObjTable(ServiceHandler):
         request.sort_closest = True
         request.sort_highest = False
         request.return_rgb_image = True
-        # Depth must reach the grasp action (Grasp.Goal.depth_image) — the
-        # downstream BtNode_Grasp.send_goal() reads vision_result.depth_image
-        # directly. Without this, AnyGrasp gets an empty image and fails.
         request.return_depth_image = True
         request.return_segments = True
         request.force_vlm_sam = False

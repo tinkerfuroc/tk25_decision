@@ -7,7 +7,6 @@ This module keeps focus on phase composition and node wiring.
 Constants, precomputed poses, and key declarations live in `HRI/config.py`.
 """
 
-import py
 import py_trees
 
 from behavior_tree.TemplateNodes.Audio import (
@@ -800,6 +799,10 @@ def createBagFlow():
     root.add_child(BtNode_GripperAction(name="Close gripper after drop", open_gripper=False))
     root.add_child(BtNode_MoveArmSingle(name="move arm back to navigation pose", service_name="arm_joint_service", arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     return root
+
+
+def arrivalAndIntake(guest_id: int):
+    pass
 
 
 def createHRITask():

@@ -1246,8 +1246,8 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
 
     PAN_TILT_COMMAND_TOPIC  = "/pan_tilt_controller/cmd"
     PAN_TILT_STATE_TOPIC    = "/pan_tilt_controller/state"
-    SETTLE_EPS_DEG          = 1.0
-    SETTLE_SAMPLES_REQUIRED = 2
+    SETTLE_EPS_DEG          = 1.5
+    SETTLE_SAMPLES_REQUIRED = 1
     SETTLE_TIMEOUT_SEC      = 2.0
 
     def __init__(self, name: str, x: float = 0.0, y: float = 0.0, speed: float = 0.0):
