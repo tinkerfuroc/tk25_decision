@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import py
 from sympy import use
 
 """Pick and Place — main mission tree (RoboCup@Home 2026 §5.2).
@@ -224,7 +223,7 @@ def _scanForGeneralistRetry(name: str, bb_source, bb_key, object, use_orbbec=Tru
         child=BtNode_ScanForGeneralist(
             name=name, bb_source=bb_source, bb_key=bb_key, object=object, use_orbbec=use_orbbec, 
             return_rgb_image=True, return_depth_image=True,
-            force_vlm_sam=True
+            force_vlm_sam=True, return_segments=True
         ),
         num_failures=5,
     )
@@ -328,7 +327,7 @@ def scanTableAndAnnounce():
             name="scan table",
             bb_source=None,
             bb_key=KEY_SCAN_RESULTS_TABLE,
-            object="plate . cup . bottle . biscuit . chip . lays . bread . cookie",  # TODO: change to actual items on table
+            object="hand sanitizer . bottled milk . plate . cup . sprite bottle . cola . water bottle. fork . knife . bottled chips . lays . bread . oreo cookie box . bottle .",
         )
     )
     root.add_child(parallel_scan_and_announce)
@@ -392,7 +391,7 @@ def graspAtTableOnce():
             name="scan for object using realsense",
             bb_source=None,
             bb_key=KEY_GRASP_VISION_RES,
-            object="plate . cup . bottle . biscuit . chip . lays . bread . cookie",
+            object="hand sanitizer . bottled milk . plate . cup . sprite bottle . cola . water bottle. bottled chips . bread . oreo cookie box . bottle .", # do not grasp fork or knife
             use_orbbec=False
         )
     )
@@ -583,10 +582,10 @@ def placeTablet():
 def pickAndPlaceShortened():
     root = py_trees.composites.Sequence("Pick and place task", memory=True)
     root.add_child(createConstantWriter())
-    root.add_child(enterArena())
-    root.add_child(navigateToShelf())
-    root.add_child(scanShelf())
-    root.add_child(navigateToTable())
+    # root.add_child(enterArena())
+    # root.add_child(navigateToShelf())
+    # root.add_child(scanShelf())
+    # root.add_child(navigateToTable())
     root.add_child(scanTableAndAnnounce())
     root.add_child(graspAllAtTable(4))
     root.add_child(navigateToWashStaging())
