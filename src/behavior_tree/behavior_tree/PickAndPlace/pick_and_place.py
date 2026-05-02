@@ -203,6 +203,8 @@ def _gotoRetryWith_Announcement(location_name: str, pose_key: str):
         name=f"Navigate to {location_name} sequence", memory=True
     )
     navigation_sequence.add_child(
+        # TODO: failed during Robocup China 2026 for some reason 
+        # in which the arm did not move to navigating shell for some reason
         _moveArmRetry(
             f"Arm to nav (pre-{location_name})", KEY_ARM_NAVIGATING, retries=3
         )
@@ -330,7 +332,7 @@ def scanTableAndAnnounce():
             name="scan table",
             bb_source=None,
             bb_key=KEY_SCAN_RESULTS_TABLE,
-            object="hand sanitizer . bottled milk . bottle . cola . water bottle. fork . knife . bottled chips . lays . bread . oreo cookie box . bottle .",
+            object="bottle . cup . chip can . hand sanitizer . plate",
         )
     )
     root.add_child(parallel_scan_and_announce)
@@ -478,7 +480,9 @@ def graspAllAtTable(n_items: int):
         )
     )
     retry_grasp.add_child(py_trees.decorators.Retry(
-        name=f"Retry grasp three times", child=graspAtTableOnce(), num_failures=3
+        name=f"Retry grasp three times", 
+        child=graspAtTableOnce("bottle . cup . can . hand sanitizer"), 
+        num_failures=3
     ))
     _retry_grasp = py_trees.decorators.FailureIsSuccess(
         name="Retry grasp at table (best effort)", child=retry_grasp
@@ -497,7 +501,7 @@ def graspAllAtTable(n_items: int):
         )
     )
     retry_grasp_simple_items.add_child(
-        graspAtTableOnce("hand sanitizer . bottled milk . sprite bottle . cola . water bottle. bottled chips . oreo cookie box . bottle .")
+        graspAtTableOnce("bottle . cup . chip can . hand sanitizer")
     )
     _retry_grasp_simple_items = py_trees.decorators.Retry(
         name="Retry grasp simple items at table (best effort)", 
@@ -628,10 +632,10 @@ def placeTablet():
 def pickAndPlaceShortened():
     root = py_trees.composites.Sequence("Pick and place task", memory=True)
     root.add_child(createConstantWriter())
-    # root.add_child(enterArena())
-    # root.add_child(navigateToShelf())
-    # root.add_child(scanShelf())
-    # root.add_child(navigateToTable())
+    root.add_child(enterArena())
+    root.add_child(navigateToShelf())
+    root.add_child(scanShelf())
+    root.add_child(navigateToTable())
     root.add_child(scanTableAndAnnounce())
     root.add_child(graspAllAtTable(4))
     root.add_child(navigateToWashStaging())
