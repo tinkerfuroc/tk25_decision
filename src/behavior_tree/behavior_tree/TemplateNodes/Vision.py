@@ -218,11 +218,11 @@ class BtNode_ScanForGeneralist(ServiceHandler):
                  transform_to_map: bool = False,
                  use_vlm_sam_fallback: bool = True,
                  force_vlm_sam: bool = False,
-                 sort_closest: bool = False,
+                 sort_closest: bool = True,
                  sort_highest: bool = False,
                  return_rgb_image: bool = False,
                  return_depth_image: bool = False,
-                 return_segments: bool = False,
+                 return_segments: bool = True,
                  ):
         super(BtNode_ScanForGeneralist, self).__init__(name, service_name, ObjectDetectionGeneralist)
         self.bb_key = bb_key
