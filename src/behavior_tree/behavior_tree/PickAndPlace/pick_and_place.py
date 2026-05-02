@@ -68,6 +68,7 @@ from .config import (
     KEY_POSE_TRASH_BIN,
     KEY_POSE_WASH_STAGING,
     KEY_TARGET_FRAME,
+    KEY_POSE_DISH_WASHER,
     KEY_VISION_RESULT,
     MAX_RUNTIME_SEC,
     NAV_RETRY_LIMIT,
@@ -86,6 +87,7 @@ from .config import (
     POSE_TABLE,
     POSE_TRASH_BIN,
     POSE_WASH_STAGING,
+    POSE_DISH_WASHER,
     TARGET_FRAME,
     KEY_IMG_SHELF,
     KEY_SCAN_RESULTS_TABLE,
@@ -120,6 +122,7 @@ def createConstantWriter() -> py_trees.composites.Parallel:
         ("Write trash bin pose", KEY_POSE_TRASH_BIN, POSE_TRASH_BIN),
         ("Write cabinet pose", KEY_POSE_CABINET, POSE_CABINET),
         ("Write kitchen shelf pose", KEY_POSE_KITCHEN_SHELF, POSE_KITCHEN_SHELF),
+        ("Write dishwasher pose", KEY_POSE_DISH_WASHER, POSE_DISH_WASHER),
         ("Write wash-staging point", KEY_POINT_WASH_STAGING, POINT_WASH_STAGING),
         ("Write cabinet default pt", KEY_POINT_CABINET_DEFAULT, POINT_CABINET_DEFAULT),
         ("Write kitchen surface pt", KEY_POINT_KITCHEN_SURFACE, POINT_KITCHEN_SURFACE),
@@ -290,7 +293,7 @@ def scanShelf():
 
     return audio_branch
 
-    #root.add_child(vision_branch)
+    # root.add_child(vision_branch)
     root.add_child(audio_branch)
     return root
 
@@ -327,7 +330,7 @@ def scanTableAndAnnounce():
             name="scan table",
             bb_source=None,
             bb_key=KEY_SCAN_RESULTS_TABLE,
-            object="hand sanitizer . bottled milk . plate . cup . sprite bottle . cola . water bottle. fork . knife . bottled chips . lays . bread . oreo cookie box . bottle .",
+            object="hand sanitizer . bottled milk . bottle . cola . water bottle. fork . knife . bottled chips . lays . bread . oreo cookie box . bottle .",
         )
     )
     root.add_child(parallel_scan_and_announce)
@@ -379,19 +382,20 @@ def scanTableAndAnnounce():
     
     return root
 
-def graspAtTableOnce():
+def graspAtTableOnce(prompt="hand sanitizer . bottled milk . plate . cup . sprite bottle . cola . water bottle. bottled chips . bread . oreo cookie box . bottle ."):
     root = py_trees.composites.Sequence("grasp at table ONCE", True)
 
     parallel_scan_announce = py_trees.composites.Parallel(
         name="parallel scan and announce",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
+
     parallel_scan_announce.add_child(
         _scanForGeneralistRetry(
             name="scan for object using realsense",
             bb_source=None,
             bb_key=KEY_GRASP_VISION_RES,
-            object="hand sanitizer . bottled milk . plate . cup . sprite bottle . cola . water bottle. bottled chips . bread . oreo cookie box . bottle .", # do not grasp fork or knife
+            object=prompt,
             use_orbbec=False
         )
     )
@@ -441,7 +445,20 @@ def graspAtTableOnce():
     )
     root.add_child(BtNode_GripperAction(name="open gripper", open_gripper=True))
 
-    return root
+
+    audio_guard = py_trees.composites.Selector(
+        name="Audio guard for announcing grasp failure", 
+        memory=True
+    )
+    audio_guard.add_child(root)
+    audio_guard.add_child(
+        BtNode_Announce(
+            name="announce grasp failure",
+            bb_source=None,
+            message="Grasp failed.",
+        )
+    )
+    return audio_guard
 
 
 def graspAllAtTable(n_items: int):
@@ -466,11 +483,40 @@ def graspAllAtTable(n_items: int):
     _retry_grasp = py_trees.decorators.FailureIsSuccess(
         name="Retry grasp at table (best effort)", child=retry_grasp
     )
-    root.add_child(
-        py_trees.decorators.Repeat(
-            name=f"repeat {n_items} times", child=_retry_grasp, num_success=n_items
+
+    retry_grasp_simple_items = py_trees.composites.Sequence(
+        name="retry grasp simple items with move arm to grap pose first",
+        memory=True
+    )
+    retry_grasp_simple_items.add_child(
+        _moveArmRetry(
+            name="move arm to grasp pose", 
+            arm_pose_key=KEY_ARM_TABLE, 
+            add_octomap=True,
+            retries=3
         )
     )
+    retry_grasp_simple_items.add_child(
+        graspAtTableOnce("hand sanitizer . bottled milk . sprite bottle . cola . water bottle. bottled chips . oreo cookie box . bottle .")
+    )
+    _retry_grasp_simple_items = py_trees.decorators.Retry(
+        name="Retry grasp simple items at table (best effort)", 
+        child=retry_grasp_simple_items, 
+        num_failures=3
+    )
+    root.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name="failure is success",
+            child=py_trees.decorators.Repeat(
+                name=f"repeat {n_items} times", child=_retry_grasp, num_success=n_items-1
+            )
+        )
+    )
+    root.add_child(py_trees.decorators.Repeat(
+            name=f"repeat {n_items} times", 
+            child=_retry_grasp_simple_items, 
+            num_success=2
+        ))
     return root
 
 
@@ -529,7 +575,7 @@ def goAndFindTrash():
         _moveArmRetry("Arm to nav (pre-trash)", KEY_ARM_NAVIGATING, retries=3)
     )
     root.add_child(_gotoRetryWith_Announcement("trash bin", KEY_POSE_TRASH_BIN))
-    root.add_child(BtNode_TurnPanTilt(name="Turn head to trash bin", x=0.0, y=-5.0))
+    root.add_child(BtNode_TurnPanTilt(name="Turn head to trash bin", x=0.0, y=10.0))
     root.add_child(
         BtNode_Announce(
             name="Announce finding trash bin",
@@ -541,7 +587,7 @@ def goAndFindTrash():
 
 
 def gotoDishWasher():
-    return _gotoRetryWith_Announcement("dishwasher", KEY_POSE_WASH_STAGING)
+    return _gotoRetryWith_Announcement("dishwasher", KEY_POSE_DISH_WASHER)
 
 
 def placeTablet():

@@ -31,17 +31,59 @@
       "w": 0.6688307217986664
     }
   },
-  "pose_table_1": {
+  
+  "pose_dish_washer": {
     "point": {
-      "x": 3.581890720522987,
-      "y": -0.08777339592119537,
+      "x": 1.808,
+      "y": -4.575,
       "z": 0.0
     },
     "orientation": {
       "x": 0.0,
       "y": 0.0,
-      "z": -0.6680746065186547,
-      "w": 0.7440942951837117
+      "z": -0.6675132952964665,
+      "w": 0.744597878456857
+    }
+  },
+
+  "pose_stove":{
+    "point": {
+      "x": 9.13755,
+      "y": 1.126608,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.06657118100966085,
+      "w": 0.9977816784542494
+    }
+  },
+  "pose_wash_staging": {
+    "_comment": "Safe surface near the dishwasher. NOT inside the rack. Hardware can't accurate-place — see RULEBOOK_PLAN.md.",
+    "point": {
+      "x": 7.8489602424084435,
+      "y": 1.5253572810542548,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.7797465155472496,
+      "w": 0.6260953373823532
+    }
+  },
+  "pose_table_1": {
+    "point": {
+      "x": 3.5451836585998535,
+      "y": 0.09268546104431152,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": -0.6540290162671715,
+      "w": 0.7564694613007164
     }
   },
   "pose_table_2": {
@@ -109,20 +151,6 @@
       "w": 0.062373953483033956
     }
   },  
-  "pose_wash_staging": {
-    "_comment": "Safe surface near the dishwasher. NOT inside the rack. Hardware can't accurate-place — see RULEBOOK_PLAN.md.",
-    "point": {
-      "x": 7.8489602424084435,
-      "y": 1.5253572810542548,
-      "z": 0.0
-    },
-    "orientation": {
-      "x": 0.0,
-      "y": 0.0,
-      "z": 0.7797465155472496,
-      "w": 0.6260953373823532
-    }
-  },
   "pose_trash_bin": {
     "point": {
       "x": 7.103644448582499,

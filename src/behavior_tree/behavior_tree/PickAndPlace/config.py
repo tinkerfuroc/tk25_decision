@@ -115,6 +115,7 @@ POSE_WASH_STAGING = _pose_reader(constants["pose_wash_staging"])
 POSE_TRASH_BIN = _pose_reader(constants["pose_trash_bin"])
 POSE_CABINET = _pose_reader(constants["pose_cabinet"])
 POSE_KITCHEN_SHELF = _pose_reader(constants["pose_kitchen_shelf"])
+POSE_DISH_WASHER = _pose_reader(constants["pose_dish_washer"])
 
 POINT_WASH_STAGING = _point_reader(constants["point_wash_staging"])
 POINT_CABINET_DEFAULT = _point_reader(constants["point_cabinet_default"])
@@ -174,6 +175,7 @@ KEY_POSE_WASH_STAGING = "pp_pose_wash_staging"
 KEY_POSE_TRASH_BIN = "pp_pose_trash_bin"
 KEY_POSE_CABINET = "pp_pose_cabinet"
 KEY_POSE_KITCHEN_SHELF = "pp_pose_kitchen_shelf"
+KEY_POSE_DISH_WASHER = "pp_pose_dish_washer"
 
 # Points
 KEY_POINT_WASH_STAGING = "pp_point_wash_staging"
@@ -195,7 +197,7 @@ KEY_ARM_CABINET = "pp_arm_cabinet"
 KEY_ARM_CLEANING_STATION = "pp_arm_cleaning_station"
 KEY_ARM_WASH = "pp_arm_wash"
 KEY_ARM_TRASH = "pp_arm_trash"
-KEY_ARM_WASH_DROP = "arm_wash_drop"
+KEY_ARM_WASH_DROP = "pp_arm_wash_drop"
 
 # Misc constants
 KEY_TARGET_FRAME = "pp_target_frame"
