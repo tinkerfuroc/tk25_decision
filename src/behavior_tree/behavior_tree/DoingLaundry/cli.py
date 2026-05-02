@@ -2,6 +2,6 @@ from behavior_tree.runtime import run_tree
 
 
 def main():
-    from .laundry import createDoingLaundryTask
+    from .laundry import createDoingLaundry
 
-    run_tree(createDoingLaundryTask, period_ms=500.0, title="Doing Laundry")
+    run_tree(createDoingLaundry, period_ms=500.0, title="Doing Laundry")
