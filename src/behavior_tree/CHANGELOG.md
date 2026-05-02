@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.2.4] - 2026-05-02
+
+### 🧭 New `BtNode_GetOrientationAngle`
+
+Adds a thin `ServiceHandler` BT node that calls
+`orientation_angle_service` (`tinker_nav_msgs/srv/OrientationAngle`,
+served by `tk26_navigation/orientation_angle_service`) and writes the
+returned angle (radians, pan_tilt sign convention) to a blackboard key.
+Compose with existing `BtNode_TurnPanTilt` / `BtNode_TurnTo` downstream
+to face the server-side hardcoded target (currently SOFA).
+
+Signature:
+```python
+BtNode_GetOrientationAngle(
+    name, bb_dest_key,
+    max_try=3, timeout=2.0,
+    service_name="orientation_angle_service",
+)
+```
+
+The srv has no status field; the server returns `0.0` on pose timeout,
+indistinguishable from a real 0 rad. Node returns SUCCESS whenever the
+service responds.
+
+### Files modified
+- `behavior_tree/messages.py` — import `OrientationAngle` from `tinker_nav_msgs.srv` (real + mock paths)
+- `behavior_tree/mock_messages.py` — add `OrientationAngle` mock stub with `max_try`/`timeout` request fields and `angle` response field
+- `behavior_tree/TemplateNodes/Navigation.py` — add `BtNode_GetOrientationAngle` class + module-docstring entry; import `OrientationAngle`
+- `behavior_tree/mock_config.json` — register `BtNode_GetOrientationAngle: IMMEDIATE` under `navigation` subsystem
+
+---
+
 ## [2.2.3] - 2026-04-19
 
 ### 🧹 HRI intake fallback — drop deprecated `BtNode_PhraseExtraction`

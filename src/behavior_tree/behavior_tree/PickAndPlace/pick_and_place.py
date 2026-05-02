@@ -277,6 +277,12 @@ def scanShelf():
         name="announce items on shelf", memory=True
     )
     audio_branch.add_child(
+        BtNode_TurnPanTilt(
+            name="Turn head to shelf", 
+            x=0.0, y=25.0
+            )
+    )
+    audio_branch.add_child(
         BtNode_Announce(
             name="announce scanning shelf",
             bb_source=None,
@@ -478,7 +484,8 @@ def graspAllAtTable(n_items: int):
         )
     )
     retry_grasp.add_child(py_trees.decorators.Retry(
-        name=f"Retry grasp three times", child=graspAtTableOnce(), num_failures=3
+        name=f"Retry grasp three times", 
+        child=graspAtTableOnce("bottle . cup . hand sanitizer . cookie box"), num_failures=3
     ))
     _retry_grasp = py_trees.decorators.FailureIsSuccess(
         name="Retry grasp at table (best effort)", child=retry_grasp
@@ -497,7 +504,7 @@ def graspAllAtTable(n_items: int):
         )
     )
     retry_grasp_simple_items.add_child(
-        graspAtTableOnce("hand sanitizer . bottled milk . sprite bottle . cola . water bottle. bottled chips . oreo cookie box . bottle .")
+        graspAtTableOnce("bottle . cup . hand sanitizer . cookie box")
     )
     _retry_grasp_simple_items = py_trees.decorators.Retry(
         name="Retry grasp simple items at table (best effort)", 
@@ -628,10 +635,10 @@ def placeTablet():
 def pickAndPlaceShortened():
     root = py_trees.composites.Sequence("Pick and place task", memory=True)
     root.add_child(createConstantWriter())
-    # root.add_child(enterArena())
-    # root.add_child(navigateToShelf())
-    # root.add_child(scanShelf())
-    # root.add_child(navigateToTable())
+    root.add_child(enterArena())
+    root.add_child(navigateToShelf())
+    root.add_child(scanShelf())
+    root.add_child(navigateToTable())
     root.add_child(scanTableAndAnnounce())
     root.add_child(graspAllAtTable(4))
     root.add_child(navigateToWashStaging())
