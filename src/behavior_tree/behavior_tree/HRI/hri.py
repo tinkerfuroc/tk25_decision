@@ -580,8 +580,18 @@ def createEscortAndSeat(guest_idx: int):
             message="Please sit here.",
         )
     )
+    # Centermost gaze: at this seat-recommend site KEY_PERSON_CENTROIDS is
+    # not populated for the active guest — the upstream vision_branch runs
+    # BtNode_SeatRecommendBbox (seat geometry), not BtNode_FeatureMatching
+    # (guest centroids). track_centermost=True makes the server lock onto
+    # whoever is most image-centered, which is correct because the
+    # BtNode_TurnPanTilt at (90, 45) just before this node centered the
+    # standing guest in the camera. Bystanders standing closer to the
+    # robot but off to the side don't steal the lock.
     track_person = BtNode_MaintainEyeContact(
-        name=f"Maintain eye contact guest {guest_idx}")
+        name=f"Maintain eye contact guest {guest_idx}",
+        track_centermost=True,
+    )
     recommend_with_eye_contact = py_trees.composites.Parallel(
         name=f"Recommend seat with eye contact guest {guest_idx}",
         policy=py_trees.common.ParallelPolicy.SuccessOnSelected([recommend_audio]),
@@ -701,7 +711,15 @@ def createTwoWayIntroduction():
         policy=py_trees.common.ParallelPolicy.SuccessOnSelected([introduce1]),
         children=[
             introduce1,
-            BtNode_MaintainEyeContact(name="Maintain eye contact during intro1"),
+            # Targeted-lock: gaze stays on guest2 (the introducee) even if a
+            # closer bystander appears. KEY_PERSON_CENTROIDS is populated by
+            # the BtNode_FeatureMatching above (line ~653, trim_last_person=False).
+            BtNode_MaintainEyeContact(
+                name="Maintain eye contact during intro1",
+                target_id=2,
+                bb_key_persons=KEY_PERSONS,
+                bb_key_points=KEY_PERSON_CENTROIDS,
+            ),
         ],
     )
     intro1.add_child(turn_pantilt_and_arm1)
@@ -738,7 +756,13 @@ def createTwoWayIntroduction():
         policy=py_trees.common.ParallelPolicy.SuccessOnSelected([introduce2]),
         children=[
             introduce2,
-            BtNode_MaintainEyeContact(name="Maintain eye contact during intro2"),
+            # Targeted-lock onto guest1 for the symmetric direction.
+            BtNode_MaintainEyeContact(
+                name="Maintain eye contact during intro2",
+                target_id=1,
+                bb_key_persons=KEY_PERSONS,
+                bb_key_points=KEY_PERSON_CENTROIDS,
+            ),
         ],
     )
     intro2.add_child(announce_with_gaze2)
