@@ -804,7 +804,7 @@ class BtNode_GripperAction(ActionHandler):
         if open_gripper:
             self.goal = 0.0
         else:
-            self.goal = 0.8
+            self.goal = 0.78
 
     def send_goal(self):
         try:

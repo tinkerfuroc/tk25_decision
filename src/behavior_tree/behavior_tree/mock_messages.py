@@ -382,6 +382,20 @@ class ComputeGrasp(MockService):
     pass
 
 
+class OrientationAngle(MockService):
+    """Mock OrientationAngle service."""
+    class Request(MockService.Request):
+        def __init__(self):
+            super().__init__()
+            self.max_try = 0
+            self.timeout = 0.0
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.angle = 0.0
+
+
 class FindApproachPose(MockService):
     """Mock FindApproachPose service."""
     class Request(MockService.Request):

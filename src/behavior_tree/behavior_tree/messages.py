@@ -41,10 +41,10 @@ else:
     from behavior_tree.mock_messages import PhraseExtractionAction
 
 if _config.has_dependency('tinker_nav_msgs'):
-    from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp
+    from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp, OrientationAngle
     # from tinker_nav_msgs.srv import FindApproachPose
 else:
-    from behavior_tree.mock_messages import SetLuggagePose, ComputeGrasp, FindApproachPose
+    from behavior_tree.mock_messages import SetLuggagePose, ComputeGrasp, FindApproachPose, OrientationAngle
 
 # `Follow` lives only in tk26_ws's tinker_nav_msgs; the tk25_ws package of the
 # same name ships srv-only. Import defensively so BT builds even when only

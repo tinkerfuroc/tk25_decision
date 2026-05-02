@@ -9,6 +9,12 @@ Constants, precomputed poses, and key declarations live in `HRI/config.py`.
 
 import py_trees
 
+USE_NAV_ORIENTATION_ANGLE_SERVICE = True
+
+KEY_PANTILT_ORIENTATION="pantilt_orientation"
+if USE_NAV_ORIENTATION_ANGLE_SERVICE:
+    from behavior_tree.TemplateNodes.Navigation import BtNode_GetOrientationAngle
+
 from behavior_tree.TemplateNodes.Audio import (
     BtNode_Announce,
     BtNode_GetConfirmationAction,
@@ -366,6 +372,7 @@ def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
     return root
 
 
+
 def createScanHostFeatures():
     """Navigate to sofa, scan the seated host, register them at index 0 of KEY_PERSONS.
 
@@ -398,6 +405,28 @@ def createScanHostFeatures():
     )
     root.add_child(parallel_going)
     root.add_child(BtNode_TurnPanTilt(name="Look down at host", x=0.0, y=20.0, speed=0.0))
+    
+    if USE_NAV_ORIENTATION_ANGLE_SERVICE:
+        turn_pantilt_to_sofa = py_trees.composites.Sequence(
+            name="Turn pan-tilt to sofa orientation", 
+            memory=True
+        )
+        turn_pantilt_to_sofa.add_child(
+            BtNode_GetOrientationAngle(
+                name="get orientation angle to sofa",
+                bb_dest_key=KEY_PANTILT_ORIENTATION
+            )
+        )
+        turn_pantilt_to_sofa.add_child(
+            BtNode_TurnPanTilt(
+                name="Turn pan-tilt to sofa orientation",
+                x=0.0,
+                y=20.0,
+                x_key=KEY_PANTILT_ORIENTATION
+            )
+        )
+
+
     parallel_scan = py_trees.composites.Parallel(
         name="Parallel host scan",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll()
@@ -454,9 +483,18 @@ def createGuestIntake(guest_idx: int):
     root.add_child(_create_get_info("name", name_key, NAMES))
     root.add_child(_create_get_info("favorite drink", drink_key, DRINKS))
     root.add_child(BtNode_TurnPanTilt(name="loop up", x=0.0, y=45.0))
-    root.add_child(BtNode_Announce(name="announce stand in front of me", 
-                                   bb_source=None, 
-                                   message="Please stand about two meters in front of me so I can remember you. Thank you"))
+    root.add_child(
+        BtNode_Announce(
+            name="announce stand in front of me", 
+            bb_source=None, 
+            message="Please stand about two meters in front of me so I can remember you."
+        )
+    )
+    root.add_child(BtNode_Announce(
+        name="announce thank you for standing in front me",
+        bb_source=None,
+        message="Thank you. Please look at me and hold still for a moment."
+    ))
     root.add_child(
         py_trees.decorators.Retry(
             name=f"Retry guest {guest_idx} feature extraction",
@@ -499,6 +537,25 @@ def createEscortAndSeat(guest_idx: int):
         )
     )
     escort.add_child(BtNode_TurnPanTilt(name=f"Look at sofa for guest {guest_idx}", x=0.0, y=20.0, speed=0.0))
+    if USE_NAV_ORIENTATION_ANGLE_SERVICE:
+        turn_pantilt_to_sofa = py_trees.composites.Sequence(
+            name="Turn pan-tilt to sofa orientation", 
+            memory=True
+        )
+        turn_pantilt_to_sofa.add_child(
+            BtNode_GetOrientationAngle(
+                name="get orientation angle to sofa",
+                bb_dest_key=KEY_PANTILT_ORIENTATION
+            )
+        )
+        turn_pantilt_to_sofa.add_child(
+            BtNode_TurnPanTilt(
+                name="Turn pan-tilt to sofa orientation",
+                x=0.0,
+                y=20.0,
+                x_key=KEY_PANTILT_ORIENTATION
+            )
+        )
     vision_branch = py_trees.composites.Sequence(
         name=f"Scan seated personnel guest {guest_idx}", memory=True
     )
@@ -512,7 +569,6 @@ def createEscortAndSeat(guest_idx: int):
             target_frame="base_link",
         )
     )
-
 
     audio_branch = py_trees.composites.Sequence(
         name=f"Sofa arrival announcements guest {guest_idx}", memory=True
@@ -628,7 +684,21 @@ def createEscortAndSeat(guest_idx: int):
             speed=0.0,
         )
     )
-    return escort
+
+    escort_with_pantilt_fallback = py_trees.composites.Sequence(
+        name="escort with fall back placing pan tilt in correct position",
+        memory=True,
+        children=[
+            py_trees.decorators.FailureIsSuccess("failure is success", child=escort),
+            BtNode_TurnPanTilt(
+                name=f"Ensure head forward after seat guest {guest_idx}",
+                x=0.0,
+                y=35.0,
+            )
+        ]
+    )
+
+    return escort_with_pantilt_fallback
 
 
 def createTwoWayIntroduction():
@@ -645,6 +715,25 @@ def createTwoWayIntroduction():
         message="Please sit down and make yourself comfortable."
     ))
 
+    if USE_NAV_ORIENTATION_ANGLE_SERVICE:
+        turn_pantilt_to_sofa = py_trees.composites.Sequence(
+            name="Turn pan-tilt to sofa orientation", 
+            memory=True
+        )
+        turn_pantilt_to_sofa.add_child(
+            BtNode_GetOrientationAngle(
+                name="get orientation angle to sofa",
+                bb_dest_key=KEY_PANTILT_ORIENTATION
+            )
+        )
+        turn_pantilt_to_sofa.add_child(
+            BtNode_TurnPanTilt(
+                name="Turn pan-tilt to sofa orientation",
+                x=0.0,
+                y=20.0,
+                x_key=KEY_PANTILT_ORIENTATION
+            )
+        )
     root.add_child(
         py_trees.decorators.FailureIsSuccess(
             name="Scan seated guest centroids",
