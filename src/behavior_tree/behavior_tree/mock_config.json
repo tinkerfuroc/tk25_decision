@@ -13,7 +13,7 @@
     "auto_detect": false,
     "subsystems": {
       "vision": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": false,
         "description": "Per-node mock mode for vision nodes. Allowed values: NO_MOCK, KEYPRESS, TELEOP, IMMEDIATE",
         "nodes": {
@@ -65,7 +65,8 @@
           "BtNode_GotoAction": "KEYPRESS",
           "BtNode_FollowAction": "KEYPRESS",
           "BtNode_FindApproachPose": "IMMEDIATE",
-          "BtNode_CaptureCurrentPose": "IMMEDIATE"
+          "BtNode_CaptureCurrentPose": "IMMEDIATE",
+          "BtNode_GetOrientationAngle": "IMMEDIATE"
         }
       },
       "audio_input": {
@@ -86,7 +87,7 @@
         }
       },
       "announcement": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": false,
         "description": "Per-node mock mode for TTS nodes",
         "nodes": {
