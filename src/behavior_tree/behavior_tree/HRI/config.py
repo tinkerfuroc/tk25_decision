@@ -145,6 +145,8 @@ KEY_GUEST2_DRINK = "hri_guest2_drink"
 KEY_GUEST2_FEATURES = "hri_guest2_features"
 KEY_GUEST2_COMPARISON_IMAGE = "hri_guest2_comparison_image"
 
+KEY_HOST_IMAGE="hri_host_image"
+
 # Follow-person subtree config — see `HRI/follow.py:createFollowPerson`.
 FOLLOW_CONFIG = dict(constants.get("follow", {}))
 FOLLOW_CONFIG.setdefault("lost_short_sec", 5.0)

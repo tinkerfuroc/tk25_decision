@@ -1436,11 +1436,11 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self._skip_settle = False
 
     def initialise(self) -> None:
-        if self.bb_read_client.exists("x"):
+        if self.x_key:
             self.x = self.bb_read_client.get("x") / math.pi * 180.0
-        if self.bb_read_client.exists("y"):
+        if self.y_key:
             self.y = self.bb_read_client.get("y") / math.pi * 180.0
-        if self.bb_read_client.exists("speed"):
+        if self.speed_key:
             self.speed = self.bb_read_client.get("speed")
 
         if self.mock_mode:
@@ -1866,19 +1866,20 @@ class BtNode_MaintainEyeContact(ActionHandler):
         seed = self._resolve_seed_point()
         goal.target_seed_xyz = seed
         seed_set = (seed.x != 0.0 or seed.y != 0.0 or seed.z != 0.0)
-        if seed_set:
+        
+        if self._track_centermost:
+            goal.seed_radius_m = 0.0 
+            goal.track_centermost = True # centermost wins over seed point
+            self.feedback_message = "Eye-contact goal sent (mode=centermost)"
+        elif seed_set:
             goal.seed_radius_m = self._seed_radius_m
-            goal.track_centermost = False  # seed wins on server, but be explicit
+            goal.track_centermost = False
             self.feedback_message = (
                 f"Eye-contact goal sent (mode=seed, "
                 f"xyz=({seed.x:.2f},{seed.y:.2f},{seed.z:.2f}), "
                 f"radius={self._seed_radius_m:.2f} m, "
                 f"target_id={self._target_id})"
             )
-        elif self._track_centermost:
-            goal.seed_radius_m = 0.0
-            goal.track_centermost = True
-            self.feedback_message = "Eye-contact goal sent (mode=centermost)"
         else:
             goal.seed_radius_m = 0.0
             goal.track_centermost = False

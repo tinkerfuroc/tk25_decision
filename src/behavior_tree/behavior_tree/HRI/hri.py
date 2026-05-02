@@ -1,5 +1,6 @@
 from __future__ import annotations
 from ast import main
+import os
 
 """HRI behavior tree composition.
 
@@ -7,9 +8,14 @@ This module keeps focus on phase composition and node wiring.
 Constants, precomputed poses, and key declarations live in `HRI/config.py`.
 """
 
+from openai import audio
 import py_trees
 
 USE_NAV_ORIENTATION_ANGLE_SERVICE = True
+
+image_path = os.environ.get("HOST_IMAGE_PATH", "/home/tinker/tk25_ws/img_host.jpg")
+description_path = os.environ.get("HOST_DESC_PATH", "/home/tinker/tk25_ws/host.txt")
+    
 
 KEY_PANTILT_ORIENTATION="pantilt_orientation"
 if USE_NAV_ORIENTATION_ANGLE_SERVICE:
@@ -21,7 +27,7 @@ from behavior_tree.TemplateNodes.Audio import (
     BtNode_ListenAction,
     BtNode_PhraseExtractionAction,
 )
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
 from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle, BtNode_PointTo
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import (
@@ -32,6 +38,7 @@ from behavior_tree.TemplateNodes.Vision import (
     BtNode_SeatRecommendBbox,
     BtNode_TurnPanTilt,
     BtNode_TurnTo,
+    BtNode_LoadPersonReference
 )
 from behavior_tree.Receptionist.customNodes import (
     BtNode_CombinePerson,
@@ -65,6 +72,7 @@ from .config import (
     KEY_HOST_FEATURES,
     KEY_HOST_NAME,
     KEY_HOST_COMPARISON_IMAGE,
+    KEY_HOST_IMAGE,
     KEY_PERSONS,
     KEY_PERSON_CENTROIDS,
     KEY_SEAT_BBOX,
@@ -76,7 +84,6 @@ from .config import (
     POSE_DOOR,
     POSE_SOFA,
 )
-from .follow import createFollowPerson
 
 
 class BtNode_MockArrivalTrigger(py_trees.behaviour.Behaviour):
@@ -233,22 +240,48 @@ def createConstantWriter():
     )
     return root
 
+def gazeAtSofa():
+    root = py_trees.composites.Sequence(name="Gaze at sofa", memory=True)
+    if USE_NAV_ORIENTATION_ANGLE_SERVICE:
+        turn_pantilt_to_sofa = py_trees.composites.Sequence(
+            name="Turn pan-tilt to sofa orientation", 
+            memory=True
+        )
+        turn_pantilt_to_sofa.add_child(
+            BtNode_GetOrientationAngle(
+                name="get orientation angle to sofa",
+                bb_dest_key=KEY_PANTILT_ORIENTATION
+            )
+        )
+        turn_pantilt_to_sofa.add_child(
+            BtNode_TurnPanTilt(
+                name="Turn pan-tilt to sofa orientation",
+                x=0.0,
+                y=20.0,
+                x_key=KEY_PANTILT_ORIENTATION
+            )
+        )
+        root.add_child(turn_pantilt_to_sofa)
+    else:
+        root.add_child(BtNode_TurnPanTilt(name="Look at sofa", x=0.0, y=20.0))
+    return root
+
 
 def createArrivalTrigger():
     """Try real door-trigger first, then fallback to mock trigger."""
     root = py_trees.composites.Sequence(name="Arrival trigger", memory=True)
-    root.add_child(
-        py_trees.decorators.Retry(
-            name=f"Retry stow arm",
-            child=BtNode_MoveArmSingle(
-                name=f"Stow arm",
-                service_name="arm_joint_service",
-                arm_pose_bb_key=KEY_ARM_NAVIGATING,
-                add_octomap=False,
-            ),
-            num_failures=3,
-        )
-    )
+    # root.add_child(
+    #     py_trees.decorators.Retry(
+    #         name=f"Retry stow arm",
+    #         child=BtNode_MoveArmSingle(
+    #             name=f"Stow arm",
+    #             service_name="arm_joint_service",
+    #             arm_pose_bb_key=KEY_ARM_NAVIGATING,
+    #             add_octomap=False,
+    #         ),
+    #         num_failures=3,
+    #     )
+    # )
     parallel_going = py_trees.composites.Parallel(name="Parallel go to door and announce", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_going.add_child(
         py_trees.decorators.Retry(
@@ -275,16 +308,16 @@ def createArrivalTrigger():
         BtNode_Announce(
             name="Arrival detected announcement",
             bb_source=None,
-            message="I see a guest.",
+            message="I see a guest. Please come in and speak to me after the beep sound",
         )
     )
-    real_trigger.add_child(
-        BtNode_Announce(
-            name="announce speak after beep sound",
-            bb_source=None,
-            message="Please come in and speak after the beep sound"
-        )
-    )
+    # real_trigger.add_child(
+    #     BtNode_Announce(
+    #         name="announce speak after beep sound",
+    #         bb_source=None,
+    #         message="Please come in and speak to me after the beep sound"
+    #     )
+    # )
     root.add_child(real_trigger)
     return root
 
@@ -372,6 +405,55 @@ def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
     return root
 
 
+def createWriteHostInfo():
+    parallel_announce = py_trees.composites.Parallel(
+        name="Parallel announce host scan info",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
+    )
+    parallel_announce.add_child(
+        BtNode_Announce(
+            name="Announce host scan info",
+            bb_source=None,
+            message="loading"
+        )
+    )
+    root = py_trees.composites.Sequence(
+        name="Write host info", memory=True
+    )
+    root.add_child(
+        BtNode_LoadPersonReference(
+            name="load host ref",
+            image_path=image_path,
+            description_path=description_path,
+            bb_features_key=KEY_HOST_FEATURES,
+            bb_image_key=KEY_HOST_IMAGE
+        )
+    )
+    root.add_child(
+        BtNode_CombinePerson(
+            name="pack host",
+            key_dest=KEY_PERSONS,
+            key_name=KEY_HOST_NAME,
+            key_drink=KEY_HOST_DRINK,
+            key_features=KEY_HOST_FEATURES,
+            key_image=KEY_HOST_IMAGE,
+        )
+    )
+    root.add_child(
+        BtNode_TurnPanTilt(
+            name="look forward",
+            x=0.0,
+            y=45.0
+        )
+    )
+    root.add_child(
+        BtNode_GripperAction(
+            "close gripper before starting HRI",
+            open_gripper=False
+        )
+    )
+    parallel_announce.add_child(root)
+    return parallel_announce
 
 def createScanHostFeatures():
     """Navigate to sofa, scan the seated host, register them at index 0 of KEY_PERSONS.
@@ -404,28 +486,7 @@ def createScanHostFeatures():
         policy=py_trees.common.ParallelPolicy.SuccessOnAll()
     )
     root.add_child(parallel_going)
-    root.add_child(BtNode_TurnPanTilt(name="Look down at host", x=0.0, y=20.0, speed=0.0))
-    
-    if USE_NAV_ORIENTATION_ANGLE_SERVICE:
-        turn_pantilt_to_sofa = py_trees.composites.Sequence(
-            name="Turn pan-tilt to sofa orientation", 
-            memory=True
-        )
-        turn_pantilt_to_sofa.add_child(
-            BtNode_GetOrientationAngle(
-                name="get orientation angle to sofa",
-                bb_dest_key=KEY_PANTILT_ORIENTATION
-            )
-        )
-        turn_pantilt_to_sofa.add_child(
-            BtNode_TurnPanTilt(
-                name="Turn pan-tilt to sofa orientation",
-                x=0.0,
-                y=20.0,
-                x_key=KEY_PANTILT_ORIENTATION
-            )
-        )
-
+    root.add_child(gazeAtSofa())
 
     parallel_scan = py_trees.composites.Parallel(
         name="Parallel host scan",
@@ -480,20 +541,39 @@ def createGuestIntake(guest_idx: int):
         image_key = KEY_GUEST2_COMPARISON_IMAGE
 
     root = py_trees.composites.Sequence(name=f"Guest {guest_idx} intake", memory=True)
-    root.add_child(_create_get_info("name", name_key, NAMES))
-    root.add_child(_create_get_info("favorite drink", drink_key, DRINKS))
-    root.add_child(BtNode_TurnPanTilt(name="loop up", x=0.0, y=45.0))
+    
+    info_intake = py_trees.composites.Sequence(
+        name=f"Guest {guest_idx} info intake",
+        memory=True,
+    )
+    info_intake.add_child(_create_get_info("name", name_key, NAMES))
+    info_intake.add_child(_create_get_info("favorite drink", drink_key, DRINKS))
+
+    maintain_eye_contact = BtNode_MaintainEyeContact(
+        name=f"Maintain eye contact during guest {guest_idx} info intake",
+        track_centermost=True
+    )
+
+    info_intake_with_eye_contact = py_trees.composites.Parallel(
+        name=f"Guest {guest_idx} info intake with eye contact",
+        policy=py_trees.common.ParallelPolicy.SuccessOnSelected([info_intake]),
+        children=[info_intake, maintain_eye_contact]
+    )
+
+    root.add_child(info_intake_with_eye_contact)
+
+    root.add_child(BtNode_TurnPanTilt(name="look up", x=0.0, y=45.0))
     root.add_child(
         BtNode_Announce(
             name="announce stand in front of me", 
             bb_source=None, 
-            message="Please stand about two meters in front of me so I can remember you."
+            message="Please stand about two meters in front of me so I can remember you. Thank you"
         )
     )
     root.add_child(BtNode_Announce(
         name="announce thank you for standing in front me",
         bb_source=None,
-        message="Thank you. Please look at me and hold still for a moment."
+        message="Please look at me and hold still for a moment."
     ))
     root.add_child(
         py_trees.decorators.Retry(
@@ -536,26 +616,8 @@ def createEscortAndSeat(guest_idx: int):
             num_failures=5,
         )
     )
-    escort.add_child(BtNode_TurnPanTilt(name=f"Look at sofa for guest {guest_idx}", x=0.0, y=20.0, speed=0.0))
-    if USE_NAV_ORIENTATION_ANGLE_SERVICE:
-        turn_pantilt_to_sofa = py_trees.composites.Sequence(
-            name="Turn pan-tilt to sofa orientation", 
-            memory=True
-        )
-        turn_pantilt_to_sofa.add_child(
-            BtNode_GetOrientationAngle(
-                name="get orientation angle to sofa",
-                bb_dest_key=KEY_PANTILT_ORIENTATION
-            )
-        )
-        turn_pantilt_to_sofa.add_child(
-            BtNode_TurnPanTilt(
-                name="Turn pan-tilt to sofa orientation",
-                x=0.0,
-                y=20.0,
-                x_key=KEY_PANTILT_ORIENTATION
-            )
-        )
+    escort.add_child(gazeAtSofa())
+
     vision_branch = py_trees.composites.Sequence(
         name=f"Scan seated personnel guest {guest_idx}", memory=True
     )
@@ -567,6 +629,27 @@ def createEscortAndSeat(guest_idx: int):
             bb_point_key=KEY_SEAT_POINT,
             bb_source_key=KEY_PERSONS,
             target_frame="base_link",
+        )
+    )
+
+    turn_and_maintain_gaze_branch = py_trees.composites.Sequence(
+        name=f"Turn and maintain gaze guest {guest_idx}", memory=True
+    )
+
+    turn_and_maintain_gaze_branch.add_child(
+        BtNode_WaitTicks(
+            name="wait a moment for orbbec to finish settling",
+            ticks=10
+        )
+    )
+
+    turn_and_maintain_gaze_branch.add_child(
+        BtNode_TurnPanTilt(name=f"Look at guest", x=90.0, y=45.0, speed=0.0)
+    )
+    turn_and_maintain_gaze_branch.add_child(
+        BtNode_MaintainEyeContact(
+            name=f"Maintain eye contact guest {guest_idx}",
+            track_centermost=True,
         )
     )
 
@@ -587,22 +670,33 @@ def createEscortAndSeat(guest_idx: int):
             message="Trying to determine an empty seat for you. Thank you for your patience.",
         )
     )
-
-    scan_and_announce = py_trees.composites.Parallel(
-        name=f"Scan + announce sofa guest {guest_idx}",
-        policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
+    audio_branch.add_child(
+        BtNode_Announce(
+            name="announce still waiting",
+            bb_source=None,
+            message="Still trying to determine"
+        )
     )
-    scan_and_announce.add_child(
-        py_trees.decorators.FailureIsSuccess(
+
+    _vision_branch = py_trees.decorators.FailureIsSuccess(
             name=f"Vision scan (audio still completes) guest {guest_idx}",
             child=vision_branch,
         )
+
+    scan_and_announce = py_trees.composites.Parallel(
+        name=f"Scan + announce sofa guest {guest_idx}",
+        policy=py_trees.common.ParallelPolicy.SuccessOnSelected([_vision_branch, audio_branch]),
+        children=[
+            _vision_branch,
+            audio_branch,
+            turn_and_maintain_gaze_branch
+        ]
     )
-    scan_and_announce.add_child(audio_branch)
 
     seat_recommend_primary = py_trees.composites.Sequence(
         name=f"Seat recommend guest {guest_idx}", memory=True
     )
+    seat_recommend_primary.add_child(BtNode_TurnPanTilt(name=f"Look at guest", x=90.0, y=45.0, speed=0.0))
     seat_recommend_primary.add_child(scan_and_announce)
     seat_recommend_primary.add_child(
         BtNode_WrapPointAsList(
@@ -611,7 +705,6 @@ def createEscortAndSeat(guest_idx: int):
             bb_dest_key=KEY_SEAT_POINTS,
         )
     )
-    seat_recommend_primary.add_child(BtNode_TurnPanTilt(name=f"Look at guest", x=90.0, y=45.0, speed=0.0))
     recommend_audio = py_trees.composites.Sequence(name=f"Announce recommendation with eye contact guest {guest_idx}", memory=True)
     recommend_audio.add_child(
         py_trees.decorators.FailureIsSuccess(
@@ -725,25 +818,7 @@ def createTwoWayIntroduction():
         message="Please sit down and make yourself comfortable."
     ))
 
-    if USE_NAV_ORIENTATION_ANGLE_SERVICE:
-        turn_pantilt_to_sofa = py_trees.composites.Sequence(
-            name="Turn pan-tilt to sofa orientation", 
-            memory=True
-        )
-        turn_pantilt_to_sofa.add_child(
-            BtNode_GetOrientationAngle(
-                name="get orientation angle to sofa",
-                bb_dest_key=KEY_PANTILT_ORIENTATION
-            )
-        )
-        turn_pantilt_to_sofa.add_child(
-            BtNode_TurnPanTilt(
-                name="Turn pan-tilt to sofa orientation",
-                x=0.0,
-                y=20.0,
-                x_key=KEY_PANTILT_ORIENTATION
-            )
-        )
+    root.add_child(gazeAtSofa())
     root.add_child(
         py_trees.decorators.FailureIsSuccess(
             name="Scan seated guest centroids",
@@ -803,12 +878,13 @@ def createTwoWayIntroduction():
             # Targeted-lock: gaze stays on guest2 (the introducee) even if a
             # closer bystander appears. KEY_PERSON_CENTROIDS is populated by
             # the BtNode_FeatureMatching above (line ~653, trim_last_person=False).
-            BtNode_MaintainEyeContact(
-                name="Maintain eye contact during intro1",
-                target_id=2,
-                bb_key_persons=KEY_PERSONS,
-                bb_key_points=KEY_PERSON_CENTROIDS,
-            ),
+            # BtNode_MaintainEyeContact(
+            #     name="Maintain eye contact during intro1",
+            #     target_id=2,
+            #     bb_key_persons=KEY_PERSONS,
+            #     bb_key_points=KEY_PERSON_CENTROIDS,
+            #     track_centermost=True
+            # ),
         ],
     )
     intro1.add_child(turn_pantilt_and_arm1)
@@ -846,12 +922,13 @@ def createTwoWayIntroduction():
         children=[
             introduce2,
             # Targeted-lock onto guest1 for the symmetric direction.
-            BtNode_MaintainEyeContact(
-                name="Maintain eye contact during intro2",
-                target_id=1,
-                bb_key_persons=KEY_PERSONS,
-                bb_key_points=KEY_PERSON_CENTROIDS,
-            ),
+            # BtNode_MaintainEyeContact(
+            #     name="Maintain eye contact during intro2",
+            #     target_id=1,
+            #     bb_key_persons=KEY_PERSONS,
+            #     bb_key_points=KEY_PERSON_CENTROIDS,
+            #     track_centermost=True
+            # ),
         ],
     )
     intro2.add_child(announce_with_gaze2)
@@ -865,7 +942,12 @@ def createTwoWayIntroduction():
 def createBagFlow():
     """Handle bag handover, host-follow proxy, and bag drop sequence."""
     root = py_trees.composites.Sequence(name="Bag handover-follow-drop", memory=True)
-    root.add_child(
+    
+    parallel_movearm_announce = py_trees.composites.Parallel(
+        name="Parallel move arm to handover and announce",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
+    )
+    parallel_movearm_announce.add_child(
         py_trees.decorators.Retry(
             name="Retry arm to handover pose",
             child=BtNode_MoveArmSingle(
@@ -877,6 +959,12 @@ def createBagFlow():
             num_failures=3,
         )
     )
+    parallel_movearm_announce.add_child(BtNode_Announce(
+        name="Announce come over",
+        bb_source=None,
+        message="introductions finished. please come over"
+    ))
+
     root.add_child(BtNode_GripperAction(name="Open gripper for bag", open_gripper=True))
     root.add_child(
         BtNode_Announce(
@@ -894,23 +982,48 @@ def createBagFlow():
             message="I'll follow you and carry the bag.",
         )
     )
-    root.add_child(createFollowPerson(FOLLOW_CONFIG))
-    root.add_child(
-        py_trees.decorators.Retry(
-            name="Retry arm to drop pose",
-            child=BtNode_MoveArmSingle(
-                name="Move arm to drop pose",
-                service_name="arm_joint_service",
-                arm_pose_bb_key=KEY_ARM_DROP,
-                add_octomap=False,
-            ),
-            num_failures=3,
-        )
-    )
-    root.add_child(BtNode_GripperAction(name="Open gripper to drop bag", open_gripper=True))
-    root.add_child(BtNode_MockSafetyCheck(name="Drop confirmation detector TODO", todo="replace with bag-drop detector"))
-    root.add_child(BtNode_GripperAction(name="Close gripper after drop", open_gripper=False))
-    root.add_child(BtNode_MoveArmSingle(name="move arm back to navigation pose", service_name="arm_joint_service", arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
+    root.add_child(BtNode_Announce(
+        name="announce attempting follow",
+        bb_source=None,
+        message="Attempting to follow"
+    ))
+    root.add_child(BtNode_Announce(
+        name="announce attempting follow",
+        bb_source=None,
+        message="Attempting to follow"
+    ))
+    root.add_child(BtNode_Announce(
+        name="announce attempting follow",
+        bb_source=None,
+        message="Attempting to follow"
+    ))
+    root.add_child(BtNode_Announce(
+        name="announce attempting follow",
+        bb_source=None,
+        message="Attempting to follow"
+    ))
+    root.add_child(BtNode_Announce(
+        name="announce follow failed",
+        bb_source=None,
+        message="Follow failed"
+    ))
+    # root.add_child(createFollowPerson(FOLLOW_CONFIG))
+    # root.add_child(
+    #     py_trees.decorators.Retry(
+    #         name="Retry arm to drop pose",
+    #         child=BtNode_MoveArmSingle(
+    #             name="Move arm to drop pose",
+    #             service_name="arm_joint_service",
+    #             arm_pose_bb_key=KEY_ARM_DROP,
+    #             add_octomap=False,
+    #         ),
+    #         num_failures=3,
+    #     )
+    # )
+    # root.add_child(BtNode_GripperAction(name="Open gripper to drop bag", open_gripper=True))
+    # root.add_child(BtNode_MockSafetyCheck(name="Drop confirmation detector TODO", todo="replace with bag-drop detector"))
+    # root.add_child(BtNode_GripperAction(name="Close gripper after drop", open_gripper=False))
+    # root.add_child(BtNode_MoveArmSingle(name="move arm back to navigation pose", service_name="arm_joint_service", arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     return root
 
 
@@ -926,7 +1039,7 @@ def createHRITask():
         BtNode_Announce(
             name="HRI start announcement",
             bb_source=None,
-            message=f"HRI task started. Host: {HOST_NAME}. Favorite drink: {HOST_DRINK}.",
+            message=f"HRI task started.",
         )
     )
     root.add_child(
@@ -941,7 +1054,8 @@ def createHRITask():
             num_failures=3,
         )
     )
-    root.add_child(createScanHostFeatures())
+    # root.add_child(createScanHostFeatures())
+    root.add_child(createWriteHostInfo())
     root.add_child(createArrivalTrigger())
     root.add_child(createGuestIntake(1))
     root.add_child(createEscortAndSeat(1))
