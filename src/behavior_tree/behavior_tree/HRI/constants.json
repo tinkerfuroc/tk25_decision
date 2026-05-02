@@ -51,8 +51,13 @@
             "w": 0.053147312050431085
         }
     },
-
-
+    "seat_catalog": [
+        "left leather sofa",
+        "right small leather sofa",
+        "leftmost spot on the large center sofa",
+        "middle spot on the large center sofa",
+        "rightmost spot on the large center sofa"
+    ],
     "arm_pos_navigating": [
         -87.4,
         -58.8,

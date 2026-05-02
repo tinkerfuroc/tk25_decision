@@ -41,6 +41,7 @@ def build() -> py_trees.behaviour.Behaviour:
         KEY_SEAT_POINT,
         KEY_SEAT_POINTS,
         KEY_SEAT_RECOMMENDATION,
+        SEAT_CATALOG,
     )
     from .hri import BtNode_WrapPointAsList
 
@@ -86,6 +87,7 @@ def build() -> py_trees.behaviour.Behaviour:
             bb_point_key=KEY_SEAT_POINT,
             bb_source_key=KEY_PERSONS,
             target_frame="base_link",
+            known_seats=SEAT_CATALOG,
         )
     )
     root.add_child(

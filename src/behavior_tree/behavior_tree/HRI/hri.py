@@ -83,6 +83,7 @@ from .config import (
     NAMES,
     POSE_DOOR,
     POSE_SOFA,
+    SEAT_CATALOG,
 )
 
 
@@ -629,6 +630,7 @@ def createEscortAndSeat(guest_idx: int):
             bb_point_key=KEY_SEAT_POINT,
             bb_source_key=KEY_PERSONS,
             target_frame="base_link",
+            known_seats=SEAT_CATALOG,
         )
     )
 
@@ -639,7 +641,7 @@ def createEscortAndSeat(guest_idx: int):
     turn_and_maintain_gaze_branch.add_child(
         BtNode_WaitTicks(
             name="wait a moment for orbbec to finish settling",
-            ticks=10
+            ticks=30
         )
     )
 
@@ -1051,7 +1053,7 @@ def createHRITask():
                 arm_pose_bb_key=KEY_ARM_NAVIGATING,
                 add_octomap=False,
             ),
-            num_failures=3,
+            num_failures=2,
         )
     )
     # root.add_child(createScanHostFeatures())
