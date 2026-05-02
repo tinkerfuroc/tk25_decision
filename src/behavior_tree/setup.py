@@ -52,6 +52,7 @@ setup(
             "hri-intake = behavior_tree.HRI.intake:main",
             "hri-intro = behavior_tree.HRI.intro:main",
             'hri-point-at-seat = behavior_tree.HRI.point_at_seat:main',
+            "test-eye-contact = behavior_tree.HRI.test_eye_contact:main",
             "pick-and-place = behavior_tree.PickAndPlace.cli:main",
             "doing-laundry = behavior_tree.DoingLaundry.cli:main",
             "GPSR = behavior_tree.GPSR.gpsr_new:main",
