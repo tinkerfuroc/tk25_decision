@@ -28,6 +28,8 @@
 #     Converts a PointStamped to a grasp-compatible pose.
 # BtNode_GoToLuggage
 #     Navigates to a luggage position and returns the target pose.
+# BtNode_GetOrientationAngle
+#     Calls orientation_angle_service and writes the returned angle (rad) to a blackboard key.
 #
 # Mock Mode
 # ---------
@@ -58,7 +60,7 @@ from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Quaternion
 
 # from behavior_tree.messages import Goto, GotoGrasp, ComputeGrasp
 from nav_msgs.msg import Odometry
-from behavior_tree.messages import NavigateToPose, SetLuggagePose, ComputeGrasp
+from behavior_tree.messages import NavigateToPose, SetLuggagePose, ComputeGrasp, OrientationAngle
 # from behavior_tree.messages import FindApproachPose
 import math
 
@@ -597,7 +599,80 @@ class BtNode_GoToLuggage(ServiceHandler):
         else:
             self.feedback_message = "Still scanning..."
             return py_trees.common.Status.RUNNING
-        
+
+
+class BtNode_GetOrientationAngle(ServiceHandler):
+    """
+    Calls ``orientation_angle_service`` and writes the returned angle (rad) to a blackboard key.
+
+    The service (``tinker_nav_msgs/srv/OrientationAngle``, advertised by
+    ``tk26_navigation/orientation_angle_service``) reads ``/amcl_pose`` and
+    returns the relative bearing from the robot to a server-side hardcoded
+    target (currently SOFA), already negated for the pan_tilt sign convention.
+
+    Note: the srv has no status field. The server returns ``angle = 0.0`` when
+    it cannot obtain a pose within the budget, which is indistinguishable from
+    a genuine 0 rad result. The node therefore returns SUCCESS as long as the
+    service responds.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        bb_dest_key: str,
+        max_try: int = 3,
+        timeout: float = 2.0,
+        service_name: str = "orientation_angle_service",
+    ):
+        super().__init__(name, service_name, OrientationAngle)
+        self.bb_dest_key = bb_dest_key
+        self.max_try = max_try
+        self.timeout = timeout
+
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+        self.bb_write_client = self.attach_blackboard_client(name="GetOrientationAngleWrite")
+        self.bb_write_client.register_key(
+            "angle",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_dest_key),
+        )
+        self.logger.debug(f"Setup GetOrientationAngle -> '{self.bb_dest_key}'")
+
+    def initialise(self) -> None:
+        super().initialise()
+
+        if self.mock_mode:
+            self.bb_write_client.angle = 0.0
+            self.feedback_message = "MOCK: orientation angle = 0.000 rad"
+            print("🧭 MOCK GET ORIENTATION ANGLE: wrote 0.0 rad")
+            return
+
+        request = OrientationAngle.Request()
+        request.max_try = self.max_try
+        request.timeout = self.timeout
+        self.response = self.call_service_async(request)
+        self.feedback_message = (
+            f"Initialized GetOrientationAngle (max_try={self.max_try}, timeout={self.timeout}s)"
+        )
+
+    def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
+        if self.response is None:
+            return py_trees.common.Status.FAILURE
+
+        if self.response.done():
+            angle = self.response.result().angle
+            self.bb_write_client.angle = angle
+            self.feedback_message = f"orientation angle = {angle:.3f} rad -> '{self.bb_dest_key}'"
+            return py_trees.common.Status.SUCCESS
+
+        self.feedback_message = "waiting for orientation_angle_service..."
+        return py_trees.common.Status.RUNNING
+
+
 # class BtNode_GoToLuggage(ServiceHandler):
 #     def __init__(self, name: str, bb_key: str, service_name: str = "set_luggage_pose"):
 #         super().__init__(name, service_name, SetLuggagePose)
