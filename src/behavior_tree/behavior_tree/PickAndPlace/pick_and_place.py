@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import py
+from sympy import use
+
 """Pick and Place — main mission tree (RoboCup@Home 2026 §5.2).
 
 Mirrors the Restaurant / HRI single-file mission idiom: phase factories at
@@ -37,6 +40,8 @@ from .config import (
     ARM_POS_TABLE,
     ARM_POS_TRASH,
     ARM_POS_WASH,
+    ARM_POS_WASH_DROP,
+    ARM_POS_CLEANING_STATION,
     ARM_SERVICE_NAME,
     GRASP_ACTION_NAME,
     KEY_ARM_CABINET,
@@ -44,6 +49,7 @@ from .config import (
     KEY_ARM_TABLE,
     KEY_ARM_TRASH,
     KEY_ARM_WASH,
+    KEY_ARM_CLEANING_STATION,
     KEY_ARM_WASH_DROP,
     KEY_DOOR_STATUS,
     KEY_MAX_RUNTIME,
@@ -84,7 +90,9 @@ from .config import (
     TARGET_FRAME,
     KEY_IMG_SHELF,
     KEY_SCAN_RESULTS_TABLE,
+    KEY_SCAN_RESULTS_SHELF,
     KEY_ANNOUNCEMENT_MSG,
+    KEY_GRASP_VISION_RES
 )
 from .custom_nodes import (
     BtNode_WriteFoundItems,
@@ -130,7 +138,9 @@ def createConstantWriter() -> py_trees.composites.Parallel:
         ("Write arm table", KEY_ARM_TABLE, ARM_POS_TABLE),
         ("Write arm cabinet", KEY_ARM_CABINET, ARM_POS_CABINET),
         ("Write arm wash", KEY_ARM_WASH, ARM_POS_WASH),
+        ("Write arm wash drop", KEY_ARM_WASH_DROP, ARM_POS_WASH_DROP),
         ("Write arm trash", KEY_ARM_TRASH, ARM_POS_TRASH),
+        ("Write arm cleaning station", KEY_ARM_CLEANING_STATION, ARM_POS_CLEANING_STATION),
         ("Write target frame", KEY_TARGET_FRAME, TARGET_FRAME),
         ("Write max runtime", KEY_MAX_RUNTIME, MAX_RUNTIME_SEC),
     ]
@@ -208,11 +218,13 @@ def _gotoRetryWith_Announcement(location_name: str, pose_key: str):
     return root
 
 
-def _scanForGeneralistRetry(name: str, bb_source, bb_key, object):
+def _scanForGeneralistRetry(name: str, bb_source, bb_key, object, use_orbbec=True):
     return py_trees.decorators.Retry(
         name="retry scan for generalist",
         child=BtNode_ScanForGeneralist(
-            name=name, bb_source=bb_source, bb_key=bb_key, object=object
+            name=name, bb_source=bb_source, bb_key=bb_key, object=object, use_orbbec=use_orbbec, 
+            return_rgb_image=True, return_depth_image=True,
+            force_vlm_sam=True
         ),
         num_failures=5,
     )
@@ -250,14 +262,14 @@ def scanShelf():
         name="Parallel announce and scan shelf",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
-    vision_branch = py_trees.composites.Sequence(
-        name="Scan shelf sequence", memory=True
-    )
-    vision_branch.add_child(
-        BtNode_GetImage(
-            name="Get shelf image", camera="orbbec", bb_key_rgb_image=KEY_IMG_SHELF
-        )
-    )
+    # vision_branch = py_trees.composites.Sequence(
+    #     name="Scan shelf sequence", memory=True
+    # )
+    # vision_branch.add_child(
+    #     BtNode_GetImage(
+    #         name="Get shelf image", camera="orbbec", bb_key_rgb_image=KEY_IMG_SHELF
+    #     )
+    # )
 
     audio_branch = py_trees.composites.Sequence(
         name="announce items on shelf", memory=True
@@ -277,7 +289,9 @@ def scanShelf():
         )
     )
 
-    root.add_child(vision_branch)
+    return audio_branch
+
+    #root.add_child(vision_branch)
     root.add_child(audio_branch)
     return root
 
@@ -288,6 +302,16 @@ def navigateToTable():
 
 def scanTableAndAnnounce():
     root = py_trees.composites.Sequence("Scan table and announce", memory=True)
+    root.add_child(BtNode_TurnPanTilt(
+        name="Turn head to table", x=0.0, y=20.0
+    ))
+    root.add_child(
+        _moveArmRetry(
+            name="move arm to navigation pose to clear orbbec",
+            arm_pose_key=KEY_ARM_NAVIGATING,
+            retries=3,
+        )
+    )
     parallel_scan_and_announce = py_trees.composites.Parallel(
         "parallel scan table and announce",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
@@ -304,7 +328,7 @@ def scanTableAndAnnounce():
             name="scan table",
             bb_source=None,
             bb_key=KEY_SCAN_RESULTS_TABLE,
-            object="",  # TODO: change to actual items on table
+            object="plate . cup . bottle . biscuit . chip . lays . bread . cookie",  # TODO: change to actual items on table
         )
     )
     root.add_child(parallel_scan_and_announce)
@@ -319,20 +343,45 @@ def scanTableAndAnnounce():
 
     root.add_child(BtNode_Announce("announce found items", KEY_ANNOUNCEMENT_MSG))
 
-    # TODO: add the vision and announce for categorizing on shelf
-
+    # parallel_shelf_scan_and_announce = py_trees.composites.Parallel(
+    #     "parallel shelf categorization scan and announce",
+    #     policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
+    # )
+    # parallel_shelf_scan_and_announce.add_child(
+    #     BtNode_Announce(
+    #         "announce scanning shelf for categories",
+    #         bb_source=None,
+    #         message="Scanning shelf to categorize where items should go.",
+    #     )
+    # )
+    # parallel_shelf_scan_and_announce.add_child(
+    #     _scanForGeneralistRetry(
+    #         name="scan shelf for categorizing",
+    #         bb_source=None,
+    #         bb_key=KEY_SCAN_RESULTS_SHELF,
+    #         object="milk, cereal, food, drink, cup, bowl, plate",
+    #     )
+    # )
+    # root.add_child(
+    #     BtNode_TurnPanTilt(name="Turn head to shelf", x=0.0, y=25.0)
+    # )
+    # root.add_child(parallel_shelf_scan_and_announce)
+    # root.add_child(
+    #     BtNode_WriteFoundItems(
+    #         name="write shelf category items to announcement message",
+    #         bb_key_vision_res=KEY_SCAN_RESULTS_SHELF,
+    #         bb_key_announcement=KEY_ANNOUNCEMENT_MSG,
+    #         place_seen="on the shelf for categorizing",
+    #     )
+    # )
+    # root.add_child(
+    #     BtNode_Announce("announce shelf category items", KEY_ANNOUNCEMENT_MSG)
+    # )
+    
     return root
-
 
 def graspAtTableOnce():
     root = py_trees.composites.Sequence("grasp at table ONCE", True)
-    root.add_child(
-        BtNode_MoveArmSingle(
-            name="Move arm to grasping pose",
-            arm_pose_bb_key=KEY_ARM_TABLE,
-            add_octomap=True,
-        )
-    )
 
     parallel_scan_announce = py_trees.composites.Parallel(
         name="parallel scan and announce",
@@ -340,10 +389,11 @@ def graspAtTableOnce():
     )
     parallel_scan_announce.add_child(
         _scanForGeneralistRetry(
-            name="scan for grasping object",
+            name="scan for object using realsense",
             bb_source=None,
-            bb_key=KEY_SCAN_RESULTS_TABLE,
-            object="",  # TODO: actually name the objects please
+            bb_key=KEY_GRASP_VISION_RES,
+            object="plate . cup . bottle . biscuit . chip . lays . bread . cookie",
+            use_orbbec=False
         )
     )
     parallel_scan_announce.add_child(
@@ -359,16 +409,23 @@ def graspAtTableOnce():
         name="parallel grasp and announce",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
-    parallel_grasp_announce.add_child(
-        BtNode_Grasp(
-            name="grasp object on the table",
-            bb_source=None,
-            bb_key_vision_res=KEY_SCAN_RESULTS_TABLE,
+
+    grasp_branch = py_trees.composites.Sequence("grasp on table", memory=True)
+    grasp_branch.add_child(
+        py_trees.decorators.Retry(
+            name="Retry grasping object on table",
+            child=BtNode_Grasp(
+                name="grasp object on the table",
+                bb_source=None,
+                bb_key_vision_res=KEY_GRASP_VISION_RES,
+            ),
+            num_failures=3
         )
     )
+    parallel_grasp_announce.add_child(grasp_branch)
     parallel_grasp_announce.add_child(
         BtNode_Announce(
-            name="announce canning table", bb_source=None, message="Grasping"
+            name="announce grasp", bb_source=None, message="Saw target, Grasping"
         )
     )
     root.add_child(parallel_grasp_announce)
@@ -380,11 +437,9 @@ def graspAtTableOnce():
             message="Grasp successful. Attempting place",
         )
     )
-
     root.add_child(
         _moveArmRetry(name="move arm to nav", arm_pose_key=KEY_ARM_NAVIGATING)
     )
-
     root.add_child(BtNode_GripperAction(name="open gripper", open_gripper=True))
 
     return root
@@ -394,12 +449,27 @@ def graspAllAtTable(n_items: int):
     root = py_trees.composites.Sequence(
         name=f"Grasp all {n_items} items at table", memory=True
     )
-    retry_grasp = py_trees.decorators.Retry(
-        name=f"Retry grasp twice", child=graspAtTableOnce(), num_failures=3
+    retry_grasp=py_trees.composites.Sequence(
+        name="retry grasp with move arm to grap pose first",
+        memory=True
+    )
+    retry_grasp.add_child(
+        _moveArmRetry(
+            name="move arm to grasp pose", 
+            arm_pose_key=KEY_ARM_TABLE, 
+            add_octomap=True,
+            retries=3
+        )
+    )
+    retry_grasp.add_child(py_trees.decorators.Retry(
+        name=f"Retry grasp three times", child=graspAtTableOnce(), num_failures=3
+    ))
+    _retry_grasp = py_trees.decorators.FailureIsSuccess(
+        name="Retry grasp at table (best effort)", child=retry_grasp
     )
     root.add_child(
         py_trees.decorators.Repeat(
-            name=f"repeat {n_items} times", child=retry_grasp, num_success=n_items
+            name=f"repeat {n_items} times", child=_retry_grasp, num_success=n_items
         )
     )
     return root
@@ -420,12 +490,23 @@ def graspTablet():
     )
     root.add_child(BtNode_TurnPanTilt(name="Turn head to tablet", x=0.0, y=10.0))
     root.add_child(
+        py_trees.decorators.Retry(
+            name="Retry moving arm to grasp tablet",
+            child=BtNode_MoveArmSingle(
+                name="move arm to grasp tablet",
+                arm_pose_bb_key=KEY_ARM_CLEANING_STATION,
+                add_octomap=True
+            ),
+            num_failures=3
+        )
+    )
+    root.add_child(
         BtNode_ScanForGeneralist(
             name="Scan for tablet on cleaning station",
             bb_source=None,
             bb_key=KEY_VISION_RESULT,
-            object="tablet",
-            use_orbbec=True,
+            object="yellow sponge",
+            use_orbbec=False,
         )
     )
     root.add_child(
@@ -437,7 +518,6 @@ def graspTablet():
                 bb_source=None,
                 action_name=GRASP_ACTION_NAME,
                 bb_key_vision_res=KEY_VISION_RESULT,
-                bb_key_object_label="tablet",
             ),
         )
     )
@@ -502,6 +582,7 @@ def placeTablet():
 
 def pickAndPlaceShortened():
     root = py_trees.composites.Sequence("Pick and place task", memory=True)
+    root.add_child(createConstantWriter())
     root.add_child(enterArena())
     root.add_child(navigateToShelf())
     root.add_child(scanShelf())

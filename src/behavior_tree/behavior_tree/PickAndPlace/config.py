@@ -138,6 +138,8 @@ ARM_POS_TABLE = [x / 180 * math.pi for x in constants["arm_pos_table"]]
 ARM_POS_CABINET = [x / 180 * math.pi for x in constants["arm_pos_cabinet"]]
 ARM_POS_WASH = [x / 180 * math.pi for x in constants["arm_pos_wash"]]
 ARM_POS_TRASH = [x / 180 * math.pi for x in constants["arm_pos_trash"]]
+ARM_POS_WASH_DROP = [x / 180 * math.pi for x in constants['arm_pos_wash_drop']]
+ARM_POS_CLEANING_STATION = [x / 180 * math.pi for x in constants['arm_pos_cleaning_station']]
 
 # --- Label sets ---
 DESIGNATED_TRASH_LABELS = list(constants["designated_trash_labels"])
@@ -190,6 +192,7 @@ KEY_POINT_PLACING_DYNAMIC = "pp_point_placing_dynamic"
 KEY_ARM_NAVIGATING = "pp_arm_navigating"
 KEY_ARM_TABLE = "pp_arm_table"
 KEY_ARM_CABINET = "pp_arm_cabinet"
+KEY_ARM_CLEANING_STATION = "pp_arm_cleaning_station"
 KEY_ARM_WASH = "pp_arm_wash"
 KEY_ARM_TRASH = "pp_arm_trash"
 KEY_ARM_WASH_DROP = "arm_wash_drop"
@@ -232,3 +235,6 @@ KEY_IMG_SHELF = "pp_img_shelf"
 KEY_SCAN_RESULTS_SHELF = "scan_result_shelf"
 KEY_SCAN_RESULTS_TABLE = "scan_result_table"
 KEY_ANNOUNCEMENT_MSG = "announcement_msg"
+
+
+KEY_GRASP_VISION_RES = "grasp_vision_result"
