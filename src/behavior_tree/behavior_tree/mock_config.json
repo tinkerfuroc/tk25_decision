@@ -23,6 +23,7 @@
           "BtNode_TrackPersonAction": "KEYPRESS",
           "BtNode_FindObj": "KEYPRESS",
           "BtNode_FeatureExtraction": "KEYPRESS",
+          "BtNode_LoadPersonReference": "NO_MOCK",
           "BtNode_SeatRecommend": "KEYPRESS",
           "BtNode_SeatRecommendBbox": "KEYPRESS",
           "BtNode_FeatureMatching": "KEYPRESS",
