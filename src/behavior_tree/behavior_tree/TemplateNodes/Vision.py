@@ -867,6 +867,7 @@ class BtNode_SeatRecommendBbox(ServiceHandler):
                  service_name: str = "seat_recommend_bbox_service",
                  use_orbbec: bool = True,
                  target_frame: str = "base_link",
+                 known_seats: list[str] | None = None,
                  ):
         super(BtNode_SeatRecommendBbox, self).__init__(name, service_name, SeatRecommendBbox)
 
@@ -894,6 +895,7 @@ class BtNode_SeatRecommendBbox(ServiceHandler):
 
         self.camera = "orbbec" if use_orbbec else "realsense"
         self.target_frame = target_frame
+        self.known_seats = list(known_seats) if known_seats else []
 
     def initialise(self):
         super().initialise()
@@ -916,6 +918,7 @@ class BtNode_SeatRecommendBbox(ServiceHandler):
         request.names = []
         request.features = []
         request.target_frame = self.target_frame
+        request.known_seats = list(self.known_seats)
         if self.blackboard.persons is not None:
             # minus one because the newest registered person is not yet seated
             for i in range(len(self.blackboard.persons) - 1):
@@ -1925,18 +1928,25 @@ class BtNode_MaintainEyeContact(ActionHandler):
         return pytree.common.Status.FAILURE
 
     def terminate(self, new_status: pytree.common.Status):
-        # On RUNNING→INVALID (parallel cut us off), the base class already
-        # sends a cancel when `goal_handle` is set. If the goal is still
-        # in flight (`send_goal_future` not yet resolved), defer the cancel
-        # to `goal_response_callback` so the server is reliably stopped.
-        if (
+        # FollowHeadAction is a continuous action: a terminal BT status does
+        # not necessarily mean the server goal has ended. Cancel whenever this
+        # behaviour exits RUNNING with a live goal, including the local
+        # follow_timeout path that returns SUCCESS.
+        should_cancel = (
             not self.mock_mode
             and self.status == pytree.common.Status.RUNNING
-            and new_status == pytree.common.Status.INVALID
-            and self.goal_handle is None
+            and new_status != pytree.common.Status.RUNNING
+            and self.result_status is None
             and self.send_goal_future is not None
-        ):
+        )
+        if should_cancel and self.goal_handle is None:
+            # Goal acceptance is still in flight; cancel once the handle
+            # arrives in goal_response_callback().
             self._cancel_pending = True
+        elif should_cancel and new_status != pytree.common.Status.INVALID:
+            # ActionHandler only cancels RUNNING→INVALID. Cover SUCCESS /
+            # FAILURE exits caused locally by this wrapper.
+            self.send_cancel_request()
         super().terminate(new_status)
 
 
@@ -1979,4 +1989,3 @@ class BtNode_ShowImage(pytree.behaviour.Behaviour):
             self.feedback_message = f"{prefix}: image path {path} not on disk (displaying anyway)"
             print(f"🖼️  {prefix} SHOW IMAGE (missing file): {path}")
         return pytree.common.Status.SUCCESS
-

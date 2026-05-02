@@ -113,6 +113,12 @@ HOST_DRINK = constants.get("host_drink", "water")
 DRINKS = list(constants.get("drinks", ["water", "cola", "juice", "milk", "coffee"]))
 NAMES = list(constants.get("names", ["Alex", "Sam", "Maria", "John"]))
 
+# Pre-known seat labels for the arena. Empty list ⇒ open-vocabulary mode
+# (the VLM enumerates seats from scratch). When populated, the seat-recommend
+# service constrains the VLM to choose from this list (or return "none"),
+# which kills the "invent a seat" hallucination class.
+SEAT_CATALOG = list(constants.get("seat_catalog", []))
+
 # Navigation / perception keys
 KEY_DOOR_POSE = "hri_door_pose"
 KEY_SOFA_POSE = "hri_sofa_pose"
