@@ -29,6 +29,10 @@
 #     Finds objects for grasping with distance validation.
 # BtNode_FeatureExtraction
 #     Extracts visual features for person recognition.
+# BtNode_LoadPersonReference
+#     Loads a pre-recorded person photo + .txt description from disk and writes
+#     them to the same blackboard keys BtNode_FeatureExtraction would write,
+#     so downstream matching consumes pre-registered data with no changes.
 # BtNode_SeatRecommend
 #     Recommends a seat based on current scene.
 # BtNode_SeatRecommendBbox
@@ -50,6 +54,11 @@
 # In mock mode, they return simulated detection results or wait for
 # keyboard input.
 #
+# Exception: BtNode_LoadPersonReference is pure local file I/O with no
+# hardware dependency, so it performs the same real load whether or not
+# the vision subsystem is mocked. It is registered in mock_config.json
+# only for naming-convention completeness.
+#
 
 import asyncio
 import os
@@ -63,7 +72,7 @@ from typing import Any, Optional
 
 from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, PanTiltCommand, PanTiltState, FollowHeadAction, SeatRecommendBbox, DetectWaving, PlacingLocation
 from behavior_tree.config import is_node_mocked
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import Point, PointStamped
 from std_msgs.msg import Header
 from py_trees.common import Status
 import action_msgs.msg as action_msgs
@@ -665,6 +674,93 @@ class BtNode_FeatureExtraction(ServiceHandler):
         else:
             self.feedback_message = "Still extracting feature..."
             return pytree.common.Status.RUNNING
+
+
+class BtNode_LoadPersonReference(pytree.behaviour.Behaviour):
+    """
+    Load a pre-recorded person photo + text description from disk and write
+    them to the blackboard in the same format ``BtNode_FeatureExtraction``
+    emits, so ``BtNode_CombinePerson`` and ``BtNode_FeatureMatching`` (and
+    therefore ``/feature_matching_service``) consume them transparently.
+
+    Use case: pre-register the host before the Receptionist task starts,
+    avoiding a live camera + LLM scan at task entry.
+
+    Mock mode: this node has no hardware/service dependency, so it performs
+    the same real local I/O regardless of ``mock_config.json``. The mock
+    flag is consulted only for log-prefix consistency.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        image_path: str,
+        description_path: str,
+        bb_features_key: str,
+        bb_image_key: str,
+    ):
+        super().__init__(name)
+        self.image_path = os.path.expanduser(image_path)
+        self.description_path = os.path.expanduser(description_path)
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
+
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="features",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_features_key),
+        )
+        self.blackboard.register_key(
+            key="comparison_image",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_image_key),
+        )
+
+        self._cached_image = None
+        self._cached_text = None
+
+    def _load_once(self) -> Optional[str]:
+        """Return None on success, error string on failure."""
+        if self._cached_image is not None and self._cached_text is not None:
+            return None
+
+        import cv2
+        from cv_bridge import CvBridge
+        from sensor_msgs.msg import Image  # noqa: F401  (returned via cv_bridge)
+
+        if not os.path.exists(self.image_path):
+            return f"image file not found: {self.image_path}"
+        if not os.path.exists(self.description_path):
+            return f"description file not found: {self.description_path}"
+
+        bgr = cv2.imread(self.image_path, cv2.IMREAD_COLOR)
+        if bgr is None:
+            return f"cv2.imread returned None for {self.image_path} (corrupt or unsupported format)"
+
+        self._cached_image = CvBridge().cv2_to_imgmsg(bgr, encoding="bgr8")
+
+        with open(self.description_path, "r", encoding="utf-8") as f:
+            self._cached_text = f.read().strip()
+
+        return None
+
+    def update(self) -> Status:
+        err = self._load_once()
+        if err is not None:
+            self.feedback_message = f"LoadPersonReference: {err}"
+            return pytree.common.Status.FAILURE
+
+        self.blackboard.features = self._cached_text
+        self.blackboard.comparison_image = self._cached_image
+
+        prefix = "MOCK" if self.mock_mode else "LOAD"
+        snippet = self._cached_text[:60] + ("…" if len(self._cached_text) > 60 else "")
+        self.feedback_message = (
+            f"{prefix}: {self._cached_image.width}x{self._cached_image.height} | "
+            f"desc: '{snippet}'"
+        )
+        return pytree.common.Status.SUCCESS
+
 
 class BtNode_SeatRecommend(ServiceHandler):
     """
@@ -1623,24 +1719,138 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
 
 class BtNode_MaintainEyeContact(ActionHandler):
     """
-    Wrap the HRI `follow_head_action` (tinker_vision_msgs_26.action.FollowHeadAction) to maintain
-    eye-contact with the closest face. Server returns success after a single gaze lock.
+    Wrap the HRI `follow_head_action` (tinker_vision_msgs_26.action.FollowHeadAction) to
+    maintain eye-contact with a designated guest. Server returns success after a single
+    gaze lock.
 
-    Feedback schema is `{pan, tilt}` — not the BT canonical `{stage, stage_name, status, delay_limit}`.
-    We override `feedback_callback` to stamp `last_feedback_time`, force `action_status=0`, and
-    keep a generous `feedback_timeout`.
+    Three fresh-lock modes, in priority order:
+
+    * **Seeded** — pass `target_id` + `bb_key_persons` + `bb_key_points`. The
+      centroid at `KEY_PERSON_CENTROIDS[target_id]` (in base_link, populated by
+      `BtNode_FeatureMatching`) is shipped as `target_seed_xyz`. The server
+      locks onto the candidate within `seed_radius_m` of the seed.
+    * **Centermost** — pass `track_centermost=True`. The server locks onto
+      whoever is most image-centered. Use after a `BtNode_TurnPanTilt` that
+      centered the designated person but no centroid is on the blackboard.
+    * **Closest** (default, no args) — server locks onto the closest person
+      (smallest XY distance to the robot in pan-tilt-root). Original upstream
+      behavior.
+
+    Sticky logic on the server is purely spatial reassoc within
+    `reassoc_dist_m` of the previous lock — no track IDs, no appearance.
+
+    Feedback schema is `{pan, tilt, person_visible, current_pan/tilt, target_pan/tilt,
+    error_deg}` — not the BT canonical `{stage, stage_name, status, delay_limit}`.
+    We override `feedback_callback` to stamp `last_feedback_time`, force `action_status=0`,
+    and keep a generous `feedback_timeout`.
     """
     def __init__(self,
                  name: str,
+                 *,
+                 target_id: Optional[int] = None,
+                 bb_key_persons: Optional[str] = None,
+                 bb_key_points: Optional[str] = None,
+                 seed_radius_m: float = 0.5,
+                 track_centermost: bool = False,
                  action_name: str = "follow_head_action",
                  feedback_timeout_secs: float = 30.0,
                  wait_for_server_timeout_sec: float = -3.0,
-                 follow_timeout:float=30.0
+                 follow_timeout: float = 30.0,
                  ):
         super().__init__(name, FollowHeadAction, action_name, None, wait_for_server_timeout_sec)
         self._feedback_timeout_secs = feedback_timeout_secs
         self._follow_timeout = follow_timeout
         self.start_time = None
+        self._target_id = target_id
+        self._bb_key_persons = bb_key_persons
+        self._bb_key_points = bb_key_points
+        self._seed_radius_m = float(seed_radius_m)
+        self._track_centermost = bool(track_centermost)
+
+        # Targeted-lock requires both keys + a target_id; partial config is
+        # almost always a wiring mistake, so refuse rather than silently
+        # dropping into seedless mode.
+        if target_id is not None and (
+            bb_key_persons is None or bb_key_points is None
+        ):
+            raise ValueError(
+                "BtNode_MaintainEyeContact: target_id requires both "
+                "bb_key_persons and bb_key_points."
+            )
+        # Seed and centermost are mutually exclusive on the server (seed
+        # wins). Surfacing this at construction prevents ambiguous tree
+        # code reading like the centermost mode is active when it isn't.
+        if target_id is not None and track_centermost:
+            raise ValueError(
+                "BtNode_MaintainEyeContact: target_id and track_centermost "
+                "are mutually exclusive (seed wins on the server)."
+            )
+
+        self._blackboard_targeted = None
+        if target_id is not None:
+            self._blackboard_targeted = self.attach_blackboard_client(
+                name=f"{self.name}_targeted",
+            )
+            self._blackboard_targeted.register_key(
+                key="persons",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", bb_key_persons,
+                ),
+            )
+            self._blackboard_targeted.register_key(
+                key="points",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", bb_key_points,
+                ),
+            )
+
+    def _resolve_seed_point(self) -> Point:
+        """Read the targeted guest's centroid from the blackboard.
+
+        Returns a `Point()` with all-zero fields on any miss (key absent,
+        index out of range, sentinel zero centroid). The action server
+        treats (0,0,0) as "no seed" and uses the head-direction fallback.
+        """
+        if self._target_id is None or self._blackboard_targeted is None:
+            return Point()
+        try:
+            persons = self._blackboard_targeted.persons
+        except KeyError:
+            persons = None
+        try:
+            points = self._blackboard_targeted.points
+        except KeyError:
+            points = None
+        if (
+            points is None
+            or len(points) <= self._target_id
+            or persons is None
+            or len(persons) <= self._target_id
+        ):
+            self.feedback_message = (
+                f"MaintainEyeContact: targeted seed unavailable "
+                f"(persons={'None' if persons is None else len(persons)}, "
+                f"points={'None' if points is None else len(points)}, "
+                f"target_id={self._target_id}); falling back to "
+                f"head-direction lock."
+            )
+            self.logger.warning(self.feedback_message)
+            return Point()
+        ps = points[self._target_id]
+        seed = Point()
+        seed.x = float(ps.point.x)
+        seed.y = float(ps.point.y)
+        seed.z = float(ps.point.z)
+        # Sentinel guard: a literal (0,0,0) centroid is indistinguishable
+        # from "no seed" on the wire; treat as missing.
+        if seed.x == 0.0 and seed.y == 0.0 and seed.z == 0.0:
+            self.logger.warning(
+                f"MaintainEyeContact: target_id={self._target_id} centroid "
+                "is exactly (0,0,0); treating as no seed.",
+            )
+        return seed
 
     def send_goal(self):
         self._cancel_pending = False
@@ -1653,8 +1863,27 @@ class BtNode_MaintainEyeContact(ActionHandler):
             return
         goal = FollowHeadAction.Goal()
         goal.start_following = True
+        seed = self._resolve_seed_point()
+        goal.target_seed_xyz = seed
+        seed_set = (seed.x != 0.0 or seed.y != 0.0 or seed.z != 0.0)
+        if seed_set:
+            goal.seed_radius_m = self._seed_radius_m
+            goal.track_centermost = False  # seed wins on server, but be explicit
+            self.feedback_message = (
+                f"Eye-contact goal sent (mode=seed, "
+                f"xyz=({seed.x:.2f},{seed.y:.2f},{seed.z:.2f}), "
+                f"radius={self._seed_radius_m:.2f} m, "
+                f"target_id={self._target_id})"
+            )
+        elif self._track_centermost:
+            goal.seed_radius_m = 0.0
+            goal.track_centermost = True
+            self.feedback_message = "Eye-contact goal sent (mode=centermost)"
+        else:
+            goal.seed_radius_m = 0.0
+            goal.track_centermost = False
+            self.feedback_message = "Eye-contact goal sent (mode=closest)"
         self.send_goal_request(goal)
-        self.feedback_message = "Eye-contact goal sent"
         self.start_time = time.time()
 
     def update(self) -> Status:
