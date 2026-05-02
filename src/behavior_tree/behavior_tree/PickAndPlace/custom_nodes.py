@@ -50,7 +50,7 @@ class BtNode_WriteFoundItems(py_trees.behaviour.Behaviour):
                 if self.place_seen is not None:
                     announcement_msg += f"  {self.place_seen}."
                 else:
-                    announce_msg += "."
+                    announcement_msg += "."
                 self.blackboard.announcement_msg = announcement_msg
                 self.feedback_message = f"Wrote {announcement_msg} to blackboard"
                 return py_trees.common.Status.SUCCESS
@@ -374,4 +374,3 @@ class BtNode_CategorizeGrocery(ActionHandler):
             self.feedback_message = f"ERROR:  {feedback.status} - {feedback.message}"
         else:
             self.feedback_message = f"INFO:  {feedback.status} - {feedback.message}"
-

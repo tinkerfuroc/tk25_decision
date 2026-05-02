@@ -1,5 +1,23 @@
 {
   "_comment_doc": "PickAndPlace Setup-Days overrides. All keys mirror config._default_constants(); any omitted key falls back to that default. Update poses + designated_trash_labels after Setup Days announcement.",
+  "arm_pos_wash_drop": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "arm_pos_cleaning_station": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
   "pose_kitchen_entry": {
     "point": {
       "x": 7.718596935272217,

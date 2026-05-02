@@ -295,6 +295,7 @@ class BtNode_ScanForGeneralist(ServiceHandler):
         request.force_vlm_sam = self.force_vlm_sam
         request.use_vlm_sam_fallback = self.use_vlm_sam_fallback
 
+
         self.response = self.call_service_async(request)
         self.feedback_message = f"Initialized ScanForGeneralist for {self.object}"
 
