@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 
-import py
 import py_trees
 import py_trees_ros
 import rclpy

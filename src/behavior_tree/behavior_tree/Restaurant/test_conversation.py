@@ -113,7 +113,7 @@ def get_order():
         _create_get_info(
             field_name="food",
             storage_key=CUSTOMER_ORDER_FOOD,
-            word_list=['chip', 'biscuit', 'cookie', 'bread', 'lays']
+            word_list=['chip', 'chips', 'biscuit', 'cookie', 'bread', 'lays']
         )
     )
 
