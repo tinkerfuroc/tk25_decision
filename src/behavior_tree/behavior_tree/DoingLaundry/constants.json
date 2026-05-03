@@ -1,45 +1,137 @@
 {
   "_comment_doc": "DoingLaundry Setup-Days overrides. Override poses + flags after the OC announces the washer + folding-table location. Defaults from config._default_constants() apply for any omitted key.",
-
   "pose_arena_entry": {
-    "point": {"x": 0.5, "y": 0.0, "z": 0.0},
-    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+    "point": {
+      "x": 0.5,
+      "y": 0.0,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "w": 1.0
+    }
   },
   "pose_laundry_area": {
-    "point": {"x": 1.5, "y": -0.8, "z": 0.0},
-    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+    "point": {
+      "x": 1.5,
+      "y": -0.8,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "w": 1.0
+    }
   },
   "pose_washing_machine": {
-    "point": {"x": 1.6, "y": -1.2, "z": 0.0},
-    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+    "point": {
+      "x": 5.510404271729306,
+      "y": -3.302388485393791,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.011691877538559053,
+      "w": 0.9999316476637907
+    }
+  },
+  "pose_folding_table": {
+    "point": {
+      "x": 4.728990827647017,
+      "y": -1.108065252994298,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": -0.9892987528557073,
+      "w": 0.14590400130956654
+    }
   },
   "pose_basket": {
     "_comment": "Used only if do_pick_from_basket is flipped to true.",
-    "point": {"x": 1.4, "y": -0.6, "z": 0.0},
-    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+    "point": {
+      "x": 1.4,
+      "y": -0.6,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "w": 1.0
+    }
   },
-  "pose_folding_table": {
-    "point": {"x": 1.0, "y": 0.4, "z": 0.0},
-    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+  "pose_basket_table": {
+    "point": {
+      "x": 4.817468117869964,
+      "y": -1.9497104317319724,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": -0.995573096885018,
+      "w": 0.09399047163821693
+    }
   },
-
-  "arm_pos_navigating":  [-87.0, -58.8, -2.4, 8.0, 12.3, -68.5, -8.2],
-  "arm_pos_pre_pick_basket": [-54.0, -29.0, 25.0, 99.0, 31.0, 83.0, 77.0],
-  "arm_pos_pick_basket": [-8.0, -20.0, 10.0, 70.0, 2.0, 60.0, 90.0],
-  "arm_pos_pre_pick_clothing": [22.0, -16.0, -21.0, 80.0, -2.0, 4.0, 86.0],
-  "arm_pos_pick_clothing": [52.0, 21.0, -75.0, 110.0, 25.0, 87.0, 72.0],
-  "arm_pos_fold_start":  [0.0, -45.0, 0.0, 1.0, 0.0, -45.0, 0.0],
-
+  "arm_pos_pre_pick_basket": [
+    -54.0,
+    -29.0,
+    25.0,
+    99.0,
+    31.0,
+    83.0,
+    77.0
+  ],
+  "arm_pos_pick_basket": [
+    -66.0,
+    -18.0,
+    59.0,
+    69.0,
+    28.0,
+    35.0,
+    79.0
+  ],
+  "arm_pos_pre_pick_clothing": [
+    22.0,
+    -16.0,
+    -21.0,
+    80.0,
+    -2.0,
+    4.0,
+    86.0
+  ],
+  "arm_pos_pick_clothing": [
+    22.0,
+    41.0,
+    -51.0,
+    128.0,
+    44.0,
+    53.0,
+    72.0
+  ],
+  "arm_pos_fold_start": [
+    0.0,
+    -51.0,
+    0.0,
+    -2.0,
+    0.0,
+    -41.0,
+    0.0
+  ],
   "fold_cycles": 3,
   "max_runtime_sec": 390.0,
   "nav_retry_limit": 3,
-
   "do_basket_transport": false,
   "do_request_washer_help": true,
   "do_pick_from_washer": true,
   "do_pick_from_basket": false,
   "do_request_single_piece_via_handover": true,
   "do_fold_picked_pieces": true,
-
   "max_extra_folds": 2
 }
