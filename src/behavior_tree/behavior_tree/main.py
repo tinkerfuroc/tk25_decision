@@ -1,6 +1,7 @@
 import py_trees
 import py_trees_ros
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from .visualization import create_post_tick_visualizer
 
 # from .HelpMeCarry.Track import createFollowPerson
@@ -30,6 +31,7 @@ def grasp_intel():
 def _run_tree(root, *, period_ms: float, title: str):
     tree = py_trees_ros.trees.BehaviourTree(root)
     tree.setup(node_name="root_node", timeout=15)
+    assert tree.node is not None, "tree.setup() did not initialise the ROS node"
     print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
         title=title,
         print_blackboard=PRINT_BLACKBOARD,
@@ -42,7 +44,7 @@ def _run_tree(root, *, period_ms: float, title: str):
 
     try:
         rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         shutdown_visualizer()

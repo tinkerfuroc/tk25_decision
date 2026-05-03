@@ -867,6 +867,7 @@ class BtNode_SeatRecommendBbox(ServiceHandler):
                  service_name: str = "seat_recommend_bbox_service",
                  use_orbbec: bool = True,
                  target_frame: str = "base_link",
+                 known_seats: list[str] | None = None,
                  ):
         super(BtNode_SeatRecommendBbox, self).__init__(name, service_name, SeatRecommendBbox)
 
@@ -894,6 +895,7 @@ class BtNode_SeatRecommendBbox(ServiceHandler):
 
         self.camera = "orbbec" if use_orbbec else "realsense"
         self.target_frame = target_frame
+        self.known_seats = list(known_seats) if known_seats else []
 
     def initialise(self):
         super().initialise()
@@ -916,6 +918,7 @@ class BtNode_SeatRecommendBbox(ServiceHandler):
         request.names = []
         request.features = []
         request.target_frame = self.target_frame
+        request.known_seats = list(self.known_seats)
         if self.blackboard.persons is not None:
             # minus one because the newest registered person is not yet seated
             for i in range(len(self.blackboard.persons) - 1):
@@ -1436,11 +1439,11 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self._skip_settle = False
 
     def initialise(self) -> None:
-        if self.bb_read_client.exists("x"):
+        if self.x_key:
             self.x = self.bb_read_client.get("x") / math.pi * 180.0
-        if self.bb_read_client.exists("y"):
+        if self.y_key:
             self.y = self.bb_read_client.get("y") / math.pi * 180.0
-        if self.bb_read_client.exists("speed"):
+        if self.speed_key:
             self.speed = self.bb_read_client.get("speed")
 
         if self.mock_mode:
@@ -1866,19 +1869,20 @@ class BtNode_MaintainEyeContact(ActionHandler):
         seed = self._resolve_seed_point()
         goal.target_seed_xyz = seed
         seed_set = (seed.x != 0.0 or seed.y != 0.0 or seed.z != 0.0)
-        if seed_set:
+        
+        if self._track_centermost:
+            goal.seed_radius_m = 0.0 
+            goal.track_centermost = True # centermost wins over seed point
+            self.feedback_message = "Eye-contact goal sent (mode=centermost)"
+        elif seed_set:
             goal.seed_radius_m = self._seed_radius_m
-            goal.track_centermost = False  # seed wins on server, but be explicit
+            goal.track_centermost = False
             self.feedback_message = (
                 f"Eye-contact goal sent (mode=seed, "
                 f"xyz=({seed.x:.2f},{seed.y:.2f},{seed.z:.2f}), "
                 f"radius={self._seed_radius_m:.2f} m, "
                 f"target_id={self._target_id})"
             )
-        elif self._track_centermost:
-            goal.seed_radius_m = 0.0
-            goal.track_centermost = True
-            self.feedback_message = "Eye-contact goal sent (mode=centermost)"
         else:
             goal.seed_radius_m = 0.0
             goal.track_centermost = False
@@ -1924,18 +1928,25 @@ class BtNode_MaintainEyeContact(ActionHandler):
         return pytree.common.Status.FAILURE
 
     def terminate(self, new_status: pytree.common.Status):
-        # On RUNNING→INVALID (parallel cut us off), the base class already
-        # sends a cancel when `goal_handle` is set. If the goal is still
-        # in flight (`send_goal_future` not yet resolved), defer the cancel
-        # to `goal_response_callback` so the server is reliably stopped.
-        if (
+        # FollowHeadAction is a continuous action: a terminal BT status does
+        # not necessarily mean the server goal has ended. Cancel whenever this
+        # behaviour exits RUNNING with a live goal, including the local
+        # follow_timeout path that returns SUCCESS.
+        should_cancel = (
             not self.mock_mode
             and self.status == pytree.common.Status.RUNNING
-            and new_status == pytree.common.Status.INVALID
-            and self.goal_handle is None
+            and new_status != pytree.common.Status.RUNNING
+            and self.result_status is None
             and self.send_goal_future is not None
-        ):
+        )
+        if should_cancel and self.goal_handle is None:
+            # Goal acceptance is still in flight; cancel once the handle
+            # arrives in goal_response_callback().
             self._cancel_pending = True
+        elif should_cancel and new_status != pytree.common.Status.INVALID:
+            # ActionHandler only cancels RUNNING→INVALID. Cover SUCCESS /
+            # FAILURE exits caused locally by this wrapper.
+            self.send_cancel_request()
         super().terminate(new_status)
 
 
@@ -1978,4 +1989,3 @@ class BtNode_ShowImage(pytree.behaviour.Behaviour):
             self.feedback_message = f"{prefix}: image path {path} not on disk (displaying anyway)"
             print(f"🖼️  {prefix} SHOW IMAGE (missing file): {path}")
         return pytree.common.Status.SUCCESS
-

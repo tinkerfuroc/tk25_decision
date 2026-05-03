@@ -9,7 +9,7 @@
     }
   },
   "mock_mode": {
-    "enabled": false,
+    "enabled": true,
     "auto_detect": false,
     "subsystems": {
       "vision": {
@@ -23,6 +23,7 @@
           "BtNode_TrackPersonAction": "KEYPRESS",
           "BtNode_FindObj": "KEYPRESS",
           "BtNode_FeatureExtraction": "KEYPRESS",
+          "BtNode_LoadPersonReference": "NO_MOCK",
           "BtNode_SeatRecommend": "KEYPRESS",
           "BtNode_SeatRecommendBbox": "KEYPRESS",
           "BtNode_FeatureMatching": "KEYPRESS",
@@ -83,7 +84,8 @@
           "BtNode_CompareInterest": "KEYPRESS",
           "BtNode_GetConfirmationAction": "KEYPRESS",
           "BtNode_ListenAction": "KEYPRESS",
-          "BtNode_PhraseExtractionAction": "KEYPRESS"
+          "BtNode_PhraseExtractionAction": "KEYPRESS",
+          "BtNode_DoorbellDetection": "KEYPRESS"
         }
       },
       "announcement": {
