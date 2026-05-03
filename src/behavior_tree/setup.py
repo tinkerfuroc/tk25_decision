@@ -53,6 +53,8 @@ setup(
             "hri-intro = behavior_tree.HRI.intro:main",
             'hri-point-at-seat = behavior_tree.HRI.point_at_seat:main',
             "test-eye-contact = behavior_tree.HRI.test_eye_contact:main",
+            "test-follow-head-fresh-lock = behavior_tree.HRI.test_follow_head_fresh_lock:main",
+            "test-doorbell = behavior_tree.HRI.test_doorbell:main",
             "pick-and-place = behavior_tree.PickAndPlace.cli:main",
             "doing-laundry = behavior_tree.DoingLaundry.cli:main",
             "GPSR = behavior_tree.GPSR.gpsr_new:main",
@@ -64,6 +66,7 @@ setup(
             "test-mock-mode = behavior_tree.test_mock_mode:main",
             "test-mockable-wrapper = scripts.test_mockable_wrapper:main",
             "verify-task-endpoints = scripts.verify_task_endpoints:main",
+            "load-then-match = behavior_tree.TestTrees.load_then_match:main",
             # HelpMeCarry test scripts
             "hmc-mock-nav = behavior_tree.HelpMeCarry.test.mock_nav_server:main",
             "hmc-mock-track = behavior_tree.HelpMeCarry.test.mock_track_server:main",

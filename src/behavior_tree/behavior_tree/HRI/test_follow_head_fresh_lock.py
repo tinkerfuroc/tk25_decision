@@ -69,6 +69,16 @@ class BtNode_DetectAndStashPersonCentroid(ServiceHandler):
         target_frame: str = "base_link",
         use_orbbec: bool = True,
         use_vlm_sam_fallback: bool = True,
+        # base_link sanity gate for the chosen object. The generalist's
+        # `sort_closest=True` ranks by camera-frame depth, so a
+        # close-camera ghost (poster / laptop screen / operator at the
+        # keyboard) often beats the actual test guest. Reject objects
+        # whose base_link X (forward) is < min_forward_m or > max_forward_m,
+        # or whose |Y| (lateral) exceeds max_lateral_m. Tuned so a guest
+        # standing 1-3 m forward, within ±1.5 m laterally, passes.
+        min_forward_m: float = 0.3,
+        max_forward_m: float = 5.0,
+        max_lateral_m: float = 1.5,
     ):
         super().__init__(name, service_name, ObjectDetectionGeneralist)
         self._bb_persons = bb_persons
@@ -77,6 +87,9 @@ class BtNode_DetectAndStashPersonCentroid(ServiceHandler):
         self._target_frame = target_frame
         self._camera = "orbbec" if use_orbbec else "realsense"
         self._use_vlm_sam_fallback = use_vlm_sam_fallback
+        self._min_forward_m = float(min_forward_m)
+        self._max_forward_m = float(max_forward_m)
+        self._max_lateral_m = float(max_lateral_m)
 
     def setup(self, **kwargs):
         super().setup(**kwargs)
@@ -135,6 +148,11 @@ class BtNode_DetectAndStashPersonCentroid(ServiceHandler):
 
         if self.response is None:
             self.feedback_message = "No response object"
+            print(
+                f"❌ DetectAndStash FAIL: {self.feedback_message} — service "
+                f"client never sent (check {self._service_name_str()} is up).",
+                file=sys.stderr, flush=True,
+            )
             return pytree.common.Status.FAILURE
 
         if not self.response.done():
@@ -146,28 +164,88 @@ class BtNode_DetectAndStashPersonCentroid(ServiceHandler):
             self.feedback_message = (
                 f"Detect failed status={result.status}: {result.error_msg}"
             )
+            # Most common cause: target_frame TF lookup failure on the
+            # server (base_link <-> camera frame). Hint the operator
+            # explicitly so they can either bring up TF or rerun with
+            # target_frame="" (raw camera frame).
+            print(
+                f"❌ DetectAndStash FAIL: {self.feedback_message}\n"
+                f"   target_frame={self._target_frame!r} — if status=1 and "
+                f"error_msg mentions TF, ensure base_link <-> camera TF is "
+                f"published, or set target_frame='' on the request.",
+                file=sys.stderr, flush=True,
+            )
             return pytree.common.Status.FAILURE
         if not result.objects:
             self.feedback_message = (
-                "Detect returned 0 objects (no person in frame)."
+                "Detect returned 0 objects (no person in frame, "
+                f"detection_source={result.detection_source})."
+            )
+            print(
+                f"❌ DetectAndStash FAIL: {self.feedback_message} — make sure "
+                "exactly one person is in the camera FoV, well-lit, and "
+                "facing the robot.",
+                file=sys.stderr, flush=True,
             )
             return pytree.common.Status.FAILURE
 
-        obj = result.objects[0]
+        # Sanity-filter: the generalist's `sort_closest=True` ranks by
+        # camera-frame depth, so a close-camera ghost (poster, laptop
+        # screen, the operator at the keyboard) often outranks the
+        # actual test guest. Pick the first object whose base_link
+        # centroid is in the reasonable forward-half-plane envelope.
+        chosen = None
+        rejected = []
+        for cand in result.objects:
+            c = cand.centroid
+            if not (self._min_forward_m <= c.x <= self._max_forward_m):
+                rejected.append((c.x, c.y, c.z, "x_out_of_range"))
+                continue
+            if abs(c.y) > self._max_lateral_m:
+                rejected.append((c.x, c.y, c.z, "y_out_of_range"))
+                continue
+            chosen = cand
+            break
+
+        if chosen is None:
+            rejected_str = ", ".join(
+                f"({x:.2f},{y:.2f},{z:.2f}|{why})" for (x, y, z, why) in rejected
+            )
+            self.feedback_message = (
+                f"All {len(result.objects)} detection(s) rejected by "
+                f"sanity gate (X in [{self._min_forward_m}, "
+                f"{self._max_forward_m}] m, |Y|<={self._max_lateral_m} m). "
+                f"Rejected: [{rejected_str}]"
+            )
+            print(
+                f"❌ DetectAndStash FAIL: {self.feedback_message}\n"
+                "   The generalist usually picks the closest-to-camera\n"
+                "   object first, which can be a poster / laptop screen\n"
+                "   / the operator near the keyboard. Make sure the\n"
+                "   intended guest is the only person in the camera FoV\n"
+                "   and stands ~1.5 m forward of the robot.",
+                file=sys.stderr, flush=True,
+            )
+            return pytree.common.Status.FAILURE
+
         ps = PointStamped()
         ps.header = result.header  # frame_id should already be base_link
         if not ps.header.frame_id:
             ps.header.frame_id = self._target_frame
-        ps.point = obj.centroid
+        ps.point = chosen.centroid
         self._bb_write.set("persons", ["person"], overwrite=True)
         self._bb_write.set("points", [ps], overwrite=True)
         self.feedback_message = (
             f"Stashed person centroid xyz=({ps.point.x:.3f}, "
             f"{ps.point.y:.3f}, {ps.point.z:.3f}) in {ps.header.frame_id} "
-            f"(detection_source={result.detection_source})"
+            f"(detection_source={result.detection_source}, "
+            f"chose {1 + len(rejected)}/{len(result.objects)} after sanity gate)"
         )
-        print(f"🎯 {self.feedback_message}")
+        print(f"🎯 {self.feedback_message}", flush=True)
         return pytree.common.Status.SUCCESS
+
+    def _service_name_str(self) -> str:
+        return getattr(self, "service_name", "object_detection_generalist")
 
 
 def build_tree() -> pytree.behaviour.Behaviour:
@@ -178,7 +256,7 @@ def build_tree() -> pytree.behaviour.Behaviour:
     # detect. Using (0, 30) tilts up slightly toward face level.
     root.add_child(
         BtNode_TurnPanTilt(
-            name="Look forward (0, 30)", x=0.0, y=30.0, speed=0.0,
+            name="Look forward (0, 30)", x=0.0, y=30.0
         )
     )
     # 2. Pre-detection cue. Long enough to give the operator time to
@@ -189,9 +267,7 @@ def build_tree() -> pytree.behaviour.Behaviour:
             name="Pre-detect announce",
             bb_source=None,
             message=(
-                "Hello. Please stand alone in front of me, about one and "
-                "a half meters away, body facing the robot. I will detect "
-                "you when this announcement finishes."
+                "Starting"
             ),
         )
     )
@@ -218,9 +294,7 @@ def build_tree() -> pytree.behaviour.Behaviour:
             name="Post-detect announce (long)",
             bb_source=None,
             message=(
-                "Person detected. Centroid stored to blackboard. Will be "
-                "the target of maintain eye contact. Initiating maintain "
-                "eye contact."
+                "Person detected."
             ),
         )
     )
@@ -233,7 +307,15 @@ def build_tree() -> pytree.behaviour.Behaviour:
             target_id=0,
             bb_key_persons=KEY_PERSONS,
             bb_key_points=KEY_POINT_CENTROIDS,
-            seed_radius_m=0.6,
+            # 1.0 m radius (vs 0.6 m default) absorbs the centroid
+            # mismatch between the generalist's bbox-center heuristic
+            # and follow_head's bbox-head-window heuristic for the same
+            # YOLO person bbox. A standing person 1.5 m away can produce
+            # XY centroids that differ by 0.4-0.7 m between the two
+            # heuristics; 0.6 m is too tight, 1.0 m comfortably covers
+            # the gap without admitting a bystander on the other side
+            # of the room.
+            seed_radius_m=1.0,
             follow_timeout=30.0,
         )
     )
