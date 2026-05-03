@@ -368,7 +368,7 @@ def foldClothingOnce():
     root.add_child(
         _moveArmRetry(
             name="Stretch out to get clothing",
-            arm_pose_key=KEY_ARM_NAVIGATING,
+            arm_pose_key=KEY_ARM_FOLD_START,
             add_octomap=False,
         )
     )
@@ -430,16 +430,16 @@ def createDoingLaundry():
     # root.add_child(pickupLaundryBasket())
     # root.add_child(goAndPlaceBasket())
 
-    root.add_child(
-        _moveArmRetry(
-            name="Move arm to base moving",
-            arm_pose_key=KEY_ARM_NAVIGATING,
-            add_octomap=False,
-        )
-    )
-    root.add_child(
-        _gotoRetry(name="Navigate to laundry area", pose_key=KEY_POSE_FOLDING_TABLE)
-    )
+    # root.add_child(
+    #     _moveArmRetry(
+    #         name="Move arm to base moving",
+    #         arm_pose_key=KEY_ARM_NAVIGATING,
+    #         add_octomap=False,
+    #     )
+    # )
+    # root.add_child(
+    #     _gotoRetry(name="Navigate to laundry area", pose_key=KEY_POSE_FOLDING_TABLE)
+    # )
 
     root.add_child(
         BtNode_Announce(
