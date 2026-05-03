@@ -45,6 +45,8 @@ from behavior_tree.Receptionist.customNodes import (
     BtNode_Confirm,
     BtNode_Introduce,
 )
+from .doorbellDetection import BtNode_DoorbellDetection
+
 from .config import (
     ARM_POS_DROP,
     ARM_POS_HANDOVER,
@@ -297,6 +299,7 @@ def createArrivalTrigger():
         message="Going to check the door.",
     ))
     root.add_child(parallel_going)
+    trigger_fallback = py_trees.composites.Selector(name="Arrival trigger fallback", memory=True)
     real_trigger = py_trees.composites.Sequence(name="Door detection trigger", memory=True)
     # real_trigger.add_child(
     #     py_trees.decorators.Retry(
@@ -309,16 +312,28 @@ def createArrivalTrigger():
         BtNode_Announce(
             name="announce waiting for door bell",
             bb_source=None,
-            message="Waiting for doorbell"
+            message="At door"
         )
+    )
+    real_trigger.add_child(
+        BtNode_DoorbellDetection(name="Listen for doorbell")
     )
     real_trigger.add_child(
         BtNode_Announce(
             name="Arrival detected announcement",
             bb_source=None,
-            message="I see a guest. Please come in and speak to me after the beep sound",
+            message="Detected door bell, Please enter.",
         )
     )
+    trigger_fallback.add_child(real_trigger)
+    trigger_fallback.add_child(
+        BtNode_Announce(
+            name="trigger failed",
+            bb_source=None,
+            message="Please enter"
+        )
+    )
+
     # real_trigger.add_child(
     #     BtNode_Announce(
     #         name="announce speak after beep sound",
@@ -326,7 +341,14 @@ def createArrivalTrigger():
     #         message="Please come in and speak to me after the beep sound"
     #     )
     # )
-    root.add_child(real_trigger)
+    root.add_child(trigger_fallback)
+    root.add_child(
+        BtNode_Announce(
+            "announce speak to me after the beep sound",
+            bb_source=None,
+            message="Please speak to me after the beep sound."
+        )
+    )
     return root
 
 
