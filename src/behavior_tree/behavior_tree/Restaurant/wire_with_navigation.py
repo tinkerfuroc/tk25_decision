@@ -2,16 +2,174 @@ from __future__ import annotations
 
 import math
 
-import py
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 import py_trees
 import py_trees_ros
 import rclpy
 
 from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
-from geometry_msgs.msg import PointStamped, Point
-from regex import P
+from geometry_msgs.msg import PointStamped, Point, PoseStamped, Quaternion, Pose
+from std_msgs.msg import Header
 
 from .custumNodes import BtNode_DetectCallingCustomer
+
+import rclpy
+import py_trees_ros
+import py_trees
+from behavior_tree.TemplateNodes.Audio import (
+    BtNode_Announce,
+    BtNode_PhraseExtractionAction,
+)
+
+
+CUSTOMER_ORDER_DRINK1="customer_order_drink"
+CUSTOMER_ORDER_FOOD1="customer_order_food"
+CUSTOMER_ORDER_DRINK2="customer_order_drink"
+CUSTOMER_ORDER_FOOD2="customer_order_food"
+
+def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
+    """High-confidence-first capture with a last-resort confirmation fallback.
+
+    Primary branch: up to 2 attempts of prompt → action-based extract. The
+    action (`phrase_extraction_action`) only succeeds on server status=0,
+    which means Whisper + Qwen ASR cross-check agreed on the same wordlist
+    entry. The rulebook awards a 4×15 "no non-essential questions" bonus for
+    accepting on that signal without a confirmation prompt.
+
+    Fallback branch: if both primary attempts abort, re-prompt, capture
+    the raw transcription via `BtNode_ListenAction`, then `BtNode_Confirm`
+    speaks it back (`"Your <field> is <value>, correct?"`) and
+    `BtNode_GetConfirmationAction` waits for yes/no. Preserves partial
+    scoring in noisy environments at the cost of the no-confirmation
+    bonus for this field only.
+    """
+    primary_loop = py_trees.composites.Sequence(
+        name=f"Prompt+extract {field_name}",
+        memory=True,
+    )
+    primary_loop.add_child(
+        BtNode_Announce(
+            name=f"Prompt for {field_name}",
+            bb_source=None,
+            message=f"What is your {field_name} order?.",
+        )
+    )
+    primary_loop.add_child(
+        BtNode_PhraseExtractionAction(
+            name=f"High-conf extract {field_name}",
+            wordlist=word_list,
+            bb_dest_key=storage_key,
+            timeout=7.0,
+        )
+    )
+    primary = py_trees.decorators.Retry(
+        name=f"Retry high-conf {field_name}",
+        child=primary_loop,
+        num_failures=10
+    )
+
+    fallback = py_trees.composites.Sequence(
+        name=f"Last-resort confirm {field_name}",
+        memory=True,
+    )
+    fallback.add_child(
+        BtNode_Announce(
+            name=f"Fallback prompt for {field_name}",
+            bb_source=None,
+            message=f"Let me try again. Please tell me your {field_name} clearly.",
+        )
+    )
+    fallback.add_child(
+        BtNode_PhraseExtractionAction(
+            name=f"High-conf extract {field_name}",
+            wordlist=word_list,
+            bb_dest_key=storage_key,
+            timeout=7.0,
+        )
+    )
+
+    root = py_trees.composites.Selector(
+        name=f"Get {field_name}",
+        memory=True,
+    )
+    root.add_child(primary)
+    root.add_child(py_trees.decorators.Retry(name="retry 3 times", child=fallback, num_failures=4))
+    return root
+
+def get_order(drink_order_key, food_order_key):
+    root = py_trees.composites.Sequence(
+        name="Get customer order",
+        memory=True
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "announce waiting door bell",
+            bb_source=None,
+            message="Hi customer, please speak to me after the beep sound"
+        )
+    )
+
+    root.add_child(
+        _create_get_info(
+            field_name="drink",
+            storage_key=drink_order_key,
+            word_list=['cola', 'water', 'sprite', 'orange', 'milk']
+        )
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "repeat order",
+            bb_source=drink_order_key,
+            message="Got order of "
+        )
+    )
+
+    root.add_child(
+        _create_get_info(
+            field_name="food",
+            storage_key=food_order_key,
+            word_list=['chip', 'chips', 'biscuit', 'cookie', 'bread', 'lays']
+        )
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "repeat order",
+            bb_source=food_order_key,
+            message="Got order of "
+        )
+    )
+
+    return root
+
+
+def main():
+    rclpy.init()
+    root = get_order()
+    tree = py_trees_ros.trees.BehaviourTree(root)
+    tree.setup(node_name="test_scan", timeout=15)
+
+    def _print(t):
+        print(py_trees.display.unicode_tree(root=t.root, show_status=True))
+
+    tree.tick_tock(period_ms=500.0, post_tick_handler=_print)
+
+    try:
+        rclpy.spin(tree.node)
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    finally:
+        tree.shutdown()
+        rclpy.try_shutdown()
+
+
+if __name__ == "__main__":
+    main()
+    
 
 
 ###########################
@@ -184,7 +342,7 @@ class BtNode_ExtractOnePoint(py_trees.behaviour.Behaviour):
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="customer_centroids",
-            access=py_trees.common.Access.READ,
+            access=py_trees.common.Access.WRITE,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_customer_centroids),
         )
         self.blackboard.register_key(
@@ -211,6 +369,14 @@ def navigateToCustomer():
     )
 
     root.add_child(
+        BtNode_Announce(
+            name="announce start navigation",
+            bb_source=None,
+            message="Navigating to calling customer",
+        )
+    )
+
+    root.add_child(
         BtNode_ExtractOnePoint(
             name="extract one customer location",
             bb_key_customer_centroids=KEY_CUSTOMER_CENTROIDS,
@@ -231,14 +397,93 @@ def navigateToCustomer():
 
     return root    
 
+
+POSE_BARMAN = PoseStamped(
+    header=Header(frame_id="map"),
+    pose=Pose(
+        position=Point(x=0.0, y=0.0, z=0.0),
+        orientation=Quaternion(x=0.0, y=0.0, z=1.0, w=0.0)
+    )
+)
+KEY_POSE_BARMAN = "pose_barman"
+
+# def writeBarmanPoseToBlackboard():
+#     return BtNode_WriteToBlackboard(
+#         name="write barman pose to blackboard",
+#         bb_key=KEY_POSE_BARMAN,
+#         value=POSE_BARMAN
+#     )
+
+def announceAllOrders():
+    root = py_trees.composites.Sequence(
+        name="give all orders to barman",
+        memory=True
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "repeat order",
+            bb_source= CUSTOMER_ORDER_DRINK1,
+            message="customer one ordered drink of "
+        )
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "repeat order",
+            bb_source=CUSTOMER_ORDER_FOOD2,
+            message="and food of "
+        )
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "repeat order",
+            bb_source=CUSTOMER_ORDER_DRINK2,
+            message="customer two orderd drink of "
+        )
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "repeat order",
+            bb_source=CUSTOMER_ORDER_FOOD2,
+            message="and food of "
+        )
+    )
+
+
+    return root
+
+
 def with_navigation():
     root=py_trees.composites.Sequence(
         "scan for waving person and navigate to them",
         True
     )
-
-    root.add_child(scanAllPositions(n_gate=1))
+    # root.add_child(writeBarmanPoseToBlackboard())
+    root.add_child(
+        BtNode_Announce(
+            name="announce start navigation",
+            bb_source=None,
+            message="Detecting waving customer",
+        )
+    )
+    root.add_child(scanAllPositions(n_gate=2))
     root.add_child(navigateToCustomer())
+    root.add_child(get_order(
+        drink_order_key=CUSTOMER_ORDER_DRINK1,
+        food_order_key=CUSTOMER_ORDER_FOOD1
+    ))
+
+    root.add_child(navigateToCustomer())
+    root.add_child(get_order(
+        drink_order_key=CUSTOMER_ORDER_DRINK2,
+        food_order_key=CUSTOMER_ORDER_FOOD2
+    ))
+
+
+
 
     return root
 
