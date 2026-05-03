@@ -93,7 +93,7 @@ from .config import (
     KEY_SCAN_RESULTS_TABLE,
     KEY_SCAN_RESULTS_SHELF,
     KEY_ANNOUNCEMENT_MSG,
-    KEY_GRASP_VISION_RES
+    KEY_GRASP_VISION_RES,
 )
 from .custom_nodes import (
     BtNode_WriteFoundItems,
@@ -142,7 +142,11 @@ def createConstantWriter() -> py_trees.composites.Parallel:
         ("Write arm wash", KEY_ARM_WASH, ARM_POS_WASH),
         ("Write arm wash drop", KEY_ARM_WASH_DROP, ARM_POS_WASH_DROP),
         ("Write arm trash", KEY_ARM_TRASH, ARM_POS_TRASH),
-        ("Write arm cleaning station", KEY_ARM_CLEANING_STATION, ARM_POS_CLEANING_STATION),
+        (
+            "Write arm cleaning station",
+            KEY_ARM_CLEANING_STATION,
+            ARM_POS_CLEANING_STATION,
+        ),
         ("Write target frame", KEY_TARGET_FRAME, TARGET_FRAME),
         ("Write max runtime", KEY_MAX_RUNTIME, MAX_RUNTIME_SEC),
     ]
@@ -203,7 +207,7 @@ def _gotoRetryWith_Announcement(location_name: str, pose_key: str):
         name=f"Navigate to {location_name} sequence", memory=True
     )
     navigation_sequence.add_child(
-        # TODO: failed during Robocup China 2026 for some reason 
+        # TODO: failed during Robocup China 2026 for some reason
         # in which the arm did not move to navigating shell for some reason
         _moveArmRetry(
             f"Arm to nav (pre-{location_name})", KEY_ARM_NAVIGATING, retries=3
@@ -226,9 +230,15 @@ def _scanForGeneralistRetry(name: str, bb_source, bb_key, object, use_orbbec=Tru
     return py_trees.decorators.Retry(
         name="retry scan for generalist",
         child=BtNode_ScanForGeneralist(
-            name=name, bb_source=bb_source, bb_key=bb_key, object=object, use_orbbec=use_orbbec, 
-            return_rgb_image=True, return_depth_image=True,
-            force_vlm_sam=True, return_segments=True
+            name=name,
+            bb_source=bb_source,
+            bb_key=bb_key,
+            object=object,
+            use_orbbec=use_orbbec,
+            return_rgb_image=True,
+            return_depth_image=True,
+            force_vlm_sam=True,
+            return_segments=True,
         ),
         num_failures=5,
     )
@@ -278,6 +288,7 @@ def scanShelf():
     audio_branch = py_trees.composites.Sequence(
         name="announce items on shelf", memory=True
     )
+    audio_branch.add_child(BtNode_TurnPanTilt(name="Turn head to shelf", x=0.0, y=25.0))
     audio_branch.add_child(
         BtNode_Announce(
             name="announce scanning shelf",
@@ -306,9 +317,7 @@ def navigateToTable():
 
 def scanTableAndAnnounce():
     root = py_trees.composites.Sequence("Scan table and announce", memory=True)
-    root.add_child(BtNode_TurnPanTilt(
-        name="Turn head to table", x=0.0, y=20.0
-    ))
+    root.add_child(BtNode_TurnPanTilt(name="Turn head to table", x=0.0, y=20.0))
     root.add_child(
         _moveArmRetry(
             name="move arm to navigation pose to clear orbbec",
@@ -381,10 +390,13 @@ def scanTableAndAnnounce():
     # root.add_child(
     #     BtNode_Announce("announce shelf category items", KEY_ANNOUNCEMENT_MSG)
     # )
-    
+
     return root
 
-def graspAtTableOnce(prompt="hand sanitizer . bottled milk . plate . cup . sprite bottle . cola . water bottle. bottled chips . bread . oreo cookie box . bottle ."):
+
+def graspAtTableOnce(
+    prompt="hand sanitizer . bottled milk . plate . cup . sprite bottle . cola . water bottle. bottled chips . bread . oreo cookie box . bottle .",
+):
     root = py_trees.composites.Sequence("grasp at table ONCE", True)
 
     parallel_scan_announce = py_trees.composites.Parallel(
@@ -398,7 +410,7 @@ def graspAtTableOnce(prompt="hand sanitizer . bottled milk . plate . cup . sprit
             bb_source=None,
             bb_key=KEY_GRASP_VISION_RES,
             object=prompt,
-            use_orbbec=False
+            use_orbbec=False,
         )
     )
     parallel_scan_announce.add_child(
@@ -424,7 +436,7 @@ def graspAtTableOnce(prompt="hand sanitizer . bottled milk . plate . cup . sprit
                 bb_source=None,
                 bb_key_vision_res=KEY_GRASP_VISION_RES,
             ),
-            num_failures=3
+            num_failures=3,
         )
     )
     parallel_grasp_announce.add_child(grasp_branch)
@@ -447,10 +459,8 @@ def graspAtTableOnce(prompt="hand sanitizer . bottled milk . plate . cup . sprit
     )
     root.add_child(BtNode_GripperAction(name="open gripper", open_gripper=True))
 
-
     audio_guard = py_trees.composites.Selector(
-        name="Audio guard for announcing grasp failure", 
-        memory=True
+        name="Audio guard for announcing grasp failure", memory=True
     )
     audio_guard.add_child(root)
     audio_guard.add_child(
@@ -467,60 +477,64 @@ def graspAllAtTable(n_items: int):
     root = py_trees.composites.Sequence(
         name=f"Grasp all {n_items} items at table", memory=True
     )
-    retry_grasp=py_trees.composites.Sequence(
-        name="retry grasp with move arm to grap pose first",
-        memory=True
+    retry_grasp = py_trees.composites.Sequence(
+        name="retry grasp with move arm to grap pose first", memory=True
     )
     retry_grasp.add_child(
         _moveArmRetry(
-            name="move arm to grasp pose", 
-            arm_pose_key=KEY_ARM_TABLE, 
+            name="move arm to grasp pose",
+            arm_pose_key=KEY_ARM_TABLE,
             add_octomap=True,
-            retries=3
+            retries=3,
         )
     )
-    retry_grasp.add_child(py_trees.decorators.Retry(
-        name=f"Retry grasp three times", 
-        child=graspAtTableOnce("bottle . cup . can . hand sanitizer"), 
-        num_failures=3
-    ))
+    retry_grasp.add_child(
+        py_trees.decorators.Retry(
+            name=f"Retry grasp three times",
+            child=graspAtTableOnce("bottle . cup . can . hand sanitizer"),
+            num_failures=3,
+        )
+    )
     _retry_grasp = py_trees.decorators.FailureIsSuccess(
         name="Retry grasp at table (best effort)", child=retry_grasp
     )
 
     retry_grasp_simple_items = py_trees.composites.Sequence(
-        name="retry grasp simple items with move arm to grap pose first",
-        memory=True
+        name="retry grasp simple items with move arm to grap pose first", memory=True
     )
     retry_grasp_simple_items.add_child(
         _moveArmRetry(
-            name="move arm to grasp pose", 
-            arm_pose_key=KEY_ARM_TABLE, 
+            name="move arm to grasp pose",
+            arm_pose_key=KEY_ARM_TABLE,
             add_octomap=True,
-            retries=3
+            retries=3,
         )
     )
     retry_grasp_simple_items.add_child(
         graspAtTableOnce("bottle . cup . chip can . hand sanitizer")
     )
     _retry_grasp_simple_items = py_trees.decorators.Retry(
-        name="Retry grasp simple items at table (best effort)", 
-        child=retry_grasp_simple_items, 
-        num_failures=3
+        name="Retry grasp simple items at table (best effort)",
+        child=retry_grasp_simple_items,
+        num_failures=3,
     )
     root.add_child(
         py_trees.decorators.FailureIsSuccess(
             name="failure is success",
             child=py_trees.decorators.Repeat(
-                name=f"repeat {n_items} times", child=_retry_grasp, num_success=n_items-1
-            )
+                name=f"repeat {n_items} times",
+                child=_retry_grasp,
+                num_success=n_items - 1,
+            ),
         )
     )
-    root.add_child(py_trees.decorators.Repeat(
-            name=f"repeat {n_items} times", 
-            child=_retry_grasp_simple_items, 
-            num_success=2
-        ))
+    root.add_child(
+        py_trees.decorators.Repeat(
+            name=f"repeat {n_items} times",
+            child=_retry_grasp_simple_items,
+            num_success=2,
+        )
+    )
     return root
 
 
@@ -544,9 +558,9 @@ def graspTablet():
             child=BtNode_MoveArmSingle(
                 name="move arm to grasp tablet",
                 arm_pose_bb_key=KEY_ARM_CLEANING_STATION,
-                add_octomap=True
+                add_octomap=True,
             ),
-            num_failures=3
+            num_failures=3,
         )
     )
     root.add_child(
