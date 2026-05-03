@@ -33,7 +33,7 @@ import py_trees
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle
-from behavior_tree.TemplateNodes.Navigation import BtNode_CaptureCurrentPose, BtNode_FindApproachPose, BtNode_GotoAction
+from behavior_tree.TemplateNodes.Navigation import BtNode_Approach, BtNode_CaptureCurrentPose, BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_MaintainEyeContact,
     BtNode_ScanForWavingPerson,
@@ -65,7 +65,6 @@ from .config import (
     KEY_BARMAN_TEXT,
     KEY_CURRENT_ITEM,
     KEY_CURRENT_ITEM_SUMMARY,
-    KEY_CUSTOMER_APPROACH_POSE,
     KEY_CUSTOMER_LOCATION,
     KEY_CUSTOMER_ORDER,
     KEY_CUSTOMER_QUEUE,
@@ -95,42 +94,30 @@ from .state_nodes import (
 
 
 def _approachCustomerSubtree(name: str = "Approach customer") -> py_trees.composites.Sequence:
-    """Find a costmap-free, target-facing approach pose then drive to it.
+    """Drive to a target-facing approach pose for the active customer.
 
-    Replaces direct `BtNode_GotoAction(KEY_CUSTOMER_LOCATION)` calls so the
-    robot stops a polite distance from the customer rather than navigating
-    onto their position.
+    Delegates to the ``go_to_approach`` action server. The server runs two
+    attempts: (1) pure geometric goal `desired_distance` back from the target
+    along the robot→target axis sent straight to nav2, and on abort/stall
+    (2) recompute candidates against the *current* costmap, gate on
+    reachability, retry with the first reachable candidate. Replaces the
+    older two-step `FindApproachPose + GotoAction` flow which had no
+    recompute-on-nav-fail.
+
+    KEY_CUSTOMER_LOCATION may hold either a PointStamped or a PoseStamped;
+    BtNode_Approach accepts both. Distance kwargs left at 0 so the action
+    server applies its own declared defaults.
     """
     seq = py_trees.composites.Sequence(name=name, memory=True)
-    seq.add_child(
-        BtNode_Announce(
-            name="Calculating customer position",
-            bb_source=None,
-            message="Calculating customer position.",
-        )
-    )
-    seq.add_child(
-        BtNode_FindApproachPose(
-            name=f"{name}: find pose",
-            bb_target_key=KEY_CUSTOMER_LOCATION,
-            bb_approach_pose_key=KEY_CUSTOMER_APPROACH_POSE,
-            desired_distance=0.7,
-            min_distance=0.45,
-            max_distance=1.2,
-            check_reachability=True,
-        )
-    )
     seq.add_child(BtNode_Announce(
         name=f"{name}: announce",
         bb_source=None,
         message="Approaching customer.",
     ))
-    seq.add_child(
-        BtNode_GotoAction(
-            name=f"{name}: drive",
-            key=KEY_CUSTOMER_APPROACH_POSE,
-        )
-    )
+    seq.add_child(BtNode_Approach(
+        name=f"{name}: go to approach",
+        bb_target_key=KEY_CUSTOMER_LOCATION,
+    ))
     return seq
 
 
