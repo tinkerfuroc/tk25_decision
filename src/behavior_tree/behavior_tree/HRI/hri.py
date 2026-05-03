@@ -701,12 +701,12 @@ def createEscortAndSeat(guest_idx: int):
         name=f"Maintain gaze on guest {guest_idx} during scan",
         memory=True
     )
-    maintain_gaze.add_child(
-        BtNode_WaitTicks(
-            name="wait a moment for orbbec to finish settling",
-            ticks=20
-        )
-    )
+    # maintain_gaze.add_child(
+    #     BtNode_WaitTicks(
+    #         name="wait a moment for orbbec to finish settling",
+    #         ticks=20
+    #     )
+    # )
 
     maintain_gaze.add_child(
         BtNode_TurnPanTilt(name=f"Look at guest", x=90.0, y=45.0, speed=0.0)
@@ -858,6 +858,22 @@ def createEscortAndSeat(guest_idx: int):
                 y=35.0,
             )
         ]
+    )
+
+    escort_with_pantilt_fallback.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name=f"Ensure arm is moved back to navigation pose",
+            child=py_trees.decorators.Retry(
+                name=f"Retry move arm to navigation pose guest {guest_idx}",
+                child=BtNode_MoveArmSingle(
+                    name=f"Move arm to navigation pose guest {guest_idx}",
+                    service_name="arm_joint_service",
+                    arm_pose_bb_key=KEY_ARM_NAVIGATING,
+                    add_octomap=False,
+                ),
+                num_failures=3,
+            ),
+        )
     )
 
     return escort_with_pantilt_fallback
@@ -1143,4 +1159,5 @@ def createHRITask():
             message="HRI task complete.",
         )
     )
+    root.add_child(py_trees.behaviours.Running("running..."))
     return root
