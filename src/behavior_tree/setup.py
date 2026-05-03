@@ -27,6 +27,7 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
+            "wire_with_navigation=behavior_tree.Restaurant.wire_with_navigation:main",
             "test_take_order=behavior_tree.Restaurant.test_conversation:main",
             "test_restaurant_scan = behavior_tree.Restaurant.test_scan:main",
             "test_move_arm = behavior_tree.test_move_arm_teleop:main",
