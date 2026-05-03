@@ -151,7 +151,7 @@ def createConstantWriter() -> py_trees.composites.Parallel:
         (
             "Write arm pre pick clothing",
             KEY_ARM_PRE_PICK_CLOTHING,
-            ARM_POS_PRE_PICK_BASKET,
+            ARM_POS_PRE_PICK_CLOTHING,
         ),
         ("Write target frame", KEY_TARGET_FRAME, TARGET_FRAME),
         # ("Write max runtime", KEY_MAX_RUNTIME, MAX_RUNTIME_SEC),
@@ -368,7 +368,7 @@ def foldClothingOnce():
     root.add_child(
         _moveArmRetry(
             name="Stretch out to get clothing",
-            arm_pose_key=KEY_ARM_FOLD_START,
+            arm_pose_key=KEY_ARM_NAVIGATING,
             add_octomap=False,
         )
     )
@@ -377,7 +377,7 @@ def foldClothingOnce():
         BtNode_Announce(
             name="Announce folding start",
             bb_source=None,
-            message=f"Start folding, please put a clothes in my gripper",
+            message=f"Start folding, please put a clothes in my gripper, it might be on the floor or table.",
         )
     )
     root.add_child(
@@ -392,7 +392,7 @@ def foldClothingOnce():
         )
     )
     root.add_child(
-        BtNode_FoldClothing(  # TODO: implement the real BtNode_Fold
+        BtNode_FoldClothing(
             name="Fold clothing piece",
             action_name=FOLD_ACTION_NAME,
         )
@@ -402,7 +402,7 @@ def foldClothingOnce():
         BtNode_Announce(
             name="Announce folding complete",
             bb_source=None,
-            message=f"Please help me to fold the current cloth into half.",
+            message=f"Please help me to fold the current cloth into half and move away the clothes on table.",
         )
     )
     # TODO: maybe sleep 5 seconds here to allow for human-assisted folding, if we want to avoid a hard dependency on the fold action server being functional
