@@ -144,6 +144,7 @@ POSE_LAUNDRY_AREA    = _pose_reader(constants["pose_laundry_area"])
 POSE_WASHING_MACHINE = _pose_reader(constants["pose_washing_machine"])
 POSE_BASKET          = _pose_reader(constants["pose_basket"])
 POSE_FOLDING_TABLE   = _pose_reader(constants["pose_folding_table"])
+POSE_BASKET_TABLE = _pose_reader(constants["pose_basket_table"])
 
 POINT_TABLE_FOLD_ZONE  = _point_reader(constants["point_table_fold_zone"])
 POINT_TABLE_STACK_ZONE = _point_reader(constants["point_table_stack_zone"])
@@ -153,6 +154,9 @@ POINT_WASHER_DRUM      = _point_reader(constants["point_washer_drum"])
 ARM_POS_NAVIGATING  = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
 ARM_POS_SCAN        = [x / 180 * math.pi for x in constants["arm_pos_scan"]]
 ARM_POS_PICK_BASKET = [x / 180 * math.pi for x in constants["arm_pos_pick_basket"]]
+ARM_POS_PRE_PICK_BASKET = [x / 180 * math.pi for x in constants["arm_pos_pre_pick_basket"]]
+ARM_POS_PICK_CLOTHING = [x / 180 * math.pi for x in constants["arm_pos_pick_clothing"]]
+ARM_POS_PRE_PICK_CLOTHING= [x / 180 * math.pi for x in constants["arm_pos_pre_pick_clothing"]]
 ARM_POS_PICK_WASHER = [x / 180 * math.pi for x in constants["arm_pos_pick_washer"]]
 ARM_POS_PLACING     = [x / 180 * math.pi for x in constants["arm_pos_placing"]]
 ARM_POS_FOLD_START  = [x / 180 * math.pi for x in constants["arm_pos_fold_start"]]
@@ -171,6 +175,7 @@ DO_FOLD_PICKED_PIECES                = bool(constants["do_fold_picked_pieces"])
 MAX_EXTRA_FOLDS = int(constants["max_extra_folds"])
 
 ARM_SERVICE_NAME    = "arm_joint_service"
+ARM_ACTION_NAME = "joint_move_action"
 GRASP_ACTION_NAME   = "grasp"
 FOLD_ACTION_NAME    = "fold_clothing_action"
 TARGET_FRAME        = "base_link"
@@ -190,6 +195,7 @@ KEY_POSE_LAUNDRY_AREA    = "dl_pose_laundry_area"
 KEY_POSE_WASHING_MACHINE = "dl_pose_washing_machine"
 KEY_POSE_BASKET          = "dl_pose_basket"
 KEY_POSE_FOLDING_TABLE   = "dl_pose_folding_table"
+KEY_POSE_BASKET_TABLE = "dl_pose_basket_table"
 
 KEY_POINT_TABLE_FOLD_ZONE  = "dl_point_table_fold_zone"
 KEY_POINT_TABLE_STACK_ZONE = "dl_point_table_stack_zone"
@@ -202,6 +208,9 @@ KEY_ARM_PICK_BASKET = "dl_arm_pick_basket"
 KEY_ARM_PICK_WASHER = "dl_arm_pick_washer"
 KEY_ARM_PLACING     = "dl_arm_placing"
 KEY_ARM_FOLD_START  = "dl_arm_fold_start"
+KEY_ARM_PRE_PICK_BASKET = "dl_arm_pre_pick_basket"
+KEY_ARM_PRE_PICK_CLOTHING = "dl_arm_pre_pick_clothing"
+KEY_ARM_PICK_CLOTHING = "dl_arm_pick_clothing"
 
 KEY_TARGET_FRAME = "dl_target_frame"
 KEY_MAX_RUNTIME  = "dl_max_runtime_sec"
