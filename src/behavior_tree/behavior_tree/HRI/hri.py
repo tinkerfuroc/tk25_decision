@@ -11,7 +11,7 @@ Constants, precomputed poses, and key declarations live in `HRI/config.py`.
 from openai import audio
 import py_trees
 
-USE_NAV_ORIENTATION_ANGLE_SERVICE = True
+USE_NAV_ORIENTATION_ANGLE_SERVICE = False
 
 image_path = os.environ.get("HOST_IMAGE_PATH", "/home/tinker/tk25_ws/img_host.jpg")
 description_path = os.environ.get("HOST_DESC_PATH", "/home/tinker/tk25_ws/host.txt")
@@ -285,6 +285,19 @@ def createArrivalTrigger():
     #         num_failures=3,
     #     )
     # )
+    root.add_child(
+        BtNode_Announce(
+            "announce waiting door bell",
+            bb_source=None,
+            message="Waiting for door bell"
+        )
+    )
+    root.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            "failure is success",
+            BtNode_DoorbellDetection(name="Listen for doorbell")
+        )
+    )
     parallel_going = py_trees.composites.Parallel(name="Parallel go to door and announce", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_going.add_child(
         py_trees.decorators.Retry(
@@ -299,8 +312,8 @@ def createArrivalTrigger():
         message="Going to check the door.",
     ))
     root.add_child(parallel_going)
-    trigger_fallback = py_trees.composites.Selector(name="Arrival trigger fallback", memory=True)
-    real_trigger = py_trees.composites.Sequence(name="Door detection trigger", memory=True)
+    # trigger_fallback = py_trees.composites.Selector(name="Arrival trigger fallback", memory=True)
+    # real_trigger = py_trees.composites.Sequence(name="Door detection trigger", memory=True)
     # real_trigger.add_child(
     #     py_trees.decorators.Retry(
     #         name="Retry door detection",
@@ -308,31 +321,31 @@ def createArrivalTrigger():
     #         num_failures=3,
     #     )
     # )
-    real_trigger.add_child(
-        BtNode_Announce(
-            name="announce waiting for door bell",
-            bb_source=None,
-            message="At door"
-        )
-    )
-    real_trigger.add_child(
-        BtNode_DoorbellDetection(name="Listen for doorbell")
-    )
-    real_trigger.add_child(
-        BtNode_Announce(
-            name="Arrival detected announcement",
-            bb_source=None,
-            message="Detected door bell, Please enter.",
-        )
-    )
-    trigger_fallback.add_child(real_trigger)
-    trigger_fallback.add_child(
-        BtNode_Announce(
-            name="trigger failed",
-            bb_source=None,
-            message="Please enter"
-        )
-    )
+    # real_trigger.add_child(
+    #     BtNode_Announce(
+    #         name="announce waiting for door bell",
+    #         bb_source=None,
+    #         message="At door"
+    #     )
+    # )
+    # real_trigger.add_child(
+    #     BtNode_DoorbellDetection(name="Listen for doorbell")
+    # )
+    # real_trigger.add_child(
+    #     BtNode_Announce(
+    #         name="Arrival detected announcement",
+    #         bb_source=None,
+    #         message="Detected door bell, Please enter.",
+    #     )
+    # )
+    # trigger_fallback.add_child(real_trigger)
+    # trigger_fallback.add_child(
+    #     BtNode_Announce(
+    #         name="trigger failed",
+    #         bb_source=None,
+    #         message="Please enter"
+    #     )
+    # )
 
     # real_trigger.add_child(
     #     BtNode_Announce(
@@ -341,12 +354,12 @@ def createArrivalTrigger():
     #         message="Please come in and speak to me after the beep sound"
     #     )
     # )
-    root.add_child(trigger_fallback)
+    # root.add_child(trigger_fallback)
     root.add_child(
         BtNode_Announce(
             "announce speak to me after the beep sound",
             bb_source=None,
-            message="Please speak to me after the beep sound."
+            message="Hi guest, please speak to me after the beep sound."
         )
     )
     return root
@@ -600,11 +613,11 @@ def createGuestIntake(guest_idx: int):
             message="Please stand about two meters in front of me so I can remember you. Thank you"
         )
     )
-    root.add_child(BtNode_Announce(
-        name="announce thank you for standing in front me",
-        bb_source=None,
-        message="Please look at me and hold still for a moment."
-    ))
+    # root.add_child(BtNode_Announce(
+    #     name="announce thank you for standing in front me",
+    #     bb_source=None,
+    #     message="Please look at me and hold still for a moment."
+    # ))
     root.add_child(
         py_trees.decorators.Retry(
             name=f"Retry guest {guest_idx} feature extraction",
@@ -662,22 +675,43 @@ def createEscortAndSeat(guest_idx: int):
             known_seats=SEAT_CATALOG,
         )
     )
-
-    turn_and_maintain_gaze_branch = py_trees.composites.Sequence(
-        name=f"Turn and maintain gaze guest {guest_idx}", memory=True
+    vision_branch_retry = py_trees.decorators.Retry(
+            name=f"Retry seat recommend for guest {guest_idx}",
+            child=vision_branch,
+            num_failures=2,
+        )
+    _vision_branch = py_trees.decorators.FailureIsSuccess(
+        name=f"Vision branch failure is success guest {guest_idx}",
+        child=vision_branch_retry
     )
 
-    turn_and_maintain_gaze_branch.add_child(
-        BtNode_WaitTicks(
-            name="wait a moment for orbbec to finish settling",
-            ticks=15
+    other_branch = py_trees.composites.Sequence(
+        name=f"Scan seated personnel other branch guest {guest_idx}", memory=True
+    )
+
+    other_branch.add_child(
+        BtNode_Announce(
+            name=f"Arrived at sofa guest {guest_idx}",
+            bb_source=None,
+            message="I have arrived at the sofa. Scanning seated personnel. Please cross behind me and stand to my right.",
         )
     )
 
-    turn_and_maintain_gaze_branch.add_child(
+    maintain_gaze = py_trees.composites.Sequence(
+        name=f"Maintain gaze on guest {guest_idx} during scan",
+        memory=True
+    )
+    # maintain_gaze.add_child(
+    #     BtNode_WaitTicks(
+    #         name="wait a moment for orbbec to finish settling",
+    #         ticks=20
+    #     )
+    # )
+
+    maintain_gaze.add_child(
         BtNode_TurnPanTilt(name=f"Look at guest", x=90.0, y=45.0, speed=0.0)
     )
-    turn_and_maintain_gaze_branch.add_child(
+    maintain_gaze.add_child(
         BtNode_MaintainEyeContact(
             name=f"Maintain eye contact guest {guest_idx}",
             track_centermost=True,
@@ -686,13 +720,6 @@ def createEscortAndSeat(guest_idx: int):
 
     audio_branch = py_trees.composites.Sequence(
         name=f"Sofa arrival announcements guest {guest_idx}", memory=True
-    )
-    audio_branch.add_child(
-        BtNode_Announce(
-            name=f"Arrived at sofa guest {guest_idx}",
-            bb_source=None,
-            message="I have arrived at the sofa. Scanning seated personnel. Please cross behind me and stand to my right.",
-        )
     )
     audio_branch.add_child(
         BtNode_Announce(
@@ -709,18 +736,20 @@ def createEscortAndSeat(guest_idx: int):
         )
     )
 
-    _vision_branch = py_trees.decorators.FailureIsSuccess(
-            name=f"Vision scan (audio still completes) guest {guest_idx}",
-            child=vision_branch,
-        )
+    gaze_with_audio = py_trees.composites.Parallel(
+        name="parallel gaze with audio",
+        policy=py_trees.common.ParallelPolicy.SuccessOnSelected([audio_branch]),
+        children=[maintain_gaze, audio_branch]
+    )
+
+    other_branch.add_child(gaze_with_audio)
 
     scan_and_announce = py_trees.composites.Parallel(
         name=f"Scan + announce sofa guest {guest_idx}",
-        policy=py_trees.common.ParallelPolicy.SuccessOnSelected([_vision_branch, audio_branch]),
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
         children=[
+            other_branch,
             _vision_branch,
-            audio_branch,
-            turn_and_maintain_gaze_branch
         ]
     )
 
@@ -831,6 +860,22 @@ def createEscortAndSeat(guest_idx: int):
         ]
     )
 
+    escort_with_pantilt_fallback.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name=f"Ensure arm is moved back to navigation pose",
+            child=py_trees.decorators.Retry(
+                name=f"Retry move arm to navigation pose guest {guest_idx}",
+                child=BtNode_MoveArmSingle(
+                    name=f"Move arm to navigation pose guest {guest_idx}",
+                    service_name="arm_joint_service",
+                    arm_pose_bb_key=KEY_ARM_NAVIGATING,
+                    add_octomap=False,
+                ),
+                num_failures=3,
+            ),
+        )
+    )
+
     return escort_with_pantilt_fallback
 
 
@@ -845,11 +890,17 @@ def createTwoWayIntroduction():
     root.add_child(BtNode_Announce(
         name=f"Complete escort announcement",
         bb_source=None,
-        message="Please sit down and make yourself comfortable."
+        message="Please sit down and make yourself comfortable. Remain seated please."
     ))
 
     root.add_child(gazeAtSofa())
-    root.add_child(
+    parallel_get_person_centroids = py_trees.composites.Parallel(
+        name="Get person centroids in parallel with announcement",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll()
+    )
+    root.add_child(parallel_get_person_centroids)
+    
+    parallel_get_person_centroids.add_child(
         py_trees.decorators.FailureIsSuccess(
             name="Scan seated guest centroids",
             child=py_trees.decorators.Retry(
@@ -862,6 +913,13 @@ def createTwoWayIntroduction():
                 ),
                 num_failures=3,
             ),
+        )
+    )
+    parallel_get_person_centroids.add_child(
+        BtNode_Announce(
+            name="Announce scanning seated guests",
+            bb_source=None,
+            message="Let me take a moment to look at you both and remember you better. Recalling memory...",
         )
     )
 
@@ -1101,4 +1159,5 @@ def createHRITask():
             message="HRI task complete.",
         )
     )
+    root.add_child(py_trees.behaviours.Running("running..."))
     return root

@@ -1,5 +1,5 @@
 {
-    "_pose_door": {
+    "pose_door": {
         "point": {
             "x": 0.45051199197769165,
             "y": -0.6419785618782043,
@@ -12,7 +12,7 @@
             "w": 0.7071067811865476
         }
     },
-    "_pose_sofa": {
+    "pose_sofa": {
         "point": {
             "x": 0.29283300042152405,
             "y": -0.1389051169157028,
@@ -25,7 +25,7 @@
             "w": 0.9999789199992876
         }
     },
-    "pose_door": {
+    "_pose_door": {
         "point": {
             "x": 10.140212059020996,
             "y": -9.970355987548828,
@@ -38,7 +38,7 @@
             "w": 0.7384221512932552
         }
     },
-    "pose_sofa": {
+    "_pose_sofa": {
         "point": {
             "x": 9.97336828751306,
             "y": -7.229833270775271,
@@ -51,12 +51,12 @@
             "w": 0.053147312050431085
         }
     },
-    "_seat_catalog": [
-        "left chair",
-        "middle chair",
-        "right chair"
-    ],
     "seat_catalog": [
+        "leftmost chair",
+        "middlemost chair",
+        "rightmost chair"
+    ],
+    "_seat_catalog": [
         "left stool",
         "front middle stool",
         "right stool",
