@@ -307,6 +307,13 @@ def createArrivalTrigger():
     # )
     real_trigger.add_child(
         BtNode_Announce(
+            name="announce waiting for door bell",
+            bb_source=None,
+            message="Waiting for doorbell"
+        )
+    )
+    real_trigger.add_child(
+        BtNode_Announce(
             name="Arrival detected announcement",
             bb_source=None,
             message="I see a guest. Please come in and speak to me after the beep sound",
@@ -641,7 +648,7 @@ def createEscortAndSeat(guest_idx: int):
     turn_and_maintain_gaze_branch.add_child(
         BtNode_WaitTicks(
             name="wait a moment for orbbec to finish settling",
-            ticks=30
+            ticks=15
         )
     )
 
@@ -698,7 +705,6 @@ def createEscortAndSeat(guest_idx: int):
     seat_recommend_primary = py_trees.composites.Sequence(
         name=f"Seat recommend guest {guest_idx}", memory=True
     )
-    seat_recommend_primary.add_child(BtNode_TurnPanTilt(name=f"Look at guest", x=90.0, y=45.0, speed=0.0))
     seat_recommend_primary.add_child(scan_and_announce)
     seat_recommend_primary.add_child(
         BtNode_WrapPointAsList(
