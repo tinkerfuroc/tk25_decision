@@ -7,62 +7,56 @@ from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtractionAction
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 import math
-from behavior_tree.messages import ObjectDetectionGeneralist, TextToSpeech, Listen, PhraseExtractionAction, PanTiltCommand
+from behavior_tree.messages import ObjectDetectionGeneralist, TextToSpeech, Listen, PhraseExtractionAction, PanTiltCommand, DetectWaving
 from geometry_msgs.msg import PointStamped, PoseStamped
 from std_msgs.msg import String
 
 class BtNode_DetectCallingCustomer(ServiceHandler):
+    """Call `/detect_waving_persons` (`DetectWaving.srv`) and append the returned
+    waving-person `PointStamped`s to a cumulative blackboard list.
+
+    Returns SUCCESS once the response arrives (regardless of detection count) so
+    an outer scan sequence keeps advancing. FAILURE only on timeout.
+    """
+
     def __init__(self,
                  name: str,
                  bb_dest_key: str,
-                 service_name: str = "object_detection_generalist",
+                 threshold_meters: float = 6.0,
+                 target_frame: str = "base_link",
+                 service_name: str = "detect_waving_persons",
                  timeout: float = 10.0):
-        super().__init__(name, service_name, ObjectDetectionGeneralist)
+        super().__init__(name, service_name, DetectWaving)
+        self.target_frame = target_frame
+        self.threshold_meters = float(threshold_meters)
         self.bb_dest_key = bb_dest_key
         self.timeout = timeout
-        self.start_time = None
-        
+        self.target_frame = target_frame
+
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
-            key="customer_location",
+            key="results",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_dest_key)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_dest_key),
         )
-    
+
     def initialise(self):
-        self.start_time = time.time()
-        request = ObjectDetectionGeneralist.Request()
-        request.prompt = "person waving or calling"
-        # tk23's flags="detect_gesture" was a no-op in tk26; fall through to VLM+SAM
-        # so the open-vocabulary prompt actually has a chance of matching.
-        request.use_vlm_sam_fallback = True
-        request.camera = "orbbec"
-        request.target_frame = "map"
-        self.response = self.client.call_async(request)
+        request = DetectWaving.Request()
+        request.threshold_meters = self.threshold_meters
+        request.target_frame = self.target_frame
+        self.response = self.call_service_async(request)
         self.feedback_message = "Looking for calling or waving customer"
-    
+
     def update(self):
-        if time.time() - self.start_time > self.timeout:
-            self.feedback_message = "Timeout: No calling customer detected"
-            return py_trees.common.Status.FAILURE
-            
-        if self.response.done():
-            result = self.response.result()
-            if result.status == 0 and len(result.objects) > 0:
-                customer_obj = result.objects[0]
-                customer_pose = PoseStamped()
-                customer_pose.header = result.header
-                customer_pose.pose.position = customer_obj.centroid
-                customer_pose.pose.orientation.w = 1.0
-                
-                self.blackboard.customer_location = customer_pose
-                self.feedback_message = f"Detected calling customer at position"
-                return py_trees.common.Status.SUCCESS
-            else:
-                self.initialise()
-                return py_trees.common.Status.RUNNING
-        else:
+        if not self.response.done():
             return py_trees.common.Status.RUNNING
+
+        result = self.response.result()
+        self.blackboard.results = list(result.waving_persons)
+        self.feedback_message = (
+            f"Wrote {len(result.waving_persons)} waving persons (status={result.status})"
+        )
+        return py_trees.common.Status.SUCCESS
 
 class BtNode_TakeOrder(BtNode_PhraseExtractionAction):
     """Restaurant order taking via tk_24_audio `phrase_extraction_action`.
