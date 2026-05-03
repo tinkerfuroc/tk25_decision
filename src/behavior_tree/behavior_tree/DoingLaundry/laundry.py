@@ -426,9 +426,9 @@ def createDoingLaundry():
     )
     root.add_child(start_parallel)
 
-    root.add_child(pickupOneClothing())
-    root.add_child(pickupLaundryBasket())
-    root.add_child(goAndPlaceBasket())
+    # root.add_child(pickupOneClothing())
+    # root.add_child(pickupLaundryBasket())
+    # root.add_child(goAndPlaceBasket())
 
     root.add_child(
         _moveArmRetry(
