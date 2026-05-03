@@ -23,13 +23,13 @@ if _config.has_dependency('tinker_arm_msgs'):
     from tinker_arm_msgs.srv import Drop, ArmJointService, PointTo
     from tinker_arm_msgs.action import Place, Grasp, JointMove, CartesianMove
     try:
-        from tinker_arm_msgs.action import FoldClothing
+        from tinker_arm_msgs.action import Fold
     except ImportError:
-        from behavior_tree.mock_messages import FoldClothing
+        from behavior_tree.mock_messages import Fold
 else:
     from behavior_tree.mock_messages import Drop, ArmJointService, PointTo
     from behavior_tree.mock_messages import Place, Grasp, JointMove, CartesianMove
-    from behavior_tree.mock_messages import FoldClothing
+    from behavior_tree.mock_messages import Fold
 
 if _config.has_dependency('tinker_audio_msgs'):
     from tinker_audio_msgs.srv import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest

@@ -253,8 +253,8 @@ class JointMove(MockAction):
             self.env_points = []
 
 
-class FoldClothing(MockAction):
-    """Mock FoldClothing action."""
+class Fold(MockAction):
+    """Mock Fold action (matches tinker_arm_msgs/action/Fold.action)."""
     class Goal(MockAction.Goal):
         def __init__(self):
             super().__init__()
