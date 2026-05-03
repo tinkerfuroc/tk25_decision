@@ -493,6 +493,23 @@ class ListenAction(MockAction):
     pass
 
 
+class Doorbell(MockAction):
+    """Mock Doorbell action from tinker_audio_msgs."""
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.error_message = ""
+            self.transcription = ""
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.elapsed = 0.0
+            self.partial_transcription = ""
+
+
 class TrackPerson(MockAction):
     """Mock TrackPerson action (tk26_vision)."""
     class Goal(MockAction.Goal):
