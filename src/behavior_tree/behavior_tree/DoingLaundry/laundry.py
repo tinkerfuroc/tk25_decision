@@ -148,7 +148,11 @@ def createConstantWriter() -> py_trees.composites.Parallel:
         ("Write arm fold start", KEY_ARM_FOLD_START, ARM_POS_FOLD_START),
         ("Write arm pre pick basket", KEY_ARM_PRE_PICK_BASKET, ARM_POS_PRE_PICK_BASKET),
         ("Write arm pick clothing", KEY_ARM_PICK_CLOTHING, ARM_POS_PICK_CLOTHING),
-        ("Write arm pre pick clothing", KEY_ARM_PRE_PICK_CLOTHING, ARM_POS_PRE_PICK_BASKET),
+        (
+            "Write arm pre pick clothing",
+            KEY_ARM_PRE_PICK_CLOTHING,
+            ARM_POS_PRE_PICK_BASKET,
+        ),
         ("Write target frame", KEY_TARGET_FRAME, TARGET_FRAME),
         # ("Write max runtime", KEY_MAX_RUNTIME, MAX_RUNTIME_SEC),
         # ("Write clothing object label", KEY_OBJECT_LABEL, OBJECT_LABEL_CLOTHING),
@@ -318,17 +322,17 @@ def goAndPlaceBasket():
     root = py_trees.composites.Sequence(name="Go and place basket", memory=True)
 
     nav_parallel = py_trees.composites.Parallel(
-        name="Navigate to folding table",
+        name="Navigate to basket table",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
     nav_parallel.add_child(
-        _gotoRetry(name="Navigate to folding table", pose_key=KEY_POSE_BASKET_TABLE)
+        _gotoRetry(name="Navigate to basket table", pose_key=KEY_POSE_BASKET_TABLE)
     )
     nav_parallel.add_child(
         BtNode_Announce(
-            name="Announce navigating to folding table",
+            name="Announce navigating to basket table",
             bb_source=None,
-            message="Navigating to folding table.",
+            message="Navigating to basket table.",
         )
     )
     root.add_child(nav_parallel)
@@ -336,7 +340,7 @@ def goAndPlaceBasket():
     root.add_child(
         _moveArmRetry(
             name="Move arm to place basket",
-            arm_pose_key=KEY_ARM_PRE_PICK_BASKET,
+            arm_pose_key=KEY_ARM_PICK_BASKET,
             add_octomap=False,
         )
     )
@@ -348,11 +352,26 @@ def goAndPlaceBasket():
             message="Released basket at folding table.",
         )
     )
+
+    root.add_child(
+        _moveArmRetry(
+            name="retract arm after placing basket",
+            arm_pose_key=KEY_ARM_PRE_PICK_BASKET,
+            add_octomap=False,
+        )
+    )
     return root
 
 
 def foldClothingOnce():
     root = py_trees.composites.Sequence(name=f"Fold clothing", memory=True)
+    root.add_child(
+        _moveArmRetry(
+            name="Stretch out to get clothing",
+            arm_pose_key=KEY_ARM_FOLD_START,
+            add_octomap=False,
+        )
+    )
     root.add_child(_gripperOpenSafe(name="Ensure gripper empty before folding"))
     root.add_child(
         BtNode_Announce(
@@ -365,6 +384,13 @@ def foldClothingOnce():
         py_trees.timers.Timer(name="Wait for clothing piece to fold", duration=5.0)
     )
     root.add_child(_gripperCloseSafe(name="Wait for clothing piece to fold"))
+    root.add_child(
+        _moveArmRetry(
+            "Move arm to fold start pose",
+            arm_pose_key=KEY_ARM_FOLD_START,
+            add_octomap=False,
+        )
+    )
     root.add_child(
         BtNode_FoldClothing(  # TODO: implement the real BtNode_Fold
             name="Fold clothing piece",
@@ -386,21 +412,34 @@ def foldClothingOnce():
 def createDoingLaundry():
     root = py_trees.composites.Sequence(name="Doing Laundry", memory=True)
     root.add_child(createConstantWriter())
-    root.add_child(
+
+    start_parallel = py_trees.composites.Parallel(
+        "Setup", policy=py_trees.common.ParallelPolicy.SuccessOnAll()
+    )
+    start_parallel.add_child(_gripperOpenSafe(name="Ensure gripper starts open"))
+    start_parallel.add_child(
         BtNode_Announce(
             name="Announce task start",
             bb_source=None,
             message="Starting laundry task! Navigating to laundry area.",
         )
     )
+    root.add_child(start_parallel)
 
-    root.add_child(pickupOneClothing())
-    root.add_child(pickupLaundryBasket())
-    root.add_child(goAndPlaceBasket())
+    # root.add_child(pickupOneClothing())
+    # root.add_child(pickupLaundryBasket())
+    # root.add_child(goAndPlaceBasket())
 
-    root.add_child(
-        _gotoRetry(name="Navigate to laundry area", pose_key=KEY_POSE_FOLDING_TABLE)
-    )
+    # root.add_child(
+    #     _moveArmRetry(
+    #         name="Move arm to base moving",
+    #         arm_pose_key=KEY_ARM_NAVIGATING,
+    #         add_octomap=False,
+    #     )
+    # )
+    # root.add_child(
+    #     _gotoRetry(name="Navigate to laundry area", pose_key=KEY_POSE_FOLDING_TABLE)
+    # )
 
     root.add_child(
         BtNode_Announce(

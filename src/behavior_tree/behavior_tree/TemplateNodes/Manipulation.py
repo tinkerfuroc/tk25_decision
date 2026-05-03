@@ -62,7 +62,7 @@ from behavior_tree.messages import (
     JointMove,
     CartesianMove,
     GripperCommand,
-    FoldClothing,
+    Fold,
 )
 from py_trees.common import Status
 from behavior_tree.Constants import SCAN_POSES
@@ -439,13 +439,13 @@ class BtNode_FoldClothing(ActionHandler):
         action_name: str = "fold_action",
     ):
         super().__init__(
-            name, FoldClothing, action_name, None, wait_for_server_timeout_sec=-3
+            name, Fold, action_name, None, wait_for_server_timeout_sec=-3
         )
-        self.blackboard = self.attach_blackboard_client(name=self.name)
+
 
     def send_goal(self):
         try:
-            goal = FoldClothing.Goal()
+            goal = Fold.Goal()
             self.send_goal_request(goal)
         except Exception as e:
             self.feedback_message = f"Failed to send fold goal; error: {e}"
@@ -454,7 +454,10 @@ class BtNode_FoldClothing(ActionHandler):
 
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            self.feedback_message = f"Fold failed with status: {self.result_status}"
+            err = getattr(getattr(self, "result_message", None), "result", None)
+            self.feedback_message = (
+                f"Fold failed with status: {self.result_status}"
+            )
             return pytree.common.Status.FAILURE
         self.feedback_message = "Fold succeeded"
         return pytree.common.Status.SUCCESS
