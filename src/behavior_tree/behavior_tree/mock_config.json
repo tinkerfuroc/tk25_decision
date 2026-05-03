@@ -9,7 +9,7 @@
     }
   },
   "mock_mode": {
-    "enabled": false,
+    "enabled": true,
     "auto_detect": false,
     "subsystems": {
       "vision": {

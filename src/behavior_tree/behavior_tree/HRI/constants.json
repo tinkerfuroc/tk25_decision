@@ -51,12 +51,12 @@
             "w": 0.053147312050431085
         }
     },
-    "_seat_catalog": [
-        "left chair",
-        "middle chair",
-        "right chair"
-    ],
     "seat_catalog": [
+        "leftmost chair",
+        "middlemost chair",
+        "rightmost chair"
+    ],
+    "_seat_catalog": [
         "left stool",
         "front middle stool",
         "right stool",
