@@ -171,7 +171,7 @@ def scanAllPositions(target_frame="map", n_gate=1):
     return root
 
 ############################
-
+from behavior_tree.TemplateNodes.Navigation import BtNode_Approach
 
 class BtNode_ExtractOnePoint(py_trees.behaviour.Behaviour):
     def __init__(
@@ -218,6 +218,17 @@ def navigateToCustomer():
         )
     )
 
+    root.add_child(
+        py_trees.decorators.Retry(
+            name="Retry approach",
+            child=BtNode_Approach(
+                name="Approach detected person",
+                bb_target_key=KEY_CUSTOMER_LOCATION,
+            ),
+            num_failures=3
+        )
+    )
+
     return root    
 
 def with_navigation():
@@ -226,6 +237,32 @@ def with_navigation():
         True
     )
 
-    root.add_child(scanAllPositions(n_gate=2))
+    root.add_child(scanAllPositions(n_gate=1))
+    root.add_child(navigateToCustomer())
+
+    return root
+
+def main():
+    rclpy.init()
+    root = with_navigation()
+    tree = py_trees_ros.trees.BehaviourTree(root)
+    tree.setup(node_name="test_approach", timeout=15)
+
+    def _print(t):
+        print(py_trees.display.unicode_tree(root=t.root, show_status=True))
+
+    tree.tick_tock(period_ms=500.0, post_tick_handler=_print)
+
+    try:
+        rclpy.spin(tree.node)
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    finally:
+        tree.shutdown()
+        rclpy.try_shutdown()
+
+
+if __name__ == "__main__":
+    main()
     
 
