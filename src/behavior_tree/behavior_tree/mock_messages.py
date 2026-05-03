@@ -425,6 +425,53 @@ class FindApproachPose(MockService):
             self.angle_to_target_rad = 0.0
 
 
+class GoToApproach(MockAction):
+    """Mock GoToApproach action (tk26 tinker_nav_msgs).
+
+    Mock policy for navigation: skip the navigation process — i.e. the BT
+    short-circuits send_goal in mock mode and never instantiates this Goal.
+    Class kept for type-import parity with the live action.
+    """
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.target = None
+            self.desired_distance = 0.0
+            self.min_distance = 0.0
+            self.max_distance = 0.0
+            self.num_angles = 0
+            self.preferred_yaw_rad = float('nan')
+            self.facing_yaw_offset_rad = 0.0
+            self.timeout_sec = 0.0
+            self.robot_pose_override = None
+            self.debug = False
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.errormsg = ""
+            self.pose = None
+            self.chosen_distance = 0.0
+            self.score = 0.0
+            self.reachable = False
+            self.alternates = []
+            self.angle_to_target_rad = 0.0
+            self.phase_at_exit = ""
+            self.nav_attempts = 0
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.phase = ""
+            self.distance_remaining = 0.0
+            self.estimated_time_remaining = 0.0
+            self.current_goal = None
+            self.candidates_total = 0
+            self.candidates_checked = 0
+            self.probes = []
+
+
 # Mock Vision Messages
 class Object(MockMessage):
     """Mock Object message."""

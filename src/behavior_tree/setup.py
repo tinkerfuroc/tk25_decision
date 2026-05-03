@@ -55,6 +55,7 @@ setup(
             "test-eye-contact = behavior_tree.HRI.test_eye_contact:main",
             "test-follow-head-fresh-lock = behavior_tree.HRI.test_follow_head_fresh_lock:main",
             "test-doorbell = behavior_tree.HRI.test_doorbell:main",
+            "test-go-to-approach = behavior_tree.Restaurant.test_go_to_approach:main",
             "pick-and-place = behavior_tree.PickAndPlace.cli:main",
             "doing-laundry = behavior_tree.DoingLaundry.cli:main",
             "GPSR = behavior_tree.GPSR.gpsr_new:main",
