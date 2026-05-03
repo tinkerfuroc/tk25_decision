@@ -62,7 +62,7 @@ from behavior_tree.messages import (
     JointMove,
     CartesianMove,
     GripperCommand,
-    FoldClothing,
+    Fold,
 )
 from py_trees.common import Status
 from behavior_tree.Constants import SCAN_POSES
@@ -436,63 +436,17 @@ class BtNode_FoldClothing(ActionHandler):
     def __init__(
         self,
         name: str,
-        bb_key_target_point: str,
-        bb_key_object_label: str = None,
-        bb_key_env_points: str = None,
-        fold_cycles: int = 3,
-        action_name: str = "fold_clothing_action",
+        action_name: str = "fold_action",
     ):
         super().__init__(
-            name, FoldClothing, action_name, None, wait_for_server_timeout_sec=-3
+            name, Fold, action_name, None, wait_for_server_timeout_sec=-3
         )
-        self.fold_cycles = int(fold_cycles)
-        self._bb_key_object_label = bb_key_object_label
-        self._bb_key_env_points = bb_key_env_points
 
-        self.blackboard = self.attach_blackboard_client(name=self.name)
-        self.blackboard.register_key(
-            key="target_point",
-            access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name(
-                "/", bb_key_target_point
-            ),
-        )
-        if bb_key_object_label is not None:
-            self.blackboard.register_key(
-                key="object_label",
-                access=pytree.common.Access.READ,
-                remap_to=pytree.blackboard.Blackboard.absolute_name(
-                    "/", bb_key_object_label
-                ),
-            )
-        if bb_key_env_points is not None:
-            self.blackboard.register_key(
-                key="env_points",
-                access=pytree.common.Access.READ,
-                remap_to=pytree.blackboard.Blackboard.absolute_name(
-                    "/", bb_key_env_points
-                ),
-            )
 
     def send_goal(self):
         try:
-            goal = FoldClothing.Goal()
-            goal.target_point = self.blackboard.target_point
-            goal.fold_cycles = self.fold_cycles
-            if self._bb_key_object_label is not None:
-                goal.object_label = str(self.blackboard.object_label or "")
-            else:
-                goal.object_label = ""
-            if self._bb_key_env_points is not None:
-                try:
-                    goal.env_points = self.blackboard.env_points
-                except Exception:
-                    pass
+            goal = Fold.Goal()
             self.send_goal_request(goal)
-            self.feedback_message = (
-                f"Sent fold goal at {self.blackboard.target_point} "
-                f"label='{goal.object_label}' cycles={self.fold_cycles}"
-            )
         except Exception as e:
             self.feedback_message = f"Failed to send fold goal; error: {e}"
             self.logger.error(f"Failed to send fold goal; error: {e}")
@@ -501,9 +455,8 @@ class BtNode_FoldClothing(ActionHandler):
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
             err = getattr(getattr(self, "result_message", None), "result", None)
-            err_msg = getattr(err, "error_msg", "") if err is not None else ""
             self.feedback_message = (
-                f"Fold failed with status: {self.result_status}, error: {err_msg}"
+                f"Fold failed with status: {self.result_status}"
             )
             return pytree.common.Status.FAILURE
         self.feedback_message = "Fold succeeded"
