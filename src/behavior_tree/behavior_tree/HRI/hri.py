@@ -550,7 +550,7 @@ def createScanHostFeatures():
                 bb_dest_key=KEY_HOST_FEATURES,
                 bb_image_key=KEY_HOST_COMPARISON_IMAGE,
             ),
-            num_failures=3,
+            num_failures=4,
         )
     )
     root.add_child(parallel_scan)
@@ -735,7 +735,13 @@ def createEscortAndSeat(guest_idx: int):
             message="Still trying to determine"
         )
     )
-
+    audio_branch.add_child(
+        BtNode_Announce(
+            name="announce still waiting",
+            bb_source=None,
+            message="Patience please"
+        )
+    )
     gaze_with_audio = py_trees.composites.Parallel(
         name="parallel gaze with audio",
         policy=py_trees.common.ParallelPolicy.SuccessOnSelected([audio_branch]),
@@ -915,13 +921,33 @@ def createTwoWayIntroduction():
             ),
         )
     )
-    parallel_get_person_centroids.add_child(
+    tell_a_story = py_trees.composites.Sequence(
+        name="Announce scanning guests story", memory=True
+    )
+    tell_a_story.add_child(
         BtNode_Announce(
             name="Announce scanning seated guests",
             bb_source=None,
-            message="Let me take a moment to look at you both and remember you better. Recalling memory...",
+            message="Let me take a moment to look at you both and remember you better.",
         )
     )
+    tell_a_story.add_child(
+        BtNode_Announce(
+            name="Announce scanning seated guests",
+            bb_source=None,
+            message="Recalling memory",
+        )
+    )
+    tell_a_story.add_child(
+        BtNode_Announce(
+            name="Announce scanning seated guests",
+            bb_source=None,
+            message="Matching features",
+        )
+    )
+    parallel_get_person_centroids.add_child(tell_a_story)
+
+
 
     # KEY_PERSONS layout after host scan + both intakes: [host, guest1, guest2]
     # → guest1 is index 1, guest2 is index 2.
@@ -1063,6 +1089,22 @@ def createBagFlow():
     )
     root.add_child(py_trees.timers.Timer(name="Wait for bag placement", duration=3.0))
     root.add_child(BtNode_GripperAction(name="Close gripper with bag", open_gripper=False))
+    root.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name="failure is success",
+            child=py_trees.decorators.Retry(
+                name="Retry moving arm to navigation pose with bag",
+                child=BtNode_MoveArmSingle(
+                    name="Move arm to navigation pose with bag",
+                    service_name="arm_joint_service",
+                    arm_pose_bb_key=KEY_ARM_NAVIGATING,
+                    add_octomap=False,
+                ),
+                num_failures=3,
+            )
+        )
+    )
+    
     root.add_child(
         BtNode_Announce(
             name="Follow host announcement",
