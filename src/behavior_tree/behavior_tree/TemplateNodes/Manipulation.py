@@ -156,6 +156,8 @@ class BtNode_Grasp(ActionHandler):
         action_name: str = "start_grasp",
         bb_key_vision_res: Optional[str] = None,
         bb_key_object_label: Optional[str] = None,
+        use_mesh: bool = True,
+        stay: bool = False,
     ):
         """
         executed when creating tree diagram, therefor very minimal
@@ -190,6 +192,8 @@ class BtNode_Grasp(ActionHandler):
                     "/", bb_key_object_label
                 ),
             )
+        self.stay = stay
+        self.use_mesh = use_mesh
 
     def send_goal(self):
         try:
@@ -198,6 +202,8 @@ class BtNode_Grasp(ActionHandler):
             goal.rgb_image = self.blackboard.vision_result.rgb_image
             goal.depth_image = self.blackboard.vision_result.depth_image
             goal.segments = self.blackboard.vision_result.segments
+            goal.use_mesh = self.use_mesh
+            goal.stay = self.stay
             # Resolve object_label: explicit bb key > vision_result.objects[0].cls > ""
             if self._bb_key_object_label is not None:
                 goal.object_label = str(self.blackboard.object_label or "")
@@ -352,10 +358,7 @@ class BtNode_FoldClothing(ActionHandler):
         name: str,
         action_name: str = "fold_action",
     ):
-        super().__init__(
-            name, Fold, action_name, None, wait_for_server_timeout_sec=-3
-        )
-
+        super().__init__(name, Fold, action_name, None, wait_for_server_timeout_sec=-3)
 
     def send_goal(self):
         try:
@@ -369,9 +372,7 @@ class BtNode_FoldClothing(ActionHandler):
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
             err = getattr(getattr(self, "result_message", None), "result", None)
-            self.feedback_message = (
-                f"Fold failed with status: {self.result_status}"
-            )
+            self.feedback_message = f"Fold failed with status: {self.result_status}"
             return pytree.common.Status.FAILURE
         self.feedback_message = "Fold succeeded"
         return pytree.common.Status.SUCCESS
@@ -857,3 +858,63 @@ class BtNode_PointTo(ActionHandler):
         # JointMove feedback is EMPTY; override the base (which reads
         # delay_limit/status/stage) to a no-op.
         pass
+
+
+class BtNode_JointMoveAction(ActionHandler):
+    def __init__(
+        self,
+        name: str,
+        arm_pose_bb_key: str,
+        action_name="joint_move_action",
+        # TODO: add octomap
+    ):
+        super().__init__(
+            name,
+            JointMove,
+            action_name,
+            arm_pose_bb_key,
+            wait_for_server_timeout_sec=-3,
+        )
+        self.blackboard.register_key(
+            key="arm_joint_pose",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", arm_pose_bb_key),
+        )
+
+    def setup(self, **kwargs):
+        return super().setup(**kwargs)
+
+    def send_goal(self):
+        try:
+            goal = JointMove.Goal()
+            goal.joint0 = self.blackboard.arm_joint_pose[0]
+            goal.joint1 = self.blackboard.arm_joint_pose[1]
+            goal.joint2 = self.blackboard.arm_joint_pose[2]
+            goal.joint3 = self.blackboard.arm_joint_pose[3]
+            goal.joint4 = self.blackboard.arm_joint_pose[4]
+            goal.joint5 = self.blackboard.arm_joint_pose[5]
+            goal.joint6 = self.blackboard.arm_joint_pose[6]
+            self.send_goal_request(goal)
+            self.feedback_message = "Send goal pose"
+        except Exception as e:
+            self.feedback_message = f"Failed to send JointMove goal {e}"
+            pass
+
+    def feedback_callback(self, msg: Any):
+        pass
+
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = f"JointMoveAction failed"
+            self.logger.debug(f"MoveArmJointPC failed")
+            return pytree.common.Status.FAILURE
+        else:
+            result = self.result_message.result
+            if result.success:
+                self.feedback_message = f"JointMoveAction succeeded"
+                self.logger.debug(f"JointMoveAction succeeded")
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"JointMoveAction failed"
+                self.logger.debug(f"JointMoveAction failed")
+                return pytree.common.Status.FAILURE

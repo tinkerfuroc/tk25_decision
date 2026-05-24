@@ -71,6 +71,7 @@ setup(
             "restaurant-nav-test = behavior_tree.Restaurant.restaurant_nav_test:main",
             "pick-and-place = behavior_tree.PickAndPlace.cli:main",
             "doing-laundry = behavior_tree.DoingLaundry.cli:main",
+            "laundry-test = behavior_tree.DoingLaundry.sampling:main",
             "GPSR = behavior_tree.GPSR.gpsr_new:main",
             "gpsr-full = behavior_tree.GPSR.gpsr_full:main",
             "gpsr-orchestrator = behavior_tree.GPSR.gpsr_orchestrator:main",
@@ -104,6 +105,13 @@ setup(
             "hmc-mock-track = behavior_tree.HelpMeCarry.test.mock_track_server:main",
             "hmc-test-follow = behavior_tree.HelpMeCarry.test.test_follow:main",
             "hmc-standalone = behavior_tree.HelpMeCarry.test.standalone_test:main",
+            # PickAndPlace test scripts
+            "pp-nav-test = behavior_tree.PickAndPlace.dev_cli:nav_test",
+            "pp-table-recognition = behavior_tree.PickAndPlace.dev_cli:table_object_recognition",
+            "pp-table-grasp = behavior_tree.PickAndPlace.dev_cli:table_grasp",
+            "pp-table-placing = behavior_tree.PickAndPlace.dev_cli:table_placing",
+            "pp-drop-trash = behavior_tree.PickAndPlace.dev_cli:drop_trash",
+            "pp-cabinet-categorization = behavior_tree.PickAndPlace.dev_cli:cabinet_categorization",
         ],
     },
 )
