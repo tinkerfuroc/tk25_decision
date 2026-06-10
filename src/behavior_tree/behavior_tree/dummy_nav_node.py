@@ -18,8 +18,16 @@
 #
 # A standalone ``rclpy`` stub that subscribes to the follow-target topic
 # (``PointStamped``, default ``/follow_target``) and logs where it "would
-# navigate", throttled to ~1 Hz. Pure stub: no motion, no nav action. Swap this
-# out for a real follow/nav node later without touching the behaviour tree.
+# navigate", throttled to ~1 Hz. Pure stub: no motion, no nav action.
+#
+# DEPRECATED (2026-06-10): the ``/follow_target`` topic this node subscribes to
+# has NO publisher since the FollowPerson rewire — ``BtNode_PublishFollowGoal``
+# (its only publisher) was removed, and the follow pipeline now drives
+# navigation through the ``Follow`` action on ``follow_server`` (tk26_navigation
+# ``following`` package), which consumes the tracker's ``/target_points`` topic
+# directly. This stub is retained for standalone experiments only and is NOT
+# part of the follow pipeline; running it against the live tree logs nothing
+# because no one publishes ``/follow_target``.
 #
 
 import rclpy

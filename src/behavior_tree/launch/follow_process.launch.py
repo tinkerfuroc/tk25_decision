@@ -23,9 +23,15 @@
 #         ros2 run vision_track person_track_server
 #   - The real TextToSpeech service ("announce") must be running (audio stack).
 #
-# The behaviour tree publishes the follow target to /follow_target; the dummy
-# nav node subscribes and logs it (no motion). Replace the dummy nav node with
-# a real follow/nav node later without changing the tree.
+# DEPRECATED dummy-nav (2026-06-10): the ``/follow_target`` topic the dummy nav
+# node subscribes to has NO publisher since the FollowPerson rewire —
+# ``BtNode_PublishFollowGoal`` (its only publisher) was removed. The follow
+# pipeline now drives navigation through the ``Follow`` action on
+# ``follow_server`` (tk26_navigation ``following`` package), consuming the
+# tracker's ``/target_points`` topic directly. The dummy nav node below is
+# retained for standalone experiments only and is NOT part of the follow
+# pipeline; with the live tree it logs nothing because ``/follow_target`` has no
+# publisher. Run ``follow_server`` separately to actually move the base.
 #
 
 import launch

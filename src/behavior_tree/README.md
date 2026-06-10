@@ -216,13 +216,20 @@ Each subsystem can be independently mocked or use real hardware.
 ### Follow Person
 
 - `follow-person` - Reacquisition-aware follow-person behaviour tree
-- `dummy-nav` - Standalone follow-target subscriber stub (logs, no motion)
+- `dummy-nav` - **DEPRECATED (2026-06-10), NOT part of the follow pipeline** —
+  standalone `/follow_target` subscriber stub (logs, no motion). Its topic has
+  no publisher since the FollowPerson rewire; retained for standalone
+  experiments only. Real navigation is driven by `follow_server` (see below).
 
 ## 🚶 Follow person
 
 A behaviour tree that follows a person via the real `/track_person` action and
 reacts to the tracker's **reacquisition state** with non-overlapping voice
-announcements. Navigation is a dummy topic stub.
+announcements. Navigation is driven by the `Follow` action on `follow_server`
+(tk26_navigation `following` package), which consumes the tracker's
+`/target_points` topic directly. The legacy `dummy-nav` / `/follow_target` stub
+is **deprecated** and no longer part of this pipeline (its topic has no
+publisher since the 2026-06-10 rewire).
 
 **What it does**
 
@@ -633,6 +640,16 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-06-10** — Mark the `/follow_target` consumers deprecated after the
+  FollowPerson rewire. Since `BtNode_PublishFollowGoal` (the only publisher of
+  `/follow_target`) was removed, navigation is driven entirely by the `Follow`
+  action on `follow_server` (tk26_navigation `following` package), which consumes
+  the tracker's `/target_points` directly. Added deprecation/non-pipeline notes
+  to `dummy_nav_node.py` (module docstring), `launch/follow_process.launch.py`
+  (comment header), the `dummy-nav` entry-point and Follow-person sections of
+  this README, and corrected the stale `follow_person.py` docstring. Docs-only;
+  no code or topic behaviour changed and `dummy-nav` is retained for standalone
+  experiments.
 - **2026-06-10** — Wire `BtNode_FollowAction` into the follow-person tree
   (P5 of the person-following plan). New `TemplateNodes/FollowAction.py`: a
   continuous-action node for `tinker_nav_msgs/action/Follow` on `follow_server`,

@@ -56,8 +56,13 @@ def create_follow_person_tree(target_frame: str = "") -> py_trees.behaviour.Beha
             frame) unless a TF source for that frame is actually running: the
             tracker blocks ~0.2 s/frame on a lookup that never resolves, which
             collapses the tracking loop from ~30 Hz to ~5 Hz and starves
-            reacquisition. The follow demo (dummy_nav stub, no nav stack) has no
-            ``map`` frame, so ``""`` is the correct default.
+            reacquisition. Navigation in the follow demo is driven by the
+            ``Follow`` action on ``follow_server`` (tk26_navigation ``following``
+            package), which consumes the tracker's ``/target_points`` topic
+            directly in the camera frame; no ``map`` frame is required, so ``""``
+            is the correct default. (The legacy ``dummy_nav`` stub on
+            ``/follow_target`` no longer participates — its topic has no
+            publisher since the 2026-06-10 rewire.)
 
     Returns:
         The Parallel root behaviour (compatible with ``run_tree``).
