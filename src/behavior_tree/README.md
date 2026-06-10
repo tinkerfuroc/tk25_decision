@@ -239,7 +239,12 @@ publisher since the 2026-06-10 rewire).
 - `BtNode_FollowAction` keeps the navigation `Follow` action
   (`tinker_nav_msgs/action/Follow`, server `follow_server`) alive and writes the
   follow-executive state to the blackboard (`follow/state` uint8,
-  `follow/distance` float, `follow/reacq` uint8). The follow executive consumes
+  `follow/distance` float, `follow/reacq` uint8). The `follow/state` enum:
+  - `1` TRACKING — person in view, robot trailing at the standoff distance.
+  - `2` PURSUIT_LAST_SEEN — tracker lost/reacquiring; robot heads to the last-seen point.
+  - `3` APPROACHING_FINAL — person stationary; robot parking behind them.
+  - Terminal outcomes are not `follow/state` values — they surface via the action result instead.
+  The follow executive consumes
   the tracker's `/target_points` topic directly, so there is **no** per-tick
   follow-goal publisher — `BtNode_FollowAction` drives navigation entirely
   through the long-running action.
@@ -640,6 +645,10 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-06-11** — docs: add the `follow/state` enum legend next to the
+  blackboard-key description (1=TRACKING, 2=PURSUIT_LAST_SEEN,
+  3=APPROACHING_FINAL; terminal outcomes surface via the action result, not
+  `follow/state`). Docs-only.
 - **2026-06-10** — Mark the `/follow_target` consumers deprecated after the
   FollowPerson rewire. Since `BtNode_PublishFollowGoal` (the only publisher of
   `/follow_target`) was removed, navigation is driven entirely by the `Follow`
