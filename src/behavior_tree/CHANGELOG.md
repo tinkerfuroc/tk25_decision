@@ -1,5 +1,41 @@
 # Changelog
 
+## [2.2.5] - 2026-06-10
+
+### 🐛 `ActionHandler.setup()` survives context shutdown mid-wait
+
+Fixes a crash where action-based BT nodes (e.g. `follow-person`'s
+`BtNode_TrackPersonAction`) died during `setup()` with a raw
+`RCLError: rcl node's context is invalid` instead of failing cleanly.
+
+Root cause: with the `wait_for_server_timeout_sec <= 0` retry-forever
+convention used by every action node, `setup()` loops on
+`ActionClient.wait_for_server()`. rclpy's implementation runs
+`while node.context.ok() and not server_is_ready()` then calls
+`server_is_ready()` one final time **unconditionally** — so when a shutdown
+signal (Ctrl-C / SIGTERM / launcher teardown) invalidates the context during
+the wait, that last call touches a dead node and raises `RCLError`. The retry
+loop never checked for context shutdown, so a missing server during teardown
+surfaced as that cryptic error rather than a clean exit.
+
+Fix lives at the shared base so every action node (nav/manip/audio) benefits:
+- `_context_ok()` — checks `node.context.ok()` (falls back to `rclpy.ok()`).
+- `_wait_for_server_once()` — wraps `wait_for_server`, translating a
+  context-shutdown `RCLError` into the documented
+  `py_trees_ros.exceptions.TimedOutError` (chained `from` the original);
+  a genuine `RCLError` with a live context is re-raised unchanged.
+- The retry loop checks `_context_ok()` before each attempt and raises a clean
+  `TimedOutError` on shutdown instead of calling `wait_for_server` again.
+
+Success path is untouched; the `track/reacquisition_state` blackboard write and
+`follow` / `help-me-carry` behaviour are unaffected.
+
+### Files modified
+- `behavior_tree/TemplateNodes/ActionBase.py` — `_context_ok()` / `_wait_for_server_once()` helpers + shutdown-aware retry loop
+- `test/test_action_base_setup_shutdown.py` — new regression test (fails pre-fix: raw `RCLError`; passes post-fix: clean `TimedOutError`)
+
+---
+
 ## [2.2.4] - 2026-05-02
 
 ### 🧭 New `BtNode_GetOrientationAngle`
