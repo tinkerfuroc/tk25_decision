@@ -213,6 +213,66 @@ Each subsystem can be independently mocked or use real hardware.
 - `hmc-mock-nav` - Mock navigation server for testing
 - `hmc-mock-track` - Mock tracking server for testing
 
+### Follow Person
+
+- `follow-person` - Reacquisition-aware follow-person behaviour tree
+- `dummy-nav` - Standalone follow-target subscriber stub (logs, no motion)
+
+## 🚶 Follow person
+
+A behaviour tree that follows a person via the real `/track_person` action and
+reacts to the tracker's **reacquisition state** with non-overlapping voice
+announcements. Navigation is a dummy topic stub.
+
+**What it does**
+
+- `BtNode_TrackPersonAction` keeps the `/track_person` goal alive and writes the
+  tracker state to the blackboard, including a new
+  `track/reacquisition_state` key (`0` TRACKING, `1` PASSIVE, `2` NEEDS_HELP).
+- `BtNode_PublishFollowGoal` republishes the tracked person's position to
+  `/follow_target` (`geometry_msgs/PointStamped`) whenever the target is not
+  lost. A real nav node (or the bundled `dummy-nav` stub) consumes this topic.
+- `BtNode_ReacqAnnounce` speaks reacquisition guidance through a
+  `CoalescingTTS` (single active utterance, latest-wins pending — speech never
+  overlaps and never blocks the tick):
+  - PASSIVE → *"Please slow down so I can keep up."*
+  - NEEDS_HELP → *"I've lost you. Please raise your hand."*
+  - Announces on a state transition and re-announces every ~5 s while still in a
+    help state; resets on a return to TRACKING.
+
+**Tree shape**
+
+```
+Parallel(SuccessOnAll, synchronise=False)
+├── BtNode_TrackPersonAction        # child A — refreshes the blackboard
+└── Sequence(memory=False)          # child B — reacts to it each tick
+    ├── BtNode_PublishFollowGoal
+    └── BtNode_ReacqAnnounce
+```
+
+If the `/track_person` action terminates (permanent loss / abort) child A
+returns FAILURE, the Parallel returns FAILURE, and the follow process ends.
+
+**Run sequence** (real tracker only — these must already be running):
+
+```bash
+# 1. Real tracker + audio TTS service (not started by the launch file)
+ros2 run vision_track person_track_server
+#    ... and the TextToSpeech ("announce") service from the audio stack
+
+# 2a. Either via the bundled launch file:
+ros2 launch behavior_tree follow_process.launch.py
+
+# 2b. ...or in two terminals:
+ros2 run behavior_tree dummy-nav        # subscribes /follow_target, logs
+ros2 run behavior_tree follow-person    # runs the BT
+```
+
+All nodes honour the package mock-mode config, so they remain importable and
+unit-testable with no ROS graph (see `test/test_coalescing_tts.py`,
+`test/test_reacq_announce.py`, `test/test_publish_follow_goal.py`,
+`test/test_feedback_buffer_reacq.py`, `test/test_follow_tree_build.py`).
+
 ## 🏗️ Architecture
 
 ### Package Structure
@@ -563,6 +623,18 @@ class BtNode_NewVisionNode(ServiceHandler):
   }
 }
 ```
+
+## 📜 Changelog
+
+_Append-only. Newest entries on top._
+
+- **2026-06-10** — Add the follow-person behaviour tree. `BtNode_TrackPersonAction`
+  now exposes `track/reacquisition_state` on the blackboard. New
+  `FollowPerson/` package: `CoalescingTTS` (non-overlapping latest-wins speaker),
+  `BtNode_ReacqAnnounce` (reacq-driven announcements), `BtNode_PublishFollowGoal`
+  (publishes `/follow_target`), `create_follow_person_tree`, and a `cli`. Added
+  the standalone `dummy_nav_node`, the `follow_process.launch.py` launch file,
+  and `dummy-nav` / `follow-person` console-script entry points.
 
 ## 📄 License
 
