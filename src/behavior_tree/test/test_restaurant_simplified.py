@@ -3,6 +3,19 @@ import sys
 import types
 
 import py_trees
+import pytest
+
+
+# _import_simplified re-imports behavior_tree.Restaurant.restaurant_simplified
+# against monkeypatched Navigation/Manipulation stubs, leaving a stubbed copy
+# cached in sys.modules. Purge it so any later test importing the real module is
+# not shadowed by the stub (monkeypatch reverts the stub submodules it set, but
+# not this importlib-loaded module).
+@pytest.fixture(autouse=True)
+def _purge_stubbed_simplified():
+    """Drop the stub-imported restaurant_simplified module after each test."""
+    yield
+    sys.modules.pop("behavior_tree.Restaurant.restaurant_simplified", None)
 
 
 class _SuccessNode(py_trees.behaviour.Behaviour):
@@ -61,6 +74,9 @@ def _install_stubs(monkeypatch):
 
     nav = types.ModuleType("behavior_tree.TemplateNodes.Navigation")
     nav.BtNode_GotoAction = _SuccessNode
+    # restaurant_simplified.py also imports these from Navigation (added 5a433bc).
+    nav.BtNode_CaptureCurrentPose = _SuccessNode
+    nav.BtNode_FindApproachPose = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Navigation", nav)
 
     custom = types.ModuleType("behavior_tree.Restaurant.custumNodes")

@@ -3,6 +3,7 @@ import sys
 import types
 
 import py_trees
+import pytest
 
 from behavior_tree.Restaurant.state_nodes import (
     BtNode_AddDetectedCustomerToBatch,
@@ -15,6 +16,19 @@ from behavior_tree.Restaurant.state_nodes import (
     BtNode_SelectBatchCustomerByIndex,
     BtNode_StoreOrderForActiveBatchCustomer,
 )
+
+
+# _import_restaurants re-imports behavior_tree.Restaurant.restaurants against
+# monkeypatched Navigation/Manipulation stubs, leaving a stubbed copy cached in
+# sys.modules. Other test files (e.g. test_restaurant_timeouts) import the REAL
+# module and inspect the real BtNode_Approach; without this cleanup the stale
+# stubbed copy shadows it and they fail. monkeypatch reverts the stub submodules
+# it set, but not this importlib-loaded module.
+@pytest.fixture(autouse=True)
+def _purge_stubbed_restaurants():
+    """Drop the stub-imported restaurants module after each test."""
+    yield
+    sys.modules.pop("behavior_tree.Restaurant.restaurants", None)
 
 
 class _SuccessNode(py_trees.behaviour.Behaviour):
@@ -74,13 +88,31 @@ def _install_stubs(monkeypatch):
 
     nav = types.ModuleType("behavior_tree.TemplateNodes.Navigation")
     nav.BtNode_GotoAction = _SuccessNode
+    # restaurants.py also imports these from Navigation (added 5a433bc).
+    nav.BtNode_Approach = _SuccessNode
+    nav.BtNode_CaptureCurrentPose = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Navigation", nav)
 
     vision = types.ModuleType("behavior_tree.TemplateNodes.Vision")
     vision.BtNode_ScanForWavingPerson = _SuccessNode
     vision.BtNode_MaintainEyeContact = _SuccessNode
     vision.BtNode_ShowImage = _SuccessNode
+    # restaurants.py also imports BtNode_TurnPanTilt from Vision (added 5a433bc).
+    vision.BtNode_TurnPanTilt = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Vision", vision)
+
+    # restaurants.py line 30 imports message types from PickAndPlace.config; that
+    # import drags in the whole PickAndPlace package via its __init__ (pick_and_place
+    # -> custom_nodes -> ActionBase/ServiceHandler/Grasp/action_msgs/...). Stub the
+    # config module directly to short-circuit the chain; only the 5 message-type
+    # names are actually used by restaurants.py.
+    pnp_config = types.ModuleType("behavior_tree.PickAndPlace.config")
+    pnp_config.Header = std.Header
+    pnp_config.Point = geom.Point
+    pnp_config.Pose = geom.Pose
+    pnp_config.PoseStamped = geom.PoseStamped
+    pnp_config.Quaternion = geom.Quaternion
+    monkeypatch.setitem(sys.modules, "behavior_tree.PickAndPlace.config", pnp_config)
 
     custom = types.ModuleType("behavior_tree.Restaurant.custumNodes")
     custom.BtNode_DetectCallingCustomer = _SuccessNode
@@ -167,6 +199,11 @@ def test_simultaneous_callers_select_oldest():
 
 def test_unreachable_customer_takes_partial_score_path(monkeypatch):
     restaurants = _import_restaurants(monkeypatch)
+    # 5a433bc swapped _approachCustomerSubtree from FindApproachPose+GotoAction
+    # to BtNode_Approach, so failing GotoAction no longer drives the approach
+    # path. Patch the node that now controls reachability to exercise the
+    # unreachable -> partial-score fallback this test asserts.
+    monkeypatch.setattr(restaurants, "BtNode_Approach", _FailNode)
     monkeypatch.setattr(restaurants, "BtNode_GotoAction", _FailNode)
     monkeypatch.setattr(restaurants, "BtNode_Announce", _SuccessNode)
 
