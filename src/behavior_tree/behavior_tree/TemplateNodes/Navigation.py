@@ -48,30 +48,34 @@
 # ... )
 #
 
+# from behavior_tree.messages import FindApproachPose
+import math
+import time
 from typing import Any
+
+import action_msgs.msg as action_msgs  # GoalStatus
 import py_trees
 import rclpy
 import tf2_geometry_msgs
-from .BaseBehaviors import ServiceHandler
-from .ActionBase import ActionHandler
-from behavior_tree.config import is_node_mocked
-
-from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Quaternion
+from geometry_msgs.msg import PointStamped, Pose, PoseStamped, Quaternion
 
 # from behavior_tree.messages import Goto, GotoGrasp, ComputeGrasp
 from nav_msgs.msg import Odometry
-from behavior_tree.messages import NavigateToPose, SetLuggagePose, ComputeGrasp, OrientationAngle
-from behavior_tree.messages import GoToApproach
-# from behavior_tree.messages import FindApproachPose
-import math
-
-from tf2_ros.transform_listener import TransformListener
-from tf2_ros.buffer import Buffer
 from tf2_ros import LookupException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 
-import action_msgs.msg as action_msgs  # GoalStatus
+from behavior_tree.config import is_node_mocked
+from behavior_tree.messages import (
+    ComputeGrasp,
+    GoToApproach,
+    NavigateToPose,
+    OrientationAngle,
+    SetLuggagePose,
+)
 
-import time
+from .ActionBase import ActionHandler
+from .BaseBehaviors import ServiceHandler
 
 
 class BtNode_GotoAction(ActionHandler):
@@ -85,9 +89,24 @@ class BtNode_GotoAction(ActionHandler):
     Attributes:
         key: Blackboard key containing the navigation goal.
     """
-    def __init__(self, name: str, key: str, action_name: str = "navigate_to_pose", wait_for_server_timeout_sec: float = -3, action_timeout_ticks=0):
-        super().__init__(name, NavigateToPose, action_name, key, wait_for_server_timeout_sec, action_timeout_ticks)
-    
+
+    def __init__(
+        self,
+        name: str,
+        key: str,
+        action_name: str = "navigate_to_pose",
+        wait_for_server_timeout_sec: float = -3,
+        action_timeout_ticks=0,
+    ):
+        super().__init__(
+            name,
+            NavigateToPose,
+            action_name,
+            key,
+            wait_for_server_timeout_sec,
+            action_timeout_ticks,
+        )
+
     def initialise(self):
         # self.tf_buffer = Buffer()
         # self.tf_listener = TransformListener(self.tf_buffer, self.node)
@@ -101,20 +120,22 @@ class BtNode_GotoAction(ActionHandler):
         # Handle mock mode - must check before doing any real action
         if self.mock_mode:
             self.feedback_message = "MOCK: Navigation goal sent (mock mode)"
+
             # Create a mock send_goal_future that appears done
             class MockFuture:
                 def done(self):
                     return True
+
             self.send_goal_future = MockFuture()
             return
-        
+
         transform = None
         # if self.tf_buffer is None:
         #     self.tf_buffer = Buffer()
         #     self.tf_listener = TransformListener(self.tf_buffer, self.node)
         # try:
         #     time_now = self.node.get_clock().now()
-            
+
         #     transform = self.tf_buffer.lookup_transform(
         #                     target_frame='map',
         #                     source_frame=self.blackboard.goal.header.frame_id,
@@ -127,28 +148,45 @@ class BtNode_GotoAction(ActionHandler):
             goal = NavigateToPose.Goal()
             if not self.blackboard.exists("goal"):
                 self.feedback_message = "No goal found in blackboard"
-                self.node.get_logger().warn("No goal found in blackboard, setting to identity pose")
+                self.node.get_logger().warn(
+                    "No goal found in blackboard, setting to identity pose"
+                )
                 return
             if isinstance(self.blackboard.goal, PoseStamped):
-                if self.blackboard.goal.header.frame_id != 'map' and transform is not None:
+                if (
+                    self.blackboard.goal.header.frame_id != "map"
+                    and transform is not None
+                ):
                     # assert False
-                    goal.pose.pose = tf2_geometry_msgs.do_transform_pose(self.blackboard.goal.pose, transform)
-                    goal.pose.header.frame_id = 'map'
+                    goal.pose.pose = tf2_geometry_msgs.do_transform_pose(
+                        self.blackboard.goal.pose, transform
+                    )
+                    goal.pose.header.frame_id = "map"
                     self.blackboard.goal = goal.pose.pose
                 else:
                     goal.pose = self.blackboard.goal
             elif isinstance(self.blackboard.goal, PointStamped):
                 # assert False
-                goal.pose = PoseStamped(header=self.blackboard.goal.header, pose=Pose(position=self.blackboard.goal.point, orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
+                goal.pose = PoseStamped(
+                    header=self.blackboard.goal.header,
+                    pose=Pose(
+                        position=self.blackboard.goal.point,
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                )
                 if transform is not None:
-                    goal.pose.pose = tf2_geometry_msgs.do_transform_pose(goal.pose.pose, transform)
-                    goal.pose.header.frame_id = 'map'
+                    goal.pose.pose = tf2_geometry_msgs.do_transform_pose(
+                        goal.pose.pose, transform
+                    )
+                    goal.pose.header.frame_id = "map"
             else:
                 print("Unknown goal type for navigation")
                 assert False
-            if goal.pose.header.frame_id == '':
+            if goal.pose.header.frame_id == "":
                 self.feedback_message = "Goal pose header frame_id is empty. INVALID!"
-                self.node.get_logger().warn("Goal pose header frame_id is empty. INVALID!")
+                self.node.get_logger().warn(
+                    "Goal pose header frame_id is empty. INVALID!"
+                )
                 return
             self.send_goal_request(goal)
             self.goal = goal
@@ -156,10 +194,10 @@ class BtNode_GotoAction(ActionHandler):
                 self.feedback_message = f"sent goal request for pose {goal.pose.pose.position.x:2f}, {goal.pose.pose.position.y:2f}, {goal.pose.pose.position.z:2f}"
             except Exception as e:
                 self.feedback_message = "sent goal request"
-            print('goal = ', str(self.goal))
+            print("goal = ", str(self.goal))
         except KeyError:
             self.node.get_logger().warn("Send goal failed!")
-    
+
     def process_result(self):
         # for navigation only, where the action can return all sorts of results while it's at it
         if self.result_status == action_msgs.GoalStatus.STATUS_ABORTED:  # noqa
@@ -167,7 +205,7 @@ class BtNode_GotoAction(ActionHandler):
             return py_trees.common.Status.FAILURE
         else:
             return py_trees.common.Status.SUCCESS
-    
+
     def feedback_callback(self, msg):
         """
         Default generator for feedback messages from the action server. This will
@@ -181,7 +219,7 @@ class BtNode_GotoAction(ActionHandler):
         self.last_feedback_time = time.time()
         self.feedback_timeout = 1000
         self.action_status = 0
-        self.process_feedback(feedback)  
+        self.process_feedback(feedback)
 
 
 # class BtNode_FindApproachPose(ServiceHandler):
@@ -194,40 +232,40 @@ class BtNode_GotoAction(ActionHandler):
 #     service (``tinker_nav_msgs/srv/FindApproachPose``) and writes the resulting
 #     PoseStamped to ``bb_approach_pose_key``. The downstream ``BtNode_GotoAction``
 #     can then drive to that pose.
-    # """
-    # Mock mode: synthesizes a PoseStamped 0.7 m offset in the target frame's -x
-    # direction and writes it directly. Skips the service call entirely so the
-    # behavior tree can be tested without nav2 running.
+# """
+# Mock mode: synthesizes a PoseStamped 0.7 m offset in the target frame's -x
+# direction and writes it directly. Skips the service call entirely so the
+# behavior tree can be tested without nav2 running.
 
-    # Reachability is opt-in (``check_reachability=False`` by default). Nav2 will
-    # refuse unreachable goals at NavigateToPose time anyway, and pre-validation
-    # via ``ComputePathToPose`` adds up to ``top_k_reachability *
-    # reachability_timeout_sec`` (≈4 s) per call. Set ``check_reachability=True``
-    # explicitly when fast-failing on unreachable poses matters more than latency.
-    # """
+# Reachability is opt-in (``check_reachability=False`` by default). Nav2 will
+# refuse unreachable goals at NavigateToPose time anyway, and pre-validation
+# via ``ComputePathToPose`` adds up to ``top_k_reachability *
+# reachability_timeout_sec`` (≈4 s) per call. Set ``check_reachability=True``
+# explicitly when fast-failing on unreachable poses matters more than latency.
+# """
 
-    # def __init__(self,
-    #              name: str,
-    #              bb_target_key: str,
-    #              bb_approach_pose_key: str,
-    #              desired_distance: float = 0.7,
-    #              min_distance: float = 0.45,
-    #              max_distance: float = 1.2,
-    #              num_angles: int = 16,
-    #              check_reachability: bool = False,
-    #              preferred_yaw_rad: float = float('nan'),
-    #              facing_yaw_offset_rad: float = 0.0,
-    #              service_name: str = "find_approach_pose"):
-    #     super().__init__(name, service_name, FindApproachPose)
-    #     self.bb_target_key = bb_target_key
-    #     self.bb_approach_pose_key = bb_approach_pose_key
-    #     self.desired_distance = float(desired_distance)
-    #     self.min_distance = float(min_distance)
-    #     self.max_distance = float(max_distance)
-    #     self.num_angles = int(num_angles)
-    #     self.check_reachability = bool(check_reachability)
-    #     self.preferred_yaw_rad = float(preferred_yaw_rad)
-    #     self.facing_yaw_offset_rad = float(facing_yaw_offset_rad)
+# def __init__(self,
+#              name: str,
+#              bb_target_key: str,
+#              bb_approach_pose_key: str,
+#              desired_distance: float = 0.7,
+#              min_distance: float = 0.45,
+#              max_distance: float = 1.2,
+#              num_angles: int = 16,
+#              check_reachability: bool = False,
+#              preferred_yaw_rad: float = float('nan'),
+#              facing_yaw_offset_rad: float = 0.0,
+#              service_name: str = "find_approach_pose"):
+#     super().__init__(name, service_name, FindApproachPose)
+#     self.bb_target_key = bb_target_key
+#     self.bb_approach_pose_key = bb_approach_pose_key
+#     self.desired_distance = float(desired_distance)
+#     self.min_distance = float(min_distance)
+#     self.max_distance = float(max_distance)
+#     self.num_angles = int(num_angles)
+#     self.check_reachability = bool(check_reachability)
+#     self.preferred_yaw_rad = float(preferred_yaw_rad)
+#     self.facing_yaw_offset_rad = float(facing_yaw_offset_rad)
 
 #     def setup(self, **kwargs):
 #         ServiceHandler.setup(self, **kwargs)
@@ -350,6 +388,7 @@ class BtNode_GotoAction(ActionHandler):
 #         out.pose.orientation.w = 1.0
 #         return out
 
+
 class BtNode_Approach(ActionHandler):
     """Drive the robot to a target-facing approach pose via the
     ``go_to_approach`` action server (``tinker_nav_msgs/action/GoToApproach``).
@@ -371,22 +410,30 @@ class BtNode_Approach(ActionHandler):
     fake done future so the BT advances without contacting any action server.
     """
 
-    def __init__(self,
-                 name: str,
-                 bb_target_key: str,
-                 desired_distance: float = 0.0,
-                 min_distance: float = 0.0,
-                 max_distance: float = 0.0,
-                 num_angles: int = 0,
-                 preferred_yaw_rad: float = float("nan"),
-                 facing_yaw_offset_rad: float = 0.0,
-                 timeout_sec: float = 0.0,
-                 debug: bool = False,
-                 action_name: str = "go_to_approach",
-                 wait_for_server_timeout_sec: float = -3.0,
-                 action_timeout_ticks: int = 0):
-        super().__init__(name, GoToApproach, action_name, bb_target_key,
-                         wait_for_server_timeout_sec, action_timeout_ticks)
+    def __init__(
+        self,
+        name: str,
+        bb_target_key: str,
+        desired_distance: float = 0.0,
+        min_distance: float = 0.0,
+        max_distance: float = 0.0,
+        num_angles: int = 0,
+        preferred_yaw_rad: float = float("nan"),
+        facing_yaw_offset_rad: float = 0.0,
+        timeout_sec: float = 0.0,
+        debug: bool = False,
+        action_name: str = "go_to_approach",
+        wait_for_server_timeout_sec: float = -3.0,
+        action_timeout_ticks: int = 0,
+    ):
+        super().__init__(
+            name,
+            GoToApproach,
+            action_name,
+            bb_target_key,
+            wait_for_server_timeout_sec,
+            action_timeout_ticks,
+        )
         self.desired_distance = float(desired_distance)
         self.min_distance = float(min_distance)
         self.max_distance = float(max_distance)
@@ -400,17 +447,17 @@ class BtNode_Approach(ActionHandler):
         # Mock policy: skip the navigation process entirely.
         if self.mock_mode:
             self.feedback_message = "MOCK: GoToApproach skipped (mock mode)"
+
             class MockFuture:
                 def done(self):
                     return True
+
             self.send_goal_future = MockFuture()
             return
 
         if not self.blackboard.exists("goal"):
             self.feedback_message = "No target found in blackboard"
-            self.node.get_logger().warn(
-                f"{self.name}: blackboard target key not set"
-            )
+            self.node.get_logger().warn(f"{self.name}: blackboard target key not set")
             return
 
         target = self._coerce_to_point_stamped(self.blackboard.goal)
@@ -450,8 +497,11 @@ class BtNode_Approach(ActionHandler):
         # GoToApproach reports semantic failures (UNREACHABLE, NAV_FAILED, ...)
         # as a succeeded action with non-zero result.status, so inspect the
         # payload rather than relying on GoalStatus alone.
-        res = self.result_message.result if hasattr(self.result_message, "result") \
+        res = (
+            self.result_message.result
+            if hasattr(self.result_message, "result")
             else self.result_message
+        )
         if res is None:
             self.feedback_message = "GoToApproach returned no result"
             return py_trees.common.Status.FAILURE
@@ -516,12 +566,14 @@ class BtNode_CaptureCurrentPose(py_trees.behaviour.Behaviour):
     downstream ``BtNode_GotoAction`` does not crash on an empty frame_id.
     """
 
-    def __init__(self,
-                 name: str,
-                 bb_key: str,
-                 source_frame: str = "base_link",
-                 target_frame: str = "map",
-                 tf_timeout_sec: float = 1.0):
+    def __init__(
+        self,
+        name: str,
+        bb_key: str,
+        source_frame: str = "base_link",
+        target_frame: str = "map",
+        tf_timeout_sec: float = 1.0,
+    ):
         super().__init__(name=name)
         self.bb_key = bb_key
         self.source_frame = source_frame
@@ -536,18 +588,18 @@ class BtNode_CaptureCurrentPose(py_trees.behaviour.Behaviour):
         self.bb_write.register_key(
             "dest",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_key)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_key),
         )
         self.time_now = None
         self.wait_ticks = 0
-    
+
     def initialise(self):
         self.time_now = self.node.get_clock().now()
         self.wait_ticks = 0
         return super().initialise()
 
     def setup(self, **kwargs):
-        self.node = kwargs.get('node')
+        self.node = kwargs.get("node")
         if self.node is not None and not self.mock_mode:
             self.tf_buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10))
             self.tf_listener = TransformListener(self.tf_buffer, self.node)
@@ -561,7 +613,9 @@ class BtNode_CaptureCurrentPose(py_trees.behaviour.Behaviour):
             ps.header.frame_id = self.target_frame
             ps.pose.orientation.w = 1.0
             self.bb_write.dest = ps
-            self.feedback_message = f"MOCK: synthetic origin pose at {self.target_frame}"
+            self.feedback_message = (
+                f"MOCK: synthetic origin pose at {self.target_frame}"
+            )
             print(f"📌 MOCK CAPTURE POSE: wrote synthetic origin to '{self.bb_key}'")
             return py_trees.common.Status.SUCCESS
 
@@ -580,7 +634,9 @@ class BtNode_CaptureCurrentPose(py_trees.behaviour.Behaviour):
                 timeout=rclpy.duration.Duration(seconds=self.tf_timeout_sec),
             )
         except Exception as e:
-            self.feedback_message = f"TF lookup '{self.target_frame}' <- '{self.source_frame}' failed: {e}"
+            self.feedback_message = (
+                f"TF lookup '{self.target_frame}' <- '{self.source_frame}' failed: {e}"
+            )
             if self.wait_ticks < 10:
                 return py_trees.common.Status.RUNNING
             else:
@@ -609,24 +665,39 @@ class BtNode_ConvertGraspPose(ServiceHandler):
     compute an appropriate arm pose for grasping. The resulting pose is
     stored back on the blackboard.
     """
-    def __init__(self, name: str, bb_source_key: str, bb_dest_key: str, service_name: str = "compute_grasp_pos"):
+
+    def __init__(
+        self,
+        name: str,
+        bb_source_key: str,
+        bb_dest_key: str,
+        service_name: str = "compute_grasp_pos",
+    ):
         super().__init__(name, service_name, ComputeGrasp)
         self.bb_source_key = bb_source_key
         self.bb_dest_key = bb_dest_key
 
     def setup(self, **kwargs):
         ServiceHandler.setup(self, **kwargs)
-        self.bb_read_client = self.attach_blackboard_client(name=f"ConvertGraspPoseRead")
-        self.bb_write_client = self.attach_blackboard_client(name=f"ConvertGraspPoseWrite")
+        self.bb_read_client = self.attach_blackboard_client(
+            name=f"ConvertGraspPoseRead"
+        )
+        self.bb_write_client = self.attach_blackboard_client(
+            name=f"ConvertGraspPoseWrite"
+        )
         self.bb_read_client.register_key(
             "source",
             access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_source_key)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name(
+                "/", self.bb_source_key
+            ),
         )
         self.bb_write_client.register_key(
             "dest",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_dest_key)
+            remap_to=py_trees.blackboard.Blackboard.absolute_name(
+                "/", self.bb_dest_key
+            ),
         )
         self.logger.debug(f"Setup ConvertGraspPose")
 
@@ -636,32 +707,37 @@ class BtNode_ConvertGraspPose(ServiceHandler):
         # Handle mock mode
         if self.mock_mode:
             from geometry_msgs.msg import PoseStamped
+
             mock_pose = PoseStamped()
             self.bb_write_client.dest = mock_pose
             self.feedback_message = "MOCK: Converted grasp pose"
             print(f"🎯 MOCK CONVERT GRASP POSE: Conversion complete")
             return
-            
+
         try:
             self.source_point = self.bb_read_client.source
             assert isinstance(self.source_point, PointStamped)
         except Exception as e:
-            self.feedback_message = f"Failed to read PointStamped from key '{self.bb_source_key}': {e}"
+            self.feedback_message = (
+                f"Failed to read PointStamped from key '{self.bb_source_key}': {e}"
+            )
             raise e
 
         request = ComputeGrasp.Request()
         request.target = self.source_point
         self.response = self.call_service_async(request)
-        self.feedback_message = f"Initialized ConvertGraspPose for point in {self.bb_source_key}"
+        self.feedback_message = (
+            f"Initialized ConvertGraspPose for point in {self.bb_source_key}"
+        )
 
     def update(self):
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         if self.response is None:
             return py_trees.common.Status.FAILURE
-            
+
         self.logger.debug(f"Update ConvertGraspPose")
         if self.response.done():
             result = self.response.result()
@@ -685,12 +761,19 @@ class BtNode_GoToLuggage(ServiceHandler):
     to compute an appropriate navigation pose for approaching the luggage,
     and stores the result on the blackboard.
     """
-    def __init__(self, name: str, bb_src_key: str, bb_target_key, service_name: str = "set_luggage_pose"):
+
+    def __init__(
+        self,
+        name: str,
+        bb_src_key: str,
+        bb_target_key,
+        service_name: str = "set_luggage_pose",
+    ):
         super().__init__(name, service_name, SetLuggagePose)
 
         self.bb_src_key = bb_src_key
         self.bb_target_key = bb_target_key
-    
+
     def setup(self, **kwargs):
         """
         setup for the node, recursively called with tree.setup()
@@ -698,12 +781,18 @@ class BtNode_GoToLuggage(ServiceHandler):
         ServiceHandler.setup(self, **kwargs)
         self.bb_read_client = self.attach_blackboard_client(name=f"GoToLuggageRead")
         self.bb_write_client = self.attach_blackboard_client(name=f"GoToLuggageWrite")
-        self.bb_write_client.register_key("target",
-                                         access=py_trees.common.Access.WRITE,
-                                         remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_target_key))
-        self.bb_read_client.register_key("source",
-                                         access=py_trees.common.Access.READ,
-                                         remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_src_key))
+        self.bb_write_client.register_key(
+            "target",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name(
+                "/", self.bb_target_key
+            ),
+        )
+        self.bb_read_client.register_key(
+            "source",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_src_key),
+        )
 
     def initialise(self) -> None:
         """
@@ -714,12 +803,13 @@ class BtNode_GoToLuggage(ServiceHandler):
         # Handle mock mode
         if self.mock_mode:
             from geometry_msgs.msg import PoseStamped
+
             mock_pose = PoseStamped()
             self.bb_write_client.target = mock_pose
             self.feedback_message = "MOCK: Set luggage pose"
             print(f"🧳 MOCK GO TO LUGGAGE: Luggage pose set")
             return
-            
+
         try:
             self.point = self.bb_read_client.source
             assert isinstance(self.point, PointStamped)
@@ -732,15 +822,14 @@ class BtNode_GoToLuggage(ServiceHandler):
 
         self.feedback_message = f"Initialized GotoLuggage for {self.point.point.x}, {self.point.point.y}, {self.point.point.z}"
 
-
     def update(self):
         # Handle mock mode
         if self.mock_mode:
             return self.wait_for_keypress_in_mock()
-            
+
         if self.response is None:
             return py_trees.common.Status.FAILURE
-            
+
         self.logger.debug(f"Update GotoLuggage")
         if self.response.done():
             if self.response.result().status > 0:
@@ -777,19 +866,25 @@ class BtNode_GetOrientationAngle(ServiceHandler):
         max_try: int = 3,
         timeout: float = 2.0,
         service_name: str = "orientation_angle_service",
+        target_point: PointStamped = PointStamped(),
     ):
         super().__init__(name, service_name, OrientationAngle)
         self.bb_dest_key = bb_dest_key
         self.max_try = max_try
         self.timeout = timeout
+        self.target_point = target_point
 
     def setup(self, **kwargs):
         ServiceHandler.setup(self, **kwargs)
-        self.bb_write_client = self.attach_blackboard_client(name="GetOrientationAngleWrite")
+        self.bb_write_client = self.attach_blackboard_client(
+            name="GetOrientationAngleWrite"
+        )
         self.bb_write_client.register_key(
             "angle",
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", self.bb_dest_key),
+            remap_to=py_trees.blackboard.Blackboard.absolute_name(
+                "/", self.bb_dest_key
+            ),
         )
         self.logger.debug(f"Setup GetOrientationAngle -> '{self.bb_dest_key}'")
 
@@ -805,9 +900,10 @@ class BtNode_GetOrientationAngle(ServiceHandler):
         request = OrientationAngle.Request()
         request.max_try = self.max_try
         request.timeout = self.timeout
+        request.point = self.target_point if self.target_point is not None else PointStamped()
         self.response = self.call_service_async(request)
-        self.feedback_message = (
-            f"Initialized GetOrientationAngle (max_try={self.max_try}, timeout={self.timeout}s)"
+        request.point = (
+            self.target_point if self.target_point is not None else PointStamped()
         )
 
     def update(self):
@@ -820,7 +916,9 @@ class BtNode_GetOrientationAngle(ServiceHandler):
         if self.response.done():
             angle = self.response.result().angle
             self.bb_write_client.angle = angle
-            self.feedback_message = f"orientation angle = {angle:.3f} rad -> '{self.bb_dest_key}'"
+            self.feedback_message = (
+                f"orientation angle = {angle:.3f} rad -> '{self.bb_dest_key}'"
+            )
             return py_trees.common.Status.SUCCESS
 
         self.feedback_message = "waiting for orientation_angle_service..."
@@ -832,7 +930,7 @@ class BtNode_GetOrientationAngle(ServiceHandler):
 #         super().__init__(name, service_name, SetLuggagePose)
 
 #         self.bb_key = bb_key
-    
+
 #     def setup(self, **kwargs):
 #         """
 #         setup for the node, recursively called with tree.setup()
@@ -878,7 +976,7 @@ class BtNode_GetOrientationAngle(ServiceHandler):
 
 
 # class BtNode_Goto(ServiceHandler):
-#     def __init__(self, 
+#     def __init__(self,
 #                 name: str,
 #                 bb_source: str,
 #                 service_name : str = "goto",
@@ -889,7 +987,7 @@ class BtNode_GetOrientationAngle(ServiceHandler):
 #         Args:
 #             name: the name of the pytree node
 #             bb_source: path to the key in blackboard containing a geometry_msgs/PoseStamped object of the pos of trash can
-#             service_name: name of the service of type tinker_decision_msgs/Drop     
+#             service_name: name of the service of type tinker_decision_msgs/Drop
 #         """
 #         super(BtNode_Goto, self).__init__(name, service_name, Goto)
 #         self.bb_source = bb_source
@@ -897,7 +995,7 @@ class BtNode_GetOrientationAngle(ServiceHandler):
 #         self.target = target
 #         if target is not None:
 #             assert isinstance(self.target, PoseStamped)
-        
+
 
 #     def setup(self, **kwargs):
 #         """
@@ -951,7 +1049,7 @@ class BtNode_GetOrientationAngle(ServiceHandler):
 
 
 # class BtNode_GotoGrasp(ServiceHandler):
-#     def __init__(self, 
+#     def __init__(self,
 #                 name: str,
 #                 bb_source: str,
 #                 service_name : str = "go_to_grasp",
@@ -962,7 +1060,7 @@ class BtNode_GetOrientationAngle(ServiceHandler):
 #         Args:
 #             name: the name of the pytree node
 #             bb_source: path to the key in blackboard containing a geometry_msgs/PoseStamped object of the pos of trash can
-#             service_name: name of the service of type tinker_decision_msgs/Drop     
+#             service_name: name of the service of type tinker_decision_msgs/Drop
 #         """
 #         super(BtNode_GotoGrasp, self).__init__(name, service_name, GotoGrasp)
 #         self.bb_source = bb_source
@@ -1028,7 +1126,7 @@ class BtNode_GetOrientationAngle(ServiceHandler):
 
 
 # class BtNode_CalcGraspPose(ServiceHandler):
-#     def __init__(self, 
+#     def __init__(self,
 #                 name: str,
 #                 bb_source: str,
 #                 bb_dest:str,
@@ -1040,7 +1138,7 @@ class BtNode_GetOrientationAngle(ServiceHandler):
 #         Args:
 #             name: the name of the pytree node
 #             bb_source: path to the key in blackboard containing a geometry_msgs/PoseStamped object of the pos of trash can
-#             service_name: name of the service of type tinker_decision_msgs/Drop     
+#             service_name: name of the service of type tinker_decision_msgs/Drop
 #         """
 #         super(BtNode_CalcGraspPose, self).__init__(name, service_name, ComputeGrasp)
 #         self.bb_source = bb_source
@@ -1070,7 +1168,7 @@ class BtNode_GetOrientationAngle(ServiceHandler):
 #             self.logger.debug(f"Setup CalcGraspPose, reading from {self.bb_source}")
 #         else:
 #             self.logger.debug(f"Setup CalcGraspPose from fixed point {self.target}")
-        
+
 #         self._tf_buffer = Buffer()
 #         self._tf_listener = TransformListener(self._tf_buffer, self.node)
 
@@ -1097,7 +1195,7 @@ class BtNode_GetOrientationAngle(ServiceHandler):
 #                             )
 #         except LookupException as e:
 #             assert False, "Failed to lookup transform"
-            
+
 #         map_point = tf2_geometry_msgs.do_transform_point(self.target, transform)
 
 #         request = ComputeGrasp.Request()

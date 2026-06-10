@@ -36,14 +36,13 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import py_trees
 import action_msgs.msg as action_msgs  # GoalStatus
+import py_trees
 
 from behavior_tree.messages import Follow, TrackPerson
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
-
 
 # Blackboard keys — root-scoped per .claude/rules/behavior-tree.md.
 BB_TARGET_LOST = "follow_target_lost"
@@ -59,6 +58,7 @@ BB_SHORT_ANNOUNCED = "follow_short_announced"
 # -----------------------------------------------------------------------------
 # Drain-pending-cancel mixin
 # -----------------------------------------------------------------------------
+
 
 class _DrainPriorCancelMixin:
     """Serialise cancel → re-init for action wrappers under Repeat/Retry.
@@ -151,7 +151,8 @@ class _DrainPriorCancelMixin:
 # Action / visibility leaves
 # -----------------------------------------------------------------------------
 
-class BtNode_TrackPersonAction(_DrainPriorCancelMixin, ActionHandler):
+
+class BtNode_TrackPersonAction(ActionHandler):
     """Wrap ``tk26_vision/track_person`` and fan feedback onto the blackboard.
 
     Feedback schema is ``{target_lost, target_track_id,
@@ -170,8 +171,10 @@ class BtNode_TrackPersonAction(_DrainPriorCancelMixin, ActionHandler):
         feedback_timeout_secs: float = 30.0,
         wait_for_server_timeout_sec: float = -3.0,
     ):
-        super().__init__(name, TrackPerson, action_name, None, wait_for_server_timeout_sec)
-        self._drain_init()
+        super().__init__(
+            name, TrackPerson, action_name, None, wait_for_server_timeout_sec
+        )
+        # self._drain_init()
         self._target_frame = target_frame
         self._target_point_topic = target_point_topic
         self._feedback_timeout_secs = feedback_timeout_secs
@@ -235,8 +238,7 @@ class BtNode_TrackPersonAction(_DrainPriorCancelMixin, ActionHandler):
         if pos is not None:
             self._bb.set(BB_TARGET_POSITION, pos, overwrite=True)
         self.feedback_message = (
-            f"track: lost={self._bb.get(BB_TARGET_LOST)} "
-            f"id={self._bb.get(BB_TRACK_ID)}"
+            f"track: lost={self._bb.get(BB_TARGET_LOST)} id={self._bb.get(BB_TRACK_ID)}"
         )
 
     def process_result(self):
@@ -345,9 +347,7 @@ class BtNode_FollowAction(ActionHandler):
         if self.result_status == action_msgs.GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "follow reached"
             return py_trees.common.Status.SUCCESS
-        self.feedback_message = (
-            f"follow ended with status {self.result_status_string}"
-        )
+        self.feedback_message = f"follow ended with status {self.result_status_string}"
         return py_trees.common.Status.FAILURE
 
     # def initialise(self):
@@ -421,6 +421,7 @@ class BtNode_IsTargetVisible(py_trees.behaviour.Behaviour):
 # Atomic watchdog state leaves — each does ONE thing.
 # -----------------------------------------------------------------------------
 
+
 class BtNode_UpdateLossElapsed(py_trees.behaviour.Behaviour):
     """Maintain ``follow_lost_elapsed_sec`` from ``follow_target_lost``.
 
@@ -439,7 +440,9 @@ class BtNode_UpdateLossElapsed(py_trees.behaviour.Behaviour):
         self._bb.register_key(
             key=BB_LOSS_ELAPSED_SEC,
             access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", BB_LOSS_ELAPSED_SEC),
+            remap_to=py_trees.blackboard.Blackboard.absolute_name(
+                "/", BB_LOSS_ELAPSED_SEC
+            ),
         )
 
     def initialise(self):
@@ -478,7 +481,9 @@ class BtNode_LossElapsedAtLeast(py_trees.behaviour.Behaviour):
         self._bb.register_key(
             key=BB_LOSS_ELAPSED_SEC,
             access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", BB_LOSS_ELAPSED_SEC),
+            remap_to=py_trees.blackboard.Blackboard.absolute_name(
+                "/", BB_LOSS_ELAPSED_SEC
+            ),
         )
 
     def update(self):
@@ -582,6 +587,7 @@ class BtNode_SetFlag(py_trees.behaviour.Behaviour):
 # -----------------------------------------------------------------------------
 # Factory
 # -----------------------------------------------------------------------------
+
 
 def createFollowPerson(cfg: dict) -> py_trees.behaviour.Behaviour:
     """Assemble the follow-person subtree with two-stage loss recovery.
@@ -715,7 +721,7 @@ def createFollowPerson(cfg: dict) -> py_trees.behaviour.Behaviour:
             turn_head_up,
             follow_person,
         ],
-        memory=True
+        memory=True,
     )
 
 
@@ -723,9 +729,11 @@ def createFollowPerson(cfg: dict) -> py_trees.behaviour.Behaviour:
 # Standalone entry point
 # -----------------------------------------------------------------------------
 
+
 def main():
     """Run the follow subtree in isolation for threshold tuning."""
     from behavior_tree.runtime import run_tree
+
     from .config import FOLLOW_CONFIG
 
     def build():

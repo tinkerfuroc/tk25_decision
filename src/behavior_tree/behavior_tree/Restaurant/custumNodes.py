@@ -22,7 +22,7 @@ class BtNode_DetectCallingCustomer(ServiceHandler):
     def __init__(self,
                  name: str,
                  bb_dest_key: str,
-                 threshold_meters: float = 6.0,
+                 threshold_meters: float = 7.0,
                  target_frame: str = "base_link",
                  service_name: str = "detect_waving_persons",
                  timeout: float = 10.0):

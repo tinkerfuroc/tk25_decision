@@ -302,11 +302,26 @@ def scanAllPositions(target_frame="map", n_gate=1):
     )
 
     for pan in [ 
+        # -60.0, 
         0.0,
         -30.0,
-        -60.0,
         30.0,
         60.0,
+        -60.0,
+        0.0,
+        -30.0,
+        30.0,
+        0.0,
+        -60.0,
+        60.0,
+        0.0,
+        -120.0,
+        120.0,
+        0.0,
+        -30.0,
+        30.0,
+        60.0,
+        -60.0,
         0.0,
         -30.0,
         30.0,
@@ -363,6 +378,7 @@ class BtNode_ExtractOnePoint(py_trees.behaviour.Behaviour):
 
         self.blackboard.extracted_centroid = self.blackboard.customer_centroids[0]
         self.blackboard.customer_centroids = self.blackboard.customer_centroids[1:]
+        self.blackboard.customer_centroids.append(self.blackboard.extracted_centroid)
         return py_trees.common.Status.SUCCESS
 
 KEY_CUSTOMER_LOCATION = "customer_location"
@@ -396,12 +412,11 @@ def navigateToCustomer():
                 name="Approach detected person",
                 bb_target_key=KEY_CUSTOMER_LOCATION,
             ),
-            num_failures=5
+            num_failures=10
         )
     )
 
-    return root    
-
+    return py_trees.decorators.FailureIsSuccess("failure is success", root)   
 
 POSE_BARMAN = PoseStamped(
     header=Header(frame_id="map"),
@@ -469,6 +484,123 @@ def announceAllOrders():
 
     return root
 
+def placeOnTinker():
+    root = py_trees.composites.Sequence(
+        "prompt to place on Tinker",
+        True
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "repeat order",
+            bb_source= None,
+            message="Dear barman, please place all four items in the box on me."
+        )
+    )
+
+    root.add_child(
+        py_trees.timers.Timer(name="wait for barman", duration=20.0)
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "repeat order",
+            bb_source= None,
+            message="You still have fifteen seconds"
+        )
+    )
+
+    root.add_child(
+        py_trees.timers.Timer(name="wait for barman again", duration=15.0)
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "repeat order",
+            bb_source= None,
+            message="Thank you, I will now deliver order"
+        )
+    )
+
+    return root
+
+def customerTake():
+    root = py_trees.composites.Sequence(
+        "prompt to place on Tinker",
+        True
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "repeat order",
+            bb_source= None,
+            message="Dear customer, I have your order. Please take order from me"
+        )
+    )
+
+    root.add_child(
+        py_trees.timers.Timer(name="wait for customer", duration=10.0)
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "repeat order",
+            bb_source= None,
+            message="You still have ten seconds"
+        )
+    )
+
+    root.add_child(
+        py_trees.timers.Timer(name="wait for customer again", duration=10.0)
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            "big goodbye",
+            bb_source= None,
+            message="A pleaure"
+        )
+    )
+
+    return root
+
+def returnOrderToCustomer():
+    root=py_trees.composites.Sequence(
+        "navigate to customer",
+        True
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            name="announce start navigation",
+            bb_source=None,
+            message="Returning order to customer",
+        )
+    )
+
+    root.add_child(
+        BtNode_ExtractOnePoint(
+            name="extract one customer location",
+            bb_key_customer_centroids=KEY_CUSTOMER_CENTROIDS,
+            bb_key_extracted_centroid=KEY_CUSTOMER_LOCATION
+        )
+    )
+
+    root.add_child(
+        py_trees.decorators.Retry(
+            name="Retry approach",
+            child=BtNode_Approach(
+                name="Approach detected person",
+                bb_target_key=KEY_CUSTOMER_LOCATION,
+            ),
+            num_failures=10
+        )
+    )
+
+    root.add_child(customerTake())
+
+    return root   
+
 
 def with_navigation():
     root=py_trees.composites.Sequence(
@@ -484,6 +616,12 @@ def with_navigation():
         )
     )
     root.add_child(scanAllPositions(n_gate=2))
+
+    root.add_child(BtNode_TurnPanTilt(
+        name="turn pan tilt back",
+        y=45.0
+    ))
+
     root.add_child(navigateToCustomer())
     root.add_child(get_order(
         drink_order_key=CUSTOMER_ORDER_DRINK1,
@@ -507,7 +645,13 @@ def with_navigation():
         announceAllOrders()
     )
 
+    root.add_child(placeOnTinker())
+
+    root.add_child(returnOrderToCustomer())
+    root.add_child(returnOrderToCustomer())
+
     return root
+
 
 def main():
     rclpy.init()

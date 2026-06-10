@@ -8,7 +8,6 @@ import rclpy
 
 from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
 from geometry_msgs.msg import PointStamped, Point
-from regex import P
 
 from .custumNodes import BtNode_DetectCallingCustomer
 
@@ -141,7 +140,9 @@ def scanAllPositions(target_frame="base_link"):
     )
 
     for pan in [ 
-        -60.0, 
+        -180.0,
+        -120.0,
+        -60.0,
         0.0,
         60.0,
         120.0
@@ -159,7 +160,7 @@ def scanAllPositions(target_frame="base_link"):
             BtNode_GateBlackBoardList(
                 name="gate",
                 bb_key_list=KEY_CUSTOMER_CENTROIDS,
-                n_gate=2
+                n_gate=30
             )
         )
         pre_gate.add_child(scan_once(pan, target_frame=target_frame))
