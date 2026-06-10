@@ -33,6 +33,7 @@
 # track/person_id          - int: Tracking ID assigned by action server
 # track/target_lost        - bool: True if target is currently lost
 # track/transform_success  - bool: True if TF transformation succeeded
+# track/reacquisition_state - int: 0 TRACKING, 1 PASSIVE, 2 NEEDS_HELP
 #
 # Mock Mode
 # ---------
@@ -65,6 +66,7 @@ class FeedbackBuffer:
         _track_id: Current tracking ID
         _target_lost: Whether target is currently lost
         _transform_success: Whether TF transformation succeeded
+        _reacquisition_state: Reacquisition state (0 TRACKING, 1 PASSIVE, 2 NEEDS_HELP)
         _feedback_count: Total feedbacks received (for debugging)
     """
 
@@ -74,6 +76,7 @@ class FeedbackBuffer:
         self._track_id: int = -1
         self._target_lost: bool = True
         self._transform_success: bool = False
+        self._reacquisition_state: int = 0
         self._feedback_count: int = 0
 
     def update(self, feedback) -> None:
@@ -88,6 +91,9 @@ class FeedbackBuffer:
             self._target_lost = feedback.target_lost
             self._track_id = feedback.target_track_id
             self._transform_success = feedback.is_transformation_successful
+            self._reacquisition_state = int(
+                getattr(feedback, "reacquisition_state", 0)
+            )
 
             # Only update position if transformation succeeded and target not lost
             if feedback.is_transformation_successful and not feedback.target_lost:
@@ -99,7 +105,8 @@ class FeedbackBuffer:
         Get current tracking state (thread-safe).
 
         Returns:
-            Tuple of (position, track_id, target_lost, transform_success, feedback_count)
+            Tuple of (position, track_id, target_lost, transform_success,
+            feedback_count, reacquisition_state)
         """
         with self._lock:
             return (
@@ -107,7 +114,8 @@ class FeedbackBuffer:
                 self._track_id,
                 self._target_lost,
                 self._transform_success,
-                self._feedback_count
+                self._feedback_count,
+                self._reacquisition_state
             )
 
     def clear(self) -> None:
@@ -117,6 +125,7 @@ class FeedbackBuffer:
             self._track_id = -1
             self._target_lost = True
             self._transform_success = False
+            self._reacquisition_state = 0
             self._feedback_count = 0
 
 
@@ -157,6 +166,7 @@ class BtNode_TrackPersonAction(ActionHandler):
     DEFAULT_BB_KEY_TRACK_ID = "track/person_id"
     DEFAULT_BB_KEY_TARGET_LOST = "track/target_lost"
     DEFAULT_BB_KEY_TRANSFORM_SUCCESS = "track/transform_success"
+    DEFAULT_BB_KEY_REACQ_STATE = "track/reacquisition_state"
 
     def __init__(
         self,
@@ -166,6 +176,7 @@ class BtNode_TrackPersonAction(ActionHandler):
         bb_key_track_id: str = DEFAULT_BB_KEY_TRACK_ID,
         bb_key_target_lost: str = DEFAULT_BB_KEY_TARGET_LOST,
         bb_key_transform_success: str = DEFAULT_BB_KEY_TRANSFORM_SUCCESS,
+        bb_key_reacquisition_state: str = DEFAULT_BB_KEY_REACQ_STATE,
         return_rgb: bool = False,
         return_depth: bool = False,
         return_segment: bool = False,
@@ -183,6 +194,7 @@ class BtNode_TrackPersonAction(ActionHandler):
             bb_key_track_id: Blackboard key for tracking ID
             bb_key_target_lost: Blackboard key for target lost flag
             bb_key_transform_success: Blackboard key for transform success
+            bb_key_reacquisition_state: Blackboard key for reacquisition state
             return_rgb: Request RGB image in feedback
             return_depth: Request depth image in feedback
             return_segment: Request segmentation in feedback
@@ -206,6 +218,7 @@ class BtNode_TrackPersonAction(ActionHandler):
         self.bb_key_track_id = bb_key_track_id
         self.bb_key_target_lost = bb_key_target_lost
         self.bb_key_transform_success = bb_key_transform_success
+        self.bb_key_reacquisition_state = bb_key_reacquisition_state
         self.return_rgb = return_rgb
         self.return_depth = return_depth
         self.return_segment = return_segment
@@ -255,6 +268,10 @@ class BtNode_TrackPersonAction(ActionHandler):
             self.bb_key_transform_success,
             access=py_trees.common.Access.WRITE
         )
+        self._bb_writer.register_key(
+            self.bb_key_reacquisition_state,
+            access=py_trees.common.Access.WRITE
+        )
 
         self.logger.debug(f"Setup complete for {self.name}")
 
@@ -269,6 +286,7 @@ class BtNode_TrackPersonAction(ActionHandler):
         self._bb_writer.set(self.bb_key_target_lost, True, overwrite=True)
         self._bb_writer.set(self.bb_key_transform_success, False, overwrite=True)
         self._bb_writer.set(self.bb_key_track_id, -1, overwrite=True)
+        self._bb_writer.set(self.bb_key_reacquisition_state, 0, overwrite=True)
 
         # Now call parent - in mock mode, send_goal() will overwrite with valid mock data
         super().initialise()
@@ -345,13 +363,14 @@ class BtNode_TrackPersonAction(ActionHandler):
             Always returns RUNNING to maintain continuous tracking
         """
         # Get latest state from buffer
-        position, track_id, target_lost, transform_success, count = \
+        position, track_id, target_lost, transform_success, count, reacq_state = \
             self._feedback_buffer.get_state()
 
         # Update blackboard
         self._bb_writer.set(self.bb_key_track_id, track_id, overwrite=True)
         self._bb_writer.set(self.bb_key_target_lost, target_lost, overwrite=True)
         self._bb_writer.set(self.bb_key_transform_success, transform_success, overwrite=True)
+        self._bb_writer.set(self.bb_key_reacquisition_state, reacq_state, overwrite=True)
 
         if position is not None:
             self._bb_writer.set(self.bb_key_position, position, overwrite=True)
