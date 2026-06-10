@@ -17,10 +17,8 @@
 import py_trees
 
 from behavior_tree.FollowPerson.follow_person import create_follow_person_tree
-from behavior_tree.FollowPerson.nodes import (
-    BtNode_PublishFollowGoal,
-    BtNode_ReacqAnnounce,
-)
+from behavior_tree.FollowPerson.nodes import BtNode_ReacqAnnounce
+from behavior_tree.TemplateNodes.FollowAction import BtNode_FollowAction
 from behavior_tree.TemplateNodes.TrackPersonAction import BtNode_TrackPersonAction
 
 
@@ -31,22 +29,33 @@ def test_root_is_parallel_success_on_all():
     assert root.policy.synchronise is False
 
 
-def test_children_are_track_action_and_sequence():
+def test_children_are_track_follow_and_reactions():
     root = create_follow_person_tree()
-    assert len(root.children) == 2
+    # Three long-running children: tracker, follow executive, reactions.
+    assert len(root.children) == 3
 
-    child_a, child_b = root.children
-    assert isinstance(child_a, BtNode_TrackPersonAction)
-    assert isinstance(child_b, py_trees.composites.Sequence)
-    assert child_b.memory is False
+    track, follow, reactions = root.children
+    assert isinstance(track, BtNode_TrackPersonAction)
+    assert isinstance(follow, BtNode_FollowAction)
+    assert isinstance(reactions, py_trees.composites.Sequence)
+    assert reactions.memory is False
 
 
-def test_sequence_children_are_publish_then_announce():
+def test_follow_action_is_a_top_level_parallel_child():
+    # The follow executive is long-running, so it sits beside the tracker under
+    # the Parallel root — NOT inside the per-tick reactions Sequence.
     root = create_follow_person_tree()
-    _, sequence = root.children
-    assert len(sequence.children) == 2
-    publish, announce = sequence.children
-    assert isinstance(publish, BtNode_PublishFollowGoal)
+    _, _, reactions = root.children
+    assert not any(
+        isinstance(child, BtNode_FollowAction) for child in reactions.children
+    )
+
+
+def test_reactions_sequence_holds_only_announce():
+    root = create_follow_person_tree()
+    _, _, reactions = root.children
+    assert len(reactions.children) == 1
+    (announce,) = reactions.children
     assert isinstance(announce, BtNode_ReacqAnnounce)
 
 

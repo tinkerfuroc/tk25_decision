@@ -227,11 +227,15 @@ announcements. Navigation is a dummy topic stub.
 **What it does**
 
 - `BtNode_TrackPersonAction` keeps the `/track_person` goal alive and writes the
-  tracker state to the blackboard, including a new
+  tracker state to the blackboard, including a
   `track/reacquisition_state` key (`0` TRACKING, `1` PASSIVE, `2` NEEDS_HELP).
-- `BtNode_PublishFollowGoal` republishes the tracked person's position to
-  `/follow_target` (`geometry_msgs/PointStamped`) whenever the target is not
-  lost. A real nav node (or the bundled `dummy-nav` stub) consumes this topic.
+- `BtNode_FollowAction` keeps the navigation `Follow` action
+  (`tinker_nav_msgs/action/Follow`, server `follow_server`) alive and writes the
+  follow-executive state to the blackboard (`follow/state` uint8,
+  `follow/distance` float, `follow/reacq` uint8). The follow executive consumes
+  the tracker's `/target_points` topic directly, so there is **no** per-tick
+  follow-goal publisher — `BtNode_FollowAction` drives navigation entirely
+  through the long-running action.
 - `BtNode_ReacqAnnounce` speaks reacquisition guidance through a
   `CoalescingTTS` (single active utterance, latest-wins pending — speech never
   overlaps and never blocks the tick):
@@ -244,33 +248,34 @@ announcements. Navigation is a dummy topic stub.
 
 ```
 Parallel(SuccessOnAll, synchronise=False)
-├── BtNode_TrackPersonAction        # child A — refreshes the blackboard
-└── Sequence(memory=False)          # child B — reacts to it each tick
-    ├── BtNode_PublishFollowGoal
+├── BtNode_TrackPersonAction        # child A — refreshes track/*
+├── BtNode_FollowAction             # child B — drives follow_server, refreshes follow/*
+└── Sequence(memory=False)          # child C — reacts to the tracker each tick
     └── BtNode_ReacqAnnounce
 ```
 
-If the `/track_person` action terminates (permanent loss / abort) child A
-returns FAILURE, the Parallel returns FAILURE, and the follow process ends.
+`BtNode_FollowAction` is long-running, so it sits beside the tracker as a
+top-level Parallel child — not inside the per-tick reactions Sequence. If either
+long-running action terminates (permanent loss / abort) its child returns
+FAILURE, the Parallel returns FAILURE, and the follow process ends.
 
-**Run sequence** (real tracker only — these must already be running):
+**Run sequence** (real tracker + nav stack only — these must already be running):
 
 ```bash
 # 1. Real tracker + audio TTS service (not started by the launch file)
 ros2 run vision_track person_track_server
 #    ... and the TextToSpeech ("announce") service from the audio stack
 
-# 2a. Either via the bundled launch file:
-ros2 launch behavior_tree follow_process.launch.py
+# 2. The follow executive (consumes /target_points, drives Nav2)
+ros2 run following follow_server
 
-# 2b. ...or in two terminals:
-ros2 run behavior_tree dummy-nav        # subscribes /follow_target, logs
+# 3. The behaviour tree
 ros2 run behavior_tree follow-person    # runs the BT
 ```
 
 All nodes honour the package mock-mode config, so they remain importable and
 unit-testable with no ROS graph (see `test/test_coalescing_tts.py`,
-`test/test_reacq_announce.py`, `test/test_publish_follow_goal.py`,
+`test/test_reacq_announce.py`, `test/test_follow_action_node.py`,
 `test/test_feedback_buffer_reacq.py`, `test/test_follow_tree_build.py`).
 
 ## 🏗️ Architecture
@@ -628,6 +633,20 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-06-10** — Wire `BtNode_FollowAction` into the follow-person tree
+  (P5 of the person-following plan). New `TemplateNodes/FollowAction.py`: a
+  continuous-action node for `tinker_nav_msgs/action/Follow` on `follow_server`,
+  mirroring `BtNode_TrackPersonAction` (feedback buffer under a lock,
+  RUNNING-while-following, SUCCESS on success/cancel, FAILURE on abort/reject,
+  KEYPRESS/IMMEDIATE mock mode). It writes `follow/state` (uint8),
+  `follow/distance` (float) and `follow/reacq` (uint8) to the blackboard. The
+  follow-person tree now has three top-level Parallel children
+  (tracker, follow executive, reactions); the long-running `BtNode_FollowAction`
+  sits beside the tracker, not inside the reactions Sequence. **Removed**
+  `BtNode_PublishFollowGoal` and the `/follow_target` publisher entirely —
+  navigation consumes the tracker's `/target_points` directly via `follow_server`.
+  `test_publish_follow_goal.py` deleted; `test_follow_action_node.py` added and
+  `test_follow_tree_build.py` updated for the new wiring.
 - **2026-06-10** — Add the follow-person behaviour tree. `BtNode_TrackPersonAction`
   now exposes `track/reacquisition_state` on the blackboard. New
   `FollowPerson/` package: `CoalescingTTS` (non-overlapping latest-wins speaker),

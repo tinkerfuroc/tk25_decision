@@ -16,18 +16,21 @@
 # Follow-person BT nodes
 # ======================
 #
-# Two non-blocking ``py_trees`` behaviours used by the follow-person tree:
+# Non-blocking ``py_trees`` behaviour used by the follow-person tree:
 #
 # - ``BtNode_ReacqAnnounce``: reads the tracker's reacquisition state from the
 #   blackboard and speaks the right phrase (slow-down while PASSIVE, raise-hand
 #   while NEEDS_HELP) on state transitions and on a throttled repeat, using a
 #   CoalescingTTS so speech never overlaps and never blocks the tick.
-# - ``BtNode_PublishFollowGoal``: publishes the tracked person's position to the
-#   follow-target topic so a (real or dummy) nav node can chase it.
 #
-# Both always return SUCCESS so they never gate the tree. Both expose an
-# injection hook (``inject_coalescer`` / ``inject_publisher``) so unit tests can
-# substitute fakes without a live ROS graph.
+# It always returns SUCCESS so it never gates the tree, and exposes an injection
+# hook (``inject_coalescer``) so unit tests can substitute a fake without a live
+# ROS graph.
+#
+# Navigation is no longer driven from here: the follow executive
+# (``BtNode_FollowAction`` -> ``follow_server``) consumes the tracker's
+# ``/target_points`` topic directly, so the former ``BtNode_PublishFollowGoal``
+# (which republished to ``/follow_target``) has been removed.
 #
 
 import time
@@ -190,88 +193,5 @@ class BtNode_ReacqAnnounce(py_trees.behaviour.Behaviour):
             self.feedback_message = f"Announced: '{text}'"
         else:
             self.feedback_message = f"Holding announcement for state {state}"
-
-        return Status.SUCCESS
-
-
-class BtNode_PublishFollowGoal(py_trees.behaviour.Behaviour):
-    """Publish the tracked person's position as the follow target.
-
-    Reads ``lost_key`` (bool) and ``pos_key`` (PointStamped) from the
-    blackboard. When the target is not lost and a position exists, publishes it
-    on ``topic`` (commanding navigation). Otherwise publishes nothing. Always
-    returns SUCCESS (never gates the tree).
-    """
-
-    def __init__(
-        self,
-        name: str,
-        topic: str = "/follow_target",
-        pos_key: str = "track/person_position",
-        lost_key: str = "track/target_lost",
-    ):
-        """Initialize the follow-goal publisher.
-
-        Args:
-            name: Behaviour tree node name.
-            topic: PointStamped topic to publish the follow target on.
-            pos_key: Blackboard key holding the target position (PointStamped).
-            lost_key: Blackboard key holding the target-lost flag (bool).
-        """
-        super().__init__(name=name)
-        self.topic = topic
-        self.pos_key = pos_key
-        self.lost_key = lost_key
-
-        self.mock_mode = is_node_mocked(self.__class__.__name__)
-        self.node = None
-        self._publisher = None
-
-        self._bb = self.attach_blackboard_client(name=f"{self.name}_goal")
-        self._bb.register_key(
-            key=self.pos_key, access=py_trees.common.Access.READ
-        )
-        self._bb.register_key(
-            key=self.lost_key, access=py_trees.common.Access.READ
-        )
-
-    def inject_publisher(self, publisher):
-        """Inject a publisher (or fake) directly, bypassing ROS setup."""
-        self._publisher = publisher
-
-    def setup(self, **kwargs):
-        """Obtain the shared rclpy node and create the PointStamped publisher."""
-        try:
-            self.node = kwargs["node"]
-        except KeyError as e:
-            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(
-                self.name, self.__class__.__name__
-            )
-            raise KeyError(error_message) from e
-
-        if self._publisher is not None:
-            return
-
-        from geometry_msgs.msg import PointStamped
-
-        self._publisher = self.node.create_publisher(PointStamped, self.topic, 10)
-
-    def update(self) -> Status:
-        """Publish the follow target if available; always SUCCESS."""
-        try:
-            target_lost = bool(self._bb.get(self.lost_key))
-        except Exception:
-            target_lost = True
-        try:
-            position = self._bb.get(self.pos_key)
-        except Exception:
-            position = None
-
-        if not target_lost and position is not None:
-            if self._publisher is not None:
-                self._publisher.publish(position)
-            self.feedback_message = "Published follow target"
-        else:
-            self.feedback_message = "No valid target; not publishing"
 
         return Status.SUCCESS

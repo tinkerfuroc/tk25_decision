@@ -16,26 +16,32 @@
 # Follow-person behaviour tree
 # ============================
 #
-# Builds the follow-person tree: a Parallel root that keeps the real
-# ``/track_person`` action alive (child A) while, in parallel, publishing the
-# follow target and speaking reacquisition guidance (child B).
+# Builds the follow-person tree: a Parallel root with three children, each
+# long-running and independent.
 #
 #   Parallel(SuccessOnAll, synchronise=False)
-#   ├── BtNode_TrackPersonAction        (writes the track/* blackboard keys)
+#   ├── BtNode_TrackPersonAction        (keeps /track_person alive; writes track/*)
+#   ├── BtNode_FollowAction             (keeps follow_server alive; writes follow/*)
 #   └── Sequence(memory=False)
-#       ├── BtNode_PublishFollowGoal    (publishes /follow_target)
 #       └── BtNode_ReacqAnnounce        (reacq-driven voice announcements)
 #
-# Child A refreshes the blackboard before child B reads it each cycle. If the
-# action terminates (permanent loss / abort) it returns FAILURE, the Parallel
-# returns FAILURE, and the follow process ends cleanly.
+# The tracker (child A) refreshes the ``track/*`` blackboard keys, the follow
+# executive node (child B) keeps the navigation ``Follow`` action alive and
+# refreshes the ``follow/*`` keys, and the reactions Sequence (child C) reacts
+# to the tracker state each tick. The navigation stack now consumes the
+# tracker's ``/target_points`` topic directly, so there is no per-tick follow
+# goal publisher — ``BtNode_FollowAction`` drives navigation via the long-running
+# ``follow_server`` action instead.
+#
+# If either long-running action terminates (permanent loss / abort) it returns
+# FAILURE, the Parallel returns FAILURE, and the follow process ends cleanly.
 #
 
 import py_trees
 
 from behavior_tree.TemplateNodes.TrackPersonAction import BtNode_TrackPersonAction
+from behavior_tree.TemplateNodes.FollowAction import BtNode_FollowAction
 from behavior_tree.FollowPerson.nodes import (
-    BtNode_PublishFollowGoal,
     BtNode_ReacqAnnounce,
 )
 
@@ -61,18 +67,22 @@ def create_follow_person_tree(target_frame: str = "") -> py_trees.behaviour.Beha
         target_frame=target_frame,
     )
 
-    publish_goal = BtNode_PublishFollowGoal(name="Publish Follow Goal")
+    follow = BtNode_FollowAction(
+        name="Follow Navigation",
+        use_breadcrumbs=True,
+        timeout=0.0,
+    )
     announce = BtNode_ReacqAnnounce(name="Reacq Announce")
 
     reactions = py_trees.composites.Sequence(
         name="Follow Reactions",
         memory=False,
-        children=[publish_goal, announce],
+        children=[announce],
     )
 
     root = py_trees.composites.Parallel(
         name="Follow Person",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(synchronise=False),
-        children=[track, reactions],
+        children=[track, follow, reactions],
     )
     return root
