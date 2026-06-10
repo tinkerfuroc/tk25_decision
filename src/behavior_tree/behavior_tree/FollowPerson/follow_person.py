@@ -40,11 +40,18 @@ from behavior_tree.FollowPerson.nodes import (
 )
 
 
-def create_follow_person_tree(target_frame: str = "map") -> py_trees.behaviour.Behaviour:
+def create_follow_person_tree(target_frame: str = "") -> py_trees.behaviour.Behaviour:
     """Build and return the follow-person tree root.
 
     Args:
-        target_frame: TF frame for the tracked position output.
+        target_frame: TF frame for the tracked position output. Defaults to
+            ``""`` (empty) so the tracker keeps the camera frame and performs
+            **no** per-frame TF lookup. Do NOT set this to ``"map"`` (or any
+            frame) unless a TF source for that frame is actually running: the
+            tracker blocks ~0.2 s/frame on a lookup that never resolves, which
+            collapses the tracking loop from ~30 Hz to ~5 Hz and starves
+            reacquisition. The follow demo (dummy_nav stub, no nav stack) has no
+            ``map`` frame, so ``""`` is the correct default.
 
     Returns:
         The Parallel root behaviour (compatible with ``run_tree``).

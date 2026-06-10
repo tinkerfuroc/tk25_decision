@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.2.6] - 2026-06-10
+
+### 🐛 follow-person: stop requesting a `map` frame the demo doesn't have
+
+Fixes two reported symptoms with one root cause: (1) the tracker failed to
+re-acquire the operator after a loss when driven by the follow-person BT
+(it worked standalone from the track_web webui), and (2) no reacquisition
+voice announcement ever played.
+
+Root cause: `create_follow_person_tree()` defaulted `target_frame="map"`, so
+`BtNode_TrackPersonAction` sent `TrackPerson.Goal.target_frame="map"`. The
+webui sends `""`. With a non-empty frame the tracker does a blocking TF lookup
+(`timeout=0.2s`) **every tracked frame**; the follow demo has no `map` frame
+(dummy_nav is a stub, no nav stack / TF), so each lookup waits out its full
+timeout. Measured: the tracking loop collapses from ~30 Hz to ~4.9 Hz. ReID
+reacquisition (N consecutive gallery-matched frames + ByteTrack id continuity,
+all built in the tracked branch) is starved at 5 Hz and never re-locks — so
+`track/reacquisition_state` never reaches PASSIVE/NEEDS_HELP, and
+`BtNode_ReacqAnnounce` (which only speaks on those states) stays silent. The
+audio chain itself was verified correct end-to-end; it was simply never
+triggered.
+
+Fix: default `target_frame=""` so the tracker keeps the camera frame and does
+zero TF lookups → full ~30 Hz → reacquisition + escalation + announcements
+behave exactly as standalone. `BtNode_PublishFollowGoal` republishes the
+camera-frame `PointStamped` as-is (correct for a map-less demo). Non-breaking:
+no test asserts the goal frame; the finalized tracker is untouched. Docstring
+warns against re-introducing `"map"` without a live TF source.
+
+### Files modified
+- `behavior_tree/FollowPerson/follow_person.py` — `create_follow_person_tree(target_frame="")` (was `"map"`) + rationale docstring
+
+---
+
 ## [2.2.5] - 2026-06-10
 
 ### 🐛 `ActionHandler.setup()` survives context shutdown mid-wait
