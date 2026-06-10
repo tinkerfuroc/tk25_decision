@@ -692,3 +692,12 @@ Apache 2.0
 - [py_trees Documentation](https://py-trees.readthedocs.io/)
 - [RoboCup@Home Rules](https://athome.robocup.org/)
 - [ROS2 Documentation](https://docs.ros.org/)
+
+## Changelog
+
+- **2026-06-10** — fix(restaurant): the approach-customer `BtNode_Approach`
+  now sets `action_timeout_ticks=220` (110 s at the 500 ms restaurant tick).
+  Previously 0 (disabled) — combined with the feedback callback refreshing
+  `feedback_timeout` every frame, a hung `go_to_approach` server blocked the
+  whole tree indefinitely. Pairs with the approach_planner timeout reduction
+  to 25 s/75 s (see that package's changelog, same date).

@@ -117,6 +117,12 @@ def _approachCustomerSubtree(name: str = "Approach customer") -> py_trees.compos
     seq.add_child(BtNode_Approach(
         name=f"{name}: go to approach",
         bb_target_key=KEY_CUSTOMER_LOCATION,
+        # 220 ticks x 500 ms tick period = 110 s backstop. The server's own
+        # nav_total_timeout_sec (75 s) terminates normal failures first;
+        # this only catches a dead/hung action server, which previously
+        # blocked the tree indefinitely (feedback refresh disables the
+        # feedback-timeout path).
+        action_timeout_ticks=220,
     ))
     return seq
 
