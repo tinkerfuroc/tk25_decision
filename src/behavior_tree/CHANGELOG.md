@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.2.7] - 2026-06-10
+
+### 🐛 run_tree: cancel the action goal when stopped with SIGTERM
+
+Fixes "Stop All (or stopping the BT) does not stop the TrackPerson goal — the
+tracker keeps tracking." When the track_web ProcessManager stops the
+follow-person process it sends **SIGTERM** to the process group. Python's
+default SIGTERM disposition terminates the process immediately *without* raising
+an exception, so `run_tree`'s `try/except (KeyboardInterrupt,
+ExternalShutdownException)` never fires and the `finally` (which is what cancels
+in-flight action goals) never runs. The goal leaks and the tracker keeps going.
+
+Two parts to the fix, both in `run_tree`:
+1. Install a SIGTERM handler that raises `KeyboardInterrupt` (mirroring SIGINT),
+   so the process unwinds through the `finally` instead of dying abruptly — and
+   crucially does **not** call `rclpy.shutdown()` (which would invalidate the
+   context and make the cancel un-sendable).
+2. Cancel + **flush** before the node is destroyed. `tree.shutdown()` issues the
+   cancel via `terminate(INVALID)` but then destroys the node in the same call,
+   so the async `cancel_goal_async()` request never reaches the server. The
+   `finally` now stops the tick timer, stops the tree root (RUNNING→INVALID,
+   firing each action node's `send_cancel_request()`), and spins briefly
+   (≤2 s, well under ProcessManager's 5 s SIGTERM→SIGKILL grace) to flush the
+   cancel while the node is alive, then does the normal shutdown.
+
+Verified against a throwaway `/track_person` server: a `killpg(SIGTERM)` on the
+follow-person session (exactly what ProcessManager does) now produces a
+server-side goal cancellation; pre-fix it did not.
+
+### Files modified
+- `behavior_tree/runtime.py` — SIGTERM→KeyboardInterrupt handler + cancel-and-flush in the shutdown `finally`
+
+---
+
 ## [2.2.6] - 2026-06-10
 
 ### 🐛 follow-person: stop requesting a `map` frame the demo doesn't have
