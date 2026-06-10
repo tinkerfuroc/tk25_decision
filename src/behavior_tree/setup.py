@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import find_packages, setup
 
 package_name = "behavior_tree"
@@ -9,6 +11,7 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
+        ("share/behavior_tree/launch", glob("launch/*.launch.py")),
     ],
     package_data={
         "behavior_tree": ["mock_config.json"],
@@ -50,6 +53,8 @@ setup(
             "store-groceries = behavior_tree.StoringGroceries.cli:main",
             "store-groceries-placing-only = behavior_tree.StoringGroceries.cli:placing_only",
             "help-me-carry = behavior_tree.HelpMeCarry.cli:help_me_carry",
+            "dummy-nav = behavior_tree.dummy_nav_node:main",
+            "follow-person = behavior_tree.FollowPerson.cli:main",
             "test_follow_head = behavior_tree.Receptionist.test_follow_head:main",
             "test-prompt-reached = behavior_tree.HelpMeCarry.cli:test_prompt_reached",
             "inspection = behavior_tree.Inspection.cli:main",
