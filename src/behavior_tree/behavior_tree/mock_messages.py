@@ -605,9 +605,11 @@ class Follow(MockAction):
     class Feedback(MockAction.Feedback):
         def __init__(self):
             super().__init__()
-            self.status = ""
-            self.point_header = None
-            self.nav_goal_header = None
+            self.state = 0
+            self.distance_to_person = -1.0
+            self.reacq_state = 255
+            self.breadcrumbs_pending = 0
+            self.goal_held = False
 
 
 # Mock Navigation Actions (from nav2)

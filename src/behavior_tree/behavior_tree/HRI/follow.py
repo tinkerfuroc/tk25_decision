@@ -22,7 +22,7 @@ Tree shape::
                     └── Sequence(memory=True)
                           ├── BtNode_IsTargetVisible
                           └── Parallel(SuccessOnSelected[nav])
-                                 ├── nav : BtNode_FollowAction
+                                 ├── nav : BtNode_FollowActionLegacy
                                  └── short_guard : Sequence(memory=False)
                                         ├── BtNode_LossElapsedAtLeast(short_sec)
                                         ├── BtNode_FlagIsFalse(follow_short_announced)
@@ -295,11 +295,20 @@ class BtNode_TrackPersonAction(ActionHandler):
         super().terminate(new_status)
 
 
-class BtNode_FollowAction(ActionHandler):
-    """Wrap tk26_nav's ``tracking_server`` (``tinker_nav_msgs/Follow``).
+class BtNode_FollowActionLegacy(ActionHandler):
+    """DEPRECATED — legacy follow node targeting the removed ``tracking_server``.
 
-    Feedback schema is ``{status, point_header, nav_goal_header}`` — not
-    canonical. Override matches ``BtNode_TrackPersonAction``.
+    This wraps the *removed* ``tracking_server`` action and parses the v1
+    ``Follow`` feedback schema (``{status, point_header, nav_goal_header}`` —
+    not canonical; read here via ``getattr(feedback, "status", "")``). The
+    server it talks to no longer exists.
+
+    The live executive is ``follow_server``, driven by
+    ``behavior_tree.TemplateNodes.FollowAction.BtNode_FollowAction`` (a
+    different class that happens to share the short name). This legacy clone is
+    retained **only** for the ``hri-follow`` tuning harness and must not be used
+    in production trees.
+
     Terminal mapping: server ``goal_handle.succeed()`` (REACHED) → SUCCESS;
     anything else → FAILURE.
     """
@@ -640,7 +649,7 @@ def createFollowPerson(cfg: dict) -> py_trees.behaviour.Behaviour:
     long_sentinel_retry = py_trees.decorators.Retry("infinite retry", long_sentinel, -1)
 
     # --- follow branch: wait-visible → follow + short guard ---
-    nav = BtNode_FollowAction(
+    nav = BtNode_FollowActionLegacy(
         name="FollowAction",
         action_name=cfg.get("follow_action_name", "tracking_server"),
         follow_timeout_sec=float(cfg.get("follow_timeout_sec", 2.0)),

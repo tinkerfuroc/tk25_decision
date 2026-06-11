@@ -649,6 +649,19 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-06-11** — refactor: disambiguate the legacy HRI follow node. Renamed the
+  `HRI/follow.py` class `BtNode_FollowAction` → `BtNode_FollowActionLegacy`
+  (it targets the removed `tracking_server` action and parses v1 `Follow`
+  feedback). It shared a short name with the live executive node
+  `behavior_tree.TemplateNodes.FollowAction.BtNode_FollowAction` (drives
+  `follow_server`) — a different class entirely; the canonical node and all of
+  its import sites are untouched. The legacy clone is retained only for the
+  `hri-follow` tuning harness and now carries a DEPRECATED docstring. Also moved
+  the mock `Follow.Feedback` to the v2 schema (`state`, `distance_to_person`,
+  `reacq_state=255`, `breadcrumbs_pending`, `goal_held`), dropping the v1
+  `status`/`point_header`/`nav_goal_header` fields; the legacy HRI node reads
+  `getattr(feedback, "status", "")`, so it degrades gracefully against the new
+  mock. (tk26_navigation follow review-fixes, Phase P7.)
 - **2026-06-11** — `BtNode_FollowAction` mirrors the new `Follow` feedback field
   `goal_held` to the blackboard key `follow/goal_held` (bool). Set `True` on any
   tick where the follow executive reused its cached fallback goal or skipped
