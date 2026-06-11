@@ -398,7 +398,18 @@ class OrientationAngle(MockService):
 
 class FindApproachPose(MockService):
     """Mock FindApproachPose service."""
+    # Projection-mode constants (P3) mirror tinker_nav_msgs/srv/FindApproachPose.
+    PROJECTION_LEGACY = 0
+    PROJECTION_STANDOFF_FACE = 1
+    PROJECTION_STANDOFF_BEHIND = 2
+    PROJECTION_ANCHOR_NEAREST_FREE = 3
+
     class Request(MockService.Request):
+        PROJECTION_LEGACY = 0
+        PROJECTION_STANDOFF_FACE = 1
+        PROJECTION_STANDOFF_BEHIND = 2
+        PROJECTION_ANCHOR_NEAREST_FREE = 3
+
         def __init__(self):
             super().__init__()
             self.target = None
@@ -411,6 +422,7 @@ class FindApproachPose(MockService):
             self.facing_yaw_offset_rad = 0.0
             self.timeout_sec = 0.0
             self.robot_pose_override = None
+            self.projection_mode = 0
 
     class Response(MockService.Response):
         def __init__(self):

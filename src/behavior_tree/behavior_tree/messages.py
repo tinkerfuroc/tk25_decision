@@ -44,7 +44,12 @@ else:
 
 if _config.has_dependency('tinker_nav_msgs'):
     from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp, OrientationAngle
-    # from tinker_nav_msgs.srv import FindApproachPose
+    # FindApproachPose grew a `projection_mode` field (P3); fall back to the
+    # mock stub if an older tinker_nav_msgs without the srv is sourced.
+    try:
+        from tinker_nav_msgs.srv import FindApproachPose
+    except (ImportError, ModuleNotFoundError):
+        from behavior_tree.mock_messages import FindApproachPose
     try:
         from tinker_nav_msgs.action import GoToApproach
     except (ImportError, ModuleNotFoundError):

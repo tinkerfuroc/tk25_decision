@@ -704,6 +704,19 @@ Apache 2.0
 
 ## Changelog
 
+- **2026-06-11** — feat(restaurant): both kitchen-bar returns (Phase-2 barman
+  trip and the per-item Phase-3 pickup verification) now drive through goal
+  projection. A new `BtNode_ProjectPose` ServiceHandler calls
+  `find_approach_pose` with `projection_mode=ANCHOR_NEAREST_FREE` (3) — the raw
+  operator-placed bar anchor becomes `target.point`, its yaw becomes
+  `preferred_yaw_rad`, and the server returns the anchor unchanged when free or
+  the nearest footprint-free cell (preserving yaw) when blocked. Each bar trip
+  is now `Selector( Sequence(ProjectPose(bar→projected), Goto(projected)),
+  Goto(bar) )` inside its existing `Retry`: if the projection service is
+  unavailable or fails, the Selector degrades gracefully to today's raw-anchor
+  `BtNode_GotoAction`. Mock mode is a pass-through copy (in-key→out-key, no
+  service contacted), so existing mock restaurant trees behave unchanged.
+
 - **2026-06-10** — fix(restaurant): the approach-customer `BtNode_Approach`
   now sets `action_timeout_ticks=220` (110 s at the 500 ms restaurant tick).
   Previously 0 (disabled) — combined with the feedback callback refreshing

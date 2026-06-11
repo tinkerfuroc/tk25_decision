@@ -33,7 +33,12 @@ import py_trees
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle
-from behavior_tree.TemplateNodes.Navigation import BtNode_Approach, BtNode_CaptureCurrentPose, BtNode_GotoAction
+from behavior_tree.TemplateNodes.Navigation import (
+    BtNode_Approach,
+    BtNode_CaptureCurrentPose,
+    BtNode_GotoAction,
+    BtNode_ProjectPose,
+)
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_MaintainEyeContact,
     BtNode_ScanForWavingPerson,
@@ -125,6 +130,50 @@ def _approachCustomerSubtree(name: str = "Approach customer") -> py_trees.compos
         action_timeout_ticks=220,
     ))
     return seq
+
+
+# Projected bar-anchor blackboard key (P3). Local to this module — the raw
+# anchor ``KEY_KITCHEN_BAR_POSE`` is the operator-placed start pose; the
+# projected key holds its nearest-free reprojection from the planner.
+KEY_KITCHEN_BAR_PROJECTED = "kitchen_bar_pose_projected"
+
+
+def _barReturnSubtree() -> py_trees.composites.Selector:
+    """Projection-guarded bar return (P3).
+
+    Returns a ``Selector`` whose preferred branch projects the raw bar anchor
+    through the ``find_approach_pose`` service in ANCHOR_NEAREST_FREE mode and
+    drives to the projected pose, and whose fallback is the historical raw
+    ``BtNode_GotoAction(name="Go to kitchen bar")`` straight to the anchor. If
+    the projection service is unavailable or fails, the Selector degrades to
+    today's raw-anchor behavior. Drops into the existing ``Retry`` wrapper at
+    both bar-trip call sites.
+    """
+    selector = py_trees.composites.Selector(
+        name="Bar return (project or raw)", memory=False
+    )
+    projected = py_trees.composites.Sequence(
+        name="Project then go to bar", memory=True
+    )
+    projected.add_child(
+        BtNode_ProjectPose(
+            name="Project kitchen bar anchor",
+            bb_in_key=KEY_KITCHEN_BAR_POSE,
+            bb_out_key=KEY_KITCHEN_BAR_PROJECTED,
+            projection_mode=3,  # ANCHOR_NEAREST_FREE
+        )
+    )
+    projected.add_child(
+        BtNode_GotoAction(
+            name="Go to kitchen bar (projected)",
+            key=KEY_KITCHEN_BAR_PROJECTED,
+        )
+    )
+    selector.add_child(projected)
+    selector.add_child(
+        BtNode_GotoAction(name="Go to kitchen bar", key=KEY_KITCHEN_BAR_POSE)
+    )
+    return selector
 
 
 def createConstantWriter():
@@ -447,7 +496,7 @@ def createPickupVerification():
     root.add_child(
         py_trees.decorators.Retry(
             name="retry goto kitchen bar",
-            child=BtNode_GotoAction(name="Go to kitchen bar", key=KEY_KITCHEN_BAR_POSE),
+            child=_barReturnSubtree(),
             num_failures=3,
         )
     )
@@ -648,7 +697,7 @@ def createBarmanPhase():
     actual.add_child(
         py_trees.decorators.Retry(
             name="retry goto kitchen bar",
-            child=BtNode_GotoAction(name="Go to kitchen bar", key=KEY_KITCHEN_BAR_POSE),
+            child=_barReturnSubtree(),
             num_failures=3,
         )
     )
