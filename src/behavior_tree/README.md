@@ -239,11 +239,15 @@ publisher since the 2026-06-10 rewire).
 - `BtNode_FollowAction` keeps the navigation `Follow` action
   (`tinker_nav_msgs/action/Follow`, server `follow_server`) alive and writes the
   follow-executive state to the blackboard (`follow/state` uint8,
-  `follow/distance` float, `follow/reacq` uint8). The `follow/state` enum:
+  `follow/distance` float, `follow/reacq` uint8, `follow/goal_held` bool). The
+  `follow/state` enum:
   - `1` TRACKING — person in view, robot trailing at the standoff distance.
   - `2` PURSUIT_LAST_SEEN — tracker lost/reacquiring; robot heads to the last-seen point.
   - `3` APPROACHING_FINAL — person stationary; robot parking behind them.
   - Terminal outcomes are not `follow/state` values — they surface via the action result instead.
+  `follow/goal_held` is `True` on a tick where the executive reused its cached
+  fallback goal or skipped dispatch (no fresh reachable standoff) — a hook for the
+  tree to announce / pause while the robot is holding rather than actively closing.
   The follow executive consumes
   the tracker's `/target_points` topic directly, so there is **no** per-tick
   follow-goal publisher — `BtNode_FollowAction` drives navigation entirely
@@ -645,6 +649,16 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-06-11** — `BtNode_FollowAction` mirrors the new `Follow` feedback field
+  `goal_held` to the blackboard key `follow/goal_held` (bool). Set `True` on any
+  tick where the follow executive reused its cached fallback goal or skipped
+  dispatch (no fresh reachable standoff), `False` otherwise. Read from feedback via
+  `getattr(..., "goal_held", False)`, so it stays safe against an older
+  `follow_server` whose `Follow.action` lacks the field. New configurable
+  `bb_key_goal_held` ctor arg (default `follow/goal_held`); seeded `False` in
+  `initialise()` + mock `send_goal()`; `regular_update()` writes it every tick and
+  appends `HOLDING` to the feedback message while held. Mirrors the additive
+  `tinker_nav_msgs` Follow feedback field (tk26_navigation Commit B).
 - **2026-06-11** — docs: add the `follow/state` enum legend next to the
   blackboard-key description (1=TRACKING, 2=PURSUIT_LAST_SEEN,
   3=APPROACHING_FINAL; terminal outcomes surface via the action result, not

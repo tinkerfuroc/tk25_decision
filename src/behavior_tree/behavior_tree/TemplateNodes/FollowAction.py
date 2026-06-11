@@ -43,6 +43,10 @@
 # follow/distance  - float: distance to the person in metres (-1.0 if unknown)
 # follow/reacq     - int (uint8): passthrough reacquisition state
 #                    (0 TRACKING / 1 PASSIVE / 2 NEEDS_HELP / 255 INACTIVE)
+# follow/goal_held - bool: True on a tick where the follow executive reused its
+#                    cached fallback goal or skipped dispatch (no fresh reachable
+#                    standoff); False otherwise. Lets the tree announce / wait
+#                    while the executive is holding rather than actively closing.
 #
 # Mock Mode
 # ---------
@@ -82,6 +86,8 @@ class FollowFeedbackBuffer:
         _distance: Latest distance to the person in metres (-1.0 if unknown).
         _reacq: Latest passthrough reacquisition state (uint8).
         _breadcrumbs_pending: Latest pending-breadcrumb count.
+        _goal_held: Latest goal-held flag (True when the executive reused its
+            cached fallback goal or skipped dispatch this tick).
         _feedback_count: Total feedbacks received (for debugging).
     """
 
@@ -91,6 +97,7 @@ class FollowFeedbackBuffer:
         self._distance: float = -1.0
         self._reacq: int = REACQ_TRACKING
         self._breadcrumbs_pending: int = 0
+        self._goal_held: bool = False
         self._feedback_count: int = 0
 
     def update(self, feedback) -> None:
@@ -107,12 +114,15 @@ class FollowFeedbackBuffer:
             self._breadcrumbs_pending = int(
                 getattr(feedback, "breadcrumbs_pending", 0)
             )
+            # getattr default keeps this safe against older follow_server builds
+            # whose Follow.action has no goal_held field (additive feedback field).
+            self._goal_held = bool(getattr(feedback, "goal_held", False))
 
     def get_state(self) -> tuple:
         """Get the current follow state (thread-safe).
 
         Returns:
-            Tuple of (state, distance, reacq, breadcrumbs_pending,
+            Tuple of (state, distance, reacq, breadcrumbs_pending, goal_held,
             feedback_count).
         """
         with self._lock:
@@ -121,6 +131,7 @@ class FollowFeedbackBuffer:
                 self._distance,
                 self._reacq,
                 self._breadcrumbs_pending,
+                self._goal_held,
                 self._feedback_count,
             )
 
@@ -131,6 +142,7 @@ class FollowFeedbackBuffer:
             self._distance = -1.0
             self._reacq = REACQ_TRACKING
             self._breadcrumbs_pending = 0
+            self._goal_held = False
             self._feedback_count = 0
 
 
@@ -152,6 +164,8 @@ class BtNode_FollowAction(ActionHandler):
         - follow/state: follow executive state (uint8).
         - follow/distance: distance to the person in metres (-1.0 if unknown).
         - follow/reacq: passthrough reacquisition state (uint8).
+        - follow/goal_held: True when the executive reused its cached fallback
+          goal or skipped dispatch this tick (no fresh reachable standoff).
 
     Mock Mode:
         - Seeds synthetic blackboard values (state=TRACKING, reacq=TRACKING).
@@ -171,6 +185,7 @@ class BtNode_FollowAction(ActionHandler):
     DEFAULT_BB_KEY_STATE = "follow/state"
     DEFAULT_BB_KEY_DISTANCE = "follow/distance"
     DEFAULT_BB_KEY_REACQ = "follow/reacq"
+    DEFAULT_BB_KEY_GOAL_HELD = "follow/goal_held"
 
     def __init__(
         self,
@@ -181,6 +196,7 @@ class BtNode_FollowAction(ActionHandler):
         bb_key_state: str = DEFAULT_BB_KEY_STATE,
         bb_key_distance: str = DEFAULT_BB_KEY_DISTANCE,
         bb_key_reacq: str = DEFAULT_BB_KEY_REACQ,
+        bb_key_goal_held: str = DEFAULT_BB_KEY_GOAL_HELD,
         action_name: str = "follow_server",
         wait_for_server_timeout_sec: float = -3.0,
     ):
@@ -194,6 +210,7 @@ class BtNode_FollowAction(ActionHandler):
             bb_key_state: Blackboard key for the follow state.
             bb_key_distance: Blackboard key for the distance-to-person.
             bb_key_reacq: Blackboard key for the reacquisition state.
+            bb_key_goal_held: Blackboard key for the goal-held flag.
             action_name: ROS2 action server name.
             wait_for_server_timeout_sec: Timeout for server connection.
         """
@@ -216,6 +233,7 @@ class BtNode_FollowAction(ActionHandler):
         self.bb_key_state = bb_key_state
         self.bb_key_distance = bb_key_distance
         self.bb_key_reacq = bb_key_reacq
+        self.bb_key_goal_held = bb_key_goal_held
 
         # Feedback buffer for handling the fast feedback rate
         self._feedback_buffer = FollowFeedbackBuffer()
@@ -254,6 +272,9 @@ class BtNode_FollowAction(ActionHandler):
         self._bb_writer.register_key(
             self.bb_key_reacq, access=py_trees.common.Access.WRITE
         )
+        self._bb_writer.register_key(
+            self.bb_key_goal_held, access=py_trees.common.Access.WRITE
+        )
 
         self.logger.debug(f"Setup complete for {self.name}")
 
@@ -268,6 +289,7 @@ class BtNode_FollowAction(ActionHandler):
         self._bb_writer.set(self.bb_key_state, 0, overwrite=True)
         self._bb_writer.set(self.bb_key_distance, -1.0, overwrite=True)
         self._bb_writer.set(self.bb_key_reacq, REACQ_TRACKING, overwrite=True)
+        self._bb_writer.set(self.bb_key_goal_held, False, overwrite=True)
 
         # Now call parent — in mock mode send_goal() overwrites with mock data.
         super().initialise()
@@ -293,6 +315,7 @@ class BtNode_FollowAction(ActionHandler):
             )
             self._bb_writer.set(self.bb_key_distance, 1.5, overwrite=True)
             self._bb_writer.set(self.bb_key_reacq, REACQ_TRACKING, overwrite=True)
+            self._bb_writer.set(self.bb_key_goal_held, False, overwrite=True)
 
             self.logger.info("MOCK: Follow initialized with synthetic state")
             return
@@ -337,7 +360,7 @@ class BtNode_FollowAction(ActionHandler):
         Returns:
             Always returns RUNNING to maintain continuous following.
         """
-        state, distance, reacq, breadcrumbs_pending, count = (
+        state, distance, reacq, breadcrumbs_pending, goal_held, count = (
             self._feedback_buffer.get_state()
         )
 
@@ -345,11 +368,13 @@ class BtNode_FollowAction(ActionHandler):
         self._bb_writer.set(self.bb_key_state, state, overwrite=True)
         self._bb_writer.set(self.bb_key_distance, distance, overwrite=True)
         self._bb_writer.set(self.bb_key_reacq, reacq, overwrite=True)
+        self._bb_writer.set(self.bb_key_goal_held, goal_held, overwrite=True)
 
         if distance >= 0.0:
             self.feedback_message = (
                 f"Following (state {state}, {distance:.2f} m, reacq {reacq}, "
-                f"{breadcrumbs_pending} crumbs pending)"
+                f"{breadcrumbs_pending} crumbs pending"
+                f"{', HOLDING' if goal_held else ''})"
             )
         else:
             self.feedback_message = (
