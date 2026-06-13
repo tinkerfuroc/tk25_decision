@@ -649,6 +649,7 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- f4_mock_config.json (installed to share/): navigation+vision REAL, announcement MOCKED — the BT config the F4 launch points BT_MOCK_CONFIG at.
 - follow-person BT: --no-nav flag builds the vision+audio-only tree (no follow-navigation child).
 - **2026-06-11** — refactor: disambiguate the legacy HRI follow node. Renamed the
   `HRI/follow.py` class `BtNode_FollowAction` → `BtNode_FollowActionLegacy`
