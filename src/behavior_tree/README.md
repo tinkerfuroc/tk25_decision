@@ -275,6 +275,18 @@ top-level Parallel child — not inside the per-tick reactions Sequence. If eith
 long-running action terminates (permanent loss / abort) its child returns
 FAILURE, the Parallel returns FAILURE, and the follow process ends.
 
+**Flags** (`follow-person [--no-nav] [--breadcrumbs]`)
+
+- `--no-nav` — vision+audio-only tree: omit the `BtNode_FollowAction` child so
+  the tracker + reacq announcer run but the base never moves (no `Follow` goal).
+- `--breadcrumbs` — route through the person's own dropped trail
+  (`follow_server` NavigateThroughPoses). **Off by default**: open following uses
+  single-goal standoff pursuit (NavigateToPose re-planned to the person's live
+  position at 2 Hz), which tracks a moving person directly. On a long open route
+  the accumulated breadcrumb corridor instead pins the robot to a stale trail it
+  never advances on. Enable `--breadcrumbs` only for cluttered/doorway following,
+  where threading the person's exact trail is what gets the robot through the gap.
+
 **Run sequence** (real tracker + nav stack only — these must already be running):
 
 ```bash
@@ -286,7 +298,9 @@ ros2 run vision_track person_track_server
 ros2 run following follow_server
 
 # 3. The behaviour tree
-ros2 run behavior_tree follow-person    # runs the BT
+ros2 run behavior_tree follow-person                # open following (no breadcrumbs)
+ros2 run behavior_tree follow-person --breadcrumbs  # clutter/doorway trail following
+ros2 run behavior_tree follow-person --no-nav       # vision+audio only (no base motion)
 ```
 
 All nodes honour the package mock-mode config, so they remain importable and

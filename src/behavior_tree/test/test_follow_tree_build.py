@@ -79,3 +79,20 @@ def test_tree_no_nav_omits_follow_child():
     assert "Follow Navigation" not in names
     assert "Track Person" in names           # tracking still present
     assert len(root.children) == 2           # Track Person, Follow Reactions
+
+
+def test_default_open_following_disables_breadcrumbs():
+    # Open following (the default) drives single-goal standoff pursuit, NOT the
+    # person's breadcrumb trail — the trail pins the robot on long open routes.
+    root = create_follow_person_tree()
+    _, follow, _ = root.children
+    assert isinstance(follow, BtNode_FollowAction)
+    assert follow.use_breadcrumbs is False
+
+
+def test_breadcrumbs_opt_in():
+    # Clutter/doorway following opts back into trail routing.
+    root = create_follow_person_tree(use_breadcrumbs=True)
+    _, follow, _ = root.children
+    assert isinstance(follow, BtNode_FollowAction)
+    assert follow.use_breadcrumbs is True

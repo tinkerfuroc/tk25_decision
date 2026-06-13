@@ -28,8 +28,11 @@ def main():
     """Run the follow-person behaviour tree until interrupted.
 
     --no-nav builds the vision+audio-only tree (no follow-navigation child, no base
-    motion). parse_known_args ignores --ros-args so the script still works under
-    ros2 run behavior_tree follow-person [--no-nav].
+    motion). --breadcrumbs opts into trail-following (NavigateThroughPoses) for
+    cluttered/doorway environments; the default is open following (single-goal
+    standoff pursuit, no breadcrumbs). parse_known_args ignores --ros-args so the
+    script still works under ros2 run behavior_tree follow-person [--no-nav]
+    [--breadcrumbs].
     """
     import argparse
 
@@ -38,13 +41,21 @@ def main():
         "--no-nav", action="store_true",
         help="vision+audio only: omit the follow-navigation child (no base motion)",
     )
+    parser.add_argument(
+        "--breadcrumbs", action="store_true",
+        help="route through the person's trail (clutter/doorways); default is "
+             "open following with single-goal pursuit",
+    )
     args, _ = parser.parse_known_args()
     enable_navigation = not args.no_nav
 
     from behavior_tree.FollowPerson.follow_person import create_follow_person_tree
 
     run_tree(
-        lambda: create_follow_person_tree(enable_navigation=enable_navigation),
+        lambda: create_follow_person_tree(
+            enable_navigation=enable_navigation,
+            use_breadcrumbs=args.breadcrumbs,
+        ),
         period_ms=200.0,
         title="Follow Person" if enable_navigation else "Follow Person (vision+audio)",
     )

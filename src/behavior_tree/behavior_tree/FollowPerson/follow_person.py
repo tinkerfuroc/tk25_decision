@@ -49,6 +49,7 @@ from behavior_tree.FollowPerson.nodes import (
 def create_follow_person_tree(
     target_frame: str = "",
     enable_navigation: bool = True,
+    use_breadcrumbs: bool = False,
 ) -> py_trees.behaviour.Behaviour:
     """Build and return the follow-person tree root.
 
@@ -73,6 +74,16 @@ def create_follow_person_tree(
             tracker stays alive and the reacq announcer fires, but the robot base
             never moves (no ``Follow`` goal is dispatched). Nothing reads
             ``follow/*``, so the no-nav tree is self-consistent.
+        use_breadcrumbs: Route the robot through the person's own dropped trail
+            (``follow_server`` NavigateThroughPoses). Defaults to ``False`` for
+            **open following**: in open space the single-goal standoff pursuit
+            (NavigateToPose, re-planned to the person's live position at 2 Hz)
+            tracks a moving person directly, and the long, accumulated breadcrumb
+            corridor otherwise pins the robot to a stale route it never advances
+            on (observed on long open routes: crumbs pile to the cap while the
+            robot fails to pursue). Set ``True`` only for cluttered/doorway
+            following, where threading the person's exact trail is what gets the
+            robot through the gap. Ignored when ``enable_navigation`` is False.
 
     Returns:
         The Parallel root behaviour (compatible with ``run_tree``).
@@ -92,7 +103,7 @@ def create_follow_person_tree(
     if enable_navigation:
         follow = BtNode_FollowAction(
             name="Follow Navigation",
-            use_breadcrumbs=True,
+            use_breadcrumbs=use_breadcrumbs,
             timeout=0.0,
         )
         children.append(follow)

@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.2.8] - 2026-06-13
+
+### 🚶 follow-person: default to open following (no breadcrumbs)
+
+`create_follow_person_tree` now defaults `use_breadcrumbs=False`, and the
+`follow-person` CLI gains a `--breadcrumbs` opt-in flag (alongside the existing
+`--no-nav`). Open following — the common case — drives single-goal standoff
+pursuit (`follow_server` NavigateToPose, re-planned to the person's live
+position at 2 Hz), which tracks a moving person directly.
+
+Why the flip: on a long open route the accumulated breadcrumb corridor pins the
+robot to a stale trail it never advances on — instrumented sim runs showed the
+breadcrumb-on robot sit at the origin while the person walked away, crumbs
+piling to the cap, `follow_server` dispatching NavigateThroughPoses but Nav2
+making no progress. Single-goal pursuit does not have this failure mode. Trail
+routing is still the right tool for cluttered/doorway following (threading the
+person's exact path through a gap), so it remains available via `--breadcrumbs`.
+
+- `FollowPerson/follow_person.py`: new `use_breadcrumbs: bool = False` param on
+  `create_follow_person_tree`, passed through to `BtNode_FollowAction`.
+- `FollowPerson/cli.py`: `--breadcrumbs` flag (default off).
+- `test/test_follow_tree_build.py`: `test_default_open_following_disables_breadcrumbs`
+  + `test_breadcrumbs_opt_in`.
+- `BtNode_FollowAction`'s own constructor default is unchanged (the open-following
+  policy lives in the tree builder / CLI, not the generic node).
+
 ## [2.2.7] - 2026-06-10
 
 ### 🐛 run_tree: cancel the action goal when stopped with SIGTERM
