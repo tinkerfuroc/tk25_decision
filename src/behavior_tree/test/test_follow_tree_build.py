@@ -64,3 +64,18 @@ def test_tree_built_without_setup():
     # setup() is called by the runner. This call alone must not raise.
     root = create_follow_person_tree()
     assert root is not None
+
+
+def test_tree_with_nav_includes_follow_child():
+    root = create_follow_person_tree(enable_navigation=True)
+    names = [c.name for c in root.children]
+    assert "Follow Navigation" in names
+    assert len(root.children) == 3   # Track Person, Follow Navigation, Follow Reactions
+
+
+def test_tree_no_nav_omits_follow_child():
+    root = create_follow_person_tree(enable_navigation=False)
+    names = [c.name for c in root.children]
+    assert "Follow Navigation" not in names
+    assert "Track Person" in names           # tracking still present
+    assert len(root.children) == 2           # Track Person, Follow Reactions

@@ -25,11 +25,26 @@ from behavior_tree.runtime import run_tree
 
 
 def main():
-    """Run the follow-person behaviour tree until interrupted."""
+    """Run the follow-person behaviour tree until interrupted.
+
+    --no-nav builds the vision+audio-only tree (no follow-navigation child, no base
+    motion). parse_known_args ignores --ros-args so the script still works under
+    ros2 run behavior_tree follow-person [--no-nav].
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="follow-person")
+    parser.add_argument(
+        "--no-nav", action="store_true",
+        help="vision+audio only: omit the follow-navigation child (no base motion)",
+    )
+    args, _ = parser.parse_known_args()
+    enable_navigation = not args.no_nav
+
     from behavior_tree.FollowPerson.follow_person import create_follow_person_tree
 
     run_tree(
-        create_follow_person_tree,
+        lambda: create_follow_person_tree(enable_navigation=enable_navigation),
         period_ms=200.0,
-        title="Follow Person",
+        title="Follow Person" if enable_navigation else "Follow Person (vision+audio)",
     )

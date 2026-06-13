@@ -46,7 +46,10 @@ from behavior_tree.FollowPerson.nodes import (
 )
 
 
-def create_follow_person_tree(target_frame: str = "") -> py_trees.behaviour.Behaviour:
+def create_follow_person_tree(
+    target_frame: str = "",
+    enable_navigation: bool = True,
+) -> py_trees.behaviour.Behaviour:
     """Build and return the follow-person tree root.
 
     Args:
@@ -63,6 +66,13 @@ def create_follow_person_tree(target_frame: str = "") -> py_trees.behaviour.Beha
             is the correct default. (The legacy ``dummy_nav`` stub on
             ``/follow_target`` no longer participates — its topic has no
             publisher since the 2026-06-10 rewire.)
+        enable_navigation: When True (default) the tree includes the
+            ``BtNode_FollowAction`` child that drives ``follow_server`` (full
+            pipeline). When False the tree is built WITHOUT that child
+            (``Parallel[track, reactions]``) — the vision+audio-only mode: the
+            tracker stays alive and the reacq announcer fires, but the robot base
+            never moves (no ``Follow`` goal is dispatched). Nothing reads
+            ``follow/*``, so the no-nav tree is self-consistent.
 
     Returns:
         The Parallel root behaviour (compatible with ``run_tree``).
@@ -71,23 +81,26 @@ def create_follow_person_tree(target_frame: str = "") -> py_trees.behaviour.Beha
         name="Track Person",
         target_frame=target_frame,
     )
-
-    follow = BtNode_FollowAction(
-        name="Follow Navigation",
-        use_breadcrumbs=True,
-        timeout=0.0,
-    )
     announce = BtNode_ReacqAnnounce(name="Reacq Announce")
-
     reactions = py_trees.composites.Sequence(
         name="Follow Reactions",
         memory=False,
         children=[announce],
     )
 
+    children = [track]
+    if enable_navigation:
+        follow = BtNode_FollowAction(
+            name="Follow Navigation",
+            use_breadcrumbs=True,
+            timeout=0.0,
+        )
+        children.append(follow)
+    children.append(reactions)
+
     root = py_trees.composites.Parallel(
         name="Follow Person",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(synchronise=False),
-        children=[track, follow, reactions],
+        children=children,
     )
     return root
