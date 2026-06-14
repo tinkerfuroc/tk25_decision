@@ -22,6 +22,12 @@ from behavior_tree.TemplateNodes.FollowAction import BtNode_FollowAction
 from behavior_tree.TemplateNodes.TrackPersonAction import BtNode_TrackPersonAction
 
 
+def _inner(node):
+    """Unwrap the FailureIsRunning 'stay alive' decorator each Parallel child is
+    wrapped in (never-mid-abort), returning the underlying action/sequence."""
+    return getattr(node, "decorated", node)
+
+
 def test_root_is_parallel_success_on_all():
     root = create_follow_person_tree()
     assert isinstance(root, py_trees.composites.Parallel)
@@ -34,18 +40,31 @@ def test_children_are_track_follow_and_reactions():
     # Three long-running children: tracker, follow executive, reactions.
     assert len(root.children) == 3
 
-    track, follow, reactions = root.children
+    track, follow, reactions = (_inner(c) for c in root.children)
     assert isinstance(track, BtNode_TrackPersonAction)
     assert isinstance(follow, BtNode_FollowAction)
     assert isinstance(reactions, py_trees.composites.Sequence)
     assert reactions.memory is False
 
 
+def test_every_child_is_failure_is_running_never_mid_abort():
+    # The tree must NEVER mid-abort: every SuccessOnAll Parallel child is wrapped
+    # in FailureIsRunning so a child's action terminating (permanent loss /
+    # follow_server ABORTED_*) becomes RUNNING, not FAILURE — the Parallel can't
+    # fail and the follow stays alive (it re-dispatches on the next tick).
+    for nav in (True, False):
+        root = create_follow_person_tree(enable_navigation=nav)
+        for child in root.children:
+            assert isinstance(child, py_trees.decorators.FailureIsRunning), (
+                f"{child.name} (nav={nav}) is not FailureIsRunning-wrapped"
+            )
+
+
 def test_follow_action_is_a_top_level_parallel_child():
     # The follow executive is long-running, so it sits beside the tracker under
     # the Parallel root — NOT inside the per-tick reactions Sequence.
     root = create_follow_person_tree()
-    _, _, reactions = root.children
+    reactions = _inner(root.children[-1])
     assert not any(
         isinstance(child, BtNode_FollowAction) for child in reactions.children
     )
@@ -53,7 +72,7 @@ def test_follow_action_is_a_top_level_parallel_child():
 
 def test_reactions_sequence_holds_only_announce():
     root = create_follow_person_tree()
-    _, _, reactions = root.children
+    reactions = _inner(root.children[-1])
     assert len(reactions.children) == 1
     (announce,) = reactions.children
     assert isinstance(announce, BtNode_ReacqAnnounce)
@@ -68,14 +87,14 @@ def test_tree_built_without_setup():
 
 def test_tree_with_nav_includes_follow_child():
     root = create_follow_person_tree(enable_navigation=True)
-    names = [c.name for c in root.children]
+    names = [_inner(c).name for c in root.children]
     assert "Follow Navigation" in names
     assert len(root.children) == 3   # Track Person, Follow Navigation, Follow Reactions
 
 
 def test_tree_no_nav_omits_follow_child():
     root = create_follow_person_tree(enable_navigation=False)
-    names = [c.name for c in root.children]
+    names = [_inner(c).name for c in root.children]
     assert "Follow Navigation" not in names
     assert "Track Person" in names           # tracking still present
     assert len(root.children) == 2           # Track Person, Follow Reactions
@@ -85,7 +104,7 @@ def test_default_open_following_disables_breadcrumbs():
     # Open following (the default) drives single-goal standoff pursuit, NOT the
     # person's breadcrumb trail — the trail pins the robot on long open routes.
     root = create_follow_person_tree()
-    _, follow, _ = root.children
+    follow = _inner(root.children[1])
     assert isinstance(follow, BtNode_FollowAction)
     assert follow.use_breadcrumbs is False
 
@@ -93,7 +112,7 @@ def test_default_open_following_disables_breadcrumbs():
 def test_breadcrumbs_opt_in():
     # Clutter/doorway following opts back into trail routing.
     root = create_follow_person_tree(use_breadcrumbs=True)
-    _, follow, _ = root.children
+    follow = _inner(root.children[1])
     assert isinstance(follow, BtNode_FollowAction)
     assert follow.use_breadcrumbs is True
 
@@ -103,7 +122,7 @@ def test_track_person_outputs_map_frame_when_navigating():
     # /target_points already in map — follow_server (working_frame=map) and every
     # other consumer read a map-frame point with no further transform.
     root = create_follow_person_tree()           # enable_navigation=True (default)
-    track, _, _ = root.children
+    track = _inner(root.children[0])
     assert isinstance(track, BtNode_TrackPersonAction)
     assert track.target_frame == "map"
 
@@ -113,7 +132,7 @@ def test_track_person_keeps_camera_frame_without_nav():
     # the tracker on a failing TF lookup and starve reacquisition (the v2.2.6
     # regression). It must stay in the camera frame ("").
     root = create_follow_person_tree(enable_navigation=False)
-    track = root.children[0]
+    track = _inner(root.children[0])
     assert isinstance(track, BtNode_TrackPersonAction)
     assert track.target_frame == ""
 
@@ -121,7 +140,7 @@ def test_track_person_keeps_camera_frame_without_nav():
 def test_track_person_frame_explicit_override_wins():
     # An explicit target_frame overrides the mode default either way: "" forces
     # the camera frame even with nav; "odom" suits out-of-arena SLAM following.
-    track = create_follow_person_tree(target_frame="").children[0]
+    track = _inner(create_follow_person_tree(target_frame="").children[0])
     assert track.target_frame == ""
-    track = create_follow_person_tree(target_frame="odom").children[0]
+    track = _inner(create_follow_person_tree(target_frame="odom").children[0])
     assert track.target_frame == "odom"

@@ -1,5 +1,38 @@
 # Changelog
 
+## [2.2.10] - 2026-06-14
+
+### 🛡️ follow-person: never mid-abort — the tree stays alive through losses
+
+Fixes "the follow BT stops when the person is ~6–7 m away." Root cause: the tree
+is a `Parallel(SuccessOnAll)` over `[track, follow, reactions]`, and `SuccessOnAll`
+returns FAILURE the instant any child fails — ending the whole follow. Near that
+range the person gets small/ReID-weak (the lock is RGB-based) and walks past the
+Femto Bolt depth sensor's ~5.5 m range, so the `TrackPerson` action ends → the
+tracker publishes `reacq_state = INACTIVE` → `follow_server` →
+`ABORTED_TARGET_LOST` → `BtNode_FollowAction` FAILURE → the Parallel fails → the
+BT exits.
+
+Fix: wrap **every** Parallel child in `py_trees.decorators.FailureIsRunning`, so a
+child's action terminating becomes RUNNING, never FAILURE. The `SuccessOnAll`
+Parallel can no longer fail, so the tree **never mid-aborts** — it stays alive,
+and on the next tick the wrapped action re-initialises and re-dispatches (the
+tracker re-acquires, the follow resumes) when the person is back in range. The
+follow now ends only on an explicit external stop. NOTE: re-dispatching
+`TrackPerson` re-seeds the lock, so a lost operator may be re-acquired as whoever
+is in frame — identity persistence on re-acquire is a tracker concern, not the
+BT's.
+
+### Files modified
+- `FollowPerson/follow_person.py` — wrap track / follow / reactions in
+  `FailureIsRunning`; removed the non-functional `Sequence[Announce, root, Running]`
+  experiment (a Sequence still propagates the child's FAILURE) and its now-unused
+  `BtNode_Announce` import; module + factory docstrings updated.
+- `test/test_follow_tree_build.py` — `test_every_child_is_failure_is_running_never_mid_abort`;
+  existing structural tests unwrap the decorator via an `_inner()` helper.
+
+---
+
 ## [2.2.9] - 2026-06-14
 
 ### 🗺️ follow-person: tracker emits `/target_points` in `map` when navigating

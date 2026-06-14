@@ -20,10 +20,9 @@
 # long-running and independent.
 #
 #   Parallel(SuccessOnAll, synchronise=False)
-#   ├── BtNode_TrackPersonAction        (keeps /track_person alive; writes track/*)
-#   ├── BtNode_FollowAction             (keeps follow_server alive; writes follow/*)
-#   └── Sequence(memory=False)
-#       └── BtNode_ReacqAnnounce        (reacq-driven voice announcements)
+#   ├── FailureIsRunning(BtNode_TrackPersonAction)        (/track_person; track/*)
+#   ├── FailureIsRunning(BtNode_FollowAction)             (follow_server; follow/*)
+#   └── FailureIsRunning(Sequence[BtNode_ReacqAnnounce])  (reacq-driven voice)
 #
 # The tracker (child A) refreshes the ``track/*`` blackboard keys, the follow
 # executive node (child B) keeps the navigation ``Follow`` action alive and
@@ -33,8 +32,14 @@
 # goal publisher — ``BtNode_FollowAction`` drives navigation via the long-running
 # ``follow_server`` action instead.
 #
-# If either long-running action terminates (permanent loss / abort) it returns
-# FAILURE, the Parallel returns FAILURE, and the follow process ends cleanly.
+# NEVER MID-ABORT: every child is wrapped in ``FailureIsRunning`` so a child's
+# action terminating (permanent loss -> reacq INACTIVE -> follow_server
+# ``ABORTED_TARGET_LOST``; or ``ABORTED_NAV_FAILED``) becomes RUNNING, never
+# FAILURE. The ``SuccessOnAll`` Parallel therefore cannot fail, so the tree STAYS
+# ALIVE; the wrapped action re-initialises and re-dispatches its goal on the next
+# tick, so the tracker re-acquires and the follow resumes when the person returns
+# (e.g. after walking past the depth sensor's ~5.5 m range). The follow ends only
+# on an explicit external stop, never on a transient loss.
 #
 
 import py_trees
@@ -114,15 +119,33 @@ def create_follow_person_tree(
         children=[announce],
     )
 
-    children = [track]
+    # NEVER MID-ABORT — keep the follow tree alive through transient losses.
+    # SuccessOnAll returns FAILURE the instant ANY child fails, which would end
+    # the whole follow. A child fails when its long-running action aborts: the
+    # TrackPerson action ending (the person walks past the depth sensor's ~5.5 m
+    # range / the RGB lock drops) makes the tracker publish reacq INACTIVE, which
+    # drives follow_server to ABORTED_TARGET_LOST -> BtNode_FollowAction FAILURE.
+    # Wrapping each child in FailureIsRunning converts that FAILURE to RUNNING, so
+    # the Parallel never fails and the tree stays alive; on the next tick the
+    # wrapped action re-initialises and re-dispatches, so the tracker re-acquires
+    # and the follow resumes when the person is back in range. (A Sequence wrapper
+    # would NOT help — a Sequence still propagates a child's FAILURE.) NOTE:
+    # re-dispatching TrackPerson re-seeds the lock, so a lost operator may be
+    # re-acquired as whoever is in frame — identity persistence on re-acquire is a
+    # tracker concern, not the BT's.
+    def _stay_alive(node):
+        return py_trees.decorators.FailureIsRunning(
+            name=f"{node.name} (stay alive)", child=node)
+
+    children = [_stay_alive(track)]
     if enable_navigation:
         follow = BtNode_FollowAction(
             name="Follow Navigation",
             use_breadcrumbs=use_breadcrumbs,
             timeout=0.0,
         )
-        children.append(follow)
-    children.append(reactions)
+        children.append(_stay_alive(follow))
+    children.append(_stay_alive(reactions))
 
     root = py_trees.composites.Parallel(
         name="Follow Person",
