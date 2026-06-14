@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.2.11] - 2026-06-14
+
+### 👋 follow-person: wave-to-reseed escape from the NEEDS_HELP hold
+
+Wires the manual recovery into the follow tree. When the tracker can no longer
+auto re-acquire it escalates to NEEDS_HELP (`reacquisition_state == 2`) and
+`BtNode_ReacqAnnounce` asks the operator to raise a hand — but nothing acted on
+that hand: nothing in `tk25_decision`/`tk26_navigation` called the tracker's
+`~/reseed_target`, so once auto passive re-ID couldn't recover, the follow sat
+alive (post-2.2.10) but frozen. (The companion tracker fix — passive re-ID now
+runs indefinitely under the hold instead of dead-ending at ~20 s — landed in
+`vision_track` the same day.)
+
+New `BtNode_WaveReseed` (added to the follow tree's per-tick **reactions
+Sequence** beside `BtNode_ReacqAnnounce`): while latched in NEEDS_HELP it polls
+`detect_waving_persons` and, on an **unambiguous single waver**, reseeds the
+tracker onto that person's box via `~/reseed_target`. Zero or multiple wavers →
+no reseed (precision: never re-lock onto an ambiguous candidate; keep
+announcing) — the same wave-to-resume policy proven in the `track_web` dashboard.
+Non-blocking (one async call in flight, IDLE→WAVE_PENDING→RESEED_PENDING across
+ticks, DetectWaving throttled to 3 s) and **always returns SUCCESS**, so it
+composes with the 2.2.10 never-mid-abort Parallel. Mock/unavailable → inert
+no-op. `ReseedTarget` added to `messages.py` (+ mock). The follow bringup
+(`navigation_bringup/follow_bringup.launch.py`) now starts `waving_person_server`
+on the real robot (`sim:=false`) so the loop works end-to-end.
+
+Tests: `test/test_wave_reseed.py` (8: gating, single/zero/multi-waver, bad
+status, throttle, leave-NEEDS_HELP cancel, no-bridge inert) +
+`test_follow_tree_build.py` updated for the two-reaction Sequence.
+
 ## [2.2.10] - 2026-06-14
 
 ### 🛡️ follow-person: never mid-abort — the tree stays alive through losses

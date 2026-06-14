@@ -20,14 +20,17 @@
 # long-running and independent.
 #
 #   Parallel(SuccessOnAll, synchronise=False)
-#   ├── FailureIsRunning(BtNode_TrackPersonAction)        (/track_person; track/*)
-#   ├── FailureIsRunning(BtNode_FollowAction)             (follow_server; follow/*)
-#   └── FailureIsRunning(Sequence[BtNode_ReacqAnnounce])  (reacq-driven voice)
+#   ├── FailureIsRunning(BtNode_TrackPersonAction)                  (/track_person; track/*)
+#   ├── FailureIsRunning(BtNode_FollowAction)                       (follow_server; follow/*)
+#   └── FailureIsRunning(Sequence[ReacqAnnounce, WaveReseed])       (reacq-driven reactions)
 #
 # The tracker (child A) refreshes the ``track/*`` blackboard keys, the follow
 # executive node (child B) keeps the navigation ``Follow`` action alive and
 # refreshes the ``follow/*`` keys, and the reactions Sequence (child C) reacts
-# to the tracker state each tick. The navigation stack now consumes the
+# to the tracker state each tick: ``BtNode_ReacqAnnounce`` speaks the reacq
+# guidance, and ``BtNode_WaveReseed`` (NEEDS_HELP-gated) detects an operator
+# raise-hand and reseeds the tracker — the manual escape from the indefinite
+# NEEDS_HELP hold. The navigation stack now consumes the
 # tracker's ``/target_points`` topic directly, so there is no per-tick follow
 # goal publisher — ``BtNode_FollowAction`` drives navigation via the long-running
 # ``follow_server`` action instead.
@@ -48,6 +51,7 @@ from behavior_tree.TemplateNodes.TrackPersonAction import BtNode_TrackPersonActi
 from behavior_tree.TemplateNodes.FollowAction import BtNode_FollowAction
 from behavior_tree.FollowPerson.nodes import (
     BtNode_ReacqAnnounce,
+    BtNode_WaveReseed,
 )
 
 
@@ -113,10 +117,17 @@ def create_follow_person_tree(
         target_frame=target_frame,
     )
     announce = BtNode_ReacqAnnounce(name="Reacq Announce")
+    # Wave-to-reseed closes the NEEDS_HELP loop the announcer opens: while the
+    # tracker is latched in NEEDS_HELP, an operator raise-hand is detected and the
+    # tracker is reseeded onto that person — the manual escape from the indefinite
+    # hold (auto passive re-ID handles the normal case). Both reactions always
+    # return SUCCESS, so the memory=False Sequence ticks both every tick and never
+    # fails. NEEDS_HELP-gated; inert otherwise.
+    wave_reseed = BtNode_WaveReseed(name="Wave Reseed")
     reactions = py_trees.composites.Sequence(
         name="Follow Reactions",
         memory=False,
-        children=[announce],
+        children=[announce, wave_reseed],
     )
 
     # NEVER MID-ABORT — keep the follow tree alive through transient losses.

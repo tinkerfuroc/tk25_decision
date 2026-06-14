@@ -17,7 +17,7 @@
 import py_trees
 
 from behavior_tree.FollowPerson.follow_person import create_follow_person_tree
-from behavior_tree.FollowPerson.nodes import BtNode_ReacqAnnounce
+from behavior_tree.FollowPerson.nodes import BtNode_ReacqAnnounce, BtNode_WaveReseed
 from behavior_tree.TemplateNodes.FollowAction import BtNode_FollowAction
 from behavior_tree.TemplateNodes.TrackPersonAction import BtNode_TrackPersonAction
 
@@ -70,12 +70,16 @@ def test_follow_action_is_a_top_level_parallel_child():
     )
 
 
-def test_reactions_sequence_holds_only_announce():
+def test_reactions_sequence_holds_announce_and_wave_reseed():
+    # Two per-tick reactions: the voice announcer + the NEEDS_HELP wave->reseed
+    # recovery. Both always return SUCCESS so the memory=False Sequence never fails.
     root = create_follow_person_tree()
     reactions = _inner(root.children[-1])
-    assert len(reactions.children) == 1
-    (announce,) = reactions.children
+    assert isinstance(reactions, py_trees.composites.Sequence)
+    assert reactions.memory is False
+    announce, wave_reseed = reactions.children
     assert isinstance(announce, BtNode_ReacqAnnounce)
+    assert isinstance(wave_reseed, BtNode_WaveReseed)
 
 
 def test_tree_built_without_setup():

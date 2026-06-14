@@ -192,6 +192,16 @@ class DetectWaving(MockService):
     pass
 
 
+class ReseedTarget(MockService):
+    """Mock ReseedTarget service (re-lock the tracker on a raise-hand operator)."""
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.success = False
+            self.target_track_id = -1
+            self.message = ""
+
+
 class PlacingLocation(MockService):
     """Mock PlacingLocation service."""
     class Response(MockService.Response):
