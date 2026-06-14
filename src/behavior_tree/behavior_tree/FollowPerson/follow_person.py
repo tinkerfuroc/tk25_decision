@@ -47,26 +47,35 @@ from behavior_tree.FollowPerson.nodes import (
 
 
 def create_follow_person_tree(
-    target_frame: str = "",
+    target_frame: str | None = None,
     enable_navigation: bool = True,
     use_breadcrumbs: bool = False,
 ) -> py_trees.behaviour.Behaviour:
     """Build and return the follow-person tree root.
 
     Args:
-        target_frame: TF frame for the tracked position output. Defaults to
-            ``""`` (empty) so the tracker keeps the camera frame and performs
-            **no** per-frame TF lookup. Do NOT set this to ``"map"`` (or any
-            frame) unless a TF source for that frame is actually running: the
-            tracker blocks ~0.2 s/frame on a lookup that never resolves, which
-            collapses the tracking loop from ~30 Hz to ~5 Hz and starves
-            reacquisition. Navigation in the follow demo is driven by the
-            ``Follow`` action on ``follow_server`` (tk26_navigation ``following``
-            package), which consumes the tracker's ``/target_points`` topic
-            directly in the camera frame; no ``map`` frame is required, so ``""``
-            is the correct default. (The legacy ``dummy_nav`` stub on
-            ``/follow_target`` no longer participates — its topic has no
-            publisher since the 2026-06-10 rewire.)
+        target_frame: TF frame for the tracked position output, written to the
+            ``TrackPerson`` goal so the tracker transforms ``/target_points``
+            into this frame before publishing. Defaults to ``None``, which
+            resolves by mode: ``"map"`` when ``enable_navigation`` is True,
+            ``""`` (camera frame) when it is False.
+
+            Rationale — emit the person point in ``map`` directly so every
+            consumer (including ``follow_server``, whose ``working_frame`` is
+            also ``map``) reads a map-frame point with no further TF transform.
+            That is only safe when a ``map`` TF source is live: with navigation
+            enabled the follow pipeline runs Nav2 + localization (AMCL/SLAM), so
+            ``map``→camera resolves immediately. In the vision+audio-only mode
+            (``enable_navigation=False``) there is NO localization, so requesting
+            ``map`` would make the tracker block ~0.2 s/frame on a failing lookup
+            — collapsing the ~30 Hz loop to ~5 Hz, starving reacquisition, and
+            dropping every point (the v2.2.6 regression). There it stays in the
+            camera frame. Pass an explicit string to override either default
+            (e.g. ``""`` to force camera frame even with nav, or ``"odom"`` for
+            out-of-arena SLAM following where ``follow_server.working_frame`` is
+            ``odom``). (The legacy ``dummy_nav`` stub on ``/follow_target`` no
+            longer participates — its topic has no publisher since the
+            2026-06-10 rewire.)
         enable_navigation: When True (default) the tree includes the
             ``BtNode_FollowAction`` child that drives ``follow_server`` (full
             pipeline). When False the tree is built WITHOUT that child
@@ -88,6 +97,12 @@ def create_follow_person_tree(
     Returns:
         The Parallel root behaviour (compatible with ``run_tree``).
     """
+    # Resolve the tracker output frame by mode (see the target_frame docstring):
+    # map when navigation+localization are up, camera frame otherwise. An
+    # explicit target_frame (incl. "") always wins.
+    if target_frame is None:
+        target_frame = "map" if enable_navigation else ""
+
     track = BtNode_TrackPersonAction(
         name="Track Person",
         target_frame=target_frame,

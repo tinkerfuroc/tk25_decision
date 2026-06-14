@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.2.9] - 2026-06-14
+
+### 🗺️ follow-person: tracker emits `/target_points` in `map` when navigating
+
+`create_follow_person_tree(target_frame=...)` now defaults to `None`, resolving
+to **`"map"` when `enable_navigation=True`** and **`""` (camera frame) when
+False**. With navigation on, the `TrackPerson` goal requests the `map` frame so
+the tracker transforms `/target_points` into `map` at the source — every
+consumer (including `follow_server`, whose `working_frame` is also `map`) then
+reads a map-frame point with **no further TF transform**, instead of relying on
+`follow_server` to convert from the camera frame.
+
+This is safe because the full follow pipeline runs Nav2 + localization
+(AMCL/SLAM), so the tracker's `map`→camera lookup resolves immediately. The
+vision+audio-only mode (`enable_navigation=False`) has no localization, so it
+**keeps the camera frame** — requesting `map` there would block the tracker
+~0.2 s/frame on a failing lookup, collapse the ~30 Hz loop to ~5 Hz, and starve
+reacquisition. That is exactly the **v2.2.6** regression; coupling the default to
+`enable_navigation` preserves the v2.2.6 fix for the no-nav mode while giving the
+real following case a map-frame product. An explicit `target_frame` still
+overrides either default (e.g. `""`, or `"odom"` for out-of-arena SLAM).
+
+### Files modified
+- `FollowPerson/follow_person.py` — `target_frame: str | None = None`, mode-based
+  resolution (`"map"` with nav, `""` without); rationale docstring.
+- `test/test_follow_tree_build.py` — `test_track_person_outputs_map_frame_when_navigating`,
+  `test_track_person_keeps_camera_frame_without_nav`,
+  `test_track_person_frame_explicit_override_wins`.
+
+---
+
 ## [2.2.8] - 2026-06-13
 
 ### 🚶 follow-person: default to open following (no breadcrumbs)

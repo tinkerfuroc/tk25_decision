@@ -96,3 +96,32 @@ def test_breadcrumbs_opt_in():
     _, follow, _ = root.children
     assert isinstance(follow, BtNode_FollowAction)
     assert follow.use_breadcrumbs is True
+
+
+def test_track_person_outputs_map_frame_when_navigating():
+    # Full following runs Nav2 + localization, so the tracker emits
+    # /target_points already in map — follow_server (working_frame=map) and every
+    # other consumer read a map-frame point with no further transform.
+    root = create_follow_person_tree()           # enable_navigation=True (default)
+    track, _, _ = root.children
+    assert isinstance(track, BtNode_TrackPersonAction)
+    assert track.target_frame == "map"
+
+
+def test_track_person_keeps_camera_frame_without_nav():
+    # Vision+audio-only mode has no localization, so requesting map would block
+    # the tracker on a failing TF lookup and starve reacquisition (the v2.2.6
+    # regression). It must stay in the camera frame ("").
+    root = create_follow_person_tree(enable_navigation=False)
+    track = root.children[0]
+    assert isinstance(track, BtNode_TrackPersonAction)
+    assert track.target_frame == ""
+
+
+def test_track_person_frame_explicit_override_wins():
+    # An explicit target_frame overrides the mode default either way: "" forces
+    # the camera frame even with nav; "odom" suits out-of-arena SLAM following.
+    track = create_follow_person_tree(target_frame="").children[0]
+    assert track.target_frame == ""
+    track = create_follow_person_tree(target_frame="odom").children[0]
+    assert track.target_frame == "odom"
