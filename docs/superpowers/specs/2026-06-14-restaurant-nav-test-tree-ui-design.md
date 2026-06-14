@@ -35,9 +35,10 @@ nodes (verified signatures):
   → settle `Timer` → `BtNode_DetectCallingCustomer` (calls `/detect_waving_persons`,
   appends) → `BtNode_PackWavingCustomers` (dedup-by-distance accumulate into
   `KEY_CUSTOMER_CENTROIDS`), run across a few sweep positions gated by
-  `BtNode_GateBlackBoardList`. Sweep positions: a short forward-facing fan
-  (e.g. `[-60, 0, 60]` deg at tilt ~10°) — fewer than the full restaurant 11-pos
-  sweep, since this is a nav test (exact list a tunable constant).
+  `BtNode_GateBlackBoardList`. Sweep positions (for now): `[0, -60, +60]` deg
+  (centre first, then left, then right) at tilt ~10° — a short forward-facing
+  fan, fewer than the full restaurant 11-pos sweep since this is a nav test
+  (a tunable module-level constant).
   `target_frame="map"` so accumulated centroids are map-frame and directly
   usable as a nav goal.
 - **Select closest:** a small leaf picks, from the accumulated
