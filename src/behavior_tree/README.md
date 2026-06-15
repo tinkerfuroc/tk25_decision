@@ -252,13 +252,25 @@ publisher since the 2026-06-10 rewire).
   the tracker's `/target_points` topic directly, so there is **no** per-tick
   follow-goal publisher — `BtNode_FollowAction` drives navigation entirely
   through the long-running action.
-- `BtNode_ReacqAnnounce` speaks reacquisition guidance through a
-  `CoalescingTTS` (single active utterance, latest-wins pending — speech never
-  overlaps and never blocks the tick):
+- `BtNode_ReacqAnnounce` speaks the **PASSIVE** nudge through a `CoalescingTTS`
+  (single active utterance, latest-wins pending — speech never overlaps and
+  never blocks the tick):
   - PASSIVE → *"Please slow down so I can keep up."*
-  - NEEDS_HELP → *"I've lost you. Please raise your hand."*
-  - Announces on a state transition and re-announces every ~5 s while still in a
-    help state; resets on a return to TRACKING.
+  - Announces on the transition into PASSIVE and re-announces every ~5 s while
+    still PASSIVE; resets on a return to TRACKING. NEEDS_HELP speech is owned by
+    `BtNode_RecoveryScan` (below).
+- `BtNode_RecoveryScan` runs the **two-pass NEEDS_HELP head-scan recovery** (the
+  active escape from the indefinite NEEDS_HELP hold). Pass 1 asks the person to
+  stop and sweeps the head across `[current, -60°, 0°, +60°]` (ABSOLUTE pan via
+  `/pan_tilt_controller/cmd`, tilt fixed 40°, ~4 s dwell each) so the camera
+  settles and the tracker's relaxed in-NEEDS_HELP re-lock can commit — no wave
+  detection. Pass 2 asks the operator to raise a hand and runs the same sweep
+  with wave-reseed active (the `detect_waving_persons` → `reseed_target` cycle);
+  Pass 2 repeats until re-lock or cancel. Re-lock (state → TRACKING) ends the
+  scan and hands the head back to the tracker's pan-follow. Speech via the same
+  `/announce` `CoalescingTTS`; head ownership is mutually exclusive with the
+  tracker's pan-follow, enforced by the tracker's `pan_follow_suppressed` guard
+  while NEEDS_HELP is latched.
 
 **Tree shape**
 
@@ -267,7 +279,8 @@ Parallel(SuccessOnAll, synchronise=False)
 ├── BtNode_TrackPersonAction        # child A — refreshes track/*
 ├── BtNode_FollowAction             # child B — drives follow_server, refreshes follow/*
 └── Sequence(memory=False)          # child C — reacts to the tracker each tick
-    └── BtNode_ReacqAnnounce
+    ├── BtNode_ReacqAnnounce        # PASSIVE "slow down" nudge
+    └── BtNode_RecoveryScan         # NEEDS_HELP two-pass head-scan recovery
 ```
 
 `BtNode_FollowAction` is long-running, so it sits beside the tracker as a
@@ -663,6 +676,18 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-06-15** — NEEDS_HELP two-pass head-scan recovery. Replaced the passive
+  NEEDS_HELP reaction (`BtNode_ReacqAnnounce` "raise your hand" + `BtNode_WaveReseed`)
+  with an active recovery owned by the new `BtNode_RecoveryScan`: Pass 1 asks the
+  person to stop and sweeps the head across `[current, -60°, 0°, +60°]` (ABSOLUTE
+  pan, tilt 40°, ~4 s dwell each) for re-lock; Pass 2 asks the operator to raise a
+  hand and sweeps again with wave-reseed active; Pass 2 repeats until re-lock or
+  cancel. `BtNode_ReacqAnnounce` is now PASSIVE-only; the wave→reseed machine was
+  extracted to the shared `WaveReseedCycle` (reused by both nodes); the pure
+  `RecoveryScanFSM` core holds the pass/scan/dwell logic. Paired with a tk26_vision
+  tracker guard (`pan_follow_suppressed`) so the head hands off cleanly while
+  NEEDS_HELP is latched. `BtNode_WaveReseed` remains as a standalone node.
+  Spec: `docs/superpowers/specs/2026-06-15-needs-help-recovery-scan-design.md`.
 - f4_mock_config.json (installed to share/): navigation+vision REAL, announcement MOCKED — the BT config the F4 launch points BT_MOCK_CONFIG at.
 - follow-person BT: --no-nav flag builds the vision+audio-only tree (no follow-navigation child).
 - **2026-06-11** — refactor: disambiguate the legacy HRI follow node. Renamed the
