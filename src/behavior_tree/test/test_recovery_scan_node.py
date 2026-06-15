@@ -54,11 +54,13 @@ class _FakeFuture:
 class _FakeBridge:
     def __init__(self):
         self.detect_calls = 0
+        self.detect_thresholds = []
         self.reseed_boxes = []
         self.next_detect = SimpleNamespace(status=0, waving_boxes=[])
 
-    def detect_async(self):
+    def detect_async(self, threshold_m):
         self.detect_calls += 1
+        self.detect_thresholds.append(threshold_m)
         return _FakeFuture(self.next_detect)
 
     def reseed_async(self, box):
@@ -84,8 +86,8 @@ def _writer(bb_key):
 
 def _make(clock, tts, pan_calls, bridge=None):
     bb = "track/reacquisition_state"
-    node = BtNode_RecoveryScan(name="RecoveryScan", dwell_sec=4.0, bb_key=bb,
-                               clock=clock)
+    node = BtNode_RecoveryScan(name="RecoveryScan", dwell_sec=7.0, settle_sec=2.0,
+                               wave_max_distance_m=3.5, bb_key=bb, clock=clock)
     node.inject_coalescer(tts)
     node.inject_pan_sink(lambda pan, tilt: pan_calls.append((pan, tilt)))
     if bridge is not None:
@@ -118,10 +120,10 @@ def test_sweep_publishes_absolute_pan_with_fixed_tilt():
     node, writer, bb = _make(clock, tts, pan)
     writer.set(bb, NEEDS_HELP, overwrite=True)
     node.tick_once()                       # HOLD at t=0
-    clock.advance(4.0)
+    clock.advance(7.0)
     writer.set(bb, NEEDS_HELP, overwrite=True)
     node.tick_once()                       # -> -60deg
-    assert pan == [(math.radians(-60.0), math.radians(40.0))]
+    assert pan == [(math.radians(-60.0), math.radians(37.0))]
 
 
 def test_pass1_never_calls_wave_bridge():
@@ -129,31 +131,42 @@ def test_pass1_never_calls_wave_bridge():
     bridge = _FakeBridge()
     node, writer, bb = _make(clock, tts, pan, bridge)
     writer.set(bb, NEEDS_HELP, overwrite=True)
-    for t in [0.0, 4.0, 8.0, 12.0]:        # all of pass 1
+    for t in [0.0, 7.0, 14.0, 21.0]:        # all of Pass 1 (dwell 7s)
         clock.now = t
         writer.set(bb, NEEDS_HELP, overwrite=True)
         node.tick_once()
     assert bridge.detect_calls == 0
 
 
-def test_pass2_drives_wave_bridge():
+def test_pass2_detects_after_settle_with_threshold():
     clock, tts, pan = _FakeClock(), _FakeCoalescer(), []
     bridge = _FakeBridge()
     node, writer, bb = _make(clock, tts, pan, bridge)
     writer.set(bb, NEEDS_HELP, overwrite=True)
-    for t in [0.0, 4.0, 8.0, 12.0, 16.0]:  # walk into pass 2 (raise-hand at 16)
+    # Walk through Pass 1 into Pass 2 entry (4 angles * 7s).
+    for t in [0.0, 7.0, 14.0, 21.0, 28.0]:
         clock.now = t
         writer.set(bb, NEEDS_HELP, overwrite=True)
         node.tick_once()
     assert PASS2 in tts.submitted
-    assert bridge.detect_calls >= 1        # wave scanning engaged in pass 2
+    # At Pass-2 entry + <settle: no detect yet.
+    clock.now = 28.0 + 1.9
+    writer.set(bb, NEEDS_HELP, overwrite=True)
+    node.tick_once()
+    assert bridge.detect_calls == 0
+    # >= settle: one detect with the 3.5 m threshold.
+    clock.now = 28.0 + 2.0
+    writer.set(bb, NEEDS_HELP, overwrite=True)
+    node.tick_once()
+    assert bridge.detect_calls == 1
+    assert bridge.detect_thresholds == [3.5]
 
 
 def test_no_pan_sink_no_crash():
     # Mock/headless: no pan sink injected -> must not raise.
     clock = _FakeClock()
     bb = "track/reacquisition_state"
-    node = BtNode_RecoveryScan(name="RecoveryScan", dwell_sec=4.0, bb_key=bb,
+    node = BtNode_RecoveryScan(name="RecoveryScan", dwell_sec=7.0, bb_key=bb,
                                clock=clock)
     node.inject_coalescer(_FakeCoalescer())
     writer = _writer(bb)

@@ -676,6 +676,14 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-06-15** — Recovery Pass-2 wave detection is now settle-gated and
+  sequenced. At each scan angle the head must be fully stopped (≥ `settle_sec`,
+  2 s, since the turn) before ONE `DetectWaving` fires; the scan then waits for
+  the response (or `detect_timeout_sec`, 5 s) before advancing — no more firing
+  mid-slew. Wavers are gated to `wave_max_distance_m` (3.5 m) via the request's
+  `threshold_meters` (the waving server drops farther wavers). `WaveReseedCycle`
+  is now trigger-driven (throttle removed). New `BtNode_RecoveryScan` params:
+  `recovery`/`settle_sec=2.0`, `detect_timeout_sec=5.0`, `wave_max_distance_m=3.5`.
 - **2026-06-15** — Removed the dead `BtNode_WaveReseed` node + its test. It left
   the follow tree in the recovery-scan rewire and was instantiated nowhere; the
   wave→reseed cycle now lives only in `WaveReseedCycle`, driven by

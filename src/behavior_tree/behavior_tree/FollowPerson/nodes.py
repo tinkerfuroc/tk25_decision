@@ -219,6 +219,8 @@ class BtNode_RecoveryScan(py_trees.behaviour.Behaviour):
         self,
         name: str,
         dwell_sec: float = 7.0,
+        settle_sec: float = 2.0,
+        detect_timeout_sec: float = 5.0,
         scan_angles_deg=(-60.0, 0.0, 60.0),
         tilt_deg: float = 37.0,
         include_current_first: bool = True,
@@ -227,7 +229,7 @@ class BtNode_RecoveryScan(py_trees.behaviour.Behaviour):
         waving_service: str = "detect_waving_persons",
         reseed_service: str = "/person_track_node/reseed_target",
         pan_cmd_topic: str = "/pan_tilt_controller/cmd",
-        wave_throttle_s: float = 3.0,
+        wave_max_distance_m: float = 3.5,
         clock=time.monotonic,
     ):
         super().__init__(name=name)
@@ -243,9 +245,11 @@ class BtNode_RecoveryScan(py_trees.behaviour.Behaviour):
         self.node = None
         self._tts = None
         self._pan_sink = None          # callable(pan_rad, tilt_rad) -> None
-        self._wave = WaveReseedCycle(throttle_s=wave_throttle_s, clock=clock)
+        self._wave = WaveReseedCycle(distance_threshold_m=wave_max_distance_m)
         self._fsm = RecoveryScanFSM(
             dwell_sec=dwell_sec,
+            settle_sec=settle_sec,
+            detect_timeout_sec=detect_timeout_sec,
             scan_angles_rad=[math.radians(a) for a in scan_angles_deg],
             include_current_first=include_current_first,
         )
@@ -312,23 +316,33 @@ class BtNode_RecoveryScan(py_trees.behaviour.Behaviour):
             state = int(self._bb.get(self.bb_key))
         except Exception:
             state = REACQ_TRACKING
-        action = self._fsm.tick(state, self._clock())
+        # Busy iff a detect is armed/in flight (computed BEFORE ticking so a
+        # detect fired last tick reads as busy this tick).
+        wave_busy = self._wave.has_bridge and not self._wave.is_idle
+        action = self._fsm.tick(state, self._clock(), wave_busy)
 
         if action.speak and self._tts is not None:
             self._tts.submit(action.speak)
         if self._tts is not None:
             self._tts.poll()
 
-        if action.pan_target_rad is not None and self._pan_sink is not None:
-            self._pan_sink(action.pan_target_rad, self._tilt_rad)
+        # New scan angle: command the head and cancel any stale detect cycle.
+        if action.pan_target_rad is not None:
+            if self._pan_sink is not None:
+                self._pan_sink(action.pan_target_rad, self._tilt_rad)
+            self._wave.reset()
 
+        # Settled at the angle: arm one detect (Pass 2 only).
+        if action.detect_now:
+            self._wave.trigger()
+
+        # Advance the wave cycle while wave is allowed (Pass 2); else keep it idle.
         if action.allow_wave and self._wave.has_bridge:
-            self._wave.step()
+            self.feedback_message = self._wave.step()
         else:
             self._wave.reset()
 
         if action.active:
-            self.feedback_message = "Recovery scanning"
             return Status.RUNNING
         self.feedback_message = "Idle (not in NEEDS_HELP)"
         return Status.SUCCESS
