@@ -47,9 +47,13 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 ## Deploy (after all phases; not a per-phase gate)
 
 ```bash
-# tk25_decision
-colcon build --packages-select behavior_tree
-# tk26_vision (root install tree the bench resolves) — per the deploy memory, tkbuild NOT scripts/build.sh
+# ALWAYS tkbuild, NEVER plain `colcon build --symlink-install`: symlink/develop
+# install leaves an ament_python pkg with an .egg-link and no resolvable
+# metadata, so `ros2 run` dies with PackageNotFoundError. tkbuild strips
+# --symlink-install and writes a real .egg-info.
+# tk25_decision (behavior_tree)
+tkbuild tk25_decision --packages-select behavior_tree
+# tk26_vision (root install tree the bench resolves)
 tkbuild tk26_vision --packages-select vision_track
 ```
 
@@ -1455,10 +1459,10 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 git log --oneline -1
 ```
 
-- [ ] **Step 3: Deploy (after P5)** — build both packages so the live trees pick up the change:
+- [ ] **Step 3: Deploy (after P5)** — build both packages via tkbuild so the live trees pick up the change. NEVER `colcon build --symlink-install` here — it breaks ament_python entry-point metadata (PackageNotFoundError at `ros2 run`):
 ```bash
 cd /home/tinker/tk25_ws
-colcon build --packages-select behavior_tree
+tkbuild tk25_decision --packages-select behavior_tree
 tkbuild tk26_vision --packages-select vision_track
 ```
 
