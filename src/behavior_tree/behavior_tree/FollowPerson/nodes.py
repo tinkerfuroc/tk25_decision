@@ -33,6 +33,7 @@
 # (which republished to ``/follow_target``) has been removed.
 #
 
+import math
 import time
 
 import py_trees
@@ -43,6 +44,7 @@ from behavior_tree.FollowPerson.wave_reseed_cycle import (
     WaveReseedCycle,
     _WaveReseedBridge,
 )
+from behavior_tree.FollowPerson.recovery_scan import RecoveryScanFSM
 
 # Reacquisition-state codes (mirror TrackPerson action feedback).
 REACQ_TRACKING = 0
@@ -268,4 +270,137 @@ class BtNode_WaveReseed(py_trees.behaviour.Behaviour):
             self.feedback_message = "NEEDS_HELP but waving bridge unavailable (mock)"
             return Status.SUCCESS
         self._cycle.step()
+        return Status.SUCCESS
+
+
+class BtNode_RecoveryScan(py_trees.behaviour.Behaviour):
+    """Two-pass head-scan recovery while the tracker is latched in NEEDS_HELP.
+
+    Owns the active recovery the announcer/wave-reseed used to do passively:
+    drives ``RecoveryScanFSM`` and executes its per-tick actions — speak each
+    pass's line (Pass 1 "please stop", Pass 2 "please raise your hand") via a
+    CoalescingTTS, command the head to ABSOLUTE scan angles (tilt fixed) on
+    ``/pan_tilt_controller/cmd``, and (Pass 2 only) advance the shared
+    ``WaveReseedCycle``. Returns RUNNING while scanning, SUCCESS when idle. All
+    ROS I/O is injectable (``inject_coalescer`` / ``inject_pan_sink`` /
+    ``inject_wave_bridge``) so the node unit-tests without a ROS graph; lazy msg
+    imports keep ``behavior_tree.messages`` off the import path until live setup.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        dwell_sec: float = 4.0,
+        scan_angles_deg=(-60.0, 0.0, 60.0),
+        tilt_deg: float = 40.0,
+        include_current_first: bool = True,
+        bb_key: str = "track/reacquisition_state",
+        announce_service: str = "announce",
+        waving_service: str = "detect_waving_persons",
+        reseed_service: str = "/person_track_node/reseed_target",
+        pan_cmd_topic: str = "/pan_tilt_controller/cmd",
+        wave_throttle_s: float = 3.0,
+        clock=time.monotonic,
+    ):
+        super().__init__(name=name)
+        self.bb_key = bb_key
+        self.announce_service = announce_service
+        self.waving_service = waving_service
+        self.reseed_service = reseed_service
+        self.pan_cmd_topic = pan_cmd_topic
+        self._tilt_rad = math.radians(float(tilt_deg))
+        self._clock = clock
+
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
+        self.node = None
+        self._tts = None
+        self._pan_sink = None          # callable(pan_rad, tilt_rad) -> None
+        self._wave = WaveReseedCycle(throttle_s=wave_throttle_s, clock=clock)
+        self._fsm = RecoveryScanFSM(
+            dwell_sec=dwell_sec,
+            scan_angles_rad=[math.radians(a) for a in scan_angles_deg],
+            include_current_first=include_current_first,
+        )
+
+        self._bb = self.attach_blackboard_client(name=f"{self.name}_reacq")
+        self._bb.register_key(key=self.bb_key, access=py_trees.common.Access.READ)
+
+    def inject_coalescer(self, coalescer):
+        self._tts = coalescer
+
+    def inject_pan_sink(self, sink):
+        self._pan_sink = sink
+
+    def inject_wave_bridge(self, bridge):
+        self._wave.set_bridge(bridge)
+
+    def setup(self, **kwargs):
+        try:
+            self.node = kwargs["node"]
+        except KeyError as e:
+            error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(
+                self.name, self.__class__.__name__
+            )
+            raise KeyError(error_message) from e
+
+        if self._tts is None:
+            from behavior_tree.FollowPerson.coalescing_tts import CoalescingTTS
+            if self.mock_mode:
+                def start(text):
+                    print(f"🔊 MOCK RECOVERY ANNOUNCE: {text}")
+                    return _DoneHandle()
+                self._tts = CoalescingTTS(start=start, is_done=lambda h: h.done())
+            else:
+                from behavior_tree.messages import TextToSpeech
+                client = self.node.create_client(TextToSpeech, self.announce_service)
+                self._client = client
+
+                def start(text):
+                    req = TextToSpeech.Request()
+                    req.text = text
+                    return client.call_async(req)
+                self._tts = CoalescingTTS(start=start, is_done=lambda f: f.done())
+
+        if self._pan_sink is None and not self.mock_mode:
+            from behavior_tree.messages import PanTiltCommand
+            pub = self.node.create_publisher(PanTiltCommand, self.pan_cmd_topic, 10)
+
+            def _sink(pan_rad, tilt_rad):
+                cmd = PanTiltCommand()
+                cmd.mode = PanTiltCommand.ABSOLUTE
+                cmd.pan_rad = float(pan_rad)
+                cmd.tilt_rad = float(tilt_rad)
+                cmd.speed_raw = 0
+                cmd.accel_raw = 0
+                pub.publish(cmd)
+            self._pan_sink = _sink
+
+        if not self._wave.has_bridge and not self.mock_mode:
+            self._wave.set_bridge(_WaveReseedBridge(
+                self.node, self.waving_service, self.reseed_service))
+
+    def update(self) -> Status:
+        try:
+            state = int(self._bb.get(self.bb_key))
+        except Exception:
+            state = REACQ_TRACKING
+        action = self._fsm.tick(state, self._clock())
+
+        if action.speak and self._tts is not None:
+            self._tts.submit(action.speak)
+        if self._tts is not None:
+            self._tts.poll()
+
+        if action.pan_target_rad is not None and self._pan_sink is not None:
+            self._pan_sink(action.pan_target_rad, self._tilt_rad)
+
+        if action.allow_wave and self._wave.has_bridge:
+            self._wave.step()
+        else:
+            self._wave.reset()
+
+        if action.active:
+            self.feedback_message = "Recovery scanning"
+            return Status.RUNNING
+        self.feedback_message = "Idle (not in NEEDS_HELP)"
         return Status.SUCCESS
