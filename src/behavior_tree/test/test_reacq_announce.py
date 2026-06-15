@@ -20,7 +20,6 @@ import pytest
 from behavior_tree.FollowPerson.nodes import BtNode_ReacqAnnounce
 
 PASSIVE_TEXT = "Please slow down so I can keep up."
-NEEDS_HELP_TEXT = "I've lost you. Please raise your hand."
 
 
 class _FakeClock:
@@ -69,7 +68,6 @@ def _make_node(clock, fake_tts, bb_key="track/reacquisition_state"):
     node = BtNode_ReacqAnnounce(
         name="ReacqAnnounce",
         passive_text=PASSIVE_TEXT,
-        needs_help_text=NEEDS_HELP_TEXT,
         throttle_s=5.0,
         bb_key=bb_key,
         clock=clock,
@@ -110,25 +108,21 @@ def test_full_cadence_sequence():
     node.tick_once()
     assert fake.submitted == [PASSIVE_TEXT, PASSIVE_TEXT]
 
-    # Transition to NEEDS_HELP (2): announce needs-help on transition.
+    # Transition to NEEDS_HELP (2): the announcer is now PASSIVE-only and stays
+    # silent here — BtNode_RecoveryScan owns all NEEDS_HELP speech.
     writer.set(bb_key, 2, overwrite=True)
     node.tick_once()
-    assert fake.submitted == [PASSIVE_TEXT, PASSIVE_TEXT, NEEDS_HELP_TEXT]
+    assert fake.submitted == [PASSIVE_TEXT, PASSIVE_TEXT]
 
     # Back to TRACKING (0): no announcement, resets last-announced state.
     writer.set(bb_key, 0, overwrite=True)
     node.tick_once()
-    assert fake.submitted == [PASSIVE_TEXT, PASSIVE_TEXT, NEEDS_HELP_TEXT]
+    assert fake.submitted == [PASSIVE_TEXT, PASSIVE_TEXT]
 
     # Re-enter PASSIVE immediately (no clock advance): announces right away.
     writer.set(bb_key, 1, overwrite=True)
     node.tick_once()
-    assert fake.submitted == [
-        PASSIVE_TEXT,
-        PASSIVE_TEXT,
-        NEEDS_HELP_TEXT,
-        PASSIVE_TEXT,
-    ]
+    assert fake.submitted == [PASSIVE_TEXT, PASSIVE_TEXT, PASSIVE_TEXT]
     assert node.status == py_trees.common.Status.SUCCESS
 
 
