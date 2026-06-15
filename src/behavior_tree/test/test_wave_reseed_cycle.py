@@ -2,22 +2,11 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); see
 # http://www.apache.org/licenses/LICENSE-2.0
-"""Unit tests for WaveReseedCycle (shared wave->reseed async machine)."""
+"""Unit tests for WaveReseedCycle (trigger-driven wave->reseed machine)."""
 
 from types import SimpleNamespace
 
 from behavior_tree.FollowPerson.wave_reseed_cycle import WaveReseedCycle
-
-
-class _FakeClock:
-    def __init__(self):
-        self.now = 0.0
-
-    def __call__(self):
-        return self.now
-
-    def advance(self, s):
-        self.now += s
 
 
 class _FakeFuture:
@@ -34,12 +23,14 @@ class _FakeFuture:
 class _FakeBridge:
     def __init__(self):
         self.detect_calls = 0
+        self.detect_thresholds = []
         self.reseed_boxes = []
         self.next_detect = SimpleNamespace(status=0, waving_boxes=[])
         self.next_reseed_success = True
 
-    def detect_async(self):
+    def detect_async(self, threshold_m):
         self.detect_calls += 1
+        self.detect_thresholds.append(threshold_m)
         return _FakeFuture(self.next_detect)
 
     def reseed_async(self, box):
@@ -55,64 +46,72 @@ def _detect(status=0, boxes=()):
     return SimpleNamespace(status=status, waving_boxes=list(boxes))
 
 
-def _cycle(bridge, clock):
-    return WaveReseedCycle(bridge=bridge, throttle_s=3.0, clock=clock)
+def _cycle(bridge, dist=3.5):
+    return WaveReseedCycle(bridge=bridge, distance_threshold_m=dist)
 
 
-def test_has_bridge_reflects_injection():
-    c = WaveReseedCycle(throttle_s=3.0, clock=_FakeClock())
-    assert c.has_bridge is False
-    c.set_bridge(_FakeBridge())
-    assert c.has_bridge is True
-
-
-def test_single_waver_reseeds_with_correct_box():
-    clock = _FakeClock()
+def test_step_without_trigger_never_fires():
     bridge = _FakeBridge()
-    bridge.next_detect = _detect(status=0, boxes=[_roi(10, 20, 30, 40)])
-    c = _cycle(bridge, clock)
-    c.step()                                  # IDLE -> start detect
+    c = _cycle(bridge)
+    c.step()
+    c.step()
+    c.step()
+    assert bridge.detect_calls == 0
+    assert c.is_idle is True
+
+
+def test_trigger_then_step_fires_once_with_threshold():
+    bridge = _FakeBridge()
+    bridge.next_detect = _detect(0, [_roi(10, 20, 30, 40)])
+    c = _cycle(bridge, dist=3.5)
+    c.trigger()
+    assert c.is_idle is False           # pending -> busy
+    c.step()                            # fires DetectWaving(threshold=3.5)
     assert bridge.detect_calls == 1
-    c.step()                                  # detect done -> reseed (x0,y0,x1,y1)
+    assert bridge.detect_thresholds == [3.5]
+    assert c.is_idle is False           # WAVE_PENDING
+    c.step()                            # response -> reseed
     assert bridge.reseed_boxes == [(10, 20, 40, 60)]
-    c.step()                                  # reseed done -> IDLE
-    assert c._phase == WaveReseedCycle._IDLE
+    c.step()                            # reseed done -> idle
+    assert c.is_idle is True
+    # A second step does NOT re-fire (trigger is one-shot).
+    c.step()
+    assert bridge.detect_calls == 1
 
 
 def test_zero_or_multiple_or_bad_status_does_not_reseed():
-    clock = _FakeClock()
     for det in (_detect(0, []),
                 _detect(0, [_roi(0, 0, 5, 5), _roi(9, 9, 5, 5)]),
                 _detect(1, [_roi(10, 20, 30, 40)])):
         bridge = _FakeBridge()
         bridge.next_detect = det
-        c = _cycle(bridge, clock)
+        c = _cycle(bridge)
+        c.trigger()
         c.step()
         c.step()
         assert bridge.reseed_boxes == []
+        assert c.is_idle is True
 
 
-def test_detect_is_throttled():
-    clock = _FakeClock()
-    bridge = _FakeBridge()
-    bridge.next_detect = _detect(0, [])       # no waver -> cycles fast
-    c = _cycle(bridge, clock)
-    c.step()                                  # detect #1 at t=0
-    c.step()                                  # done -> IDLE
-    c.step()                                  # within throttle -> no new detect
-    assert bridge.detect_calls == 1
-    clock.advance(3.0)
-    c.step()                                  # detect #2
-    assert bridge.detect_calls == 2
-
-
-def test_reset_returns_to_idle_and_drops_future():
-    clock = _FakeClock()
+def test_reset_clears_pending_and_phase():
     bridge = _FakeBridge()
     bridge.next_detect = _detect(0, [_roi(10, 20, 30, 40)])
-    c = _cycle(bridge, clock)
-    c.step()                                  # WAVE_PENDING
-    assert c._phase == WaveReseedCycle._WAVE_PENDING
+    c = _cycle(bridge)
+    c.trigger()
+    c.step()                            # WAVE_PENDING
+    assert c.is_idle is False
     c.reset()
-    assert c._phase == WaveReseedCycle._IDLE
-    assert c._future is None
+    assert c.is_idle is True
+    # A pending trigger that was reset before firing does not fire later.
+    c.trigger()
+    c.reset()
+    c.step()
+    assert bridge.detect_calls == 1     # only the first (pre-reset) detect
+
+
+def test_no_bridge_trigger_step_is_inert():
+    c = WaveReseedCycle(bridge=None, distance_threshold_m=3.5)
+    c.trigger()
+    c.step()
+    assert c.is_idle is True            # nothing to fire; pending consumed
+    assert c.has_bridge is False

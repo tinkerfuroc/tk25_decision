@@ -2,25 +2,27 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); see
 # http://www.apache.org/licenses/LICENSE-2.0
-"""Shared wave->reseed async machine used by the NEEDS_HELP reactions.
+"""Trigger-driven wave->reseed async machine for NEEDS_HELP recovery.
 
-``WaveReseedCycle`` drives a throttled ``DetectWaving`` -> ``ReseedTarget`` cycle
-through a small IDLE -> WAVE_PENDING -> RESEED_PENDING state machine, at most one
-service call in flight, advanced one step per ``step()`` call. It is ROS-free
-(driven by an injected ``bridge``) so it unit-tests with a fake bridge.
-``_WaveReseedBridge`` is the live ROS adapter (lazy tk26 msg import).
+``WaveReseedCycle`` fires ONE ``DetectWaving`` (gated to ``distance_threshold_m``)
+when ``trigger()`` has been called, then walks IDLE -> WAVE_PENDING ->
+RESEED_PENDING, at most one service call in flight, one transition per ``step()``.
+It does NOT free-run: without a ``trigger()`` it stays idle. ROS-free (injected
+``bridge``) so it unit-tests with a fake. ``_WaveReseedBridge`` is the live ROS
+adapter (lazy tk26 msg import). The recovery FSM fires one detect per scan angle
+AFTER the head has settled and waits for the response (``is_idle``) before
+advancing.
 """
-
-import time
 
 
 class _WaveReseedBridge:
     """Live ROS bridge: async DetectWaving + ReseedTarget.
 
-    ``detect_async()`` returns an rclpy Future of a ``DetectWaving.Response``
-    (read ``.status`` + ``.waving_boxes``); ``reseed_async(box)`` returns a Future
-    of a ``ReseedTarget.Response`` (read ``.success``). ``box`` is
-    ``(x0, y0, x1, y1)`` in the current color frame.
+    ``detect_async(threshold_m)`` requests wavers within ``threshold_m`` of the
+    camera (the server drops any waver whose centroid depth exceeds it) and
+    returns an rclpy Future of a ``DetectWaving.Response`` (read ``.status`` +
+    ``.waving_boxes``). ``reseed_async(box)`` returns a Future of a
+    ``ReseedTarget.Response`` (read ``.success``). ``box`` is ``(x0,y0,x1,y1)``.
     """
 
     def __init__(self, node, waving_service, reseed_service):
@@ -31,10 +33,12 @@ class _WaveReseedBridge:
         self._wave_cli = node.create_client(DetectWaving, waving_service)
         self._reseed_cli = node.create_client(ReseedTarget, reseed_service)
 
-    def detect_async(self):
-        # min_waving_persons=0 (default) -> fast MediaPipe-only path (no VLM
-        # fallback), well inside the vision budget.
-        return self._wave_cli.call_async(self._DetectWaving.Request())
+    def detect_async(self, threshold_m):
+        req = self._DetectWaving.Request()
+        req.threshold_meters = float(threshold_m)
+        # min_waving_persons=0 -> fast MediaPipe-only path (no VLM fallback).
+        req.min_waving_persons = 0
+        return self._wave_cli.call_async(req)
 
     def reseed_async(self, box):
         req = self._ReseedTarget.Request()
@@ -48,24 +52,24 @@ class _WaveReseedBridge:
 
 
 class WaveReseedCycle:
-    """Throttled DetectWaving -> ReseedTarget cycle, advanced one step per tick.
+    """One-shot, trigger-driven DetectWaving -> ReseedTarget cycle.
 
-    On an UNAMBIGUOUS single waver (status OK, exactly one box) it reseeds the
-    tracker onto that box; zero/multiple wavers or a non-OK status -> NO reseed
-    (precision: never re-lock onto an ambiguous candidate). DetectWaving is
-    throttled to ``throttle_s`` (measured from the start of the previous scan).
+    ``trigger()`` arms one detect; the next ``step()`` while IDLE fires it (gated
+    to ``distance_threshold_m``). On an UNAMBIGUOUS single waver (status OK,
+    exactly one box) it reseeds the tracker; zero/multiple wavers or a non-OK
+    status -> NO reseed. ``is_idle`` is False from ``trigger()`` until the
+    round-trip completes, so the caller can wait on the response.
     """
 
     _IDLE, _WAVE_PENDING, _RESEED_PENDING = "idle", "wave_pending", "reseed_pending"
 
-    def __init__(self, bridge=None, throttle_s: float = 3.0, clock=time.monotonic):
+    def __init__(self, bridge=None, distance_threshold_m: float = 3.5):
         self._bridge = bridge
-        self.throttle_s = throttle_s
-        self._clock = clock
+        self.distance_threshold_m = float(distance_threshold_m)
         self._phase = self._IDLE
         self._future = None
         self._pending_box = None
-        self._last_detect_time = -1e9
+        self._armed = False
 
     def set_bridge(self, bridge):
         self._bridge = bridge
@@ -74,23 +78,33 @@ class WaveReseedCycle:
     def has_bridge(self) -> bool:
         return self._bridge is not None
 
+    @property
+    def is_idle(self) -> bool:
+        """True iff no detect is armed and no request is in flight."""
+        return self._phase == self._IDLE and not self._armed
+
+    def trigger(self) -> None:
+        """Arm one detect; the next IDLE ``step()`` fires it."""
+        self._armed = True
+
     def reset(self) -> None:
-        """Cancel any in-flight cycle (does NOT reset the throttle clock)."""
+        """Cancel any armed/in-flight cycle."""
         self._phase = self._IDLE
         self._future = None
         self._pending_box = None
+        self._armed = False
 
     def step(self) -> str:
-        """Advance one step of IDLE -> WAVE_PENDING -> RESEED_PENDING."""
-        now = self._clock()
-
+        """Advance one transition of IDLE -> WAVE_PENDING -> RESEED_PENDING."""
         if self._phase == self._IDLE:
-            if (now - self._last_detect_time) >= self.throttle_s:
-                self._future = self._bridge.detect_async()
-                self._last_detect_time = now
-                self._phase = self._WAVE_PENDING
-                return "Scanning for a waving operator"
-            return "Waiting to re-scan"
+            if self._armed:
+                self._armed = False
+                if self._bridge is not None:
+                    self._future = self._bridge.detect_async(
+                        self.distance_threshold_m)
+                    self._phase = self._WAVE_PENDING
+                    return f"Scanning for a waver (<= {self.distance_threshold_m:.1f} m)"
+            return "Idle"
 
         if self._phase == self._WAVE_PENDING:
             if self._future is None or not self._future.done():
