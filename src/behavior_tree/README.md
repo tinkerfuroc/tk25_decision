@@ -676,6 +676,10 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-06-15** — Removed the dead `BtNode_WaveReseed` node + its test. It left
+  the follow tree in the recovery-scan rewire and was instantiated nowhere; the
+  wave→reseed cycle now lives only in `WaveReseedCycle`, driven by
+  `BtNode_RecoveryScan` Pass 2.
 - **2026-06-15** — NEEDS_HELP two-pass head-scan recovery. Replaced the passive
   NEEDS_HELP reaction (`BtNode_ReacqAnnounce` "raise your hand" + `BtNode_WaveReseed`)
   with an active recovery owned by the new `BtNode_RecoveryScan`: Pass 1 asks the
