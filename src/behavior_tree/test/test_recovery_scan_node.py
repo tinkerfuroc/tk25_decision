@@ -68,6 +68,59 @@ class _FakeBridge:
         return _FakeFuture(SimpleNamespace(success=True))
 
 
+class _PendingFuture:
+    """Reports not-done for the first ``pending`` done() calls, then done."""
+
+    def __init__(self, result, pending):
+        self._result = result
+        self._pending = pending
+
+    def done(self):
+        if self._pending > 0:
+            self._pending -= 1
+            return False
+        return True
+
+    def result(self):
+        return self._result
+
+
+class _PendingBridge:
+    """Detect future stays pending for ``pending`` step()s, then resolves."""
+
+    def __init__(self, detect_result, pending):
+        self.detect_calls = 0
+        self.detect_thresholds = []
+        self.reseed_boxes = []
+        self._detect_result = detect_result
+        self._pending = pending
+
+    def detect_async(self, threshold_m):
+        self.detect_calls += 1
+        self.detect_thresholds.append(threshold_m)
+        return _PendingFuture(self._detect_result, self._pending)
+
+    def reseed_async(self, box):
+        self.reseed_boxes.append(box)
+        return _PendingFuture(SimpleNamespace(success=True), 0)
+
+
+class _StuckBridge:
+    """No-server simulation: the detect future never resolves."""
+
+    def __init__(self):
+        self.detect_calls = 0
+        self.detect_thresholds = []
+
+    def detect_async(self, threshold_m):
+        self.detect_calls += 1
+        self.detect_thresholds.append(threshold_m)
+        return _PendingFuture(None, 10 ** 9)
+
+    def reseed_async(self, box):                       # pragma: no cover
+        raise AssertionError("stuck detect must not reach reseed")
+
+
 @pytest.fixture(autouse=True)
 def _clear_blackboard():
     clear_fn = getattr(py_trees.blackboard.Blackboard, "clear", None)
@@ -173,3 +226,67 @@ def test_no_pan_sink_no_crash():
     writer.set(bb, NEEDS_HELP, overwrite=True)
     node.tick_once()
     assert node.status == py_trees.common.Status.RUNNING
+
+
+def _walk_into_pass2_entry(node, writer, bb, clock):
+    """Tick Pass 1 (4 angles * 7s dwell) up to the Pass-2 entry at t=28."""
+    writer.set(bb, NEEDS_HELP, overwrite=True)
+    for t in [0.0, 7.0, 14.0, 21.0, 28.0]:
+        clock.now = t
+        writer.set(bb, NEEDS_HELP, overwrite=True)
+        node.tick_once()
+
+
+def test_pass2_holds_while_detect_in_flight_then_advances():
+    # The load-bearing wiring: wave_busy = has_bridge and not is_idle, computed
+    # BEFORE the FSM tick, must hold the angle (no advance, no second detect)
+    # for as long as the detect future is in flight, then advance once it resolves.
+    clock, tts, pan = _FakeClock(), _FakeCoalescer(), []
+    bridge = _PendingBridge(SimpleNamespace(status=0, waving_boxes=[]), pending=2)
+    node, writer, bb = _make(clock, tts, pan, bridge)
+    _walk_into_pass2_entry(node, writer, bb, clock)
+    n_at_entry = len(pan)
+    # Settle tick: exactly one detect; the detect tick itself does not advance.
+    clock.now = 30.0
+    writer.set(bb, NEEDS_HELP, overwrite=True)
+    node.tick_once()
+    assert bridge.detect_calls == 1
+    assert bridge.detect_thresholds == [3.5]
+    assert len(pan) == n_at_entry
+    # Hold while pending, then advance once the future resolves.
+    advanced = False
+    for k in range(6):
+        clock.now = 30.1 + 0.1 * k
+        writer.set(bb, NEEDS_HELP, overwrite=True)
+        node.tick_once()
+        assert bridge.detect_calls == 1              # never double-fires
+        if len(pan) > n_at_entry:
+            advanced = True
+            break
+        assert len(pan) == n_at_entry                # still held at the angle
+    assert advanced
+    assert pan[-1] == (math.radians(-60.0), math.radians(37.0))
+
+
+def test_pass2_stuck_detect_advances_on_timeout():
+    # No server: the detect future never resolves -> the node must NOT hang at the
+    # angle; the FSM's detect_timeout_sec (5s default) advances it.
+    clock, tts, pan = _FakeClock(), _FakeCoalescer(), []
+    bridge = _StuckBridge()
+    node, writer, bb = _make(clock, tts, pan, bridge)
+    _walk_into_pass2_entry(node, writer, bb, clock)
+    n_at_entry = len(pan)
+    clock.now = 30.0                                 # settle -> detect fires (stuck)
+    writer.set(bb, NEEDS_HELP, overwrite=True)
+    node.tick_once()
+    assert bridge.detect_calls == 1
+    # Within the timeout window: held despite the future never resolving.
+    clock.now = 34.0                                 # 4s after detect (< 5)
+    writer.set(bb, NEEDS_HELP, overwrite=True)
+    node.tick_once()
+    assert len(pan) == n_at_entry
+    # Past the timeout: advance even though the detect is still in flight.
+    clock.now = 35.1                                 # > 5s after detect at 30.0
+    writer.set(bb, NEEDS_HELP, overwrite=True)
+    node.tick_once()
+    assert pan[-1] == (math.radians(-60.0), math.radians(37.0))
