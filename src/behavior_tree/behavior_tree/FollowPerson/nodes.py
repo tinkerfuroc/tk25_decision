@@ -288,9 +288,9 @@ class BtNode_RecoveryScan(py_trees.behaviour.Behaviour):
     def __init__(
         self,
         name: str,
-        dwell_sec: float = 4.0,
+        dwell_sec: float = 7.0,
         scan_angles_deg=(-60.0, 0.0, 60.0),
-        tilt_deg: float = 40.0,
+        tilt_deg: float = 37.0,
         include_current_first: bool = True,
         bb_key: str = "track/reacquisition_state",
         announce_service: str = "announce",
