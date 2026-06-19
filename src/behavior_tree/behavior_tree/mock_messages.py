@@ -249,7 +249,13 @@ class Grasp(MockAction):
 
 
 class JointMove(MockAction):
-    """Mock JointMove action."""
+    """Mock JointMove action.
+
+    Mirrors tinker_arm_msgs/action/JointMove: Goal has joint0..joint6 +
+    add_octomap, Result has only `success`, Feedback is empty. The legacy
+    `env_points` field was dropped to match the real action (it was only ever
+    set by the now-deleted BtNode_MoveArmJointPC).
+    """
     class Goal(MockAction.Goal):
         def __init__(self):
             super().__init__()
@@ -260,7 +266,7 @@ class JointMove(MockAction):
             self.joint4 = 0.0
             self.joint5 = 0.0
             self.joint6 = 0.0
-            self.env_points = []
+            self.add_octomap = False
 
 
 class Fold(MockAction):

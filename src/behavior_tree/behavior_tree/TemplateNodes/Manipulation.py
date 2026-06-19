@@ -24,8 +24,6 @@
 # -------
 # BtNode_CartesianMove
 #     Moves the arm using Cartesian (end-effector) control with point cloud.
-# BtNode_MoveArmJointPC
-#     Moves the arm joints with point cloud for collision avoidance.
 # BtNode_Grasp
 #     Grasps an object using vision-guided grasping.
 # BtNode_Drop
@@ -57,7 +55,6 @@ from behavior_tree.messages import (
     Grasp,
     ObjectDetection,
     Drop,
-    ArmJointService,
     Place,
     JointMove,
     CartesianMove,
@@ -140,89 +137,6 @@ class BtNode_CartesianMove(ActionHandler):
                 self.feedback_message = f"CartesianMove feedback received with success: {result.success} and error message {result.error_msg}"
                 self.logger.debug(
                     f"CartesianMove feedback received with success: {result.success} and error message {result.error_msg}"
-                )
-                return pytree.common.Status.FAILURE
-
-    def feedback_callback(self, msg):
-        return super().feedback_callback(msg)
-
-
-class BtNode_MoveArmJointPC(ActionHandler):
-    """
-    Moves the arm joints with point cloud for collision avoidance.
-
-    This node performs joint-space motion planning using a point cloud
-    for collision avoidance. It moves the arm to a specified joint
-    configuration while avoiding obstacles.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        bb_key_pointcloud: str,
-        bb_key_arm_pose: str,
-        action_name: str = "joint_move_action",
-    ):
-        super().__init__(
-            name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
-        )
-        self.blackboard = self.attach_blackboard_client(name=self.name)
-        self.blackboard.register_key(
-            key="pointcloud",
-            access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_pointcloud),
-        )
-        self.blackboard.register_key(
-            key="arm_pose",
-            access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_arm_pose),
-        )
-
-    def send_goal(self):
-        try:
-            goal = JointMove.Goal()
-            goal.env_points = self.blackboard.pointcloud
-            arm_pose = self.blackboard.arm_pose
-            goal.joint0 = arm_pose[0]
-            goal.joint1 = arm_pose[1]
-            goal.joint2 = arm_pose[2]
-            goal.joint3 = arm_pose[3]
-            goal.joint4 = arm_pose[4]
-            goal.joint5 = arm_pose[5]
-            goal.joint6 = arm_pose[6]
-            self.send_goal_request(goal)
-            self.feedback_message = (
-                f"Sent move arm joint pc goal with pointcloud and arm pose"
-            )
-            self.logger.debug(
-                f"Sent move arm joint pc goal with pointcloud and arm pose"
-            )
-        except Exception as e:
-            self.feedback_message = f"Failed to send move arm joint pc goal; error: {e}"
-            self.logger.error(f"Failed to send move arm joint pc goal; error: {e}")
-            return pytree.common.Status.FAILURE
-
-    def process_result(self):
-        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            self.feedback_message = (
-                f"MoveArmJointPC feedback received with status: {self.result_status}"
-            )
-            self.logger.debug(
-                f"MoveArmJointPC feedback received with status: {self.result_status}"
-            )
-            return pytree.common.Status.FAILURE
-        else:
-            result = self.result_message.result
-            if result.success:
-                self.feedback_message = (
-                    f"MoveArmJointPC feedback received with success: {result.success}"
-                )
-                self.logger.debug(f"MoveArmJointPC feedback received with success")
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"MoveArmJointPC feedback received with success: {result.success} and error message {result.error_msg}"
-                self.logger.debug(
-                    f"MoveArmJointPC feedback received with success: {result.success} and error message {result.error_msg}"
                 )
                 return pytree.common.Status.FAILURE
 
@@ -551,13 +465,20 @@ class BtNode_Place(ActionHandler):
             )
 
 
-class BtNode_MoveArm(ServiceHandler):
+class BtNode_MoveArm(ActionHandler):
     """
     Moves arm through predefined scan poses (iterative).
 
     This node moves the arm to a sequence of predefined poses for scanning
     operations. It reads an index from the blackboard and moves to the
     corresponding pose, incrementing the index for the next iteration.
+
+    Migrated from the ``arm_joint_service`` service (ArmJointService) to the
+    ``joint_move_action`` action (JointMove). The interfaces are field
+    equivalent (joint0..joint6 + add_octomap; result.success), so call sites
+    are unchanged. The legacy ``service_name`` kwarg is preserved and now maps
+    to the action name; a passed value of ``"arm_joint_service"`` is
+    transparently remapped to ``"joint_move_action"`` for back-compat.
     """
 
     def __init__(
@@ -566,13 +487,23 @@ class BtNode_MoveArm(ServiceHandler):
         service_name: str,
         #  arm_joint_pose: list[float]
         arm_pose_bb_key,
+        add_octomap: bool = False,
     ):
-        super().__init__(name, service_name, ArmJointService)
+        action_name = (
+            "joint_move_action"
+            if service_name == "arm_joint_service"
+            else service_name
+        )
+        super().__init__(
+            name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
+        )
         self.arm_pose_bb_key = arm_pose_bb_key
+        self.add_octomap = add_octomap
         self.arm_joint_pose = None
+        self.arm_pose_idx = 0
 
     def setup(self, **kwargs):
-        ServiceHandler.setup(self, **kwargs)
+        ActionHandler.setup(self, **kwargs)
 
         self.bb_write_client = self.attach_blackboard_client(name="MoveArm Read")
         self.bb_write_client.register_key(
@@ -582,82 +513,81 @@ class BtNode_MoveArm(ServiceHandler):
         # debugger info (shown with DebugVisitor)
         self.logger.debug(f"Setup MoveArm, reading from {self.arm_pose_bb_key}")
 
-    def initialise(self):
-        super().initialise()
-
+    def send_goal(self):
         try:
             self.arm_pose_idx = self.bb_write_client.get(self.arm_pose_bb_key)
             assert isinstance(self.arm_pose_idx, int)
-            # if SCAN_POSES is None:
-            #     arm_joint_pose_d = SCAN_POSES_D[self.arm_pose_idx % len(SCAN_POSES)]
-            #     self.arm_joint_pose = [x / 180 * math.pi for x in arm_joint_pose_d]
-            # else:
-            #     self.arm_joint_pose_d = None
             self.arm_joint_pose = SCAN_POSES[self.arm_pose_idx % len(SCAN_POSES)]
-
         except Exception as e:
-            self.feedback_message = f"MoveArm reading object name failed"
+            self.feedback_message = f"MoveArm reading pose index failed"
             raise e
 
-        # Handle mock mode
-        if self.mock_mode:
-            self.bb_write_client.set(
-                self.arm_pose_bb_key, self.arm_pose_idx + 1, overwrite=True
-            )
-            self.feedback_message = f"MOCK: Moved arm to pose {self.arm_joint_pose}"
-            print(f"🦾 MOCK MOVE ARM JOINT: Pose {self.arm_pose_idx}")
-            return
-
-        request = ArmJointService.Request()
-
-        request.joint0 = self.arm_joint_pose[0]
-        request.joint1 = self.arm_joint_pose[1]
-        request.joint2 = self.arm_joint_pose[2]
-        request.joint3 = self.arm_joint_pose[3]
-        request.joint4 = self.arm_joint_pose[4]
-        request.joint5 = self.arm_joint_pose[5]
-        request.joint6 = self.arm_joint_pose[6]
-        request.add_octomap = False
-
-        self.response = self.call_service_async(request)
-
-        self.feedback_message = (
-            f"Initialized move arm joint for joints {self.arm_joint_pose}"
+        # Advance the index so the next visit scans the next pose. Done here
+        # (rather than in the old update() after the service completed) because
+        # ActionHandler.update() is the base poller and isn't overridden.
+        self.bb_write_client.set(
+            self.arm_pose_bb_key, self.arm_pose_idx + 1, overwrite=True
         )
 
-    def update(self) -> Status:
         # Handle mock mode
         if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
+            self.feedback_message = f"MOCK: Moved arm to pose {self.arm_joint_pose}"
+            print(f"🦾 MOCK MOVE ARM JOINT: Pose {self.arm_pose_idx}")
+            super().send_goal()
+            return
 
-        if self.response is None:
-            return pytree.common.Status.FAILURE
-
-        self.logger.debug(f"Update move arm joint")
-        if self.response.done():
-            # increase counter
-            self.bb_write_client.set(
-                self.arm_pose_bb_key, self.arm_pose_idx + 1, overwrite=True
+        try:
+            goal = JointMove.Goal()
+            goal.joint0 = self.arm_joint_pose[0]
+            goal.joint1 = self.arm_joint_pose[1]
+            goal.joint2 = self.arm_joint_pose[2]
+            goal.joint3 = self.arm_joint_pose[3]
+            goal.joint4 = self.arm_joint_pose[4]
+            goal.joint5 = self.arm_joint_pose[5]
+            goal.joint6 = self.arm_joint_pose[6]
+            goal.add_octomap = self.add_octomap
+            self.send_goal_request(goal)
+            self.feedback_message = (
+                f"Sent move arm joint goal for joints {self.arm_joint_pose}"
             )
+        except Exception as e:
+            self.feedback_message = f"Failed to send move arm joint goal; error: {e}"
+            self.logger.error(f"Failed to send move arm joint goal; error: {e}")
 
-            if self.response.result().success:
-                self.feedback_message = f"Move arm Successful"
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Move arm failed"
-                return pytree.common.Status.FAILURE
-        else:
-            self.feedback_message = f"Still moving arm to {self.arm_joint_pose}..."
-            return pytree.common.Status.RUNNING
+    def process_result(self):
+        # JointMove.Result has ONLY `success` (no status, no error_msg).
+        if (
+            self.result_status == action_msgs.GoalStatus.STATUS_SUCCEEDED
+            and self.result_message.result.success
+        ):
+            self.feedback_message = "Move arm Successful"
+            return pytree.common.Status.SUCCESS
+        self.feedback_message = (
+            f"Move arm failed with status: {self.result_status}"
+        )
+        return pytree.common.Status.FAILURE
+
+    def feedback_callback(self, msg):
+        # JointMove feedback is EMPTY; override the base (which reads
+        # delay_limit/status/stage) to a no-op.
+        pass
 
 
-class BtNode_MoveArmSingle(ServiceHandler):
+class BtNode_MoveArmSingle(ActionHandler):
     """
     Moves arm to a single predefined pose.
 
     This node moves the arm to a joint configuration read from the
     blackboard. Unlike BtNode_MoveArm, it does not iterate through
     multiple poses.
+
+    Migrated from the ``arm_joint_service`` service (ArmJointService) to the
+    ``joint_move_action`` action (JointMove). The interfaces are field
+    equivalent (joint0..joint6 + add_octomap; result.success), so the
+    constructor signature and all ~110 call sites are unchanged. The legacy
+    ``service_name`` kwarg is preserved and now maps to the action name; the
+    default ``"arm_joint_service"`` is transparently remapped to
+    ``"joint_move_action"``.
     """
 
     def __init__(
@@ -668,7 +598,14 @@ class BtNode_MoveArmSingle(ServiceHandler):
         #  arm_joint_pose: list[float]
         add_octomap: bool = False,
     ):
-        super().__init__(name, service_name, ArmJointService)
+        action_name = (
+            "joint_move_action"
+            if service_name == "arm_joint_service"
+            else service_name
+        )
+        super().__init__(
+            name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
+        )
         self.arm_pose_bb_key = arm_pose_bb_key
         self.add_octomap = add_octomap
         self.blackboard = self.attach_blackboard_client(name=self.name)
@@ -679,60 +616,55 @@ class BtNode_MoveArmSingle(ServiceHandler):
         )
 
     def setup(self, **kwargs):
-        ServiceHandler.setup(self, **kwargs)
+        ActionHandler.setup(self, **kwargs)
 
         # debugger info (shown with DebugVisitor)
         self.logger.debug(f"Setup MoveArm, reading from {self.arm_pose_bb_key}")
 
-    def initialise(self):
-        super().initialise()
-
+    def send_goal(self):
         # Handle mock mode
         if self.mock_mode:
             print(f"🤖 MOCK: Moving arm to position")
             self.feedback_message = "MOCK: Arm movement simulated"
+            super().send_goal()
             return
 
-        request = ArmJointService.Request()
-
-        request.joint0 = self.blackboard.arm_joint_pose[0]
-        request.joint1 = self.blackboard.arm_joint_pose[1]
-        request.joint2 = self.blackboard.arm_joint_pose[2]
-        request.joint3 = self.blackboard.arm_joint_pose[3]
-        request.joint4 = self.blackboard.arm_joint_pose[4]
-        request.joint5 = self.blackboard.arm_joint_pose[5]
-        request.joint6 = self.blackboard.arm_joint_pose[6]
-        request.add_octomap = self.add_octomap
-
-        self.response = self.call_service_async(request)
-
-        self.feedback_message = (
-            f"Initialized move arm joint for joints {self.blackboard.arm_joint_pose}"
-        )
-
-    def update(self) -> Status:
-        # Handle mock mode
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
-
-        # Check if response exists
-        if self.response is None:
-            self.feedback_message = "No response object"
-            return pytree.common.Status.FAILURE
-
-        self.logger.debug(f"Update move arm joint")
-        if self.response.done():
-            if self.response.result().success:
-                self.feedback_message = f"Move arm Successful"
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Move arm failed"
-                return pytree.common.Status.FAILURE
-        else:
+        try:
+            arm_joint_pose = self.blackboard.arm_joint_pose
+            goal = JointMove.Goal()
+            goal.joint0 = arm_joint_pose[0]
+            goal.joint1 = arm_joint_pose[1]
+            goal.joint2 = arm_joint_pose[2]
+            goal.joint3 = arm_joint_pose[3]
+            goal.joint4 = arm_joint_pose[4]
+            goal.joint5 = arm_joint_pose[5]
+            goal.joint6 = arm_joint_pose[6]
+            goal.add_octomap = self.add_octomap
+            self.send_goal_request(goal)
             self.feedback_message = (
-                f"Still moving arm to {self.blackboard.arm_joint_pose}..."
+                f"Sent move arm joint goal for joints {arm_joint_pose}"
             )
-            return pytree.common.Status.RUNNING
+        except Exception as e:
+            self.feedback_message = f"Failed to send move arm joint goal; error: {e}"
+            self.logger.error(f"Failed to send move arm joint goal; error: {e}")
+
+    def process_result(self):
+        # JointMove.Result has ONLY `success` (no status, no error_msg).
+        if (
+            self.result_status == action_msgs.GoalStatus.STATUS_SUCCEEDED
+            and self.result_message.result.success
+        ):
+            self.feedback_message = "Move arm Successful"
+            return pytree.common.Status.SUCCESS
+        self.feedback_message = (
+            f"Move arm failed with status: {self.result_status}"
+        )
+        return pytree.common.Status.FAILURE
+
+    def feedback_callback(self, msg):
+        # JointMove feedback is EMPTY; override the base (which reads
+        # delay_limit/status/stage) to a no-op.
+        pass
 
 
 class BtNode_GripperAction(ActionHandler):
@@ -785,13 +717,21 @@ class BtNode_GripperAction(ActionHandler):
         #     return pytree.common.Status.FAILURE
 
 
-class BtNode_PointTo(ServiceHandler):
+class BtNode_PointTo(ActionHandler):
     """
     Points the arm towards a specific person.
 
     This node moves the arm to point at a target person identified by ID.
     It reads the target's position from the blackboard and computes an
     appropriate arm configuration for pointing.
+
+    Migrated from the ``arm_joint_service`` service (ArmJointService) to the
+    ``joint_move_action`` action (JointMove). The interfaces are field
+    equivalent (joint0..joint6 + add_octomap; result.success), so the
+    constructor signature and all call sites are unchanged. The legacy
+    ``service_name`` kwarg is preserved and now maps to the action name; the
+    default ``"arm_joint_service"`` is transparently remapped to
+    ``"joint_move_action"``.
     """
 
     def __init__(
@@ -803,13 +743,20 @@ class BtNode_PointTo(ServiceHandler):
         target_id: int = 0,
         service_name: str = "arm_joint_service",
     ):
-        super().__init__(name, service_name, ArmJointService)
+        action_name = (
+            "joint_move_action"
+            if service_name == "arm_joint_service"
+            else service_name
+        )
+        super().__init__(
+            name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
+        )
         self.bb_key_persons = bb_key_persons
         self.bb_key_points = bb_key_points
         self.target_id = target_id
-        # Default value so the response-None failure branch in update() can
-        # safely format `self.angle` even when initialise skipped the
-        # happy-path assignment (e.g. missing or short points list).
+        # Default value so the no-goal failure branch can safely format
+        # `self.angle` even when send_goal skipped the happy-path assignment
+        # (e.g. missing or short points list).
         self.angle = 0.0
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
@@ -829,14 +776,12 @@ class BtNode_PointTo(ServiceHandler):
         )
 
     def setup(self, **kwargs):
-        ServiceHandler.setup(self, **kwargs)
+        ActionHandler.setup(self, **kwargs)
 
         # debugger info (shown with DebugVisitor)
         self.logger.debug(f"Setup PointTo, reading from {self.bb_key_persons}")
 
-    def initialise(self):
-        super().initialise()
-
+    def send_goal(self):
         try:
             persons = self.blackboard.persons
         except KeyError:
@@ -853,62 +798,62 @@ class BtNode_PointTo(ServiceHandler):
             or len(points) <= self.target_id
         ):
             # Feature matching did not produce a PointStamped for this target.
-            # Fast-fail cleanly; FailureIsSuccess wrappers in the BT can absorb.
+            # Leave send_goal_future as None so the base update() fast-fails
+            # cleanly; FailureIsSuccess wrappers in the BT can absorb it.
             self.feedback_message = (
                 f"PointTo skipped: persons={'None' if persons is None else len(persons)}, "
                 f"points={'None' if points is None else len(points)}, target_id={self.target_id}"
             )
-            self.response = None
-        else:
-            # Handle mock mode
-            if self.mock_mode:
-                self.feedback_message = f"MOCK: Pointed to target {self.target_id}"
-                print(f"👉 MOCK POINT TO: Target {self.target_id}")
-                return
+            return
 
-            point = points[self.target_id]
-
-            request = ArmJointService.Request()
-
-            request.joint0 = math.atan2(point.point.y, point.point.x)
-            self.node.get_logger().info(
-                f"Calculated joint0 angle {request.joint0} to point at target {self.target_id} with coordinates ({point.point.x}, {point.point.y})"
-            )
-            if request.joint0 < -math.pi / 2 or request.joint0 > math.pi / 2:
-                self.node.get_logger().warning(
-                    f"Calculated joint0 angle {request.joint0} is out of expected range [-pi/2, pi/2]"
-                )
-            request.joint1 = self.blackboard.arm_joint_pose[1]
-            request.joint2 = self.blackboard.arm_joint_pose[2]
-            request.joint3 = self.blackboard.arm_joint_pose[3]
-            request.joint4 = self.blackboard.arm_joint_pose[4]
-            request.joint5 = self.blackboard.arm_joint_pose[5]
-            request.joint6 = self.blackboard.arm_joint_pose[6]
-
-            self.angle = math.atan2(point.point.y, point.point.x)
-            request.add_octomap = False
-
-            self.response = self.call_service_async(request)
-
-            self.feedback_message = f"Initialized point to for joints {self.angle}"
-
-    def update(self) -> Status:
         # Handle mock mode
         if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
+            self.feedback_message = f"MOCK: Pointed to target {self.target_id}"
+            print(f"👉 MOCK POINT TO: Target {self.target_id}")
+            super().send_goal()
+            return
 
-        self.logger.debug(f"Update point to")
-        if self.response is None:
-            self.feedback_message = f"Point To failed for joints {self.angle}"
-            return pytree.common.Status.FAILURE
+        point = points[self.target_id]
 
-        if self.response.done():
-            if self.response.result().success:
-                self.feedback_message = f"Point To Successful"
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Point To failed"
-                return pytree.common.Status.FAILURE
-        else:
-            self.feedback_message = f"Still pointing...."
-            return pytree.common.Status.RUNNING
+        try:
+            goal = JointMove.Goal()
+            goal.joint0 = math.atan2(point.point.y, point.point.x)
+            self.node.get_logger().info(
+                f"Calculated joint0 angle {goal.joint0} to point at target {self.target_id} with coordinates ({point.point.x}, {point.point.y})"
+            )
+            if goal.joint0 < -math.pi / 2 or goal.joint0 > math.pi / 2:
+                self.node.get_logger().warning(
+                    f"Calculated joint0 angle {goal.joint0} is out of expected range [-pi/2, pi/2]"
+                )
+            goal.joint1 = self.blackboard.arm_joint_pose[1]
+            goal.joint2 = self.blackboard.arm_joint_pose[2]
+            goal.joint3 = self.blackboard.arm_joint_pose[3]
+            goal.joint4 = self.blackboard.arm_joint_pose[4]
+            goal.joint5 = self.blackboard.arm_joint_pose[5]
+            goal.joint6 = self.blackboard.arm_joint_pose[6]
+            goal.add_octomap = False
+
+            self.angle = goal.joint0
+            self.send_goal_request(goal)
+            self.feedback_message = f"Sent point to goal for joints {self.angle}"
+        except Exception as e:
+            self.feedback_message = f"Failed to send point to goal; error: {e}"
+            self.logger.error(f"Failed to send point to goal; error: {e}")
+
+    def process_result(self):
+        # JointMove.Result has ONLY `success` (no status, no error_msg).
+        if (
+            self.result_status == action_msgs.GoalStatus.STATUS_SUCCEEDED
+            and self.result_message.result.success
+        ):
+            self.feedback_message = "Point To Successful"
+            return pytree.common.Status.SUCCESS
+        self.feedback_message = (
+            f"Point To failed for joints {self.angle} with status: {self.result_status}"
+        )
+        return pytree.common.Status.FAILURE
+
+    def feedback_callback(self, msg):
+        # JointMove feedback is EMPTY; override the base (which reads
+        # delay_limit/status/stage) to a no-op.
+        pass
