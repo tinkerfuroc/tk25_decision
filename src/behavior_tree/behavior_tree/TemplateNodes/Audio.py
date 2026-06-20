@@ -269,8 +269,16 @@ class BtNode_Announce(ServiceHandler):
                     self.announce_msg = read_msg
 
             except Exception as e:
-                self.feedback_message = f"Announce reading message failed"
-                raise e
+                # A missing/unset announcement key must NOT abort the mission —
+                # this is common when an upstream producer was mocked and never
+                # wrote the text. Fall back to the given message (or stay silent)
+                # and carry on instead of re-raising.
+                self.feedback_message = (
+                    f"Announce: key '{self.bb_source}' unavailable "
+                    f"({type(e).__name__}); skipping text"
+                )
+                if self.announce_msg is None:
+                    self.announce_msg = ""
 
         # Handle mock mode
         if self.mock_mode:

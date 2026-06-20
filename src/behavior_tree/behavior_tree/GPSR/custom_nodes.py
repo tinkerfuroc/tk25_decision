@@ -399,12 +399,16 @@ class BtNode_QA(ServiceHandler):
         )
     
     def initialise(self):
+        if self.mock_mode:
+            return
         request = QuestionAnswer.Request()
         request.timeout = self.timeout
         self.response = self.client.call_async(request)
         self.feedback_message = f"Initialized QnA, timeout of {self.timeout} seconds"
-    
+
     def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
         self.logger.debug(f"Updated QnA")
         if self.response.done():
             result : QuestionAnswer.Response = self.response.result()
@@ -765,12 +769,16 @@ class BtNode_GetCommand(ServiceHandler):
         self.timeout = timeout
     
     def initialise(self):
+        if self.mock_mode:
+            return
         request = Listen.Request()
         request.timeout = self.timeout
         self.response = self.client.call_async(request)
         self.feedback_message = f"Initialized GetCommand"
-    
+
     def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
         self.logger.debug(f"Update get command")
         if self.response.done():
             if self.response.result().status == 0:
@@ -829,6 +837,8 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
         """
         Called when the node is visited
         """
+        if self.mock_mode:
+            return
         request = ObjectDetectionGeneralist.Request()
         request.prompt = "person"
         # tk23's flags="find_waving_person" was a no-op in tk26; see class docstring.
@@ -844,6 +854,8 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
         self.feedback_message = f"Initialized ScanForWavingPerson"
 
     def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
         self.logger.debug(f"Update ScanForWavingPerson with self.orbbec = {self.use_orbbec}")
         if self.response.done():
             if self.response.result().status == 0:
@@ -889,6 +901,8 @@ class BtNode_ScanForWavingPersonNew(ServiceHandler):
         self.logger.debug(f"Setup ScanForWavingPersonNew")
 
     def initialise(self) -> None:
+        if self.mock_mode:
+            return
         request = DetectWaving.Request()
         request.threshold_meters = self.threshold_meters
         request.target_frame = self.target_frame
@@ -896,6 +910,8 @@ class BtNode_ScanForWavingPersonNew(ServiceHandler):
         self.feedback_message = f"Initialized ScanForWavingPersonNew"
 
     def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
         self.logger.debug(f"Update ScanForWavingPersonNew")
         if self.response.done():
             result = self.response.result()

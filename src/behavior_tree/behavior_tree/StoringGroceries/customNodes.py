@@ -67,6 +67,10 @@ class BtNode_FindObjTable(ServiceHandler):
         self.use_realsense = use_realsense
 
     def initialise(self):
+        # In mock mode the base ServiceHandler skips client creation, so there is
+        # no real service to call — don't touch self.client (it is None).
+        if self.mock_mode:
+            return
         request = ObjectDetection.Request()
         request.prompt = self.blackboard.prompt
         request.flags = "find_for_grasp|request_image|request_segmentation"
@@ -78,6 +82,10 @@ class BtNode_FindObjTable(ServiceHandler):
         self.logger.debug(f"Initialized FindObjTable with prompt: {self.blackboard.prompt}")
 
     def update(self):
+        # Mock: use the shared mock-interaction path (IMMEDIATE / keypress)
+        # instead of polling a service response that was never requested.
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
         self.logger.debug(f"Updating FindObjTable with prompt: {self.blackboard.prompt}")
         if self.response.done():
             if self.response.result().status == 0:
