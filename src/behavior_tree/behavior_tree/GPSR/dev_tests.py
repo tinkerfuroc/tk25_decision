@@ -259,26 +259,49 @@ def main_say():
 # ---- orchestrator-with-fixed-command dev test ----
 
 def main_orchestrator():
-    """Run the full orchestrator (plan + execute) against a fixed command.
+    """Speak ONE command -> plan -> execute, honouring per-module mock config.
 
-    Reads BT_GPSR_DEBUG_CMD env var (or falls back to a default). Skips the
-    listen step and goes straight into planning + execution.
+    This is the per-module integration harness: the planner is always real (it
+    "splits" the spoken command and generates the tree), while which *executing*
+    subsystems are real vs. stubbed is read from ``mock_config.json`` BEFORE the
+    run. Set ``mock_mode.enabled: true`` and flip each subsystem's ``enabled``
+    flag (``true`` = MOCKED, ``false`` = REAL) so only the module under test
+    drives hardware. ``keyboard_control.enabled: false`` makes mocked nodes
+    auto-succeed (smooth flow) instead of waiting for a keypress.
+
+    Command source:
+      * ``BT_GPSR_DEBUG_CMD`` set -> use it verbatim (deterministic, no audio).
+      * unset -> SPEAK it after the beep (needs audio_input REAL + audio stack up).
     """
     from .orchestrator import create_execute_command, create_orchestrator_init
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
+    from .small_trees import BtNode_AnnounceFromBB
 
     load_knowledge_from_constants(CONSTANTS_PATH)
-    command = os.environ.get(
-        "BT_GPSR_DEBUG_CMD",
-        "Go to the kitchen and bring me a coke.",
-    )
+    command = os.environ.get("BT_GPSR_DEBUG_CMD", "").strip()
 
     rclpy.init()
     root = py_trees.composites.Sequence("Test orchestrator", memory=True)
     _arm_constants_to_bb(root)
-    root.add_child(BtNode_WriteToBlackboard(
-        "command", bb_namespace="", bb_source=None,
-        bb_key=bb_keys.COMMAND, object=command,
-    ))
+    if command:
+        root.add_child(BtNode_WriteToBlackboard(
+            "command (env)", bb_namespace="", bb_source=None,
+            bb_key=bb_keys.COMMAND, object=command,
+        ))
+    else:
+        # Voice intake: prompt, then the listen server beeps and records.
+        root.add_child(BtNode_Announce(
+            "prompt", bb_source=None,
+            message="Please tell me the command after the beep.",
+        ))
+        listen_timeout = float(os.environ.get("BT_GPSR_LISTEN_TIMEOUT", "30.0"))
+        root.add_child(BtNode_ListenAction(
+            "listen", bb_dest_key=bb_keys.COMMAND, timeout=listen_timeout,
+        ))
+        # Echo the transcription so STT accuracy is audible before planning.
+        root.add_child(BtNode_AnnounceFromBB(
+            "echo heard", bb_keys.COMMAND, prefix="I heard: ",
+        ))
     root.add_child(create_orchestrator_init())
     root.add_child(create_execute_command(max_steps=25, max_corrections=3))
     root.add_child(py_trees.behaviours.Running("idle"))

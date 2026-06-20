@@ -407,7 +407,7 @@ class BtNode_FollowAction(ActionHandler):
             return py_trees.common.Status.SUCCESS
         else:
             self.feedback_message = f"Follow failed with status {self.result_status}"
-            self.logger.warn(
+            self.logger.warning(
                 f"Follow action failed with status {self.result_status}"
             )
             return py_trees.common.Status.FAILURE

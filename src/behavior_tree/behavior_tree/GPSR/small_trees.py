@@ -22,11 +22,16 @@ from std_msgs.msg import Header
 import rclpy
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_ConvertGraspPose
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+from behavior_tree.TemplateNodes.Navigation import (
+    BtNode_GotoAction,
+    BtNode_ConvertGraspPose,
+    BtNode_CaptureCurrentPose,
+)
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_ScanForGeneralist,
     BtNode_TurnPanTilt,
+    BtNode_FeatureExtraction,
 )
 from behavior_tree.TemplateNodes.Manipulation import (
     BtNode_MoveArmSingle,
@@ -37,10 +42,13 @@ from behavior_tree.StoringGroceries.customNodes import (
     BtNode_FindObjTable,
     BtNode_GraspWithPose,
 )
+from behavior_tree.PickAndPlace.custom_nodes import BtNode_GetImage
 
 from .custom_nodes import (
     BtNode_QA,
     BtNode_ScanForWavingPersonNew,
+    BtNode_VLMQuery,
+    BtNode_LLMQuery,
 )
 
 
@@ -51,6 +59,10 @@ from .custom_nodes import (
 class bb_keys:
     # Orchestrator state
     COMMAND = "gpsr/command"
+    START_POSE = "gpsr/start_pose"      # PoseStamped — where the command was received
+    DYNAMIC_LOCATIONS = "gpsr/dynamic_locations"  # dict[str -> PoseStamped] (runtime-recorded labels)
+    LAST_CAPTURE = "gpsr/last_capture"            # PoseStamped scratch for the most recent capture
+    CURRENT_DYNLABEL = "gpsr/current_dynlabel"    # str — label for the record_position step being run
     PLAN = "gpsr/plan"
     PLAN_INDEX = "gpsr/plan_index"
     CURRENT_ACTION = "gpsr/current_action"
@@ -58,6 +70,7 @@ class bb_keys:
     STATE_LOG = "gpsr/state_log"
     CORRECTION_COUNT = "gpsr/correction_count"
     LAST_FAILURE = "gpsr/last_failure"
+    PLAN_SPEECH = "gpsr/plan_speech"    # str — spoken rehearsal of the plan steps
 
     # Per-action working keys (filled by orchestrator just before dispatch)
     TARGET_POSE = "gpsr/target_pose"            # PoseStamped
@@ -69,10 +82,21 @@ class bb_keys:
     TARGET_PERSON_PROMPT = "gpsr/target_person_prompt"  # str
     TARGET_PERSON_POSE = "gpsr/target_person_pose"      # PoseStamped/PointStamped
     TARGET_PERSON_DETECTION = "gpsr/target_person_detection"
+    PERSON_NAV_POSE = "gpsr/person_nav_pose"            # PoseStamped (approach goal)
+    PERSON_VISION_PROMPT = "gpsr/person_vision_prompt"  # str (descriptor -> vision prompt)
     ALL_WAVING_PERSONS = "gpsr/all_waving_persons"
     ANNOUNCE_TEXT = "gpsr/announce_text"
     QA_ANSWER = "gpsr/qa_answer"
     COUNT_VALUE = "gpsr/count_value"
+    VLM_ANSWER = "gpsr/vlm_answer"
+    DESCRIBE_FEATURES = "gpsr/describe_features"   # str — textual person description
+    DESCRIBE_IMAGE = "gpsr/describe_image"         # sensor_msgs/Image comparison crop
+    ASK_QUESTION = "gpsr/ask_question"     # str — the question to speak to a person
+    PERSON_ANSWER = "gpsr/person_answer"   # str — the person's captured spoken answer
+    VLM_QUESTION = "gpsr/vlm_question"     # str — question for the generic VLM fallback
+    VLM_IMAGE = "gpsr/vlm_image"           # sensor_msgs/Image grabbed for the VLM fallback
+    LLM_QUESTION = "gpsr/llm_question"     # str — question for the generic LLM fallback
+    LLM_ANSWER = "gpsr/llm_answer"         # str — text LLM fallback answer
 
     # Manipulation working keys (re-using the conventions from gpsr_new.py)
     TABLE_IMG = "gpsr/table_img"
@@ -182,6 +206,23 @@ class BtNode_ExtractDetection(Behaviour):
         self._client.register_key(self._point_dst, access=Access.WRITE)
 
     def update(self):
+        from behavior_tree.config import is_subsystem_mocked
+        if is_subsystem_mocked("vision"):
+            # Mocked scan -> no real object. Write a placeholder point at the
+            # origin so the (also-mocked) grasp can proceed; the real object pose
+            # is irrelevant when manipulation is mocked too.
+            self._client.set(self._object_dst, None, overwrite=True)
+            self._client.set(
+                self._point_dst,
+                PointStamped(
+                    header=Header(frame_id=self._target_frame,
+                                  stamp=rclpy.time.Time().to_msg()),
+                    point=Point(x=0.0, y=0.0, z=0.0),
+                ),
+                overwrite=True,
+            )
+            self.feedback_message = "MOCK(vision): synthetic detection at origin"
+            return Status.SUCCESS
         try:
             result = self._client.get(self._src)
         except Exception as exc:
@@ -251,13 +292,48 @@ class BtNode_PointToPoseStamped(Behaviour):
         return Status.SUCCESS
 
 
-class BtNode_CountDetections(Behaviour):
-    """Count objects in a stored detection result and write the integer."""
+class BtNode_CheckBBContains(Behaviour):
+    """SUCCESS iff the string at ``key`` contains ``substring`` (case-insensitive).
 
-    def __init__(self, name: str, bb_detection_src: str, bb_count_dst: str):
+    Used as a guard so a Selector branch only runs when the descriptor on the
+    blackboard actually calls for it (e.g. waving-person specialist only when
+    the descriptor mentions waving).
+    """
+
+    def __init__(self, name: str, key: str, substring: str):
         super().__init__(name)
-        self._src = bb_detection_src
-        self._dst = bb_count_dst
+        self._key = key
+        self._substring = substring.lower()
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._key, access=Access.READ)
+
+    def update(self):
+        try:
+            value = self._client.get(self._key)
+        except Exception:
+            self.feedback_message = f"{self._key} not set"
+            return Status.FAILURE
+        if self._substring in str(value or "").lower():
+            return Status.SUCCESS
+        self.feedback_message = f"{self._key} does not mention {self._substring!r}"
+        return Status.FAILURE
+
+
+class BtNode_BuildPersonPrompt(Behaviour):
+    """Turn the planner's person descriptor into a usable vision prompt.
+
+    Bare names ("Liam") cannot be detected visually, so they collapse to
+    "person". Attribute descriptors ("person pointing to the left",
+    "waving person") pass through so the generalist VLM can use them.
+    """
+
+    def __init__(self, name: str, bb_descriptor_key: str, bb_prompt_key: str):
+        super().__init__(name)
+        self._src = bb_descriptor_key
+        self._dst = bb_prompt_key
         self._client = None
 
     def setup(self, **kwargs):
@@ -267,12 +343,116 @@ class BtNode_CountDetections(Behaviour):
 
     def update(self):
         try:
+            descriptor = str(self._client.get(self._src) or "").strip()
+        except Exception:
+            descriptor = ""
+        low = descriptor.lower()
+        if not low:
+            prompt = "person"
+        elif "person" in low:
+            prompt = low
+        elif len(low.split()) == 1:
+            prompt = "person"  # bare name — not visually detectable
+        else:
+            prompt = f"person {low}"
+        self._client.set(self._dst, prompt, overwrite=True)
+        self.feedback_message = f"vision prompt: {prompt!r}"
+        return Status.SUCCESS
+
+
+class BtNode_RegisterLabeledPose(Behaviour):
+    """Store the last-captured pose into the dynamic-location registry.
+
+    Reads the PoseStamped at ``src_key`` (written by BtNode_CaptureCurrentPose)
+    and the label string at ``label_key``, then inserts ``registry[label] =
+    pose`` into the dict at ``registry_key`` so a later ``goto(location=label)``
+    can navigate there. Each label is independent; recording a new one never
+    clobbers the others.
+    """
+
+    def __init__(self, name: str, src_key: str, label_key: str, registry_key: str):
+        super().__init__(name)
+        self._src = src_key
+        self._label_key = label_key
+        self._registry_key = registry_key
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._src, access=Access.READ)
+        self._client.register_key(self._label_key, access=Access.READ)
+        self._client.register_key(self._registry_key, access=Access.WRITE)
+
+    def update(self):
+        try:
+            pose = self._client.get(self._src)
+        except Exception as exc:
+            self.feedback_message = f"no captured pose to register: {exc}"
+            return Status.FAILURE
+        try:
+            label = self._client.get(self._label_key)
+        except Exception:
+            label = None
+        label = (str(label) if label is not None else "").strip().lower() or "start_position"
+        try:
+            registry = self._client.get(self._registry_key)
+        except Exception:
+            registry = None
+        if not isinstance(registry, dict):
+            registry = {}
+        registry[label] = pose
+        self._client.set(self._registry_key, registry, overwrite=True)
+        try:
+            self.feedback_message = (
+                f"registered '{label}' at "
+                f"({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f})"
+            )
+        except Exception:
+            self.feedback_message = f"registered '{label}'"
+        return Status.SUCCESS
+
+
+class BtNode_CountDetections(Behaviour):
+    """Count objects in a stored detection result and write the integer.
+
+    With ``fail_if_zero=True`` a zero count returns FAILURE so a Selector
+    parent can hand over to a fallback strategy (the detector finding nothing
+    is more often a detection miss than a true zero).
+    """
+
+    def __init__(self, name: str, bb_detection_src: str, bb_count_dst: str,
+                 fail_if_zero: bool = False):
+        super().__init__(name)
+        self._src = bb_detection_src
+        self._dst = bb_count_dst
+        self._fail_if_zero = fail_if_zero
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._src, access=Access.READ)
+        self._client.register_key(self._dst, access=Access.WRITE)
+
+    def update(self):
+        from behavior_tree.config import is_subsystem_mocked
+        if is_subsystem_mocked("vision"):
+            # The detector was mocked (auto-completed without writing a real
+            # result), so a zero count is a mock artifact, not a true miss.
+            # Report a synthetic hit so the find/count tree succeeds and the plan
+            # continues instead of failing into endless fallback / replan.
+            self._client.set(self._dst, 1, overwrite=True)
+            self.feedback_message = "MOCK(vision): synthetic count=1"
+            return Status.SUCCESS
+        try:
             result = self._client.get(self._src)
         except Exception as exc:
             self.feedback_message = f"Missing detection result: {exc}"
             return Status.FAILURE
         count = len(getattr(result, "objects", []) or [])
         self._client.set(self._dst, count, overwrite=True)
+        if self._fail_if_zero and count == 0:
+            self.feedback_message = "counted 0 objects — deferring to fallback"
+            return Status.FAILURE
         self.feedback_message = f"counted {count} objects"
         return Status.SUCCESS
 
@@ -296,7 +476,13 @@ def create_goto():
 
 
 def create_find_object():
-    """Scan for the object named in ``bb_keys.TARGET_OBJECT_PROMPT`` and store the closest hit."""
+    """Scan for the object named in ``bb_keys.TARGET_OBJECT_PROMPT``.
+
+    Locate-only: stores the full detection result and verifies at least one
+    match exists. It deliberately does NOT pick a single instance — choosing
+    the object to manipulate is the grasp tree's job (``BtNode_FindObjTable``
+    re-detects on the table surface with the arm camera).
+    """
     seq = py_trees.composites.Sequence("small/find_object", memory=True)
     seq.add_child(BtNode_TurnPanTilt("turn pantilt down", x=0.0, y=20.0))
     seq.add_child(BtNode_ScanForGeneralist(
@@ -309,11 +495,11 @@ def create_find_object():
         sort_closest=True,
         return_segments=True,
     ))
-    seq.add_child(BtNode_ExtractDetection(
-        "pick closest object",
+    seq.add_child(BtNode_CountDetections(
+        "verify objects found",
         bb_detection_src=bb_keys.TARGET_OBJECT_DETECTION,
-        bb_object_dst=bb_keys.TARGET_OBJECT,
-        bb_point_dst=bb_keys.TARGET_PERSON_POSE,  # reuse for now, overwritten if person flow runs
+        bb_count_dst=bb_keys.COUNT_VALUE,
+        fail_if_zero=True,
     ))
     seq.add_child(BtNode_AnnounceFromBB(
         "announce found", bb_keys.TARGET_OBJECT_NAME, prefix="I can see the "
@@ -321,36 +507,70 @@ def create_find_object():
     return seq
 
 
-def create_find_person():
-    """Scan for a person matching ``bb_keys.TARGET_PERSON_PROMPT`` and store their pose.
+def create_approach_person():
+    """Navigate to the person pose stored by the most recent ``find_person``.
 
-    Uses the waving-person service when the prompt mentions "wav" (a common
-    GPSR descriptor); otherwise falls back to the generalist with prompt
-    "person".
+    Atomic action — the LLM plans ``find_person`` then ``approach_person``
+    when an interaction (describe / follow / guide / handover) needs the robot
+    standing next to the person rather than across the room. Converts
+    ``bb_keys.TARGET_PERSON_POSE`` (PointStamped from vision) into a nav goal
+    and drives there.
+    """
+    seq = py_trees.composites.Sequence("small/approach_person", memory=True)
+    seq.add_child(BtNode_PointToPoseStamped(
+        "person point to nav pose",
+        bb_point_key=bb_keys.TARGET_PERSON_POSE,
+        bb_pose_key=bb_keys.PERSON_NAV_POSE,
+    ))
+    seq.add_child(py_trees.decorators.Retry(
+        "retry approach",
+        BtNode_GotoAction("goto person", key=bb_keys.PERSON_NAV_POSE),
+        num_failures=3,
+    ))
+    return seq
+
+
+def create_find_person():
+    """Scan for a person matching ``bb_keys.TARGET_PERSON_PROMPT`` and store
+    their pose. Locate-only — it does NOT move the robot.
+
+    The waving-person specialist only runs when the descriptor actually
+    mentions waving; otherwise the generalist scans with a vision prompt built
+    from the descriptor (bare names collapse to "person"). To stand next to
+    the person, the planner emits ``approach_person`` as a separate step.
     """
     seq = py_trees.composites.Sequence("small/find_person", memory=True)
-    seq.add_child(BtNode_TurnPanTilt("look forward", x=0.0, y=10.0))
+    seq.add_child(BtNode_TurnPanTilt("turn pantilt forward", x=0.0, y=10.0))
+    seq.add_child(BtNode_BuildPersonPrompt(
+        "descriptor to vision prompt",
+        bb_descriptor_key=bb_keys.TARGET_PERSON_PROMPT,
+        bb_prompt_key=bb_keys.PERSON_VISION_PROMPT,
+    ))
     seq.add_child(BtNode_Announce(
         "announce searching", bb_source=None,
         message="Looking for a person, please stay still.",
     ))
 
     selector = py_trees.composites.Selector("person scan strategies", memory=False)
-    # waving-person specialist
-    selector.add_child(BtNode_ScanForWavingPersonNew(
+    # waving-person specialist — only when the descriptor calls for it
+    waving_branch = py_trees.composites.Sequence("waving person branch", memory=True)
+    waving_branch.add_child(BtNode_CheckBBContains(
+        "descriptor mentions waving?", bb_keys.TARGET_PERSON_PROMPT, "wav",
+    ))
+    waving_branch.add_child(BtNode_ScanForWavingPersonNew(
         "find waving persons",
         bb_keys.ALL_WAVING_PERSONS,
         bb_keys.TARGET_PERSON_POSE,
         WAVING_THRESHOLD_METERS,
         target_frame="map",
     ))
-    # generalist fallback
+    selector.add_child(waving_branch)
+    # generalist fallback — prompt carries the descriptor where possible
     generalist_branch = py_trees.composites.Sequence("generalist person scan", memory=True)
     generalist_branch.add_child(BtNode_ScanForGeneralist(
         name="generalist person scan",
-        bb_source=None,
+        bb_source=bb_keys.PERSON_VISION_PROMPT,
         bb_key=bb_keys.TARGET_PERSON_DETECTION,
-        object="person",
         use_orbbec=True,
         transform_to_map=True,
         sort_closest=True,
@@ -366,6 +586,88 @@ def create_find_person():
     seq.add_child(BtNode_Announce(
         "announce found person", bb_source=None,
         message="Found a person.",
+    ))
+    return seq
+
+
+def create_describe_person():
+    """Look at the person in view and speak a description of them.
+
+    Closes the "tell me the name / pose / gesture of the person" gap: the
+    vision feature-extraction service returns a human-readable description
+    string (the same ``feature`` text HRI speaks when introducing a guest —
+    see HRI/hri.py BtNode_FeatureExtraction + BtNode_Introduce). The planner
+    runs ``find_person`` first to locate + approach the person, then this
+    tree frames the face, extracts the description, and announces it.
+    """
+    seq = py_trees.composites.Sequence("small/describe_person", memory=True)
+    seq.add_child(BtNode_TurnPanTilt("turn pantilt up", x=0.0, y=45.0))
+    seq.add_child(BtNode_Announce(
+        "announce describing", bb_source=None,
+        message="Let me take a look at this person.",
+    ))
+    seq.add_child(py_trees.decorators.Retry(
+        "retry feature extraction",
+        BtNode_FeatureExtraction(
+            "extract person description",
+            bb_dest_key=bb_keys.DESCRIBE_FEATURES,
+            bb_image_key=bb_keys.DESCRIBE_IMAGE,
+        ),
+        num_failures=3,
+    ))
+    seq.add_child(BtNode_AnnounceFromBB(
+        "announce description", bb_keys.DESCRIBE_FEATURES,
+        prefix="Here is what I can tell about the person. ",
+    ))
+    return seq
+
+
+def create_ask_person():
+    """Ask the person in front a spoken question and capture their answer.
+
+    For information you can ONLY get by ASKING — the person's name, age,
+    favourite drink, where they are from. This is the audio counterpart to
+    describe_person (which reports VISIBLE traits only and cannot obtain a
+    name). Mirrors the HRI intake pattern (HRI/hri.py ``_create_get_info``):
+    speak the question, prompt to answer after the beep, listen for the free
+    answer, then read it back. The orchestrator writes the literal question to
+    ``bb_keys.ASK_QUESTION`` from the plan's ``question`` param; the captured
+    answer lands in ``bb_keys.PERSON_ANSWER`` for a later ``report_answer``.
+    """
+    seq = py_trees.composites.Sequence("small/ask_person", memory=True)
+    seq.add_child(BtNode_AnnounceFromBB(
+        "ask question", bb_keys.ASK_QUESTION, prefix="",
+    ))
+    seq.add_child(BtNode_Announce(
+        "announce answer after beep", bb_source=None,
+        message="Please answer after the beep.",
+    ))
+    seq.add_child(py_trees.decorators.Retry(
+        "retry listen answer",
+        BtNode_ListenAction(
+            "listen to answer",
+            bb_dest_key=bb_keys.PERSON_ANSWER,
+            timeout=10.0,
+        ),
+        num_failures=2,
+    ))
+    seq.add_child(BtNode_AnnounceFromBB(
+        "repeat answer", bb_keys.PERSON_ANSWER, prefix="Thank you. I heard ",
+    ))
+    return seq
+
+
+def create_report_answer():
+    """Speak the most recent ask_person answer back to the listener in front.
+
+    Used for "ask the person X and tell me X": after ``ask_person`` captures
+    the answer, the robot returns to the operator (``goto start_position``) and
+    this reports the stored ``bb_keys.PERSON_ANSWER``.
+    """
+    seq = py_trees.composites.Sequence("small/report_answer", memory=True)
+    seq.add_child(BtNode_AnnounceFromBB(
+        "report answer", bb_keys.PERSON_ANSWER,
+        prefix="Here is what the person told me. ",
     ))
     return seq
 
@@ -403,17 +705,7 @@ def create_guide():
         num_failures=5,
     ))
     seq.add_child(BtNode_AnnounceFromBB(
-        "arrived announce", bb_keys.TARGET_LOCATION, prefix="We have arrived at "
-    ))
-    return seq
-
-
-def create_greet():
-    """Locate a person (closest), then speak a greeting that names them."""
-    seq = py_trees.composites.Sequence("small/greet", memory=True)
-    seq.add_child(create_find_person())
-    seq.add_child(BtNode_AnnounceFromBB(
-        "greet announce", bb_keys.TARGET_PERSON_PROMPT, prefix="Hello "
+        "announce arrived", bb_keys.TARGET_LOCATION, prefix="We have arrived at "
     ))
     return seq
 
@@ -438,7 +730,7 @@ def create_grasp():
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
     par_scan.add_child(BtNode_Announce(
-        "say move arm", bb_source=None,
+        "announce move arm", bb_source=None,
         message="Moving my arm to look for the object",
     ))
     par_scan.add_child(BtNode_MoveArmSingle(
@@ -462,7 +754,7 @@ def create_grasp():
         "grasp+announce",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
-    par_grasp.add_child(BtNode_Announce("say grasp", bb_source=bb_keys.GRASP_ANNOUNCEMENT))
+    par_grasp.add_child(BtNode_Announce("announce grasp", bb_source=bb_keys.GRASP_ANNOUNCEMENT))
     par_grasp.add_child(BtNode_GraspWithPose(
         "grasp object",
         bb_key_vision_res=bb_keys.TARGET_OBJECT,
@@ -500,7 +792,7 @@ def create_grasp():
         "ask referee", bb_keys.TARGET_OBJECT_NAME, prefix="Dear referee, please help me grasp the "
     ))
     ex_machina.add_child(BtNode_Announce(
-        "say put in gripper", bb_source=None,
+        "announce put in gripper", bb_source=None,
         message="Put it in my gripper please. Thank you.",
     ))
     ex_machina.add_child(BtNode_WaitTicks("wait", 8))
@@ -530,7 +822,7 @@ def create_place():
         num_failures=5,
     ))
     seq.add_child(BtNode_Announce(
-        "say releasing", bb_source=None, message="Releasing object now."
+        "announce releasing", bb_source=None, message="Releasing object now."
     ))
     seq.add_child(BtNode_GripperAction("open gripper", True))
     seq.add_child(BtNode_WaitTicks("wait", 4))
@@ -539,18 +831,27 @@ def create_place():
 
 
 def create_deliver():
-    """Bring the currently-held object to a person at ``bb_keys.TARGET_POSE``."""
+    """Bring the currently-held object to a person.
+
+    Navigates to the recipient's room (``bb_keys.TARGET_POSE``, materialised
+    from ``recipient_location``), then visually detects and approaches the
+    recipient before opening the gripper — handing over at a room waypoint
+    with nobody in front of the gripper is the failure mode this guards
+    against.
+    """
     seq = py_trees.composites.Sequence("small/deliver", memory=True)
     seq.add_child(BtNode_AnnounceFromBB(
         "announce delivering", bb_keys.TARGET_OBJECT_NAME, prefix="Delivering the "
     ))
     seq.add_child(py_trees.decorators.Retry(
         "retry deliver goto",
-        BtNode_GotoAction("goto recipient", key=bb_keys.TARGET_POSE),
+        BtNode_GotoAction("goto recipient room", key=bb_keys.TARGET_POSE),
         num_failures=5,
     ))
+    seq.add_child(create_find_person())       # detect the recipient
+    seq.add_child(create_approach_person())   # walk up to them
     seq.add_child(BtNode_Announce(
-        "say take it", bb_source=None,
+        "announce take it", bb_source=None,
         message="Here you go, please take the object from my gripper.",
     ))
     seq.add_child(BtNode_WaitTicks("wait for take", 8))
@@ -561,13 +862,21 @@ def create_deliver():
 
 
 def create_count():
-    """Count objects matching ``bb_keys.TARGET_OBJECT_PROMPT`` and announce the number."""
-    seq = py_trees.composites.Sequence("small/count", memory=True)
-    seq.add_child(BtNode_TurnPanTilt("turn pantilt", x=0.0, y=10.0))
-    seq.add_child(BtNode_Announce(
-        "say scanning", bb_source=None, message="I am counting now."
+    """Count objects matching ``bb_keys.TARGET_OBJECT_PROMPT`` and announce the number.
+
+    Counting is NOT a first-class capability of the vision stack — the
+    detector enumerates what it happens to segment, which is unreliable for
+    category counting. Structure: try detection-based counting first (and
+    keep the RGB frame); if the detector fails or returns zero, fall back to
+    sending the captured image plus the counting question to the multimodal
+    LLM and speaking its answer.
+    """
+    primary = py_trees.composites.Sequence("count/by_detector", memory=True)
+    primary.add_child(BtNode_TurnPanTilt("turn pantilt", x=0.0, y=10.0))
+    primary.add_child(BtNode_Announce(
+        "announce scanning", bb_source=None, message="I am counting now."
     ))
-    seq.add_child(BtNode_ScanForGeneralist(
+    primary.add_child(BtNode_ScanForGeneralist(
         name="scan to count",
         bb_source=bb_keys.TARGET_OBJECT_PROMPT,
         bb_key=bb_keys.TARGET_OBJECT_DETECTION,
@@ -576,49 +885,154 @@ def create_count():
         use_vlm_sam_fallback=True,
         sort_closest=True,
         return_segments=False,
+        return_rgb_image=True,  # keep the frame for the VLM fallback
     ))
-    seq.add_child(BtNode_CountDetections(
+    primary.add_child(BtNode_CountDetections(
         "count detections",
         bb_detection_src=bb_keys.TARGET_OBJECT_DETECTION,
         bb_count_dst=bb_keys.COUNT_VALUE,
+        fail_if_zero=True,  # zero hits -> let the VLM double-check the frame
     ))
-    seq.add_child(BtNode_AnnounceFromBB(
-        "say count", bb_keys.COUNT_VALUE, prefix="I counted "
+    primary.add_child(BtNode_AnnounceFromBB(
+        "announce count", bb_keys.COUNT_VALUE, prefix="I counted "
     ))
-    return seq
+
+    vlm_fallback = py_trees.composites.Sequence("count/vlm_fallback", memory=True)
+    vlm_fallback.add_child(BtNode_Announce(
+        "announce vlm fallback", bb_source=None,
+        message="My detector could not count them. Let me look at the picture myself.",
+    ))
+    vlm_fallback.add_child(BtNode_VLMQuery(
+        "vlm count",
+        bb_detection_src=bb_keys.TARGET_OBJECT_DETECTION,
+        bb_answer_dst=bb_keys.VLM_ANSWER,
+        question_template=(
+            "How many {value} are visible in this image? Answer in one short "
+            "spoken sentence that starts with the number."
+        ),
+        bb_fill_key=bb_keys.TARGET_OBJECT_PROMPT,
+    ))
+    vlm_fallback.add_child(BtNode_AnnounceFromBB(
+        "announce vlm count", bb_keys.VLM_ANSWER, prefix=""
+    ))
+
+    return py_trees.composites.Selector(
+        "small/count", memory=True,
+        children=[primary, vlm_fallback],
+    )
 
 
 def create_answer_question():
     """Listen to a question and answer via the question_answer_service."""
     seq = py_trees.composites.Sequence("small/answer_question", memory=True)
     seq.add_child(BtNode_Announce(
-        "say ask", bb_source=None,
+        "announce ask", bb_source=None,
         message="Please ask me a question after the beep.",
     ))
     seq.add_child(BtNode_WaitTicks("beep wait", 6))
     seq.add_child(BtNode_QA("qa", bb_key_dest=bb_keys.QA_ANSWER, timeout=10.0))
     seq.add_child(BtNode_AnnounceFromBB(
-        "say answer", bb_keys.QA_ANSWER, prefix=""
+        "announce answer", bb_keys.QA_ANSWER, prefix=""
     ))
     return seq
 
 
-def create_tell_info():
-    """Speak the text already placed in ``bb_keys.ANNOUNCE_TEXT`` by the orchestrator.
+def create_announce():
+    """Speak the text in ``bb_keys.ANNOUNCE_TEXT`` (filled from the plan's
+    ``text`` param by the orchestrator).
 
-    For ``tell`` commands (time, day, team info, person info), the orchestrator
-    resolves the topic into a sentence string and writes it to the announce
-    blackboard before dispatching this tree.
+    Single spoken-output action — replaces the former ``say`` / ``tell_info``
+    twins, which were structurally identical. Used for telling the time/day,
+    team info, reporting results, and explaining refusals.
     """
-    seq = py_trees.composites.Sequence("small/tell_info", memory=True)
-    seq.add_child(BtNode_Announce("say tell", bb_source=bb_keys.ANNOUNCE_TEXT))
+    seq = py_trees.composites.Sequence("small/announce", memory=True)
+    seq.add_child(BtNode_Announce("announce text", bb_source=bb_keys.ANNOUNCE_TEXT))
     return seq
 
 
-def create_say():
-    """Generic announcement using ``bb_keys.ANNOUNCE_TEXT``."""
-    seq = py_trees.composites.Sequence("small/say", memory=True)
-    seq.add_child(BtNode_Announce("announce", bb_source=bb_keys.ANNOUNCE_TEXT))
+def create_record_position():
+    """Capture the robot's current map pose and register it under a label.
+
+    The orchestrator writes the label (from the plan's ``label`` param) to
+    ``bb_keys.CURRENT_DYNLABEL`` before dispatch, so this tree can store the
+    pose into the ``DYNAMIC_LOCATIONS`` registry under that name. A later
+    ``goto(location=<label>)`` then resolves to it. With no label it defaults
+    to ``start_position``. The single auto start-pose snapshot at command
+    start is captured separately by the orchestrator (straight to START_POSE).
+    """
+    seq = py_trees.composites.Sequence("small/record_position", memory=True)
+    seq.add_child(BtNode_CaptureCurrentPose(
+        "capture current pose", bb_key=bb_keys.LAST_CAPTURE,
+    ))
+    seq.add_child(BtNode_RegisterLabeledPose(
+        "register labeled pose",
+        src_key=bb_keys.LAST_CAPTURE,
+        label_key=bb_keys.CURRENT_DYNLABEL,
+        registry_key=bb_keys.DYNAMIC_LOCATIONS,
+    ))
+    return seq
+
+
+def create_vlm_fallback():
+    """Look at the scene and answer a visual question with the gpt-4.1 VLM.
+
+    Generic escape hatch for VISUAL tasks no specific small tree covers — "what
+    colour is the X", "is the door open", "what is on the table", "what is the
+    person holding". Grabs a fresh camera frame, sends it plus the question
+    (written to ``bb_keys.VLM_QUESTION`` by the orchestrator) to gpt-4.1, and
+    speaks the answer. The planner navigates to the right spot first if needed.
+    """
+    seq = py_trees.composites.Sequence("small/vlm_fallback", memory=True)
+    seq.add_child(BtNode_TurnPanTilt("turn pantilt forward", x=0.0, y=15.0))
+    seq.add_child(BtNode_Announce(
+        "announce looking", bb_source=None, message="Let me take a look.",
+    ))
+    seq.add_child(BtNode_GetImage(
+        "grab frame", camera="orbbec", bb_key_rgb_image=bb_keys.VLM_IMAGE,
+    ))
+    seq.add_child(BtNode_VLMQuery(
+        "vlm answer",
+        bb_detection_src=bb_keys.VLM_IMAGE,
+        bb_answer_dst=bb_keys.VLM_ANSWER,
+        question_template="{value}",
+        bb_fill_key=bb_keys.VLM_QUESTION,
+    ))
+    seq.add_child(BtNode_AnnounceFromBB("announce vlm answer", bb_keys.VLM_ANSWER))
+    return seq
+
+
+def create_llm_fallback():
+    """Answer a general (non-visual) question with the gpt-4.1 text LLM.
+
+    Generic escape hatch for general-knowledge / contextual questions the robot
+    has no dedicated action for — "what is the date / day / time", simple facts
+    or maths. The question (written to ``bb_keys.LLM_QUESTION`` by the
+    orchestrator) goes to gpt-4.1 with the current date/time injected; the
+    spoken answer is announced. Questions needing live data the model cannot
+    have (e.g. current weather) get an honest "I cannot access that" reply.
+    """
+    seq = py_trees.composites.Sequence("small/llm_fallback", memory=True)
+    seq.add_child(BtNode_LLMQuery(
+        "llm answer",
+        bb_question_key=bb_keys.LLM_QUESTION,
+        bb_answer_dst=bb_keys.LLM_ANSWER,
+    ))
+    seq.add_child(BtNode_AnnounceFromBB("announce llm answer", bb_keys.LLM_ANSWER))
+    return seq
+
+
+def create_report_view():
+    """Speak the most recent vlm_fallback observation back to the operator.
+
+    The visual analogue of report_answer: when the robot had to go elsewhere to
+    look at something, vlm_fallback captures what it saw (``bb_keys.VLM_ANSWER``)
+    there, then the robot returns to the operator (``goto start_position``) and
+    this reports it. The blackboard value persists across the navigation.
+    """
+    seq = py_trees.composites.Sequence("small/report_view", memory=True)
+    seq.add_child(BtNode_AnnounceFromBB(
+        "report view", bb_keys.VLM_ANSWER, prefix="Here is what I saw. ",
+    ))
     return seq
 
 
@@ -630,14 +1044,20 @@ ACTION_FACTORIES = {
     "goto": create_goto,
     "find_object": create_find_object,
     "find_person": create_find_person,
+    "approach_person": create_approach_person,
+    "describe_person": create_describe_person,
+    "ask_person": create_ask_person,
+    "report_answer": create_report_answer,
     "follow": create_follow,
     "guide": create_guide,
-    "greet": create_greet,
     "grasp": create_grasp,
     "place": create_place,
     "deliver": create_deliver,
     "count": create_count,
     "answer_question": create_answer_question,
-    "tell_info": create_tell_info,
-    "say": create_say,
+    "announce": create_announce,
+    "record_position": create_record_position,
+    "vlm_fallback": create_vlm_fallback,
+    "llm_fallback": create_llm_fallback,
+    "report_view": create_report_view,
 }

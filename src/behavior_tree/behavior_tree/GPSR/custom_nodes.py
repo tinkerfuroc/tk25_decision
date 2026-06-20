@@ -1,4 +1,6 @@
 import asyncio
+import threading
+from behavior_tree.config import is_node_mocked
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, DetectWaving
 import py_trees
@@ -10,7 +12,14 @@ import openai
 import json
 import time
 import textwrap
-from .config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_TEMPERATURE, OPENAI_MAX_TOKENS
+from .config import (
+    OPENAI_API_KEY,
+    OPENAI_MODEL,
+    OPENAI_VISION_MODEL,
+    OPENAI_FALLBACK_MODEL,
+    OPENAI_TEMPERATURE,
+    OPENAI_MAX_TOKENS,
+)
 
 from behavior_tree.messages import QuestionAnswer, Listen
 
@@ -409,6 +418,241 @@ class BtNode_QA(ServiceHandler):
         else:
             self.feedback_message = "Still running QnA..."
             return Status.RUNNING
+
+
+class BtNode_VLMQuery(Behaviour):
+    """Ask a multimodal LLM a question about the RGB image of a stored
+    detection response.
+
+    Generic fallback for capabilities the vision stack has no dedicated
+    service for (counting, gesture/pose description, attribute questions).
+    Reads the ``ObjectDetectionGeneralist.Response`` stored at
+    ``bb_detection_src`` — request the scan with ``return_rgb_image=True`` so
+    the frame is present — fills ``question_template`` (``{value}`` is
+    replaced with the blackboard value at ``bb_fill_key``), sends question +
+    image to the OpenRouter model, and writes the text answer to
+    ``bb_answer_dst`` for a downstream announce.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        bb_detection_src: str,
+        bb_answer_dst: str,
+        question_template: str,
+        bb_fill_key: str = None,
+    ):
+        super().__init__(name)
+        self._src = bb_detection_src
+        self._dst = bb_answer_dst
+        self._template = question_template
+        self._fill_key = bb_fill_key
+        self._bb = None
+        self._thread = None
+        self._answer = None
+        self._error = None
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
+        self._client_oai = None
+        if not self.mock_mode:
+            self._client_oai = openai.OpenAI(
+                api_key=OPENAI_API_KEY,
+                base_url="https://openrouter.ai/api/v1",
+            )
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(self._src, access=Access.READ)
+        self._bb.register_key(self._dst, access=Access.WRITE)
+        if self._fill_key:
+            self._bb.register_key(self._fill_key, access=Access.READ)
+
+    @staticmethod
+    def _image_to_b64_jpeg(img_msg):
+        """sensor_msgs/Image (rgb8 or bgr8) -> base64 JPEG string, or None."""
+        if img_msg is None or getattr(img_msg, "height", 0) == 0:
+            return None
+        import base64
+        import cv2
+        import numpy as np
+        arr = np.frombuffer(bytes(img_msg.data), dtype=np.uint8)
+        arr = arr.reshape(img_msg.height, -1)[:, : img_msg.width * 3]
+        arr = arr.reshape(img_msg.height, img_msg.width, 3)
+        if img_msg.encoding.lower().startswith("rgb"):
+            arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        ok, buf = cv2.imencode(".jpg", arr)
+        if not ok:
+            return None
+        return base64.b64encode(buf.tobytes()).decode("ascii")
+
+    def initialise(self):
+        self._thread = None
+        self._answer = None
+        self._error = None
+
+        question = self._template
+        if self._fill_key:
+            try:
+                fill = str(self._bb.get(self._fill_key) or "")
+            except Exception:
+                fill = ""
+            question = self._template.format(value=fill)
+
+        if self.mock_mode:
+            self._answer = f"MOCK VLM answer to: {question}"
+            self.feedback_message = "MOCK: VLM query"
+            return
+
+        try:
+            result = self._bb.get(self._src)
+        except Exception as exc:
+            self._error = f"no image/detection result at {self._src}: {exc}"
+            return
+        # Accept either a detection response carrying ``rgb_image`` (count
+        # fallback path) OR a raw sensor_msgs/Image written by BtNode_GetImage
+        # (generic VLM fallback path).
+        img = getattr(result, "rgb_image", None)
+        if img is None and hasattr(result, "encoding") and hasattr(result, "data"):
+            img = result
+        b64 = self._image_to_b64_jpeg(img)
+        if b64 is None:
+            self._error = (
+                f"no usable rgb_image at {self._src} — give a detection result "
+                "scanned with return_rgb_image=True, or a raw Image from GetImage"
+            )
+            return
+
+        def _call():
+            try:
+                resp = self._client_oai.chat.completions.create(
+                    model=OPENAI_VISION_MODEL,  # image query — never the text-only planner model
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": question},
+                            {"type": "image_url", "image_url": {
+                                "url": f"data:image/jpeg;base64,{b64}",
+                            }},
+                        ],
+                    }],
+                    temperature=OPENAI_TEMPERATURE,
+                    max_tokens=max(OPENAI_MAX_TOKENS, 256),
+                )
+                self._answer = resp.choices[0].message.content.strip()
+            except Exception as exc:  # noqa: BLE001 — surface anything
+                self._error = repr(exc)
+
+        self._thread = threading.Thread(target=_call, daemon=True)
+        self._thread.start()
+        self.feedback_message = f"VLM query: {question[:60]}"
+
+    def update(self):
+        if self._error is not None:
+            self.feedback_message = f"VLM query failed: {self._error}"
+            return Status.FAILURE
+        if self._answer is None:
+            return Status.RUNNING
+        self._bb.set(self._dst, self._answer, overwrite=True)
+        self.feedback_message = f"VLM answered: {self._answer[:60]}"
+        return Status.SUCCESS
+
+    def terminate(self, new_status):
+        self._thread = None
+
+
+class BtNode_LLMQuery(Behaviour):
+    """Answer a free-form general question with a text LLM (gpt-4.1).
+
+    Generic fallback for general-knowledge / contextual questions the robot has
+    no dedicated capability for ("what is the date", "what day is it", simple
+    facts/maths). The current date/time is injected so date/day/time questions
+    resolve correctly. Best-effort: for questions needing live data the model
+    cannot have (e.g. current weather), it returns a short honest "I cannot
+    access that" answer rather than failing.
+
+    Reads the question string at ``bb_question_key``, calls the OpenRouter model
+    asynchronously, and writes the spoken answer to ``bb_answer_dst`` for a
+    downstream announce.
+    """
+
+    def __init__(self, name: str, bb_question_key: str, bb_answer_dst: str):
+        super().__init__(name)
+        self._q_key = bb_question_key
+        self._dst = bb_answer_dst
+        self._bb = None
+        self._thread = None
+        self._answer = None
+        self._error = None
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
+        self._client_oai = None
+        if not self.mock_mode:
+            self._client_oai = openai.OpenAI(
+                api_key=OPENAI_API_KEY,
+                base_url="https://openrouter.ai/api/v1",
+            )
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(self._q_key, access=Access.READ)
+        self._bb.register_key(self._dst, access=Access.WRITE)
+
+    def initialise(self):
+        self._thread = None
+        self._answer = None
+        self._error = None
+        try:
+            question = str(self._bb.get(self._q_key) or "").strip()
+        except Exception:
+            question = ""
+        if not question:
+            question = "Please answer the user's question."
+
+        if self.mock_mode:
+            self._answer = f"MOCK LLM answer to: {question}"
+            self.feedback_message = "MOCK: LLM query"
+            return
+
+        from datetime import datetime
+        now = datetime.now().strftime("%A, %B %d, %Y, %H:%M")
+        system = (
+            "You are a household service robot answering a person's question "
+            "out loud. Reply in ONE short, natural spoken sentence. The current "
+            f"date and time is {now}. If the question needs live information you "
+            "cannot have (such as the current weather or news), say briefly that "
+            "you cannot access that information. Do not output lists or markdown."
+        )
+
+        def _call():
+            try:
+                resp = self._client_oai.chat.completions.create(
+                    model=OPENAI_FALLBACK_MODEL,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": question},
+                    ],
+                    temperature=OPENAI_TEMPERATURE,
+                    max_tokens=max(OPENAI_MAX_TOKENS, 200),
+                )
+                self._answer = (resp.choices[0].message.content or "").strip() or \
+                    "I am not sure how to answer that."
+            except Exception as exc:  # noqa: BLE001 — surface anything
+                self._error = repr(exc)
+
+        self._thread = threading.Thread(target=_call, daemon=True)
+        self._thread.start()
+        self.feedback_message = f"LLM query: {question[:60]}"
+
+    def update(self):
+        if self._error is not None:
+            self.feedback_message = f"LLM query failed: {self._error}"
+            return Status.FAILURE
+        if self._answer is None:
+            return Status.RUNNING
+        self._bb.set(self._dst, self._answer, overwrite=True)
+        self.feedback_message = f"LLM answered: {self._answer[:60]}"
+        return Status.SUCCESS
+
+    def terminate(self, new_status):
+        self._thread = None
 
 
 # write PoseStamped to a blackboard location

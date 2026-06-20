@@ -73,6 +73,8 @@ setup(
             "doing-laundry = behavior_tree.DoingLaundry.cli:main",
             "GPSR = behavior_tree.GPSR.gpsr_new:main",
             "gpsr-full = behavior_tree.GPSR.gpsr_full:main",
+            "gpsr-orchestrator = behavior_tree.GPSR.gpsr_orchestrator:main",
+            "gpsr-dryrun = behavior_tree.GPSR.gpsr_dryrun:main",
             "EGPSR = behavior_tree.GPSR.egpsr:main",
             # GPSR small-tree dev tests (one per atomic action)
             "gpsr-test-goto = behavior_tree.GPSR.dev_tests:main_goto",
