@@ -259,54 +259,69 @@ def main_say():
 # ---- orchestrator-with-fixed-command dev test ----
 
 def main_orchestrator():
-    """Speak ONE command -> plan -> execute, honouring per-module mock config.
+    """Type/speak a command -> plan -> execute, looping, saving each plan.
 
-    This is the per-module integration harness: the planner is always real (it
-    "splits" the spoken command and generates the tree), while which *executing*
-    subsystems are real vs. stubbed is read from ``mock_config.json`` BEFORE the
-    run. Set ``mock_mode.enabled: true`` and flip each subsystem's ``enabled``
-    flag (``true`` = MOCKED, ``false`` = REAL) so only the module under test
-    drives hardware. ``keyboard_control.enabled: false`` makes mocked nodes
-    auto-succeed (smooth flow) instead of waiting for a keypress.
+    Per-module integration harness: the planner always runs (it "splits" the
+    command and generates the tree); which *executing* subsystems are real vs.
+    stubbed is read from ``mock_config.json`` BEFORE the run (``mock_mode.enabled:
+    true`` + per-subsystem ``enabled``: ``true`` = MOCKED, ``false`` = REAL).
+    ``keyboard_control.enabled: false`` makes mocked nodes auto-succeed.
 
     Command source:
-      * ``BT_GPSR_DEBUG_CMD`` set -> use it verbatim (deterministic, no audio).
-      * unset -> SPEAK it after the beep (needs audio_input REAL + audio stack up).
+      * ``BT_GPSR_DEBUG_CMD`` set -> use it verbatim once, then idle.
+      * unset -> intake LOOP. If ``audio_input`` is MOCKED and you're on an
+        interactive terminal, you TYPE each command (remote / no microphone);
+        if audio is REAL you speak it. After each command the cycle loops so you
+        can enter another.
+
+    Every generated plan is frozen to a re-runnable ``.py`` under
+    ``BT_GPSR_PLAN_DIR`` (default ``./gpsr_runs``) so a command can be replayed
+    later for debugging (``python <that_file>.py``).
     """
+    from pathlib import Path
     from .orchestrator import create_execute_command, create_orchestrator_init
     from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
     from .small_trees import BtNode_AnnounceFromBB
 
     load_knowledge_from_constants(CONSTANTS_PATH)
     command = os.environ.get("BT_GPSR_DEBUG_CMD", "").strip()
+    plan_dir = Path(os.environ.get("BT_GPSR_PLAN_DIR", "gpsr_runs")).resolve()
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[gpsr-test-orchestrator] saved plans -> {plan_dir}")
 
     rclpy.init()
-    root = py_trees.composites.Sequence("Test orchestrator", memory=True)
-    _arm_constants_to_bb(root)
+    cycle = py_trees.composites.Sequence("Test orchestrator", memory=True)
+    _arm_constants_to_bb(cycle)
     if command:
-        root.add_child(BtNode_WriteToBlackboard(
+        cycle.add_child(BtNode_WriteToBlackboard(
             "command (env)", bb_namespace="", bb_source=None,
             bb_key=bb_keys.COMMAND, object=command,
         ))
     else:
-        # Voice intake: prompt, then the listen server beeps and records.
-        root.add_child(BtNode_Announce(
+        # Intake: spoken prompt (silent when announcement is mocked); a MOCKED
+        # listen on an interactive terminal then prompts you to TYPE the command.
+        cycle.add_child(BtNode_Announce(
             "prompt", bb_source=None,
-            message="Please tell me the command after the beep.",
+            message="Please give me a command.",
         ))
         listen_timeout = float(os.environ.get("BT_GPSR_LISTEN_TIMEOUT", "30.0"))
-        root.add_child(BtNode_ListenAction(
+        cycle.add_child(BtNode_ListenAction(
             "listen", bb_dest_key=bb_keys.COMMAND, timeout=listen_timeout,
         ))
-        # Echo the transcription so STT accuracy is audible before planning.
-        root.add_child(BtNode_AnnounceFromBB(
+        cycle.add_child(BtNode_AnnounceFromBB(
             "echo heard", bb_keys.COMMAND, prefix="I heard: ",
         ))
-    root.add_child(create_orchestrator_init())
-    root.add_child(create_execute_command(max_steps=25, max_corrections=3))
-    root.add_child(py_trees.behaviours.Running("idle"))
+    cycle.add_child(create_orchestrator_init())
+    cycle.add_child(create_execute_command(
+        max_steps=25, max_corrections=3, emit_plan_dir=str(plan_dir),
+    ))
+    if command:
+        # One-shot: run the injected command once, then idle.
+        cycle.add_child(py_trees.behaviours.Running("idle (ctrl-c to exit)"))
+    # Typed/voice path: no trailing idle -> the memory Sequence re-runs from the
+    # top after each command, so you can enter another.
 
-    tree = py_trees_ros.trees.BehaviourTree(root=root)
+    tree = py_trees_ros.trees.BehaviourTree(root=cycle)
     tree.setup(timeout=15, node_name="gpsr_test_orchestrator")
     print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(title="orchestrator")
     tree.tick_tock(period_ms=500.0, post_tick_handler=print_tree)

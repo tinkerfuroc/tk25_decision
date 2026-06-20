@@ -1005,6 +1005,59 @@ class BtNode_ListenAction(ActionHandler):
         self.feedback_message = f"Listened: '{result.message}'"
         return Status.SUCCESS
 
+    # ------------------------------------------------------------------
+    # Mock "type the heard command in the terminal" path.
+    # ------------------------------------------------------------------
+    def initialise(self):
+        # Reset typed-command state for the mock typed-input path.
+        self._typed_done = False
+        return super().initialise()
+
+    def update(self):
+        # When this listen node is MOCKED and attached to an interactive
+        # terminal, let the operator TYPE the heard command instead of returning
+        # a canned string — for remote / headless testing with no microphone.
+        # Non-interactive (CI, piped stdin) keeps the old fixed-string mock so
+        # automated runs never block. Force on/off via BT_LISTEN_MOCK_TYPED=1/0.
+        if self.mock_mode and self._mock_typed_enabled():
+            return self._mock_typed_listen()
+        return super().update()
+
+    @staticmethod
+    def _mock_typed_enabled() -> bool:
+        import os
+        import sys
+        forced = os.environ.get("BT_LISTEN_MOCK_TYPED")
+        if forced is not None:
+            return forced.strip().lower() in ("1", "true", "yes", "on")
+        try:
+            return sys.stdin.isatty()
+        except Exception:
+            return False
+
+    def _mock_typed_listen(self):
+        # Blocking read in the tick thread: the post-tick tree print pauses while
+        # you type (no scroll clutter), then resumes to run the generated tree.
+        import sys
+        if getattr(self, "_typed_done", False):
+            return Status.SUCCESS
+        try:
+            sys.stdout.write(
+                f"\n⌨️  [MOCK LISTEN] type the command for "
+                f"'{self.bb_dest_key}', then press Enter:\n> "
+            )
+            sys.stdout.flush()
+            typed = (sys.stdin.readline() or "").strip()
+        except Exception as exc:
+            typed = ""
+            print(f"[MOCK LISTEN] stdin error: {exc}")
+        typed = typed or "(empty)"
+        self.message_blackboard.message = typed
+        self._typed_done = True
+        self.feedback_message = f"MOCK typed: '{typed}'"
+        print(f"\U0001F442 MOCK LISTEN (typed): '{typed}'")
+        return Status.SUCCESS
+
 
 class BtNode_PhraseExtractionAction(ActionHandler):
     """
