@@ -64,6 +64,7 @@ class BehaviorTreeConfig:
         }
 
         self.missing_packages = set()
+        self._auto_mocked_unlisted = set()  # nodes auto-mocked because unlisted
 
         # Load mock configuration
         self._load_mock_config()
@@ -332,8 +333,16 @@ class BehaviorTreeConfig:
         
         _, subsystem_config, raw_mode = self._find_node_subsystem_entry(node_class_name)
         if subsystem_config is None:
-            # Explicit listing is required in the new format
-            return False
+            # Under GLOBAL mock, a node nobody listed defaults to MOCKED rather
+            # than real. An unlisted ServiceHandler/ActionHandler would otherwise
+            # block tree.setup() forever waiting for a server that isn't running
+            # ("mock everything" must mean everything). To force a specific node
+            # REAL under global mock, list it NO_MOCK or disable its subsystem.
+            if node_class_name not in self._auto_mocked_unlisted:
+                self._auto_mocked_unlisted.add(node_class_name)
+                print(f"🔄 Mock: '{node_class_name}' not in mock_config — "
+                      f"defaulting to MOCKED (global mock on; list it NO_MOCK to force real)")
+            return True
 
         if not subsystem_config.get("enabled", True):
             # Subsystem disabled means ignore node mode values
@@ -390,7 +399,8 @@ class BehaviorTreeConfig:
 
         _, subsystem_config, raw_mode = self._find_node_subsystem_entry(node_class_name)
         if subsystem_config is None:
-            return "no_mock"
+            # Unlisted under global mock -> auto-complete (see is_node_mocked).
+            return "immediate"
         if not subsystem_config.get("enabled", True):
             return "no_mock"
 
