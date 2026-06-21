@@ -69,6 +69,7 @@ from behavior_tree.messages import (
     GetConfirmationAction,
     ListenAction,
     PhraseExtractionAction,
+    NameDrinkExtractionAction,
 )
 
 from .BaseBehaviors import ServiceHandler
@@ -1161,4 +1162,112 @@ class BtNode_PhraseExtractionAction(ActionHandler):
         phrase = getattr(self.result_message.result, "phrase", "")
         self._bb.phrase = phrase
         self.feedback_message = f"extracted high-confidence phrase: '{phrase}'"
+        return Status.SUCCESS
+
+
+class BtNode_NameDrinkExtractionAction(ActionHandler):
+    """
+    Action-client wrapper for tk_24_audio's `name_drink_extraction_action`
+    (tinker_audio_msgs/action/NameDrinkExtraction).
+
+    The server records a short English utterance, hands the audio to Qwen-Omni,
+    and returns a parsed `{name, drink}` pair — no wordlist required. Server
+    contract (`audio_pakage/name_drink_extraction_ac.py`):
+
+    - status=0 → goal_handle.succeed(); name/drink may be both populated
+      ("Success") or only one ("Partial extraction").
+    - status=1 (recording fail) / 2 (LLM error) / 3 (no name nor drink parsed)
+      → goal_handle.abort().
+
+    So `STATUS_SUCCEEDED` ⇔ at least one of name/drink was recovered. We write
+    both fields to the blackboard (empty string for whichever is missing) and
+    return SUCCESS — let the caller decide whether to re-prompt for the missing
+    field via a confirmation subtree.
+
+    Feedback schema mirrors PhraseExtraction's
+    `{progress, status_message, partial_transcription}` — non-canonical, so we
+    override `feedback_callback` to keep the BT's `delay_limit` watchdog happy.
+    Qwen-Omni round-trip lands on top of `timeout`, so the feedback watchdog
+    margin is generous.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        bb_name_key: str,
+        bb_drink_key: str,
+        timeout: float = 7.0,
+        action_name: str = "name_drink_extraction_action",
+        wait_for_server_timeout_sec: float = -3.0,
+    ):
+        super().__init__(
+            name,
+            NameDrinkExtractionAction,
+            action_name,
+            key=None,
+            wait_for_server_timeout_sec=wait_for_server_timeout_sec,
+        )
+        self.timeout = timeout
+        self._feedback_timeout_secs = max(self.timeout + 15.0, 30.0)
+        self.bb_name_key = bb_name_key
+        self.bb_drink_key = bb_drink_key
+        self._bb = self.attach_blackboard_client(
+            name=f"{self.name}_NameDrinkExtractionAction"
+        )
+        self._bb.register_key(
+            key="name",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_name_key),
+        )
+        self._bb.register_key(
+            key="drink",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_drink_key),
+        )
+
+    def send_goal(self):
+        if self.mock_mode:
+            self._bb.name = "Alice"
+            self._bb.drink = "orange juice"
+            self.feedback_message = "MOCK: name='Alice', drink='orange juice'"
+            print(f"🎤 MOCK NAME/DRINK EXTRACTION: name='Alice', drink='orange juice'")
+            self.send_goal_future = _MockFuture()
+            return
+        goal = NameDrinkExtractionAction.Goal()
+        goal.timeout = float(self.timeout)
+        self.send_goal_request(goal)
+        self.feedback_message = (
+            f"sent NameDrinkExtraction goal (timeout={self.timeout}s)"
+        )
+
+    def feedback_callback(self, msg):
+        feedback = msg.feedback
+        self.last_feedback_time = time.time()
+        self.feedback_timeout = self._feedback_timeout_secs
+        self.action_status = 0
+        progress = getattr(feedback, "progress", 0.0)
+        status_message = getattr(feedback, "status_message", "")
+        partial = getattr(feedback, "partial_transcription", "")
+        self.feedback_message = (
+            f"name/drink progress={progress:.2f} {status_message}"
+            + (f" [partial: '{partial}']" if partial else "")
+        )
+
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            result = getattr(self.result_message, "result", None)
+            status = getattr(result, "status", -1)
+            err = getattr(result, "error_message", "")
+            self.feedback_message = (
+                f"NameDrinkExtraction aborted (action={self.result_status_string}, "
+                f"server status={status}): {err}"
+            )
+            return Status.FAILURE
+        extracted_name = getattr(self.result_message.result, "name", "") or ""
+        extracted_drink = getattr(self.result_message.result, "drink", "") or ""
+        self._bb.name = extracted_name
+        self._bb.drink = extracted_drink
+        self.feedback_message = (
+            f"extracted name='{extracted_name}', drink='{extracted_drink}'"
+        )
         return Status.SUCCESS

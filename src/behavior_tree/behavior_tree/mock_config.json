@@ -90,6 +90,7 @@
           "BtNode_GetConfirmationAction": "KEYPRESS",
           "BtNode_ListenAction": "KEYPRESS",
           "BtNode_PhraseExtractionAction": "KEYPRESS",
+          "BtNode_NameDrinkExtractionAction": "KEYPRESS",
           "BtNode_DoorbellDetection": "KEYPRESS"
         }
       },

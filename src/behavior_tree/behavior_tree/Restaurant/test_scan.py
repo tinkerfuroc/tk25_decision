@@ -140,17 +140,12 @@ def scanAllPositions(target_frame="base_link"):
     )
 
     for pan in [ 
-        -180.0,
-        -120.0,
+        0.0,
         -60.0,
         0.0,
         60.0,
-        120.0
-        -120.0,
-        -180.0,
         0.0,
-        60.0,
-        120.0
+        60.0
         ]:
         pre_gate = py_trees.composites.Selector(
             f"gate and then scan for x {pan}",

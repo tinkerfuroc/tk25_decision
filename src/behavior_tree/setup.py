@@ -69,6 +69,7 @@ setup(
             "test-doorbell = behavior_tree.HRI.test_doorbell:main",
             "test-go-to-approach = behavior_tree.Restaurant.test_go_to_approach:main",
             "restaurant-nav-test = behavior_tree.Restaurant.restaurant_nav_test:main",
+            "test-name-drink = behavior_tree.HRI.test_name_drink_extraction:main",
             "pick-and-place = behavior_tree.PickAndPlace.cli:main",
             "doing-laundry = behavior_tree.DoingLaundry.cli:main",
             "laundry-test = behavior_tree.DoingLaundry.sampling:main",
