@@ -45,7 +45,6 @@ from behavior_tree.StoringGroceries.customNodes import (
 from behavior_tree.PickAndPlace.custom_nodes import BtNode_GetImage
 
 from .custom_nodes import (
-    BtNode_QA,
     BtNode_ScanForWavingPersonNew,
     BtNode_VLMQuery,
     BtNode_LLMQuery,
@@ -86,6 +85,7 @@ class bb_keys:
     PERSON_VISION_PROMPT = "gpsr/person_vision_prompt"  # str (descriptor -> vision prompt)
     ALL_WAVING_PERSONS = "gpsr/all_waving_persons"
     ANNOUNCE_TEXT = "gpsr/announce_text"
+    QA_QUESTION = "gpsr/qa_question"       # str — the question heard for answer_question
     QA_ANSWER = "gpsr/qa_answer"
     COUNT_VALUE = "gpsr/count_value"
     VLM_ANSWER = "gpsr/vlm_answer"
@@ -923,16 +923,37 @@ def create_count():
 
 
 def create_answer_question():
-    """Listen to a question and answer via the question_answer_service."""
+    """Listen to a spoken question and answer it with the text LLM.
+
+    Rebuilt from listen + LLM + announce — no separate ``question_answer_service``
+    node is needed (that server only did listen -> answer -> speak internally,
+    which these BT nodes already provide). Prompt, listen the question into
+    ``QA_QUESTION``, answer it with gpt-4.1 (``BtNode_LLMQuery``, current
+    date/time injected, honest "cannot access that" for live-data questions),
+    then speak the answer. Same building blocks as ``create_llm_fallback``,
+    but the question arrives by voice instead of from the plan.
+    """
     seq = py_trees.composites.Sequence("small/answer_question", memory=True)
     seq.add_child(BtNode_Announce(
         "announce ask", bb_source=None,
         message="Please ask me a question after the beep.",
     ))
-    seq.add_child(BtNode_WaitTicks("beep wait", 6))
-    seq.add_child(BtNode_QA("qa", bb_key_dest=bb_keys.QA_ANSWER, timeout=10.0))
+    seq.add_child(py_trees.decorators.Retry(
+        "retry listen question",
+        BtNode_ListenAction(
+            "listen to question",
+            bb_dest_key=bb_keys.QA_QUESTION,
+            timeout=10.0,
+        ),
+        num_failures=2,
+    ))
+    seq.add_child(BtNode_LLMQuery(
+        "answer question",
+        bb_question_key=bb_keys.QA_QUESTION,
+        bb_answer_dst=bb_keys.QA_ANSWER,
+    ))
     seq.add_child(BtNode_AnnounceFromBB(
-        "announce answer", bb_keys.QA_ANSWER, prefix=""
+        "announce answer", bb_keys.QA_ANSWER, prefix="",
     ))
     return seq
 
