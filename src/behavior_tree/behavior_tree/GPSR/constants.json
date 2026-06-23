@@ -264,6 +264,35 @@
         "oats": "whte cereal box",
         "mayo": "white bottle with black cap",
         "tuna": "blue tuna can"
+    },
+    "default_locations": {
+        "_comment": "Where each object USUALLY is. Used only when a fetch/find command names no location. EDIT each room to your arena layout. Each value must be a key in possible_poses / egpsr_rooms.",
+        "kuat": "kitchen",
+        "fanta": "kitchen",
+        "milk": "kitchen",
+        "orange juice": "kitchen",
+        "coke": "kitchen",
+        "coffee": "kitchen",
+        "ketchup": "kitchen",
+        "oats": "kitchen",
+        "mayo": "kitchen",
+        "tuna": "kitchen",
+        "lime": "shelf",
+        "tangerine": "shelf",
+        "pear": "shelf",
+        "lemon": "shelf",
+        "apple": "shelf",
+        "snack bag": "shelf",
+        "pringles": "shelf",
+        "chocolate": "shelf"
+    },
+    "search_spots": {
+        "_comment": "Per-room sweep order for search_object when the in-room spot is unknown (override case). Each entry is an ORDERED list of pose names; every name must be a key in possible_poses / egpsr_rooms. To make the robot sweep several spots in a room, add poses like living_room_2/living_room_3 to possible_poses and list them here. Max spots per room = MAX_SEARCH_SPOTS (small_trees.py).",
+        "living_room": ["living_room"],
+        "kitchen": ["kitchen"],
+        "office": ["office"],
+        "shelf": ["shelf"],
+        "bedroom": ["bedroom"]
     }
 }
 

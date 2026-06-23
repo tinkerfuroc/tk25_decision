@@ -24,6 +24,7 @@ import math
 import re
 import textwrap
 import threading
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 import py_trees
@@ -43,7 +44,12 @@ from .config import (
     OPENAI_MAX_TOKENS,
 )
 from .planner_validators import validate_plan
-from .small_trees import ACTION_FACTORIES, bb_keys, BtNode_AnnounceFromBB
+from .small_trees import (
+    ACTION_FACTORIES,
+    bb_keys,
+    BtNode_AnnounceFromBB,
+    SEARCH_POSE_KEYS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +61,13 @@ from .small_trees import ACTION_FACTORIES, bb_keys, BtNode_AnnounceFromBB
 
 KNOWN_LOCATIONS: Dict[str, PoseStamped] = {}
 KNOWN_OBJECT_PROMPTS: Dict[str, str] = {}
+# object name -> the location it usually lives at (used when a fetch command
+# names no location). Populated from constants.json "default_locations".
+DEFAULT_OBJECT_LOCATIONS: Dict[str, str] = {}
+# room/location name -> ordered list of pose names to sweep when the in-room
+# spot is unknown (the override case). Populated from constants.json
+# "search_spots"; a location with no entry falls back to [itself].
+ROOM_SEARCH_SPOTS: Dict[str, List[str]] = {}
 
 # Names the planner may use for "where the robot stood when it received the
 # command". Resolved from the blackboard (bb_keys.START_POSE, captured by
@@ -81,6 +94,8 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     """Populate KNOWN_LOCATIONS / KNOWN_OBJECT_PROMPTS from constants.json."""
     KNOWN_LOCATIONS.clear()
     KNOWN_OBJECT_PROMPTS.clear()
+    DEFAULT_OBJECT_LOCATIONS.clear()
+    ROOM_SEARCH_SPOTS.clear()
     with open(constants_path, "r") as fh:
         constants = json.load(fh)
     for key, value in constants.get("possible_poses", {}).items():
@@ -90,6 +105,17 @@ def load_knowledge_from_constants(constants_path: str) -> None:
         KNOWN_LOCATIONS.setdefault(key, _parse_pose_stamped(value))
     for key, value in constants.get("possible_objects", {}).items():
         KNOWN_OBJECT_PROMPTS[key] = value
+    # Object default locations (skip _comment-style keys).
+    for key, value in constants.get("default_locations", {}).items():
+        if str(key).startswith("_"):
+            continue
+        DEFAULT_OBJECT_LOCATIONS[str(key).lower()] = str(value)
+    # Per-room search-spot sweep lists (skip _comment-style keys).
+    for key, value in constants.get("search_spots", {}).items():
+        if str(key).startswith("_"):
+            continue
+        if isinstance(value, list) and value:
+            ROOM_SEARCH_SPOTS[str(key).lower()] = [str(v) for v in value]
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +141,17 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         "fetch a fruit", "tell me how many snacks"), pass the category noun
         through verbatim. Do not substitute a concrete instance — the vision
         module needs the category to enumerate all matches.
+    - search_object(object: str, location?: str)
+        Go to a place and FIND an object there so it can be picked up — the
+        finder for FETCH / BRING / GRASP tasks. It navigates by itself and, if
+        the location has several recorded search spots, sweeps them until the
+        object is seen (then parks there with the object in view for grasp). Use
+        it INSTEAD of a separate goto + find_object whenever the goal is to grasp
+        or bring the object. ``location`` is OPTIONAL: pass it only when the
+        command names where the object is ("a coke from the living room") — that
+        overrides the default; OMIT it otherwise and the robot uses the object's
+        default location. ``object`` may be a known name or a category noun.
+        Follow with grasp(object). Do NOT add a goto before it.
     - find_person(descriptor: str)
         Locate a person matching ``descriptor`` (e.g. "waving person",
         "person in a red shirt", "John") and store their position. Use
@@ -154,7 +191,9 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         yourself" — that is ``goto``.
     - grasp(object: str)
         Pick up an object that is currently in view of the arm/vision system.
-        Always plan find_object + goto first.
+        Always plan ``search_object`` first (which navigates + finds it); only
+        use goto + find_object before grasp if you have a specific reason not to
+        sweep.
     - place(location: str)
         Place the currently-held object at ``location``. The robot navigates
         to ``location`` itself — do not add a separate ``goto`` before it.
@@ -217,8 +256,13 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
     Compose composite commands by emitting multiple atomic actions in order.
     Example: "bring me the coke from the kitchen" =>
         [
-          {"action": "goto", "params": {"location": "kitchen"}},
-          {"action": "find_object", "params": {"object": "coke", "location": "kitchen"}},
+          {"action": "search_object", "params": {"object": "coke", "location": "kitchen"}},
+          {"action": "grasp", "params": {"object": "coke"}},
+          {"action": "deliver", "params": {"object": "coke", "recipient": "me", "recipient_location": "start_position"}}
+        ]
+    Example: "fetch me a coke" (no location given) =>
+        [
+          {"action": "search_object", "params": {"object": "coke"}},
           {"action": "grasp", "params": {"object": "coke"}},
           {"action": "deliver", "params": {"object": "coke", "recipient": "me", "recipient_location": "start_position"}}
         ]
@@ -310,6 +354,22 @@ SYSTEM_PROMPT = textwrap.dedent("""
        announce) when one fits. Only fall back when nothing else does. For "go
        and look at X, then tell ME": ``vlm_fallback`` at X →
        ``goto(location=start_position)`` → text-less ``announce``.
+    15. Objects are NOT bound to a fixed room. When the command names WHERE to
+       fetch / find / count / grasp an object ("a coke FROM THE LIVING ROOM",
+       "the apple ON THE SHELF"), search THAT named location. NEVER refuse, and
+       NEVER return an empty plan, just because the object is one you would
+       normally expect somewhere else — the location named in the command always
+       wins over any default. Only when the command gives NO location may you
+       fall back to the object's usual place (the "Default object locations"
+       list above).
+    16. To FETCH / BRING / PICK UP an object, use ``search_object(object,
+       location?)`` then ``grasp(object)`` (then ``deliver`` if it goes to
+       someone). ``search_object`` navigates and finds by itself — do NOT emit a
+       separate ``goto`` or ``find_object`` for that same object, and do NOT put
+       a ``goto`` before it. Pass ``location`` ONLY when the command names where
+       the object is (override); omit it otherwise (the robot uses the default
+       location). Plain ``goto`` + ``find_object`` / ``count`` are still correct
+       for NON-grasp finds and counts (e.g. "how many cokes are in the kitchen").
 """).strip()
 
 
@@ -352,14 +412,20 @@ def _build_planner_user_prompt(
     command: str,
     state_log: List[str],
     failure_msg: Optional[str] = None,
+    nonce: Optional[str] = None,
 ) -> str:
     from datetime import datetime
     known_loc = ", ".join(sorted(KNOWN_LOCATIONS.keys())) or "(none)"
     known_obj = ", ".join(sorted(KNOWN_OBJECT_PROMPTS.keys())) or "(none)"
+    default_loc = ", ".join(
+        f"{k}={v}" for k, v in sorted(DEFAULT_OBJECT_LOCATIONS.items())
+    ) or "(none)"
     body = (
         f"Current date and time: {datetime.now().strftime('%A, %B %d, %Y, %H:%M')}\n"
         f"Known locations: {known_loc}\n"
-        f"Known objects: {known_obj}\n\n"
+        f"Known objects: {known_obj}\n"
+        f"Default object locations (where each object usually is, used only when "
+        f"a fetch/find command names NO location): {default_loc}\n\n"
         f"{ACTION_CATALOGUE_DESCRIPTION}\n\n"
         f"Command:\n{command}\n\n"
         f"Completed steps so far:\n{json.dumps(state_log, indent=2)}\n"
@@ -369,6 +435,12 @@ def _build_planner_user_prompt(
             f"\nThe previous attempt failed with: {failure_msg}\n"
             "Re-plan from the current state. Do not repeat completed steps.\n"
         )
+    if nonce:
+        # A fresh nonce every call makes each planning request byte-unique, so
+        # re-issuing an identical command (or re-planning) cannot return a
+        # cached / deterministic copy of a previous refusal — the model
+        # re-evaluates from scratch. The token itself carries no meaning.
+        body += f"\n(Planning request id: {nonce} — ignore, ensures a fresh plan.)"
     body += "\nReturn the JSON plan now."
     return body
 
@@ -419,7 +491,17 @@ class BtNode_PlanActions(Behaviour):
         if not self._rephrase_on_failure:
             failure_msg = None
 
-        user_prompt = _build_planner_user_prompt(command, state_log, failure_msg)
+        # Fresh nonce per call → re-issuing the same command (or re-planning the
+        # same failure) can't hit a cached/deterministic copy of a prior reply.
+        nonce = uuid.uuid4().hex[:8]
+        user_prompt = _build_planner_user_prompt(
+            command, state_log, failure_msg, nonce=nonce,
+        )
+        # On a re-plan after failure, warm the sampler up so the model explores a
+        # genuinely different plan instead of resampling the same dead end.
+        temperature = OPENAI_TEMPERATURE
+        if failure_msg:
+            temperature = min(0.9, OPENAI_TEMPERATURE + 0.5)
 
         def _call():
             try:
@@ -429,7 +511,7 @@ class BtNode_PlanActions(Behaviour):
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=OPENAI_TEMPERATURE,
+                    temperature=temperature,
                     # Reasoning models (DeepSeek) spend thousands of tokens
                     # thinking BEFORE the JSON; too small a cap truncates the
                     # plan (finish_reason=length). 8192 leaves headroom for
@@ -580,6 +662,8 @@ class BtNode_PopNextAction(Behaviour):
         self._bb.register_key(bb_keys.START_POSE, access=Access.READ)
         self._bb.register_key(bb_keys.DYNAMIC_LOCATIONS, access=Access.READ)
         self._bb.register_key(bb_keys.CURRENT_DYNLABEL, access=Access.WRITE)
+        for search_pose_key in SEARCH_POSE_KEYS:
+            self._bb.register_key(search_pose_key, access=Access.WRITE)
 
     def update(self):
         try:
@@ -604,31 +688,59 @@ class BtNode_PopNextAction(Behaviour):
         self.feedback_message = f"step {index+1}/{len(plan)}: {action}({params})"
         return Status.SUCCESS
 
+    def _resolve_pose(self, name: Any) -> Optional[PoseStamped]:
+        """Resolve a location name to a PoseStamped, or None if unknown.
+
+        Resolution order: start-position aliases (pose captured at command
+        start) → known map locations (exact then case-insensitive) →
+        runtime-recorded dynamic-location registry (labels fixed by an earlier
+        record_position step).
+        """
+        if not name:
+            return None
+        key = str(name).lower()
+        if key in START_LOCATION_ALIASES:
+            try:
+                return self._bb.get(bb_keys.START_POSE)
+            except KeyError:
+                return None
+        if name in KNOWN_LOCATIONS:
+            return KNOWN_LOCATIONS.get(name)
+        for known_name, pose in KNOWN_LOCATIONS.items():
+            if known_name.lower() == key:
+                return pose
+        try:
+            registry = self._bb.get(bb_keys.DYNAMIC_LOCATIONS) or {}
+        except KeyError:
+            registry = {}
+        return registry.get(key)
+
     def _materialise_params(self, action: str, params: Dict[str, Any]) -> None:
         """Translate the LLM's params into the BB keys the small trees consume."""
-        # Location → PoseStamped lookup. Resolution order: start-position
-        # aliases (pose captured at command start) → known map locations →
-        # runtime-recorded dynamic-location registry (labels fixed by an
-        # earlier record_position step).
+        # Location → PoseStamped lookup (see _resolve_pose for the order).
         loc_name = params.get("location") or params.get("recipient_location")
         if loc_name:
             self._bb.set(bb_keys.TARGET_LOCATION, loc_name, overwrite=True)
-            key = str(loc_name).lower()
-            if key in START_LOCATION_ALIASES:
-                try:
-                    pose = self._bb.get(bb_keys.START_POSE)
-                except KeyError:
-                    pose = None
-            elif loc_name in KNOWN_LOCATIONS:
-                pose = KNOWN_LOCATIONS.get(loc_name)
-            else:
-                try:
-                    registry = self._bb.get(bb_keys.DYNAMIC_LOCATIONS) or {}
-                except KeyError:
-                    registry = {}
-                pose = registry.get(key)
+            pose = self._resolve_pose(loc_name)
             if pose is not None:
                 self._bb.set(bb_keys.TARGET_POSE, pose, overwrite=True)
+
+        # search_object: resolve the room's sweep spots into SEARCH_POSE_0..N.
+        # location is optional — when omitted, fall back to the object's default
+        # location (DEFAULT_OBJECT_LOCATIONS). A location with no explicit
+        # search-spot list sweeps just itself. Unused slots are cleared to None
+        # so the sweep guards them out.
+        if action == "search_object":
+            loc = params.get("location")
+            obj = params.get("object")
+            if not loc and obj:
+                loc = DEFAULT_OBJECT_LOCATIONS.get(str(obj).lower())
+            if loc:
+                self._bb.set(bb_keys.TARGET_LOCATION, loc, overwrite=True)
+            spot_names = ROOM_SEARCH_SPOTS.get(str(loc).lower(), [loc]) if loc else []
+            for i, search_key in enumerate(SEARCH_POSE_KEYS):
+                pose = self._resolve_pose(spot_names[i]) if i < len(spot_names) else None
+                self._bb.set(search_key, pose, overwrite=True)
 
         # record_position: stash the label so the small tree registers the
         # captured pose under it.
@@ -836,6 +948,11 @@ def describe_step(action: str, params: Optional[Dict[str, Any]]) -> str:
     table = {
         "goto": f"go to the {loc}" if loc else "move to the next location",
         "find_object": f"look for the {obj}" if obj else "look for the object",
+        "search_object": (
+            f"go to the {loc} and look for the {obj}" if loc and obj
+            else f"go and look for the {obj}" if obj
+            else "go and look for the object"
+        ),
         "find_person": f"find the {person}" if person else "find the person",
         "approach_person": "walk up to the person",
         "describe_person": "describe what the person looks like",

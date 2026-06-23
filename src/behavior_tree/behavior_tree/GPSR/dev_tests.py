@@ -48,6 +48,10 @@ def _build_runner(action_name: str, fill_bb: Callable[[py_trees.composites.Seque
     """Build a runnable tree: write defaults to BB, then tick the small tree."""
     load_knowledge_from_constants(CONSTANTS_PATH)
     seq = py_trees.composites.Sequence(f"test:{action_name}", memory=True)
+    # Seed arm navigating/scan poses so standalone nav/grasp small trees can tuck
+    # the arm (they read ARM_NAVIGATING/ARM_SCAN, normally seeded by the
+    # orchestrator entry point). Harmless if a fill_bb re-writes them.
+    _arm_constants_to_bb(seq)
     fill_bb(seq)
     seq.add_child(ACTION_FACTORIES[action_name]())
     seq.add_child(py_trees.behaviours.Running("idle"))

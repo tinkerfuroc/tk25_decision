@@ -114,6 +114,15 @@ ARM_ACTION_NAME = "joint_move_action"
 GRASP_SERVICE_NAME = "start_grasp"
 WAVING_THRESHOLD_METERS = 6.0
 
+# Fixed capacity for the room sweep (create_search_object). The dispatcher
+# builds every small tree once, before any command, so the sweep cannot size
+# itself to the runtime location's spot list — it is built with this many
+# branches and the orchestrator fills only as many SEARCH_POSE_<i> keys as the
+# location actually has (the rest stay unset and are guarded out). Bump this if
+# a room ever needs more than this many recorded search spots.
+MAX_SEARCH_SPOTS = 6
+SEARCH_POSE_KEYS = [f"gpsr/search_pose_{i}" for i in range(MAX_SEARCH_SPOTS)]
+
 
 # ---------------------------------------------------------------------------
 # Tiny utility behaviours used inside the small trees
@@ -357,6 +366,36 @@ class BtNode_CheckBBContains(Behaviour):
         return Status.FAILURE
 
 
+class BtNode_CheckBBKeySet(Behaviour):
+    """SUCCESS iff ``key`` exists on the blackboard and is not None.
+
+    Guards each branch of the room sweep (create_search_object): a SEARCH_POSE
+    slot the orchestrator did not fill (the location has fewer spots than the
+    sweep's capacity) reads back as unset/None, so the branch fails fast and the
+    Selector moves on instead of navigating to a stale/empty goal.
+    """
+
+    def __init__(self, name: str, key: str):
+        super().__init__(name)
+        self._key = key
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._key, access=Access.READ)
+
+    def update(self):
+        try:
+            value = self._client.get(self._key)
+        except Exception:
+            self.feedback_message = f"{self._key} not set"
+            return Status.FAILURE
+        if value is None:
+            self.feedback_message = f"{self._key} is None"
+            return Status.FAILURE
+        return Status.SUCCESS
+
+
 class BtNode_BuildPersonPrompt(Behaviour):
     """Turn the planner's person descriptor into a usable vision prompt.
 
@@ -496,12 +535,36 @@ class BtNode_CountDetections(Behaviour):
 # Small-tree factories
 # ---------------------------------------------------------------------------
 
+def _tuck_arm_for_nav(label: str = "tuck arm for nav"):
+    """Move the arm to the ``base_moving`` (navigating) pose before driving.
+
+    The arm must be folded back to ``arm_pos_navigating`` so it does not block
+    the lidar / occupy the robot's footprint during base motion. Every small
+    tree that issues a base move (goto / follow / guide / approach / deliver /
+    place) tucks first. The pose is read from ``bb_keys.ARM_NAVIGATING``, seeded
+    once at startup by the orchestrator entry point (``_arm_constants_to_bb``).
+    Retry-wrapped and propagates failure: if the arm cannot tuck, we do NOT
+    drive with the arm sticking out — the orchestrator self-correction handles it.
+    """
+    return py_trees.decorators.Retry(
+        f"retry {label}",
+        BtNode_MoveArmSingle(
+            label,
+            action_name=ARM_ACTION_NAME,
+            arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
+            add_octomap=False,
+        ),
+        num_failures=3,
+    )
+
+
 def create_goto():
     """Navigate to ``bb_keys.TARGET_POSE`` (filled by orchestrator)."""
     seq = py_trees.composites.Sequence("small/goto", memory=True)
     seq.add_child(BtNode_AnnounceFromBB(
         "announce going", bb_keys.TARGET_LOCATION, prefix="Going to "
     ))
+    seq.add_child(_tuck_arm_for_nav("tuck arm before goto"))
     seq.add_child(py_trees.decorators.Retry(
         "retry goto",
         BtNode_GotoAction("goto target", key=bb_keys.TARGET_POSE),
@@ -542,6 +605,37 @@ def create_find_object():
     return seq
 
 
+def create_search_object():
+    """Sweep a room's search spots until the target object is located.
+
+    The finder for FETCH / GRASP tasks. For "fetch a coke from the living room"
+    where the exact in-room spot is unknown, visit each pose in the location's
+    search-spot list (materialised by the orchestrator into SEARCH_POSE_0..N),
+    tucking the arm and driving to each, then scanning; stop at the FIRST spot
+    where the object is seen (the robot is then parked there with the object in
+    view for grasp). SUCCESS = found; FAILURE = swept every spot, none found.
+
+    Built at fixed capacity (MAX_SEARCH_SPOTS) because the dispatcher constructs
+    each small tree once. The orchestrator fills only the SEARCH_POSE_i keys the
+    location has; unfilled slots are guarded out by BtNode_CheckBBKeySet so they
+    neither navigate nor count as "found". A memory Selector returns SUCCESS on
+    the first branch that succeeds, FAILURE only if all branches fail.
+    """
+    sweep = py_trees.composites.Selector("small/search_object", memory=True)
+    for i, pose_key in enumerate(SEARCH_POSE_KEYS):
+        branch = py_trees.composites.Sequence(f"search spot {i}", memory=True)
+        branch.add_child(BtNode_CheckBBKeySet(f"spot {i} set?", pose_key))
+        branch.add_child(_tuck_arm_for_nav(f"tuck arm before spot {i}"))
+        branch.add_child(py_trees.decorators.Retry(
+            f"retry goto spot {i}",
+            BtNode_GotoAction(f"goto spot {i}", key=pose_key),
+            num_failures=3,
+        ))
+        branch.add_child(create_find_object())
+        sweep.add_child(branch)
+    return sweep
+
+
 def create_approach_person():
     """Navigate to the person pose stored by the most recent ``find_person``.
 
@@ -557,6 +651,7 @@ def create_approach_person():
         bb_point_key=bb_keys.TARGET_PERSON_POSE,
         bb_pose_key=bb_keys.PERSON_NAV_POSE,
     ))
+    seq.add_child(_tuck_arm_for_nav("tuck arm before approach"))
     seq.add_child(py_trees.decorators.Retry(
         "retry approach",
         BtNode_GotoAction("goto person", key=bb_keys.PERSON_NAV_POSE),
@@ -712,6 +807,7 @@ def create_follow():
         "announce follow", bb_source=None,
         message="I will follow you. Please walk slowly.",
     ))
+    seq.add_child(_tuck_arm_for_nav("tuck arm before follow"))
     seq.add_child(BtNode_TrackPersonAction(
         name="track person",
         target_frame="map",
@@ -726,6 +822,7 @@ def create_guide():
         "announce guide", bb_source=None,
         message="Please follow me. I will guide you to your destination.",
     ))
+    seq.add_child(_tuck_arm_for_nav("tuck arm before guide"))
     seq.add_child(py_trees.decorators.Retry(
         "retry guide goto",
         BtNode_GotoAction("guide to target", key=bb_keys.TARGET_POSE),
@@ -843,6 +940,7 @@ def create_place():
     seq.add_child(BtNode_AnnounceFromBB(
         "announce placing", bb_keys.TARGET_LOCATION, prefix="Placing the item at "
     ))
+    seq.add_child(_tuck_arm_for_nav("tuck arm before place goto"))
     seq.add_child(py_trees.decorators.Retry(
         "retry place goto",
         BtNode_GotoAction("goto place pose", key=bb_keys.TARGET_POSE),
@@ -870,6 +968,7 @@ def create_deliver():
     seq.add_child(BtNode_AnnounceFromBB(
         "announce delivering", bb_keys.TARGET_OBJECT_NAME, prefix="Delivering the "
     ))
+    seq.add_child(_tuck_arm_for_nav("tuck arm before deliver goto"))
     seq.add_child(py_trees.decorators.Retry(
         "retry deliver goto",
         BtNode_GotoAction("goto recipient room", key=bb_keys.TARGET_POSE),
@@ -1085,6 +1184,7 @@ def create_llm_fallback():
 ACTION_FACTORIES = {
     "goto": create_goto,
     "find_object": create_find_object,
+    "search_object": create_search_object,
     "find_person": create_find_person,
     "approach_person": create_approach_person,
     "describe_person": create_describe_person,
