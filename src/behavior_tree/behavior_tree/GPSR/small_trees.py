@@ -1057,6 +1057,38 @@ def create_report_view():
     return seq
 
 
+def create_report_count():
+    """Speak the most recent count back to the operator.
+
+    For "tell me how many X are in/on the Y": the robot counts at Y (``count``
+    stores the number in ``bb_keys.COUNT_VALUE``), returns to the operator
+    (``goto start_position``), and this reports the stored number TO THEM —
+    instead of only announcing it on the spot where nobody asked. The count's
+    own on-spot line stays as a local "done" cue; this is the report home.
+    """
+    seq = py_trees.composites.Sequence("small/report_count", memory=True)
+    seq.add_child(BtNode_AnnounceFromBB(
+        "report count", bb_keys.COUNT_VALUE, prefix="I counted ",
+    ))
+    return seq
+
+
+def create_report_description():
+    """Speak the most recent person description back to the operator.
+
+    For "describe the person in the Y and tell me": ``describe_person`` stores
+    the description in ``bb_keys.DESCRIBE_FEATURES`` next to the person, the
+    robot returns to the operator (``goto start_position``), and this reports it
+    TO THEM. The visual twin of report_answer/report_view for descriptions.
+    """
+    seq = py_trees.composites.Sequence("small/report_description", memory=True)
+    seq.add_child(BtNode_AnnounceFromBB(
+        "report description", bb_keys.DESCRIBE_FEATURES,
+        prefix="Here is what the person looks like. ",
+    ))
+    return seq
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -1081,4 +1113,6 @@ ACTION_FACTORIES = {
     "vlm_fallback": create_vlm_fallback,
     "llm_fallback": create_llm_fallback,
     "report_view": create_report_view,
+    "report_count": create_report_count,
+    "report_description": create_report_description,
 }

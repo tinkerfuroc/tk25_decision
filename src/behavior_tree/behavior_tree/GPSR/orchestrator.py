@@ -168,10 +168,13 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         do not add a separate ``goto`` to ``recipient_location`` before it.
         For "deliver/bring it to me", set ``recipient_location=start_position``.
     - count(object: str)
-        Count visible instances of ``object`` and announce the number.
-        count() performs its own visual scan — NEVER emit find_object for
+        Count visible instances of ``object`` and announce the number on the
+        spot. count() performs its own visual scan — NEVER emit find_object for
         the same object before count. If the command names a location, emit
-        goto first, then count directly.
+        goto first, then count directly. If the command says to tell ME the
+        number ("tell me how many ... in the kitchen"), the count happens away
+        from the operator, so follow it with ``goto(location=start_position)``
+        then ``report_count`` so the operator actually hears the result.
     - answer_question()
         Listen to a question and answer it.
     - announce(text: str)
@@ -203,6 +206,17 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         the operator. The visual twin of ``report_answer``: use for "go and
         look at X, then tell ME" — ``vlm_fallback`` at the place, then
         ``goto(location=start_position)``, then ``report_view``.
+    - report_count()
+        Speak the number from the most recent ``count`` back to the operator.
+        Use for "tell me how many X are in/on the Y": ``goto(Y)``, ``count(X)``,
+        ``goto(location=start_position)``, then ``report_count``. Requires a
+        prior ``count``.
+    - report_description()
+        Speak the description from the most recent ``describe_person`` back to
+        the operator. Use for "describe the person in the Y and tell me":
+        find/approach + ``describe_person`` at the person, then
+        ``goto(location=start_position)``, then ``report_description``. Requires
+        a prior ``describe_person``.
     - llm_fallback(question: str)
         LAST-RESORT general-knowledge fallback: answer a NON-visual question
         with a language model. Use ONLY for questions not about the robot's
@@ -273,10 +287,16 @@ SYSTEM_PROMPT = textwrap.dedent("""
        same place immediately before them — it would drive there twice. This
        applies to every recipient, not just ME.
     11. If the command reports a result to ME ("tell me ...", "show me ...")
-       and the robot had to leave to do the task, the final ``announce`` MUST
-       be immediately preceded by ``goto(location=start_position)`` so the
-       robot reports back at the operator. (For "bring/give me", use
-       ``deliver`` with ``recipient_location=start_position`` instead.)
+       and the robot had to leave to do the task, the result MUST be reported
+       back AT the operator: emit ``goto(location=start_position)`` and then the
+       reporting step. Use the matching report action for what was gathered —
+       ``report_count`` after ``count``, ``report_description`` after
+       ``describe_person``, ``report_view`` after ``vlm_fallback``,
+       ``report_answer`` after ``ask_person`` — NOT a templated ``announce``
+       (you cannot know the result at plan time). A perception action's own
+       on-spot line does NOT satisfy "tell ME"; the report at start_position
+       does. (For "bring/give me", use ``deliver`` with
+       ``recipient_location=start_position`` instead.)
     12. For a place not in the known list but named at runtime ("here",
        "this spot", "where I am / where this person is"), emit
        ``record_position(label=<name>)`` to fix it, and only ``goto`` that
@@ -847,6 +867,8 @@ def describe_step(action: str, params: Optional[Dict[str, Any]]) -> str:
             else "answer a general question"
         ),
         "report_view": "tell you what I saw",
+        "report_count": "come back and tell you the number",
+        "report_description": "come back and tell you what the person looks like",
     }
     return table.get(action, str(action).replace("_", " "))
 
@@ -1013,6 +1035,7 @@ def create_execute_command(
     max_steps: int = 25,
     max_corrections: int = 3,
     emit_plan_dir: Optional[str] = None,
+    announce_plan: bool = True,
 ) -> py_trees.behaviour.Behaviour:
     """Plan once, then run the step loop until the plan is exhausted.
 
@@ -1024,6 +1047,9 @@ def create_execute_command(
 
     If ``emit_plan_dir`` is given, a standalone re-runnable ``.py`` of the
     planned tree is written there right after planning (check-after-run).
+
+    If ``announce_plan`` (default), the robot speaks the full planned step
+    sequence aloud right after planning, before executing it.
     """
     plan = BtNode_PlanActions(name="plan initial")
 
@@ -1041,6 +1067,10 @@ def create_execute_command(
     root.add_child(plan)
     if emit_plan_dir is not None:
         root.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
+    if announce_plan:
+        # Speak the full plan ("Here is my plan. First... Then... Finally...")
+        # right after planning so the operator hears it before execution starts.
+        root.add_child(create_announce_plan())
     root.add_child(loop_done_ok)
     return root
 

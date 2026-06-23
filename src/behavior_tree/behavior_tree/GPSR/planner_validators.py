@@ -130,6 +130,8 @@ def validate_plan(
     saw_find_person = False
     saw_ask_person = False
     saw_vlm_fallback = False
+    saw_count = False
+    saw_describe_person = False
     saw_goto_destinations: set = set()
     recorded_labels: set = set()  # labels fixed by an earlier record_position
 
@@ -149,6 +151,24 @@ def validate_plan(
             saw_ask_person = True
         if action == "vlm_fallback":
             saw_vlm_fallback = True
+        if action == "count":
+            saw_count = True
+        if action == "describe_person":
+            saw_describe_person = True
+        # Rule: report_count / report_description need a prior count /
+        # describe_person — nothing was gathered to report otherwise.
+        if action == "report_count" and not saw_count:
+            return False, (
+                f"step {i}: report_count() without a prior count() — there is no "
+                "number to report. To tell the operator how many, count(object=...) "
+                "first, then return to start_position, then report_count()."
+            )
+        if action == "report_description" and not saw_describe_person:
+            return False, (
+                f"step {i}: report_description() without a prior describe_person() "
+                "— there is no description to report. describe_person first, then "
+                "return to start_position, then report_description()."
+            )
         # Rule: report_answer needs a prior ask_person — there is no captured
         # answer to report otherwise (and "tell me X" likely meant ask_person).
         if action == "report_answer" and not saw_ask_person:
