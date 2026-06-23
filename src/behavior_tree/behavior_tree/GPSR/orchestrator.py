@@ -138,12 +138,9 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         person's name, age, favourite drink, where they live. ``question`` is
         the literal sentence to speak ("What is your name?"). Plan
         ``find_person`` then ``approach_person`` FIRST so the robot is next to
-        them. The answer is remembered for a later ``report_answer``.
-    - report_answer()
-        Speak the answer captured by the most recent ``ask_person`` back to the
-        person in front of the robot. Use for "ask the person X and tell ME X":
-        emit ``ask_person`` at the person, then ``goto(location=start_position)``
-        to return to the operator, then ``report_answer``.
+        them. The answer is buffered, so for "ask the person X and tell ME X"
+        follow with ``goto(location=start_position)`` then a text-less
+        ``announce`` to report it back at the operator (see ``announce``).
     - follow(person?: str)
         Continuously follow a person. ``person`` is optional and informational.
         Plan ``find_person`` then ``approach_person`` before it so the robot
@@ -174,13 +171,23 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         goto first, then count directly. If the command says to tell ME the
         number ("tell me how many ... in the kitchen"), the count happens away
         from the operator, so follow it with ``goto(location=start_position)``
-        then ``report_count`` so the operator actually hears the result.
+        then a text-less ``announce`` so the operator actually hears the result
+        (see ``announce``).
     - answer_question()
         Listen to a question and answer it.
-    - announce(text: str)
-        Speak the literal ``text``. Use for "tell me the time/day", team
-        info, reporting results, explaining a refusal — any spoken output.
-        ``text`` must be the final resolved phrase.
+    - announce(text?: str)
+        Speak. TWO modes:
+        (a) ``announce(text=...)`` speaks the literal ``text`` — use for fixed
+            output you know at plan time: team info, explaining a refusal, etc.
+            ``text`` must be the final resolved phrase.
+        (b) ``announce()`` with NO text speaks the LAST RESULT the robot
+            gathered — the number from ``count``, the description from
+            ``describe_person``, the answer from ``ask_person``, the observation
+            from ``vlm_fallback`` (whichever ran most recently). This is the
+            generalized "go gather X, come back and tell ME X" reporter: do the
+            perception action, then ``goto(location=start_position)``, then
+            ``announce()`` with no text. NEVER hand-write the result into a
+            templated ``announce(text=...)`` — you cannot know it at plan time.
     - record_position(label: str)
         Capture the robot's CURRENT pose and remember it under ``label`` for
         the rest of this task, so a later ``goto(location=<label>)`` can return
@@ -195,28 +202,11 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         when a clause needs the robot to LOOK at something and NO specific
         action above covers it — e.g. "what colour is the X", "is the door
         open", "what is on the table", "what is the person holding". Navigate
-        (goto) to the right place first. Never follow it with a templated
-        ``announce`` (it speaks the answer itself, and you cannot know the
-        answer at plan time). If the command says to tell ME and the robot had
-        to go elsewhere to look, follow it with ``goto(location=start_position)``
-        then ``report_view`` (see below). Prefer the specific actions (count,
-        describe_person, find_object) whenever they fit.
-    - report_view()
-        Speak the answer captured by the most recent ``vlm_fallback`` back to
-        the operator. The visual twin of ``report_answer``: use for "go and
-        look at X, then tell ME" — ``vlm_fallback`` at the place, then
-        ``goto(location=start_position)``, then ``report_view``.
-    - report_count()
-        Speak the number from the most recent ``count`` back to the operator.
-        Use for "tell me how many X are in/on the Y": ``goto(Y)``, ``count(X)``,
-        ``goto(location=start_position)``, then ``report_count``. Requires a
-        prior ``count``.
-    - report_description()
-        Speak the description from the most recent ``describe_person`` back to
-        the operator. Use for "describe the person in the Y and tell me":
-        find/approach + ``describe_person`` at the person, then
-        ``goto(location=start_position)``, then ``report_description``. Requires
-        a prior ``describe_person``.
+        (goto) to the right place first. If the command says to tell ME and the
+        robot had to go elsewhere to look, follow it with
+        ``goto(location=start_position)`` then a text-less ``announce`` to report
+        the observation back at the operator (see ``announce``). Prefer the
+        specific actions (count, describe_person, find_object) whenever they fit.
     - llm_fallback(question: str)
         LAST-RESORT general-knowledge fallback: answer a NON-visual question
         with a language model. Use ONLY for questions not about the robot's
@@ -288,14 +278,14 @@ SYSTEM_PROMPT = textwrap.dedent("""
        applies to every recipient, not just ME.
     11. If the command reports a result to ME ("tell me ...", "show me ...")
        and the robot had to leave to do the task, the result MUST be reported
-       back AT the operator: emit ``goto(location=start_position)`` and then the
-       reporting step. Use the matching report action for what was gathered —
-       ``report_count`` after ``count``, ``report_description`` after
-       ``describe_person``, ``report_view`` after ``vlm_fallback``,
-       ``report_answer`` after ``ask_person`` — NOT a templated ``announce``
-       (you cannot know the result at plan time). A perception action's own
-       on-spot line does NOT satisfy "tell ME"; the report at start_position
-       does. (For "bring/give me", use ``deliver`` with
+       back AT the operator: do the gathering action (count / describe_person /
+       ask_person / vlm_fallback — it buffers its result), then
+       ``goto(location=start_position)``, then a text-less ``announce`` (no
+       ``text`` param) which speaks that buffered result. Do NOT hand-write the
+       result into a templated ``announce(text=...)`` (you cannot know it at
+       plan time), and a perception action's own on-spot line does NOT satisfy
+       "tell ME" — the text-less ``announce`` at start_position does. (For
+       "bring/give me", use ``deliver`` with
        ``recipient_location=start_position`` instead.)
     12. For a place not in the known list but named at runtime ("here",
        "this spot", "where I am / where this person is"), emit
@@ -311,7 +301,7 @@ SYSTEM_PROMPT = textwrap.dedent("""
          use ``describe_person`` for these, and NEVER a bare ``announce`` (it
          speaks but never listens).
        For "ask the person X and tell ME X" (X askable): ``ask_person`` →
-       ``goto(location=start_position)`` → ``report_answer``.
+       ``goto(location=start_position)`` → text-less ``announce``.
     14. Do not refuse a clause just because no exact action fits. If it needs
        LOOKING at the scene, use ``vlm_fallback(question=...)``; if it is a
        general non-visual question (date/day/time, a fact), use
@@ -319,7 +309,7 @@ SYSTEM_PROMPT = textwrap.dedent("""
        specific action (count, describe_person, find_object, ask_person,
        announce) when one fits. Only fall back when nothing else does. For "go
        and look at X, then tell ME": ``vlm_fallback`` at X →
-       ``goto(location=start_position)`` → ``report_view``.
+       ``goto(location=start_position)`` → text-less ``announce``.
 """).strip()
 
 
@@ -583,6 +573,7 @@ class BtNode_PopNextAction(Behaviour):
         self._bb.register_key(bb_keys.TARGET_OBJECT_PROMPT, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_PERSON_PROMPT, access=Access.WRITE)
         self._bb.register_key(bb_keys.ANNOUNCE_TEXT, access=Access.WRITE)
+        self._bb.register_key(bb_keys.REPORT_INFO, access=Access.READ)
         self._bb.register_key(bb_keys.ASK_QUESTION, access=Access.WRITE)
         self._bb.register_key(bb_keys.VLM_QUESTION, access=Access.WRITE)
         self._bb.register_key(bb_keys.LLM_QUESTION, access=Access.WRITE)
@@ -660,9 +651,18 @@ class BtNode_PopNextAction(Behaviour):
         if person:
             self._bb.set(bb_keys.TARGET_PERSON_PROMPT, person, overwrite=True)
 
-        # announce carries text directly
+        # announce: a literal ``text`` is spoken as-is; an announce with NO text
+        # reports the latest gathered result buffered in REPORT_INFO by the most
+        # recent count / describe_person / ask_person / vlm_fallback. This is the
+        # generalized "go gather X then come back and tell ME X" reporter that
+        # replaced the per-result report_* actions.
         if action == "announce":
             text = params.get("text") or params.get("message") or ""
+            if not text:
+                try:
+                    text = str(self._bb.get(bb_keys.REPORT_INFO) or "")
+                except KeyError:
+                    text = ""
             self._bb.set(bb_keys.ANNOUNCE_TEXT, text, overwrite=True)
 
         # ask_person carries the literal question to speak
@@ -843,7 +843,6 @@ def describe_step(action: str, params: Optional[Dict[str, Any]]) -> str:
             f"ask the person, {p.get('question')}" if p.get("question")
             else "ask the person a question"
         ),
-        "report_answer": "tell you what the person answered",
         "follow": f"follow {person}" if person else "follow the person",
         "guide": f"guide them to the {loc}" if loc else "guide them to the destination",
         "grasp": f"pick up the {obj}" if obj else "pick up the object",
@@ -854,7 +853,7 @@ def describe_step(action: str, params: Optional[Dict[str, Any]]) -> str:
         ),
         "count": f"count the {obj}" if obj else "count the objects",
         "answer_question": "answer a question",
-        "announce": f"say, {text}" if text else "make an announcement",
+        "announce": f"say, {text}" if text else "tell you what I found",
         "record_position": (
             f"remember this spot as {label}" if label else "remember this spot"
         ),
@@ -866,9 +865,6 @@ def describe_step(action: str, params: Optional[Dict[str, Any]]) -> str:
             f"answer the question, {p.get('question')}" if p.get("question")
             else "answer a general question"
         ),
-        "report_view": "tell you what I saw",
-        "report_count": "come back and tell you the number",
-        "report_description": "come back and tell you what the person looks like",
     }
     return table.get(action, str(action).replace("_", " "))
 

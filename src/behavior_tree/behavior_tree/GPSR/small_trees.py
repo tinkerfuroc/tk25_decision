@@ -97,6 +97,9 @@ class bb_keys:
     VLM_IMAGE = "gpsr/vlm_image"           # sensor_msgs/Image grabbed for the VLM fallback
     LLM_QUESTION = "gpsr/llm_question"     # str — question for the generic LLM fallback
     LLM_ANSWER = "gpsr/llm_answer"         # str — text LLM fallback answer
+    REPORT_INFO = "gpsr/report_info"       # str — latest gathered result to report
+                                           #       (count/describe/ask/vlm write it;
+                                           #       a later text-less announce speaks it)
 
     # Manipulation working keys (re-using the conventions from gpsr_new.py)
     TABLE_IMG = "gpsr/table_img"
@@ -107,7 +110,7 @@ class bb_keys:
     ARM_SCAN = "gpsr/arm_scan"
 
 
-ARM_SERVICE_NAME = "arm_joint_service"
+ARM_ACTION_NAME = "joint_move_action"
 GRASP_SERVICE_NAME = "start_grasp"
 WAVING_THRESHOLD_METERS = 6.0
 
@@ -173,6 +176,38 @@ class BtNode_AnnounceFromBB(Behaviour):
 
     def terminate(self, new_status):
         self._inner.terminate(new_status)
+
+
+class BtNode_SetReportInfo(Behaviour):
+    """Persist a gathered result into the shared ``REPORT_INFO`` buffer.
+
+    The generalized "remember what to tell the operator" step: a perception
+    action (count / describe_person / ask_person / vlm_fallback) writes its
+    human-readable result here, and a later text-less ``announce`` speaks it
+    back at the operator. Replaces the per-result report_* small trees — those
+    were just announces of a stored value, which is exactly this buffer.
+    """
+
+    def __init__(self, name: str, bb_source: str, prefix: str = ""):
+        super().__init__(name)
+        self._src = bb_source
+        self._prefix = prefix
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._src, access=Access.READ)
+        self._client.register_key(bb_keys.REPORT_INFO, access=Access.WRITE)
+
+    def update(self):
+        try:
+            value = self._client.get(self._src)
+        except Exception:
+            value = None
+        text = f"{self._prefix}{value}" if value is not None else self._prefix
+        self._client.set(bb_keys.REPORT_INFO, text.strip(), overwrite=True)
+        self.feedback_message = f"buffered: {text[:60]}"
+        return Status.SUCCESS
 
 
 class BtNode_ExtractDetection(Behaviour):
@@ -619,6 +654,10 @@ def create_describe_person():
         "announce description", bb_keys.DESCRIBE_FEATURES,
         prefix="Here is what I can tell about the person. ",
     ))
+    seq.add_child(BtNode_SetReportInfo(
+        "buffer description", bb_keys.DESCRIBE_FEATURES,
+        prefix="Here is what the person looks like. ",
+    ))
     return seq
 
 
@@ -654,20 +693,8 @@ def create_ask_person():
     seq.add_child(BtNode_AnnounceFromBB(
         "repeat answer", bb_keys.PERSON_ANSWER, prefix="Thank you. I heard ",
     ))
-    return seq
-
-
-def create_report_answer():
-    """Speak the most recent ask_person answer back to the listener in front.
-
-    Used for "ask the person X and tell me X": after ``ask_person`` captures
-    the answer, the robot returns to the operator (``goto start_position``) and
-    this reports the stored ``bb_keys.PERSON_ANSWER``.
-    """
-    seq = py_trees.composites.Sequence("small/report_answer", memory=True)
-    seq.add_child(BtNode_AnnounceFromBB(
-        "report answer", bb_keys.PERSON_ANSWER,
-        prefix="Here is what the person told me. ",
+    seq.add_child(BtNode_SetReportInfo(
+        "buffer answer", bb_keys.PERSON_ANSWER, prefix="The person told me. ",
     ))
     return seq
 
@@ -721,7 +748,7 @@ def create_grasp():
     primary.add_child(BtNode_TurnPanTilt("turn pantilt down", x=0.0, y=20.0))
     primary.add_child(BtNode_MoveArmSingle(
         "arm to navigating",
-        service_name=ARM_SERVICE_NAME,
+        action_name=ARM_ACTION_NAME,
         arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
         add_octomap=False,
     ))
@@ -735,7 +762,7 @@ def create_grasp():
     ))
     par_scan.add_child(BtNode_MoveArmSingle(
         "arm to scan",
-        service_name=ARM_SERVICE_NAME,
+        action_name=ARM_ACTION_NAME,
         arm_pose_bb_key=bb_keys.ARM_SCAN,
         add_octomap=True,
     ))
@@ -767,7 +794,7 @@ def create_grasp():
         "retry arm back",
         BtNode_MoveArmSingle(
             "arm back to navigating",
-            service_name=ARM_SERVICE_NAME,
+            action_name=ARM_ACTION_NAME,
             arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
         ),
         num_failures=5,
@@ -782,7 +809,7 @@ def create_grasp():
         "retry arm back",
         BtNode_MoveArmSingle(
             "arm to navigating",
-            service_name=ARM_SERVICE_NAME,
+            action_name=ARM_ACTION_NAME,
             arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
         ),
         num_failures=5,
@@ -896,6 +923,9 @@ def create_count():
     primary.add_child(BtNode_AnnounceFromBB(
         "announce count", bb_keys.COUNT_VALUE, prefix="I counted "
     ))
+    primary.add_child(BtNode_SetReportInfo(
+        "buffer count", bb_keys.COUNT_VALUE, prefix="I counted ",
+    ))
 
     vlm_fallback = py_trees.composites.Sequence("count/vlm_fallback", memory=True)
     vlm_fallback.add_child(BtNode_Announce(
@@ -914,6 +944,9 @@ def create_count():
     ))
     vlm_fallback.add_child(BtNode_AnnounceFromBB(
         "announce vlm count", bb_keys.VLM_ANSWER, prefix=""
+    ))
+    vlm_fallback.add_child(BtNode_SetReportInfo(
+        "buffer vlm count", bb_keys.VLM_ANSWER, prefix="",
     ))
 
     return py_trees.composites.Selector(
@@ -1019,6 +1052,9 @@ def create_vlm_fallback():
         bb_fill_key=bb_keys.VLM_QUESTION,
     ))
     seq.add_child(BtNode_AnnounceFromBB("announce vlm answer", bb_keys.VLM_ANSWER))
+    seq.add_child(BtNode_SetReportInfo(
+        "buffer view", bb_keys.VLM_ANSWER, prefix="Here is what I saw. ",
+    ))
     return seq
 
 
@@ -1042,53 +1078,6 @@ def create_llm_fallback():
     return seq
 
 
-def create_report_view():
-    """Speak the most recent vlm_fallback observation back to the operator.
-
-    The visual analogue of report_answer: when the robot had to go elsewhere to
-    look at something, vlm_fallback captures what it saw (``bb_keys.VLM_ANSWER``)
-    there, then the robot returns to the operator (``goto start_position``) and
-    this reports it. The blackboard value persists across the navigation.
-    """
-    seq = py_trees.composites.Sequence("small/report_view", memory=True)
-    seq.add_child(BtNode_AnnounceFromBB(
-        "report view", bb_keys.VLM_ANSWER, prefix="Here is what I saw. ",
-    ))
-    return seq
-
-
-def create_report_count():
-    """Speak the most recent count back to the operator.
-
-    For "tell me how many X are in/on the Y": the robot counts at Y (``count``
-    stores the number in ``bb_keys.COUNT_VALUE``), returns to the operator
-    (``goto start_position``), and this reports the stored number TO THEM —
-    instead of only announcing it on the spot where nobody asked. The count's
-    own on-spot line stays as a local "done" cue; this is the report home.
-    """
-    seq = py_trees.composites.Sequence("small/report_count", memory=True)
-    seq.add_child(BtNode_AnnounceFromBB(
-        "report count", bb_keys.COUNT_VALUE, prefix="I counted ",
-    ))
-    return seq
-
-
-def create_report_description():
-    """Speak the most recent person description back to the operator.
-
-    For "describe the person in the Y and tell me": ``describe_person`` stores
-    the description in ``bb_keys.DESCRIBE_FEATURES`` next to the person, the
-    robot returns to the operator (``goto start_position``), and this reports it
-    TO THEM. The visual twin of report_answer/report_view for descriptions.
-    """
-    seq = py_trees.composites.Sequence("small/report_description", memory=True)
-    seq.add_child(BtNode_AnnounceFromBB(
-        "report description", bb_keys.DESCRIBE_FEATURES,
-        prefix="Here is what the person looks like. ",
-    ))
-    return seq
-
-
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -1100,7 +1089,6 @@ ACTION_FACTORIES = {
     "approach_person": create_approach_person,
     "describe_person": create_describe_person,
     "ask_person": create_ask_person,
-    "report_answer": create_report_answer,
     "follow": create_follow,
     "guide": create_guide,
     "grasp": create_grasp,
@@ -1112,7 +1100,4 @@ ACTION_FACTORIES = {
     "record_position": create_record_position,
     "vlm_fallback": create_vlm_fallback,
     "llm_fallback": create_llm_fallback,
-    "report_view": create_report_view,
-    "report_count": create_report_count,
-    "report_description": create_report_description,
 }

@@ -155,38 +155,20 @@ def validate_plan(
             saw_count = True
         if action == "describe_person":
             saw_describe_person = True
-        # Rule: report_count / report_description need a prior count /
-        # describe_person — nothing was gathered to report otherwise.
-        if action == "report_count" and not saw_count:
-            return False, (
-                f"step {i}: report_count() without a prior count() — there is no "
-                "number to report. To tell the operator how many, count(object=...) "
-                "first, then return to start_position, then report_count()."
-            )
-        if action == "report_description" and not saw_describe_person:
-            return False, (
-                f"step {i}: report_description() without a prior describe_person() "
-                "— there is no description to report. describe_person first, then "
-                "return to start_position, then report_description()."
-            )
-        # Rule: report_answer needs a prior ask_person — there is no captured
-        # answer to report otherwise (and "tell me X" likely meant ask_person).
-        if action == "report_answer" and not saw_ask_person:
-            return False, (
-                f"step {i}: report_answer() without a prior ask_person() — "
-                "there is no captured answer to report. To tell the operator a "
-                "spoken fact, ask_person(question=...) first, then return to "
-                "start_position, then report_answer()."
-            )
-        # Rule: report_view needs a prior vlm_fallback — nothing was looked at
-        # to report otherwise.
-        if action == "report_view" and not saw_vlm_fallback:
-            return False, (
-                f"step {i}: report_view() without a prior vlm_fallback() — "
-                "there is no observation to report. To tell the operator what "
-                "the robot saw elsewhere, vlm_fallback(question=...) first, then "
-                "return to start_position, then report_view()."
-            )
+        # Rule: a text-less ``announce`` reports the latest gathered result from
+        # the REPORT_INFO buffer, so it needs a prior result-producing action
+        # (count / describe_person / ask_person / vlm_fallback). A bare announce
+        # with nothing gathered would speak an empty/stale buffer.
+        if action == "announce" and not (params.get("text") or params.get("message")):
+            if not (saw_count or saw_describe_person or saw_ask_person
+                    or saw_vlm_fallback):
+                return False, (
+                    f"step {i}: announce() with no text reports the last gathered "
+                    "result, but no count/describe_person/ask_person/vlm_fallback "
+                    "ran before it. Either give announce a literal text=..., or do "
+                    "the gathering action first (then goto start_position, then "
+                    "the text-less announce)."
+                )
         if action == "record_position":
             lab = params.get("label")
             if isinstance(lab, str) and lab.strip():
