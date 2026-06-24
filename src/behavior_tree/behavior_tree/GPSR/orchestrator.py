@@ -276,7 +276,12 @@ SYSTEM_PROMPT = textwrap.dedent("""
       ]
     }
 
-    Use only the action names listed below. Use only known locations and objects.
+    Use only the action names listed below, and only known LOCATIONS. OBJECTS
+    are NOT restricted: the vision system is open-vocabulary, so pass through
+    whatever object word the command names (e.g. "bottle", "cup", "remote",
+    "coke"). The "Known objects" list is only the typical arena items as a hint —
+    NEVER refuse or announce "I cannot find a known object matching X"; just use
+    X as the object. Only refuse if there is no LOCATION you can resolve.
 
     Hard planning rules — your plan WILL be rejected if you violate any:
     1. Do not silently drop any clause from the command. Every clause must
@@ -421,7 +426,7 @@ def _build_planner_user_prompt(
     body = (
         f"Current date and time: {datetime.now().strftime('%A, %B %d, %Y, %H:%M')}\n"
         f"Known locations: {known_loc}\n"
-        f"Known objects: {known_obj}\n"
+        f"Known objects (HINT ONLY — any object word is allowed, not just these): {known_obj}\n"
         f"Default object locations (where each object usually is, used only when "
         f"a fetch/find command names NO location): {default_loc}\n\n"
         f"{ACTION_CATALOGUE_DESCRIPTION}\n\n"
