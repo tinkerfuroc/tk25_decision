@@ -200,9 +200,8 @@ def main_grasp_diag():
     from py_trees.behaviour import Behaviour
     from py_trees.common import Access, Status
     from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
-    from behavior_tree.StoringGroceries.customNodes import (
-        BtNode_FindObjTable, BtNode_GraspWithPose,
-    )
+    from behavior_tree.StoringGroceries.customNodes import BtNode_GraspWithPose
+    from behavior_tree.TemplateNodes.Vision import BtNode_ScanForGeneralist
 
     obj = os.environ.get("BT_GPSR_TEST_OBJECT", "coke")
     arm_nav, arm_scan = _load_arm_constants()
@@ -233,19 +232,26 @@ def main_grasp_diag():
                                            bb_key=bb_keys.ARM_NAVIGATING, object=arm_nav))
     seq.add_child(BtNode_WriteToBlackboard("obj", bb_namespace="", bb_source=None,
                                            bb_key=bb_keys.TARGET_OBJECT_NAME, object=obj))
+    seq.add_child(BtNode_WriteToBlackboard("obj prompt", bb_namespace="", bb_source=None,
+                                           bb_key=bb_keys.TARGET_OBJECT_PROMPT, object=obj))
     seq.add_child(BtNode_MoveArmSingle("1. arm to base_moving",
                                        arm_pose_bb_key=bb_keys.ARM_NAVIGATING, add_octomap=False))
     seq.add_child(BtNode_MoveArmSingle("2. arm to table_grasp",
                                        arm_pose_bb_key=bb_keys.ARM_SCAN, add_octomap=True))
-    seq.add_child(BtNode_FindObjTable("3. realsense detect", bb_keys.TARGET_OBJECT_NAME,
-                                      bb_keys.TABLE_IMG, bb_keys.OBJ_SEG,
-                                      bb_keys.TARGET_OBJECT, bb_keys.GRASP_ANNOUNCEMENT))
+    seq.add_child(BtNode_ScanForGeneralist(name="3. realsense generalist detect",
+                                           bb_source=bb_keys.TARGET_OBJECT_PROMPT,
+                                           bb_key=bb_keys.TARGET_OBJECT, use_orbbec=False,
+                                           transform_to_map=False, use_vlm_sam_fallback=True,
+                                           sort_closest=True, return_rgb_image=True,
+                                           return_depth_image=True, return_segments=True))
     seq.add_child(_Report("detect report", bb_keys.TARGET_OBJECT, "RealSense BEFORE grasp"))
     seq.add_child(BtNode_GraspWithPose("4. grasp", bb_key_vision_res=bb_keys.TARGET_OBJECT,
                                        bb_key_pose=bb_keys.GRASP_POSE, action_name="start_grasp"))
-    seq.add_child(BtNode_FindObjTable("5. realsense recheck", bb_keys.TARGET_OBJECT_NAME,
-                                      bb_keys.TABLE_IMG, bb_keys.OBJ_SEG,
-                                      "gpsr/recheck_result", "gpsr/recheck_ann"))
+    seq.add_child(BtNode_ScanForGeneralist(name="5. realsense generalist recheck",
+                                           bb_source=bb_keys.TARGET_OBJECT_PROMPT,
+                                           bb_key="gpsr/recheck_result", use_orbbec=False,
+                                           transform_to_map=False, use_vlm_sam_fallback=True,
+                                           sort_closest=True, return_segments=True))
     seq.add_child(_Report("recheck report", "gpsr/recheck_result", "RealSense AFTER grasp"))
     seq.add_child(BtNode_MoveArmSingle("6. arm back to base_moving",
                                        arm_pose_bb_key=bb_keys.ARM_NAVIGATING, add_octomap=False))

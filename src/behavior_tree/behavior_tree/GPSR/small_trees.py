@@ -874,15 +874,26 @@ def create_grasp():
     # base_moving before vision really had a look. Retry holds the arm at
     # table_grasp across several detection attempts instead.
     find_and_grasp.add_child(BtNode_WaitTicks("settle before scan", 6))
+    # Detect on the table with the GENERALIST detector on the arm RealSense
+    # (open-vocab: YOLO-World / Gemini-VLM + SAM fallback), NOT the stock-COCO
+    # yolo_seg — so competition labels like "coke" are actually found (COCO only
+    # knows generic classes like "bottle"). It returns rgb+depth+segments, so the
+    # grasp server gets everything it needs, and FAILS (status!=0) when nothing
+    # matches so the Retry re-looks. The full response lands in TARGET_OBJECT,
+    # which the grasp node reads as vision_result.
     find_and_grasp.add_child(py_trees.decorators.Retry(
-        "retry find on table",
-        BtNode_FindObjTable(
-            "find object on table",
-            bb_keys.TARGET_OBJECT_NAME,
-            bb_keys.TABLE_IMG,
-            bb_keys.OBJ_SEG,
-            bb_keys.TARGET_OBJECT,
-            bb_keys.GRASP_ANNOUNCEMENT,
+        "retry detect on table",
+        BtNode_ScanForGeneralist(
+            name="realsense generalist detect",
+            bb_source=bb_keys.TARGET_OBJECT_PROMPT,
+            bb_key=bb_keys.TARGET_OBJECT,
+            use_orbbec=False,            # arm RealSense at table_grasp
+            transform_to_map=False,      # keep camera frame for the grasp server
+            use_vlm_sam_fallback=True,   # open-vocab for coke / fanta / ...
+            sort_closest=True,
+            return_rgb_image=True,
+            return_depth_image=True,
+            return_segments=True,
         ),
         num_failures=5,
     ))
@@ -890,7 +901,9 @@ def create_grasp():
         "grasp+announce",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
-    par_grasp.add_child(BtNode_Announce("announce grasp", bb_source=bb_keys.GRASP_ANNOUNCEMENT))
+    par_grasp.add_child(BtNode_AnnounceFromBB(
+        "announce grasp", bb_keys.TARGET_OBJECT_NAME, prefix="Grasping the ",
+    ))
     par_grasp.add_child(BtNode_GraspWithPose(
         "grasp object",
         bb_key_vision_res=bb_keys.TARGET_OBJECT,
