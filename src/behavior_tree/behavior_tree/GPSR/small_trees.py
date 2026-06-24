@@ -670,7 +670,8 @@ def create_find_person():
     the person, the planner emits ``approach_person`` as a separate step.
     """
     seq = py_trees.composites.Sequence("small/find_person", memory=True)
-    seq.add_child(BtNode_TurnPanTilt("turn pantilt forward", x=0.0, y=10.0))
+    # Look FORWARD/up to see a standing person's body+face, not down at the floor.
+    seq.add_child(BtNode_TurnPanTilt("turn pantilt forward", x=0.0, y=45.0))
     seq.add_child(BtNode_BuildPersonPrompt(
         "descriptor to vision prompt",
         bb_descriptor_key=bb_keys.TARGET_PERSON_PROMPT,
@@ -866,13 +867,24 @@ def create_grasp():
     primary.add_child(par_scan)
 
     find_and_grasp = py_trees.composites.Sequence("find and grasp", memory=True)
-    find_and_grasp.add_child(BtNode_FindObjTable(
-        "find object on table",
-        bb_keys.TARGET_OBJECT_NAME,
-        bb_keys.TABLE_IMG,
-        bb_keys.OBJ_SEG,
-        bb_keys.TARGET_OBJECT,
-        bb_keys.GRASP_ANNOUNCEMENT,
+    # Let the RealSense settle on the table after the arm reaches table_grasp
+    # (first frames after the arm stops can be motion-blurred / unsynced), THEN
+    # detect — and RETRY the detection in place. Without this, one fast "no
+    # detection" makes the whole grasp fail and the arm jumps back to
+    # base_moving before vision really had a look. Retry holds the arm at
+    # table_grasp across several detection attempts instead.
+    find_and_grasp.add_child(BtNode_WaitTicks("settle before scan", 6))
+    find_and_grasp.add_child(py_trees.decorators.Retry(
+        "retry find on table",
+        BtNode_FindObjTable(
+            "find object on table",
+            bb_keys.TARGET_OBJECT_NAME,
+            bb_keys.TABLE_IMG,
+            bb_keys.OBJ_SEG,
+            bb_keys.TARGET_OBJECT,
+            bb_keys.GRASP_ANNOUNCEMENT,
+        ),
+        num_failures=5,
     ))
     par_grasp = py_trees.composites.Parallel(
         "grasp+announce",
