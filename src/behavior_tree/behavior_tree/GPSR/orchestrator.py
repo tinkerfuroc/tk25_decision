@@ -143,17 +143,6 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         "fetch a fruit", "tell me how many snacks"), pass the category noun
         through verbatim. Do not substitute a concrete instance — the vision
         module needs the category to enumerate all matches.
-    - search_object(object: str, location?: str)
-        Go to a place and FIND an object there so it can be picked up — the
-        finder for FETCH / BRING / GRASP tasks. It navigates by itself and, if
-        the location has several recorded search spots, sweeps them until the
-        object is seen (then parks there with the object in view for grasp). Use
-        it INSTEAD of a separate goto + find_object whenever the goal is to grasp
-        or bring the object. ``location`` is OPTIONAL: pass it only when the
-        command names where the object is ("a coke from the living room") — that
-        overrides the default; OMIT it otherwise and the robot uses the object's
-        default location. ``object`` may be a known name or a category noun.
-        Follow with grasp(object). Do NOT add a goto before it.
     - find_person(descriptor: str)
         Locate a person matching ``descriptor`` (e.g. "waving person",
         "person in a red shirt", "John") and store their position. Use
@@ -192,10 +181,12 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         to them before leading). Never use ``guide`` to express "go
         yourself" — that is ``goto``.
     - grasp(object: str)
-        Pick up an object that is currently in view of the arm/vision system.
-        Always plan ``search_object`` first (which navigates + finds it); only
-        use goto + find_object before grasp if you have a specific reason not to
-        sweep.
+        Pick up an object from the surface in front of the robot. ``grasp`` moves
+        the arm to the table-grasp scan pose, detects the object on the table
+        with the ARM (RealSense) camera ITSELF, and picks it up — you do NOT add
+        a separate find/scan step before it and you do NOT use the head camera.
+        Always plan a ``goto(location)`` first so the robot is at the table where
+        the object is.
     - place(location: str)
         Place the currently-held object at ``location``. The robot navigates
         to ``location`` itself — do not add a separate ``goto`` before it.
@@ -258,13 +249,13 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
     Compose composite commands by emitting multiple atomic actions in order.
     Example: "bring me the coke from the kitchen" =>
         [
-          {"action": "search_object", "params": {"object": "coke", "location": "kitchen"}},
+          {"action": "goto", "params": {"location": "kitchen"}},
           {"action": "grasp", "params": {"object": "coke"}},
           {"action": "deliver", "params": {"object": "coke", "recipient": "me", "recipient_location": "start_position"}}
         ]
-    Example: "fetch me a coke" (no location given) =>
+    Example: "fetch me a coke" (no location given -> use coke's default location) =>
         [
-          {"action": "search_object", "params": {"object": "coke"}},
+          {"action": "goto", "params": {"location": "kitchen"}},
           {"action": "grasp", "params": {"object": "coke"}},
           {"action": "deliver", "params": {"object": "coke", "recipient": "me", "recipient_location": "start_position"}}
         ]
@@ -368,14 +359,15 @@ SYSTEM_PROMPT = textwrap.dedent("""
        wins over any default. Only when the command gives NO location may you
        fall back to the object's usual place (the "Default object locations"
        list above).
-    16. To FETCH / BRING / PICK UP an object, use ``search_object(object,
-       location?)`` then ``grasp(object)`` (then ``deliver`` if it goes to
-       someone). ``search_object`` navigates and finds by itself — do NOT emit a
-       separate ``goto`` or ``find_object`` for that same object, and do NOT put
-       a ``goto`` before it. Pass ``location`` ONLY when the command names where
-       the object is (override); omit it otherwise (the robot uses the default
-       location). Plain ``goto`` + ``find_object`` / ``count`` are still correct
-       for NON-grasp finds and counts (e.g. "how many cokes are in the kitchen").
+    16. To FETCH / BRING / PICK UP an object: emit ``goto(location)`` then
+       ``grasp(object)`` (then ``deliver`` if it goes to someone). ``grasp``
+       moves the arm to the table-grasp pose and detects the object on the table
+       with the ARM camera itself — do NOT add any find/scan step before grasp
+       and do NOT use the head camera to look for it. ``location`` is the place
+       named in the command, or — if none is named — the object's default
+       location from the "Default object locations" list. Plain ``goto`` +
+       ``find_object`` / ``count`` are still correct for NON-grasp finds and
+       counts (e.g. "how many cokes are in the kitchen").
 """).strip()
 
 

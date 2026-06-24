@@ -177,6 +177,100 @@ def main_grasp():
     _spin(_build_runner("grasp", fill), "grasp")
 
 
+def main_grasp_diag():
+    """Hardware grasp diagnostic — RealSense (arm camera), NOT the head Orbbec.
+
+    Runs the exact sequence the GPSR ``grasp`` action uses and prints a clear
+    per-stage result so you can see whether the *vision module* (RealSense
+    detection) actually finds the object and whether the grasp picks it up:
+
+      1. arm -> base_moving (navigating pose)
+      2. arm -> table_grasp (scan pose)
+      3. RealSense detect on the table (``object_detection_yolo``)   <- VISION CHECK
+      4. grasp the detected object (``start_grasp``)
+      5. RealSense RE-SCAN to check the object is gone (picked up)   <- GRABBED CHECK
+      6. arm -> base_moving
+
+    REQUIRES these servers running first (launch the manipulation + realsense +
+    yolo bringup): ``joint_move_action``, ``object_detection_yolo``,
+    ``start_grasp``. Object via ``BT_GPSR_TEST_OBJECT`` (default "coke").
+    Setup will BLOCK waiting for a server that is not up — start them first.
+    """
+    import time
+    from py_trees.behaviour import Behaviour
+    from py_trees.common import Access, Status
+    from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
+    from behavior_tree.StoringGroceries.customNodes import (
+        BtNode_FindObjTable, BtNode_GraspWithPose,
+    )
+
+    obj = os.environ.get("BT_GPSR_TEST_OBJECT", "coke")
+    arm_nav, arm_scan = _load_arm_constants()
+
+    class _Report(Behaviour):
+        def __init__(self, name, src_key, label):
+            super().__init__(name)
+            self._src, self._label, self._c = src_key, label, None
+
+        def setup(self, **kw):
+            self._c = self.attach_blackboard_client(name=self.name)
+            self._c.register_key(self._src, access=Access.READ)
+
+        def update(self):
+            try:
+                r = self._c.get(self._src)
+            except Exception:
+                r = None
+            objs = list(getattr(r, "objects", []) or []) if r is not None else []
+            cls = [getattr(o, "cls", "?") for o in objs]
+            print(f"[DIAG] {self._label}: {len(objs)} object(s) {cls}")
+            return Status.SUCCESS
+
+    seq = py_trees.composites.Sequence("grasp_diag", memory=True)
+    seq.add_child(BtNode_WriteToBlackboard("arm scan", bb_namespace="", bb_source=None,
+                                           bb_key=bb_keys.ARM_SCAN, object=arm_scan))
+    seq.add_child(BtNode_WriteToBlackboard("arm nav", bb_namespace="", bb_source=None,
+                                           bb_key=bb_keys.ARM_NAVIGATING, object=arm_nav))
+    seq.add_child(BtNode_WriteToBlackboard("obj", bb_namespace="", bb_source=None,
+                                           bb_key=bb_keys.TARGET_OBJECT_NAME, object=obj))
+    seq.add_child(BtNode_MoveArmSingle("1. arm to base_moving",
+                                       arm_pose_bb_key=bb_keys.ARM_NAVIGATING, add_octomap=False))
+    seq.add_child(BtNode_MoveArmSingle("2. arm to table_grasp",
+                                       arm_pose_bb_key=bb_keys.ARM_SCAN, add_octomap=True))
+    seq.add_child(BtNode_FindObjTable("3. realsense detect", bb_keys.TARGET_OBJECT_NAME,
+                                      bb_keys.TABLE_IMG, bb_keys.OBJ_SEG,
+                                      bb_keys.TARGET_OBJECT, bb_keys.GRASP_ANNOUNCEMENT))
+    seq.add_child(_Report("detect report", bb_keys.TARGET_OBJECT, "RealSense BEFORE grasp"))
+    seq.add_child(BtNode_GraspWithPose("4. grasp", bb_key_vision_res=bb_keys.TARGET_OBJECT,
+                                       bb_key_pose=bb_keys.GRASP_POSE, action_name="start_grasp"))
+    seq.add_child(BtNode_FindObjTable("5. realsense recheck", bb_keys.TARGET_OBJECT_NAME,
+                                      bb_keys.TABLE_IMG, bb_keys.OBJ_SEG,
+                                      "gpsr/recheck_result", "gpsr/recheck_ann"))
+    seq.add_child(_Report("recheck report", "gpsr/recheck_result", "RealSense AFTER grasp"))
+    seq.add_child(BtNode_MoveArmSingle("6. arm back to base_moving",
+                                       arm_pose_bb_key=bb_keys.ARM_NAVIGATING, add_octomap=False))
+
+    rclpy.init()
+    tree = py_trees_ros.trees.BehaviourTree(root=seq)
+    print(f"[DIAG] grasp diagnostic for object={obj!r} — connecting to arm/realsense/grasp servers...")
+    tree.setup(timeout=30, node_name="gpsr_grasp_diag")
+    print("[DIAG] all servers connected. Running sequence:")
+    result = None
+    for _ in range(240):  # ~120 s budget
+        tree.tick()
+        if seq.status == Status.SUCCESS:
+            result = "SUCCESS"; break
+        if seq.status == Status.FAILURE:
+            result = "FAILURE"
+            for n in seq.iterate():
+                if n.status == Status.FAILURE and (n.feedback_message or ""):
+                    print(f"[DIAG] FAIL @ {n.name}: {n.feedback_message}")
+            break
+        time.sleep(0.5)
+    print(f"[DIAG] ===== RESULT: {result or 'TIMEOUT'} =====")
+    rclpy.shutdown()
+
+
 def main_place():
     location = os.environ.get("BT_GPSR_TEST_LOCATION", "kitchen")
 

@@ -84,6 +84,7 @@ setup(
             "gpsr-test-guide = behavior_tree.GPSR.dev_tests:main_guide",
             "gpsr-test-greet = behavior_tree.GPSR.dev_tests:main_greet",
             "gpsr-test-grasp = behavior_tree.GPSR.dev_tests:main_grasp",
+            "gpsr-test-grasp-diag = behavior_tree.GPSR.dev_tests:main_grasp_diag",
             "gpsr-test-place = behavior_tree.GPSR.dev_tests:main_place",
             "gpsr-test-deliver = behavior_tree.GPSR.dev_tests:main_deliver",
             "gpsr-test-count = behavior_tree.GPSR.dev_tests:main_count",
