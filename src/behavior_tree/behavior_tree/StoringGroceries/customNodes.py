@@ -236,7 +236,13 @@ class BtNode_GraspWithPose(BtNode_Grasp):
                  bb_key_pose: str,
                  action_name: str = "grasp",
                  bb_key_object_label: str = None):
-        super().__init__(name, bb_key_vision_res, action_name, bb_key_object_label=bb_key_object_label)
+        # NOTE: pass bb_key_vision_res as a KEYWORD. BtNode_Grasp's 2nd positional
+        # is bb_source, not bb_key_vision_res — passing it positionally left
+        # bb_key_vision_res=None, so the "vision_result" key was never registered
+        # and send_goal failed with "no read/write access to '/vision_result'".
+        super().__init__(name, bb_key_vision_res=bb_key_vision_res,
+                         action_name=action_name,
+                         bb_key_object_label=bb_key_object_label)
         self.blackboard.register_key(
             key="pose",
             access=py_trees.common.Access.WRITE,
