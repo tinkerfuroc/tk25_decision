@@ -535,7 +535,7 @@ class BtNode_PlanActions(Behaviour):
             # the same command and it refuses again until you say something else"
             # symptom). Combined with the per-call nonce in the prompt, no two
             # planning calls are ever identical.
-            resp = self._client_oai.chat.completions.create(
+            kwargs = dict(
                 model=OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
@@ -548,6 +548,13 @@ class BtNode_PlanActions(Behaviour):
                 max_tokens=max(OPENAI_MAX_TOKENS, 8192),
                 response_format={"type": "json_object"},
             )
+            try:
+                resp = self._client_oai.chat.completions.create(**kwargs)
+            except Exception as exc:  # a model/provider that rejects `seed`?
+                if "seed" not in repr(exc).lower():
+                    raise
+                kwargs.pop("seed", None)
+                resp = self._client_oai.chat.completions.create(**kwargs)
             msg = resp.choices[0].message
             raw = (getattr(msg, "content", None) or "").strip()
             if not raw:
