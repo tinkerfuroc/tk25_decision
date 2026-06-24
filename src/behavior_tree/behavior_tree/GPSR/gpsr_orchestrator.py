@@ -92,12 +92,19 @@ def main():
     tree = py_trees_ros.trees.BehaviourTree(root=root)
     tree.setup(timeout=15, node_name="gpsr_orchestrator")
     print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(title="GPSR orchestrator")
-    tree.tick_tock(period_ms=500.0, post_tick_handler=print_tree)
+    # Per-command logging (plan + each step's result + the failing node's feedback).
+    from .command_logger import create_command_logger, combine_post_tick_handlers
+    log_tree, shutdown_logger = create_command_logger(str(DEFAULT_PLAN_DIR / "logs"))
+    tree.tick_tock(
+        period_ms=500.0,
+        post_tick_handler=combine_post_tick_handlers(print_tree, log_tree),
+    )
     try:
         rclpy.spin(tree.node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        shutdown_logger()
         shutdown_visualizer()
         tree.shutdown()
         rclpy.try_shutdown()

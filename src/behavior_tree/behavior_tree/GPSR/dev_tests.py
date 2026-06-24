@@ -328,9 +328,17 @@ def main_orchestrator():
     tree = py_trees_ros.trees.BehaviourTree(root=cycle)
     tree.setup(timeout=15, node_name="gpsr_test_orchestrator")
     print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(title="orchestrator")
-    tree.tick_tock(period_ms=500.0, post_tick_handler=print_tree)
+    # Per-command logging (plan + each step's result + the failing node's feedback)
+    # lands beside the saved plans, under <plan_dir>/logs.
+    from .command_logger import create_command_logger, combine_post_tick_handlers
+    log_tree, shutdown_logger = create_command_logger(str(plan_dir / "logs"))
+    tree.tick_tock(
+        period_ms=500.0,
+        post_tick_handler=combine_post_tick_handlers(print_tree, log_tree),
+    )
     try:
         rclpy.spin(tree.node)
     finally:
+        shutdown_logger()
         shutdown_visualizer()
         rclpy.shutdown()

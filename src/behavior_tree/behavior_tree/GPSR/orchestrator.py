@@ -301,9 +301,13 @@ SYSTEM_PROMPT = textwrap.dedent("""
        emit the step — or emit an ``announce`` that explains why.
     5. When the command says "follow X to the Y" or "follow them to the Y",
        emit ``follow`` then ``goto(location=Y)``.
-    6. If the command is impossible, return an empty plan with a reasoning
-       that explains why. Empty-with-reasoning is preferred to a partial
-       plan that is wrong.
+    6. NEVER return an empty plan, and never refuse. Always emit at least a
+       best-effort plan of known actions. If part of the command is impossible,
+       unknown, or unclear, still emit the steps you CAN do and finish with an
+       ``announce(text=...)`` that explains the part you could not do. A
+       non-empty plan is ALWAYS required — even "I could not find a known
+       location for X" must be expressed as an ``announce`` step, not an empty
+       plan.
     7. When the command names the place to search ("find X in the kitchen",
        "how many X on the shelf"), the FIRST step for that clause must be
        an explicit ``goto(location=...)``. Navigation is never implicit.
@@ -445,13 +449,58 @@ def _build_planner_user_prompt(
     return body
 
 
+def _clean_plan(plan_raw: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Keep only well-formed {action, params} steps using known actions."""
+    cleaned: List[Dict[str, Any]] = []
+    dropped: List[str] = []
+    if not isinstance(plan_raw, list):
+        return cleaned, [f"<{type(plan_raw).__name__}>"]
+    for step in plan_raw:
+        if not isinstance(step, dict):
+            dropped.append(f"<{type(step).__name__}>")
+            continue
+        action = step.get("action")
+        params = step.get("params", {}) or {}
+        if action in ACTION_FACTORIES:
+            cleaned.append({"action": action, "params": params})
+        else:
+            dropped.append(str(action))
+    return cleaned, dropped
+
+
+def _fallback_plan(command: str) -> List[Dict[str, Any]]:
+    """Guaranteed non-empty plan when the LLM cannot produce a valid one.
+
+    Never let the robot silently refuse: emit a single spoken acknowledgement so
+    the operator hears a response and the command always has *a* plan. Only hit
+    after every planning attempt failed — realistic commands never reach here.
+    """
+    return [{
+        "action": "announce",
+        "params": {
+            "text": "I heard your command but could not work out a complete "
+                    "plan for it. I will skip it for now.",
+        },
+    }]
+
+
 class BtNode_PlanActions(Behaviour):
-    """Call the LLM asynchronously, parse the returned plan, write it to BB."""
+    """Plan a command into actions, with internal retries and a guaranteed plan.
+
+    The planning thread loops up to ``max_attempts``: each attempt calls the LLM
+    (fresh nonce, temperature rising per attempt), then cleans + validates the
+    result locally. The *reason* a try was rejected (bad JSON, empty plan,
+    validator complaint) is fed back into the next prompt so the model fixes it
+    rather than resampling the same dead end. If every attempt fails it falls
+    back to a non-empty acknowledgement plan — so ``update()`` ALWAYS returns
+    SUCCESS with a non-empty plan and the orchestrator never silently refuses.
+    """
 
     def __init__(
         self,
         name: str = "Plan actions",
         rephrase_on_failure: bool = False,
+        max_attempts: int = 4,
     ):
         super().__init__(name)
         self._client_oai = openai.OpenAI(
@@ -460,9 +509,11 @@ class BtNode_PlanActions(Behaviour):
         )
         self._bb = None
         self._thread: Optional[threading.Thread] = None
-        self._response: Optional[Dict[str, Any]] = None
-        self._error: Optional[str] = None
+        self._plan_result: Optional[List[Dict[str, Any]]] = None
+        self._fell_back: bool = False
+        self._attempts_used: int = 0
         self._rephrase_on_failure = rephrase_on_failure
+        self._max_attempts = max(1, int(max_attempts))
 
     def setup(self, **kwargs):
         self._bb = self.attach_blackboard_client(name=self.name)
@@ -473,9 +524,38 @@ class BtNode_PlanActions(Behaviour):
         self._bb.register_key(bb_keys.LAST_FAILURE, access=Access.WRITE)
         self._bb.register_key(bb_keys.CORRECTION_COUNT, access=Access.WRITE)
 
+    def _call_llm(self, user_prompt: str, temperature: float) -> Tuple[Optional[dict], Optional[str]]:
+        """One LLM round-trip → (parsed JSON dict, error string). Exactly one is set."""
+        try:
+            resp = self._client_oai.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                # Reasoning models spend tokens thinking before the JSON; a high
+                # cap avoids truncation and costs nothing on a short reply.
+                max_tokens=max(OPENAI_MAX_TOKENS, 8192),
+                response_format={"type": "json_object"},
+            )
+            msg = resp.choices[0].message
+            raw = (getattr(msg, "content", None) or "").strip()
+            if not raw:
+                raw = (getattr(msg, "reasoning", None) or "").strip()
+            parsed = _extract_json_object(raw)
+            if parsed is None:
+                return None, ("your reply was not parseable JSON "
+                              f"(content was {'empty' if not raw else 'non-JSON'}). "
+                              "Reply with ONLY the JSON object.")
+            return parsed, None
+        except Exception as exc:  # noqa: BLE001 — surface anything for retry
+            return None, f"LLM call error: {exc!r}"
+
     def initialise(self):
-        self._response = None
-        self._error = None
+        self._plan_result = None
+        self._fell_back = False
+        self._attempts_used = 0
         try:
             command = self._bb.get(bb_keys.COMMAND)
         except KeyError:
@@ -485,141 +565,93 @@ class BtNode_PlanActions(Behaviour):
         except KeyError:
             state_log = []
         try:
-            failure_msg = self._bb.get(bb_keys.LAST_FAILURE)
+            seed_failure = self._bb.get(bb_keys.LAST_FAILURE)
         except KeyError:
-            failure_msg = None
+            seed_failure = None
         if not self._rephrase_on_failure:
-            failure_msg = None
+            seed_failure = None
 
-        # Fresh nonce per call → re-issuing the same command (or re-planning the
-        # same failure) can't hit a cached/deterministic copy of a prior reply.
-        nonce = uuid.uuid4().hex[:8]
-        user_prompt = _build_planner_user_prompt(
-            command, state_log, failure_msg, nonce=nonce,
-        )
-        # On a re-plan after failure, warm the sampler up so the model explores a
-        # genuinely different plan instead of resampling the same dead end.
-        temperature = OPENAI_TEMPERATURE
-        if failure_msg:
-            temperature = min(0.9, OPENAI_TEMPERATURE + 0.5)
+        known_locs = set(KNOWN_LOCATIONS.keys())
+        known_loc_arg = (known_locs | START_LOCATION_ALIASES) if known_locs else None
+        known_actions = set(ACTION_FACTORIES.keys())
+        max_attempts = self._max_attempts
 
         def _call():
-            try:
-                resp = self._client_oai.chat.completions.create(
-                    model=OPENAI_MODEL,
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=temperature,
-                    # Reasoning models (DeepSeek) spend thousands of tokens
-                    # thinking BEFORE the JSON; too small a cap truncates the
-                    # plan (finish_reason=length). 8192 leaves headroom for
-                    # reasoning + the plan. You only pay for tokens actually
-                    # produced, so a high cap costs nothing on a short reply.
-                    max_tokens=max(OPENAI_MAX_TOKENS, 8192),
-                    response_format={"type": "json_object"},
+            last_reason = seed_failure
+            for attempt in range(max_attempts):
+                # Fresh nonce each try → no cached/deterministic refusal. Warm the
+                # sampler as attempts climb so the model explores a new plan.
+                nonce = uuid.uuid4().hex[:8]
+                temperature = min(0.9, OPENAI_TEMPERATURE + 0.2 * attempt)
+                if last_reason and attempt == 0:
+                    temperature = min(0.9, OPENAI_TEMPERATURE + 0.5)
+                prompt = _build_planner_user_prompt(
+                    command, state_log, last_reason, nonce=nonce,
                 )
-                msg = resp.choices[0].message
-                # DeepSeek / reasoning models sometimes return content=None (the
-                # answer lands in `reasoning`, or the message was truncated/empty).
-                # Don't blindly .strip() — fall back to reasoning, then extract.
-                raw = (getattr(msg, "content", None) or "").strip()
-                if not raw:
-                    raw = (getattr(msg, "reasoning", None) or "").strip()
-                parsed = _extract_json_object(raw)
-                if parsed is None:
-                    self._error = (
-                        "LLM returned no parseable JSON object "
-                        f"(content was {'empty' if not raw else 'non-JSON'})"
+                parsed, err = self._call_llm(prompt, temperature)
+                if err is not None:
+                    last_reason = err
+                    print(f"[planner] attempt {attempt+1}/{max_attempts} -> {err}")
+                    continue
+                cleaned, dropped = _clean_plan(parsed.get("plan", []))
+                raw_actions = [
+                    s.get("action") if isinstance(s, dict) else f"<{type(s).__name__}>"
+                    for s in (parsed.get("plan", []) or [])
+                ]
+                print(f"[planner] attempt {attempt+1}/{max_attempts}: raw {raw_actions} "
+                      f"| kept {[s['action'] for s in cleaned]} | dropped {dropped}")
+                if not cleaned:
+                    last_reason = (
+                        "you returned an EMPTY plan (or only unknown actions). You "
+                        "MUST return a NON-EMPTY plan of the known actions — never "
+                        "refuse. If part of the command is impossible, still emit the "
+                        "doable steps and finish with announce(text=...) explaining "
+                        "what you could not do."
                     )
-                else:
-                    self._response = parsed
-            except Exception as exc:  # noqa: BLE001 — surface anything for retry
-                self._error = repr(exc)
+                    continue
+                ok, reason = validate_plan(
+                    cleaned, command or "", known_actions,
+                    known_locations=known_loc_arg,
+                )
+                if not ok:
+                    last_reason = reason
+                    print(f"[planner] attempt {attempt+1}/{max_attempts} REJECTED: {reason}")
+                    continue
+                # Accepted.
+                self._attempts_used = attempt + 1
+                self._plan_result = cleaned
+                print(f"[planner] accepted on attempt {attempt+1}: "
+                      f"{[s['action'] for s in cleaned]}")
+                return
+            # Every attempt failed → guaranteed non-empty fallback plan.
+            self._attempts_used = max_attempts
+            self._fell_back = True
+            self._plan_result = _fallback_plan(command or "")
+            print(f"[planner] all {max_attempts} attempts failed "
+                  f"(last reason: {last_reason}) -> fallback acknowledgement plan")
 
         self._thread = threading.Thread(target=_call, daemon=True)
         self._thread.start()
         self.feedback_message = "LLM planning..."
 
     def update(self):
-        if self._error is not None:
-            self.feedback_message = f"LLM error: {self._error}"
-            return Status.FAILURE
-        if self._response is None:
+        if self._plan_result is None:
             return Status.RUNNING
 
-        plan_raw = self._response.get("plan", [])
-        if not isinstance(plan_raw, list):
-            self.feedback_message = "LLM returned non-list plan"
-            return Status.FAILURE
-
-        cleaned: List[Dict[str, Any]] = []
-        dropped: List[str] = []
-        for step in plan_raw:
-            if not isinstance(step, dict):
-                dropped.append(f"<{type(step).__name__}>")
-                continue
-            action = step.get("action")
-            params = step.get("params", {}) or {}
-            if action in ACTION_FACTORIES:
-                cleaned.append({"action": action, "params": params})
-            else:
-                dropped.append(str(action))
-
-        # Visibility: log the raw LLM plan vs. what survived parsing. A partial
-        # drop (some steps kept, some dropped for unknown action names) silently
-        # truncates the plan — e.g. a 5-step "fetch" plan collapses to 1 step and
-        # then "exhausts" after the first action. Surface it loudly.
-        raw_actions = [
-            s.get("action") if isinstance(s, dict) else f"<{type(s).__name__}>"
-            for s in plan_raw
-        ]
-        print(f"[planner] command -> raw plan ({len(raw_actions)}): {raw_actions}")
-        print(f"[planner] kept {len(cleaned)}: {[s['action'] for s in cleaned]}"
-              f"  |  DROPPED {len(dropped)}: {dropped}")
-
-        # Schema drift: the model returned a non-empty plan but NONE of the
-        # steps were valid {"action", "params"} entries (reasoning models like
-        # DeepSeek occasionally emit steps as plain strings or unknown actions).
-        # An empty plan from a non-empty reply is a format error, not a genuine
-        # "impossible command" — fail so the self-correction sub-tree re-prompts
-        # with the exact schema rather than silently planning nothing.
-        if plan_raw and not cleaned:
-            self._bb.set(
-                bb_keys.LAST_FAILURE,
-                "plan steps were not in the required {\"action\": ..., "
-                "\"params\": {...}} format (or used unknown actions). Re-emit "
-                "every step using that exact JSON schema.",
-                overwrite=True,
-            )
-            self.feedback_message = "plan steps malformed (schema drift) — replanning"
-            return Status.FAILURE
-
-        try:
-            command_text = self._bb.get(bb_keys.COMMAND) or ""
-        except KeyError:
-            command_text = ""
-        known_locs = set(KNOWN_LOCATIONS.keys())
-        ok, reason = validate_plan(
-            cleaned, command_text, set(ACTION_FACTORIES.keys()),
-            known_locations=(known_locs | START_LOCATION_ALIASES) if known_locs else None,
-        )
-        if not ok:
-            self._bb.set(bb_keys.LAST_FAILURE, f"plan rejected: {reason}", overwrite=True)
-            self.feedback_message = f"plan rejected: {reason}"
-            return Status.FAILURE
-
-        self._bb.set(bb_keys.PLAN, cleaned, overwrite=True)
+        plan = self._plan_result
+        self._bb.set(bb_keys.PLAN, plan, overwrite=True)
         self._bb.set(bb_keys.PLAN_INDEX, 0, overwrite=True)
+        # Clear the stale failure so it isn't fed into the next planning call.
+        self._bb.set(bb_keys.LAST_FAILURE, "", overwrite=True)
         try:
             count = self._bb.get(bb_keys.CORRECTION_COUNT)
         except KeyError:
             count = 0
         self._bb.set(bb_keys.CORRECTION_COUNT, count, overwrite=True)
+        tag = " [FALLBACK]" if self._fell_back else ""
         self.feedback_message = (
-            f"Planned {len(cleaned)} step(s): {[s['action'] for s in cleaned]}"
-            + (f"  [DROPPED {len(dropped)}: {dropped}]" if dropped else "")
+            f"Planned {len(plan)} step(s) in {self._attempts_used} attempt(s){tag}: "
+            f"{[s['action'] for s in plan]}"
         )
         return Status.SUCCESS
 
