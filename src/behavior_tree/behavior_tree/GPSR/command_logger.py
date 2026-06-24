@@ -51,9 +51,11 @@ def create_command_logger(
     ):
         bb.register_key(key, access=Access.READ)
 
+    # phase: "wait" until this command's per-command STATE_LOG reset is observed
+    # (so we never dump the PREVIOUS command's residual state), then "active".
     state = {
-        "cmd": None, "fh": None, "plan_logged": False,
-        "state_len": 0, "corr": 0, "seen_fail": set(),
+        "cmd": None, "fh": None, "phase": "wait", "baseline": 0,
+        "plan_repr": None, "state_len": 0, "corr": 0, "seen_fail": set(),
     }
 
     def _get(key):
@@ -62,7 +64,7 @@ def create_command_logger(
         except (KeyError, AttributeError):
             return None
 
-    def _open_for(cmd: str):
+    def _open_for(cmd: str, slog_len: int):
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         path = out_dir / f"cmd_{stamp}_{_slug(cmd)}.log"
         fh = open(path, "a", buffering=1)  # line-buffered
@@ -73,39 +75,57 @@ def create_command_logger(
 
     def handler(tree: Any) -> None:
         cmd = _get(bb_keys.COMMAND)
-        # Rotate to a new file whenever the command text changes.
+        slog = _get(bb_keys.STATE_LOG) or []
+        plan = _get(bb_keys.PLAN)
+        corr = _get(bb_keys.CORRECTION_COUNT) or 0
+
+        # New command -> new file, but stay in "wait" until the orchestrator's
+        # per-command reset shrinks STATE_LOG (so we log THIS command's run only).
         if cmd and cmd != state["cmd"]:
             if state["fh"]:
                 state["fh"].write("\n")
                 state["fh"].close()
+            base = len(slog)
             state.update(
-                cmd=cmd, fh=_open_for(cmd), plan_logged=False,
-                state_len=0, corr=0, seen_fail=set(),
+                cmd=cmd, fh=_open_for(cmd, base),
+                # First-ever command (no residual state): log immediately.
+                # Otherwise wait for this command's reset to shrink STATE_LOG
+                # below the previous command's length before logging anything.
+                phase=("active" if base == 0 else "wait"),
+                baseline=base,
+                # Baseline the stale plan still on the blackboard (the previous
+                # command's) so only the genuinely new plan gets logged.
+                plan_repr=(repr(plan) if plan else None),
+                state_len=0, corr=corr, seen_fail=set(),
             )
         fh = state["fh"]
         if fh is None:
             return
 
-        # Plan (logged once, when first available after planning).
-        plan = _get(bb_keys.PLAN)
-        if plan is not None and not state["plan_logged"]:
-            if plan:
-                fh.write(f"PLAN ({len(plan)} steps):\n")
-                for i, s in enumerate(plan):
-                    fh.write(f"  {i+1}. {s.get('action')}({s.get('params')})\n")
+        # Detect the per-command reset (STATE_LOG cleared). Until it shrinks
+        # strictly below the previous command's length, ignore residual state.
+        if state["phase"] == "wait":
+            if len(slog) < state["baseline"]:
+                state["phase"] = "active"
+                state["state_len"] = 0
+                state["corr"] = corr
             else:
-                fh.write("PLAN: <empty> (planner produced no steps)\n")
-            state["plan_logged"] = True
+                return
+
+        # Plan: log each NEW non-empty plan (initial + any self-correction replan).
+        if plan and repr(plan) != state["plan_repr"]:
+            state["plan_repr"] = repr(plan)
+            fh.write(f"PLAN ({len(plan)} steps):\n")
+            for i, s in enumerate(plan):
+                fh.write(f"  {i+1}. {s.get('action')}({s.get('params')})\n")
 
         # New completed-step entries from STATE_LOG.
-        slog = _get(bb_keys.STATE_LOG) or []
         if len(slog) > state["state_len"]:
             for entry in slog[state["state_len"]:]:
                 fh.write(f"  STEP: {entry}\n")
             state["state_len"] = len(slog)
 
         # Self-correction rounds.
-        corr = _get(bb_keys.CORRECTION_COUNT) or 0
         if corr > state["corr"]:
             fh.write(f"  !! self-correction #{corr} — replanning\n")
             state["corr"] = corr
@@ -120,6 +140,10 @@ def create_command_logger(
                 continue
             fb = (getattr(n, "feedback_message", "") or "").strip()
             if not fb:
+                continue
+            # Skip the by-design sweep-skip guards (an unused search-spot slot
+            # failing fast so the Selector moves on) — they are not real errors.
+            if "set?" in n.name and "is None" in fb:
                 continue
             key = (n.name, fb)
             if key in state["seen_fail"]:

@@ -21,6 +21,7 @@ Blackboard contract:
 
 import json
 import math
+import random
 import re
 import textwrap
 import threading
@@ -48,6 +49,7 @@ from .small_trees import (
     ACTION_FACTORIES,
     bb_keys,
     BtNode_AnnounceFromBB,
+    BtNode_BlackboardSet,
     SEARCH_POSE_KEYS,
 )
 
@@ -527,6 +529,12 @@ class BtNode_PlanActions(Behaviour):
     def _call_llm(self, user_prompt: str, temperature: float) -> Tuple[Optional[dict], Optional[str]]:
         """One LLM round-trip → (parsed JSON dict, error string). Exactly one is set."""
         try:
+            # A fresh random seed every call makes the provider treat this as a
+            # brand-new request and sample anew — it defeats any response
+            # caching / dedup of identical consecutive requests (the "re-issue
+            # the same command and it refuses again until you say something else"
+            # symptom). Combined with the per-call nonce in the prompt, no two
+            # planning calls are ever identical.
             resp = self._client_oai.chat.completions.create(
                 model=OPENAI_MODEL,
                 messages=[
@@ -534,6 +542,7 @@ class BtNode_PlanActions(Behaviour):
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=temperature,
+                seed=random.randint(1, 2_000_000_000),
                 # Reasoning models spend tokens thinking before the JSON; a high
                 # cap avoids truncation and costs nothing on a short reply.
                 max_tokens=max(OPENAI_MAX_TOKENS, 8192),
@@ -569,7 +578,12 @@ class BtNode_PlanActions(Behaviour):
         except KeyError:
             seed_failure = None
         if not self._rephrase_on_failure:
+            # Initial plan for a fresh command: plan from the command ALONE.
+            # Never carry session history (a previous command's completed/failed
+            # steps) into a new command's plan — that cross-command bleed is what
+            # made a re-issued command behave differently from the first issue.
             seed_failure = None
+            state_log = []
 
         known_locs = set(KNOWN_LOCATIONS.keys())
         known_loc_arg = (known_locs | START_LOCATION_ALIASES) if known_locs else None
@@ -1209,6 +1223,13 @@ def create_execute_command(
     )
 
     root = py_trees.composites.Sequence("execute_command", memory=True)
+    # Hard per-command reset of execution state, right before planning. This runs
+    # every time a command is executed (independent of create_orchestrator_init),
+    # so a previous command's STATE_LOG / correction count / failure can never
+    # bleed into this command's plan or self-correction.
+    root.add_child(BtNode_BlackboardSet("reset state_log", bb_keys.STATE_LOG, []))
+    root.add_child(BtNode_BlackboardSet("reset correction", bb_keys.CORRECTION_COUNT, 0))
+    root.add_child(BtNode_BlackboardSet("reset last_failure", bb_keys.LAST_FAILURE, ""))
     root.add_child(plan)
     if emit_plan_dir is not None:
         root.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
