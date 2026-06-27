@@ -41,7 +41,7 @@ from .config import (
     ARM_POS_WASH,
     ARM_POS_WASH_DROP,
     ARM_POS_CLEANING_STATION,
-    ARM_SERVICE_NAME,
+    ARM_ACTION_NAME,
     GRASP_ACTION_NAME,
     KEY_ARM_CABINET,
     KEY_ARM_NAVIGATING,
@@ -179,7 +179,7 @@ def _moveArmRetry(
         name=f"Retry {name}",
         child=BtNode_MoveArmSingle(
             name=name,
-            service_name=ARM_SERVICE_NAME,
+            action_name=ARM_ACTION_NAME,
             arm_pose_bb_key=arm_pose_key,
             add_octomap=add_octomap,
         ),

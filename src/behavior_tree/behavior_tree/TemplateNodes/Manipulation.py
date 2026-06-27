@@ -476,25 +476,31 @@ class BtNode_MoveArm(ActionHandler):
 
     Migrated from the ``arm_joint_service`` service (ArmJointService) to the
     ``joint_move_action`` action (JointMove). The interfaces are field
-    equivalent (joint0..joint6 + add_octomap; result.success), so call sites
-    are unchanged. The legacy ``service_name`` kwarg is preserved and now maps
-    to the action name; a passed value of ``"arm_joint_service"`` is
-    transparently remapped to ``"joint_move_action"`` for back-compat.
+    equivalent (joint0..joint6 + add_octomap; result.success). The action name
+    is selected via the ``action_name`` kwarg (default ``"joint_move_action"``).
+    The legacy ``service_name`` kwarg is retained as a deprecated alias; a
+    passed value of ``"arm_joint_service"`` is transparently remapped to
+    ``"joint_move_action"`` for back-compat.
     """
 
     def __init__(
         self,
         name: str,
-        service_name: str,
         #  arm_joint_pose: list[float]
         arm_pose_bb_key,
+        action_name: str = "joint_move_action",
         add_octomap: bool = False,
+        *,
+        service_name: Optional[str] = None,  # deprecated alias for action_name
     ):
-        action_name = (
-            "joint_move_action"
-            if service_name == "arm_joint_service"
-            else service_name
-        )
+        # Back-compat: the node was migrated from the ``arm_joint_service``
+        # service to the ``joint_move_action`` action. The legacy
+        # ``service_name=`` kwarg and the old ``"arm_joint_service"`` value are
+        # still accepted and transparently mapped to ``action_name``.
+        if service_name is not None:
+            action_name = service_name
+        if action_name == "arm_joint_service":
+            action_name = "joint_move_action"
         super().__init__(
             name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
         )
@@ -584,10 +590,10 @@ class BtNode_MoveArmSingle(ActionHandler):
 
     Migrated from the ``arm_joint_service`` service (ArmJointService) to the
     ``joint_move_action`` action (JointMove). The interfaces are field
-    equivalent (joint0..joint6 + add_octomap; result.success), so the
-    constructor signature and all ~110 call sites are unchanged. The legacy
-    ``service_name`` kwarg is preserved and now maps to the action name; the
-    default ``"arm_joint_service"`` is transparently remapped to
+    equivalent (joint0..joint6 + add_octomap; result.success). The action name
+    is selected via the ``action_name`` kwarg (default ``"joint_move_action"``).
+    The legacy ``service_name`` kwarg is retained as a deprecated alias; a
+    passed value of ``"arm_joint_service"`` is transparently remapped to
     ``"joint_move_action"``.
     """
 
@@ -595,15 +601,20 @@ class BtNode_MoveArmSingle(ActionHandler):
         self,
         name: str,
         arm_pose_bb_key: str,
-        service_name: str = "arm_joint_service",
+        action_name: str = "joint_move_action",
         #  arm_joint_pose: list[float]
         add_octomap: bool = False,
+        *,
+        service_name: Optional[str] = None,  # deprecated alias for action_name
     ):
-        action_name = (
-            "joint_move_action"
-            if service_name == "arm_joint_service"
-            else service_name
-        )
+        # Back-compat: the node was migrated from the ``arm_joint_service``
+        # service to the ``joint_move_action`` action. The legacy
+        # ``service_name=`` kwarg and the old ``"arm_joint_service"`` value are
+        # still accepted and transparently mapped to ``action_name``.
+        if service_name is not None:
+            action_name = service_name
+        if action_name == "arm_joint_service":
+            action_name = "joint_move_action"
         super().__init__(
             name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
         )
@@ -728,10 +739,10 @@ class BtNode_PointTo(ActionHandler):
 
     Migrated from the ``arm_joint_service`` service (ArmJointService) to the
     ``joint_move_action`` action (JointMove). The interfaces are field
-    equivalent (joint0..joint6 + add_octomap; result.success), so the
-    constructor signature and all call sites are unchanged. The legacy
-    ``service_name`` kwarg is preserved and now maps to the action name; the
-    default ``"arm_joint_service"`` is transparently remapped to
+    equivalent (joint0..joint6 + add_octomap; result.success). The action name
+    is selected via the ``action_name`` kwarg (default ``"joint_move_action"``).
+    The legacy ``service_name`` kwarg is retained as a deprecated alias; a
+    passed value of ``"arm_joint_service"`` is transparently remapped to
     ``"joint_move_action"``.
     """
 
@@ -742,13 +753,18 @@ class BtNode_PointTo(ActionHandler):
         bb_key_points: str,
         bb_key_init_pose: str,
         target_id: int = 0,
-        service_name: str = "arm_joint_service",
+        action_name: str = "joint_move_action",
+        *,
+        service_name: Optional[str] = None,  # deprecated alias for action_name
     ):
-        action_name = (
-            "joint_move_action"
-            if service_name == "arm_joint_service"
-            else service_name
-        )
+        # Back-compat: the node was migrated from the ``arm_joint_service``
+        # service to the ``joint_move_action`` action. The legacy
+        # ``service_name=`` kwarg and the old ``"arm_joint_service"`` value are
+        # still accepted and transparently mapped to ``action_name``.
+        if service_name is not None:
+            action_name = service_name
+        if action_name == "arm_joint_service":
+            action_name = "joint_move_action"
         super().__init__(
             name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
         )
