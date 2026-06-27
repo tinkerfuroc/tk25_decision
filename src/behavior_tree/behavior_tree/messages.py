@@ -21,18 +21,23 @@ else:
 
 if _config.has_dependency('tinker_arm_msgs'):
     from tinker_arm_msgs.srv import Drop, ArmJointService, PointTo
-    from tinker_arm_msgs.action import Place, Grasp, JointMove, CartesianMove
+    from tinker_arm_msgs.action import Place, Grasp, JointMove, CartesianMove, ScanAndPlace
     try:
         from tinker_arm_msgs.action import Fold
     except ImportError:
         from behavior_tree.mock_messages import Fold
 else:
     from behavior_tree.mock_messages import Drop, ArmJointService, PointTo
-    from behavior_tree.mock_messages import Place, Grasp, JointMove, CartesianMove
+    from behavior_tree.mock_messages import Place, Grasp, JointMove, CartesianMove, ScanAndPlace
     from behavior_tree.mock_messages import Fold
 
 if _config.has_dependency('tinker_audio_msgs'):
-    from tinker_audio_msgs.srv import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
+    try:
+        from tinker_audio_msgs.srv import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
+    except ImportError:
+        # tinker_audio_msgs present but missing a symbol (TTSCnRequest hazard) ->
+        # fall back to the mock srvs. Does NOT reproduce on this host; harmless.
+        from behavior_tree.mock_messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
     from tinker_audio_msgs.action import GetConfirmation as GetConfirmationAction, Listen as ListenAction
     from tinker_audio_msgs.action import PhraseExtraction as PhraseExtractionAction
     from tinker_audio_msgs.action import Doorbell
