@@ -391,6 +391,29 @@ class PhraseExtractionAction(MockAction):
             self.partial_transcription = ""
 
 
+class NameDrinkExtractionAction(MockAction):
+    """Mock NameDrinkExtraction action (tk_24_audio `name_drink_extraction_action`)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.timeout = 0.0
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.error_message = ""
+            self.name = ""
+            self.drink = ""
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.progress = 0.0
+            self.status_message = ""
+            self.partial_transcription = ""
+
+
 class GetConfirmation(MockService):
     """Mock GetConfirmation service."""
     class Request(MockService.Request):

@@ -40,11 +40,13 @@ if _config.has_dependency('tinker_audio_msgs'):
         from behavior_tree.mock_messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
     from tinker_audio_msgs.action import GetConfirmation as GetConfirmationAction, Listen as ListenAction
     from tinker_audio_msgs.action import PhraseExtraction as PhraseExtractionAction
+    from tinker_audio_msgs.action import NameDrinkExtraction as NameDrinkExtractionAction
     from tinker_audio_msgs.action import Doorbell
 else:
     from behavior_tree.mock_messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
     from behavior_tree.mock_messages import GetConfirmationAction, ListenAction
     from behavior_tree.mock_messages import PhraseExtractionAction
+    from behavior_tree.mock_messages import NameDrinkExtractionAction
     from behavior_tree.mock_messages import Doorbell
 
 if _config.has_dependency('tinker_nav_msgs'):
