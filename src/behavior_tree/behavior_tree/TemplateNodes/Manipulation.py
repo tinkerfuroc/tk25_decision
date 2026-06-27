@@ -1014,4 +1014,8 @@ class BtNode_ScanAndPlace(ActionHandler):
         return pytree.common.Status.SUCCESS
 
     def feedback_callback(self, msg: Any):
-        return super().feedback_callback(msg)
+        # ScanAndPlace.Feedback is stage-only (no delay_limit/status), so the
+        # base feedback_callback (which reads delay_limit/status) must NOT run.
+        import time
+        self.action_stage = msg.feedback.stage
+        self.last_feedback_time = time.time()
