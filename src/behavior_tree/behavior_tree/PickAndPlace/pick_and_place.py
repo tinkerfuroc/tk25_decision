@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from sympy import use
-
 """Pick and Place — main mission tree (RoboCup@Home 2026 §5.2).
 
 Mirrors the Restaurant / HRI single-file mission idiom: phase factories at
