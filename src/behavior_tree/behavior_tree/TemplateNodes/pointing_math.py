@@ -36,11 +36,13 @@ def compute_point_to_pan(
     The raw bearing is ``atan2(y, x)``.
 
     ``pan_bias`` corrects a known constant rotation between the point's source
-    frame and the arm's joint0 frame. The ``seat_recommend_bbox_service``
-    centroid comes back rotated ``pi`` about the base Z axis relative to
-    ``base_link``, so a seat physically in front yields a raw bearing near
-    ``+/-pi`` — outside the arm's reachable ``[-pi/2, pi/2]`` pan range. Passing
-    ``pan_bias=math.pi`` folds it back to the true bearing.
+    frame and the arm's joint0 frame. With a correctly-calibrated camera TF the
+    seat/person centroid is already correct in ``base_link`` and the arm base is
+    aligned with ``base_link``, so production seat/person-pointing uses
+    ``pan_bias=0.0`` (joint0 = ``atan2(y, x)`` directly). The ``math.pi`` path
+    is retained for the general case: if a point's source frame is genuinely
+    pi-rotated about base Z (e.g. an un-fixed backward-camera TF — the bug fixed
+    2026-06-27), ``pan_bias=math.pi`` folds the raw bearing back into range.
 
     The biased result is wrapped into ``(-pi, pi]`` so the correction never
     pushes the command past a full turn. With the default ``pan_bias=0.0`` this
