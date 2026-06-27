@@ -19,6 +19,8 @@ KEYPRESS-waits. In live mode it hits ``seat_recommend_bbox_service``
 """
 from __future__ import annotations
 
+import math
+
 import py_trees
 
 
@@ -110,6 +112,9 @@ def build() -> py_trees.behaviour.Behaviour:
             bb_key_points=KEY_SEAT_POINTS,
             bb_key_init_pose=KEY_ARM_POINT_TO,
             target_id=0,
+            # seat_recommend_bbox centroid is pi-rotated about base Z vs
+            # base_link; matches the production seat-pointing in hri.py.
+            pan_bias=math.pi,
         )
     )
     return root

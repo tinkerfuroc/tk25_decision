@@ -69,6 +69,7 @@ import action_msgs.msg as action_msgs
 
 from .BaseBehaviors import ServiceHandler
 from .ActionBase import ActionHandler
+from .pointing_math import compute_point_to_pan
 import math
 
 
@@ -744,6 +745,17 @@ class BtNode_PointTo(ActionHandler):
     The legacy ``service_name`` kwarg is retained as a deprecated alias; a
     passed value of ``"arm_joint_service"`` is transparently remapped to
     ``"joint_move_action"``.
+
+    ``pan_bias`` (radians, default ``0.0``) corrects a constant rotation
+    between the target point's source frame and the arm joint0 frame before the
+    range check. It is subtracted from the raw ``atan2(y, x)`` bearing and the
+    result is wrapped to ``(-pi, pi]``. The ``seat_recommend_bbox_service``
+    centroid is rotated ``pi`` about the base Z axis relative to ``base_link``,
+    so seat-pointing call sites pass ``pan_bias=math.pi`` to keep the commanded
+    pan inside the reachable ``[-pi/2, pi/2]`` window. With the default ``0.0``
+    the joint0 math is byte-for-byte identical to the legacy behaviour, so
+    person-pointing callers (Receptionist, Inspection, HRI introductions) are
+    unaffected.
     """
 
     def __init__(
@@ -756,6 +768,7 @@ class BtNode_PointTo(ActionHandler):
         action_name: str = "joint_move_action",
         *,
         service_name: Optional[str] = None,  # deprecated alias for action_name
+        pan_bias: float = 0.0,
     ):
         # Back-compat: the node was migrated from the ``arm_joint_service``
         # service to the ``joint_move_action`` action. The legacy
@@ -771,6 +784,12 @@ class BtNode_PointTo(ActionHandler):
         self.bb_key_persons = bb_key_persons
         self.bb_key_points = bb_key_points
         self.target_id = target_id
+        # Constant rotation (radians) between the point's source frame and the
+        # arm joint0 frame, subtracted from the raw bearing. Default 0.0 keeps
+        # legacy behaviour; the seat-recommend centroid is pi-rotated about base
+        # Z, so seat-pointing call sites pass pan_bias=math.pi (see PointTo docs
+        # and TemplateNodes/pointing_math.compute_point_to_pan).
+        self.pan_bias = pan_bias
         # Default value so the no-goal failure branch can safely format
         # `self.angle` even when send_goal skipped the happy-path assignment
         # (e.g. missing or short points list).
@@ -834,9 +853,11 @@ class BtNode_PointTo(ActionHandler):
 
         try:
             goal = JointMove.Goal()
-            goal.joint0 = math.atan2(point.point.y, point.point.x)
+            goal.joint0 = compute_point_to_pan(
+                point.point.x, point.point.y, self.pan_bias
+            )
             self.node.get_logger().info(
-                f"Calculated joint0 angle {goal.joint0} to point at target {self.target_id} with coordinates ({point.point.x}, {point.point.y})"
+                f"Calculated joint0 angle {goal.joint0} (pan_bias={self.pan_bias}) to point at target {self.target_id} with coordinates ({point.point.x}, {point.point.y})"
             )
             if goal.joint0 < -math.pi / 2 or goal.joint0 > math.pi / 2:
                 self.node.get_logger().warning(

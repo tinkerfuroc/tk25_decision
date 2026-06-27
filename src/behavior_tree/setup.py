@@ -69,6 +69,13 @@ setup(
             "test-doorbell = behavior_tree.HRI.test_doorbell:main",
             "test-go-to-approach = behavior_tree.Restaurant.test_go_to_approach:main",
             "restaurant-nav-test = behavior_tree.Restaurant.restaurant_nav_test:main",
+            "test-name-drink = behavior_tree.HRI.test_name_drink_extraction:main",
+            # HRI finalization modules (new, 2026): real follow-host integration
+            "hri-follow-real = behavior_tree.HRI.follow_real:main",
+            "hri-test-handover = behavior_tree.HRI.test_bag_handover:main",
+            "hri-test-arrival = behavior_tree.HRI.test_arrival:main",
+            # HRI finalized 2026 production tree (real follow bag flow)
+            "hri-2026 = behavior_tree.HRI.hri_2026:main",
             "pick-and-place = behavior_tree.PickAndPlace.cli:main",
             "pick-and-place-demo = behavior_tree.PickAndPlace.cli_demo:main",
             "pp-test-scan-place = behavior_tree.PickAndPlace.samplings:main_scan_place",
