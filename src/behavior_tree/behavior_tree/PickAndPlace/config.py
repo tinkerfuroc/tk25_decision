@@ -159,7 +159,7 @@ SCAN_RETRY_LIMIT = int(constants["scan_retry_limit"])
 GRASP_RETRY_LIMIT = int(constants["grasp_retry_limit"])
 
 # --- Service / action names ---
-ARM_SERVICE_NAME = "arm_joint_service"
+ARM_ACTION_NAME = "joint_move_action"
 GRASP_ACTION_NAME = "start_grasp"
 PLACE_ACTION_NAME = "place_action"
 TARGET_FRAME = "base_link"
@@ -240,3 +240,42 @@ KEY_ANNOUNCEMENT_MSG = "announcement_msg"
 
 
 KEY_GRASP_VISION_RES = "grasp_vision_result"
+
+
+# ============================================================
+# Rulebook integration (net-new — REUSE existing KEY_* above)
+# ============================================================
+
+# ScanAndPlace action + placement modes (mirror arm_api/placement_logic.py).
+SCAN_AND_PLACE_ACTION_NAME = "scan_and_place_action"
+PLACEMENT_MODE_FREE_SPACE = 0
+PLACEMENT_MODE_NEAR_SIMILAR = 1
+PLACEMENT_MODE_FIXED_POINT = 2
+PLACEMENT_MODE_NONE = 255  # sentinel: the trash branch never calls ScanAndPlace
+
+# Extra surface — a distinct auxiliary surface, NOT one of the table poses.
+KEY_POSE_EXTRA_SURFACE = "pp_pose_extra_surface"
+KEY_POINT_EXTRA_SURFACE = "pp_point_extra_surface"
+POSE_EXTRA_SURFACE = _pose_reader(constants["pose_extra_surface"])
+POINT_EXTRA_SURFACE = _point_reader(constants["point_extra_surface"])
+
+# Optional grouping table (label -> cabinet group). Empty v1 => default-to-label.
+CATEGORY_MAP = {
+    k: v for k, v in dict(constants.get("category_map", {})).items()
+    if not str(k).startswith("_")
+}
+
+# Per-phase time budgets (seconds). Sum (370) <= MAX_RUNTIME_SEC (390) w/ margin.
+TABLE_BUDGET_SEC = 200.0
+BREAKFAST_BUDGET_SEC = 110.0
+EXTRA_BUDGET_SEC = 60.0
+
+# Destination routing: klass -> (nav_pose_key, arm_scan_pose_key, vlm_mode, hardcoded_point_key).
+# BtNode_PopWorkItem chooses the effective placement_mode from the tree's
+# place_policy: vlm -> vlm_mode (+reference_label); hardcoded -> FIXED_POINT with
+# fixed_target = the hardcoded_point. Trash always drops (PLACEMENT_MODE_NONE).
+DESTINATION_ROUTING = {
+    "wash_staging": (KEY_POSE_WASH_STAGING, KEY_ARM_WASH, PLACEMENT_MODE_FREE_SPACE, KEY_POINT_WASH_STAGING),
+    "cabinet": (KEY_POSE_CABINET, KEY_ARM_CABINET, PLACEMENT_MODE_NEAR_SIMILAR, KEY_POINT_CABINET_DEFAULT),
+    "trash": (KEY_POSE_TRASH_BIN, KEY_ARM_TRASH, PLACEMENT_MODE_NONE, None),
+}
