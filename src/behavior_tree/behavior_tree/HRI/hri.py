@@ -1,5 +1,6 @@
 from __future__ import annotations
 from ast import main
+import math
 import os
 
 """HRI behavior tree composition.
@@ -25,7 +26,7 @@ from behavior_tree.TemplateNodes.Audio import (
     BtNode_Announce,
     BtNode_GetConfirmationAction,
     BtNode_ListenAction,
-    BtNode_PhraseExtractionAction,
+    BtNode_NameDrinkExtractionAction,
 )
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
 from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle, BtNode_PointTo
@@ -365,86 +366,40 @@ def createArrivalTrigger():
     return root
 
 
-def _create_get_info(field_name: str, storage_key: str, word_list: list[str]):
-    """High-confidence-first capture with a last-resort confirmation fallback.
+def _create_get_name_drink(name_key: str, drink_key: str):
+    """Capture name + favorite drink in a single utterance.
 
-    Primary branch: up to 2 attempts of prompt → action-based extract. The
-    action (`phrase_extraction_action`) only succeeds on server status=0,
-    which means Whisper + Qwen ASR cross-check agreed on the same wordlist
-    entry. The rulebook awards a 4×15 "no non-essential questions" bonus for
-    accepting on that signal without a confirmation prompt.
-
-    Fallback branch: if both primary attempts abort, re-prompt, capture
-    the raw transcription via `BtNode_ListenAction`, then `BtNode_Confirm`
-    speaks it back (`"Your <field> is <value>, correct?"`) and
-    `BtNode_GetConfirmationAction` waits for yes/no. Preserves partial
-    scoring in noisy environments at the cost of the no-confirmation
-    bonus for this field only.
+    One prompt → ``BtNode_NameDrinkExtractionAction``, which records a short
+    English utterance, hands it to Qwen-Omni, and writes the parsed name and
+    drink to ``name_key`` / ``drink_key`` in one shot (no wordlist). The server
+    returns STATUS_SUCCEEDED when at least one of the two fields is recovered,
+    so the leaf returns SUCCESS and downstream nodes decide whether to re-prompt
+    for a missing field. Wrapped in a Retry so a fully-failed extraction (server
+    abort) re-prompts instead of failing the intake.
     """
-    primary_loop = py_trees.composites.Sequence(
-        name=f"Prompt+extract {field_name}",
+    root = py_trees.composites.Sequence(
+        name="Get name and drink",
         memory=True,
     )
-    primary_loop.add_child(
+    root.add_child(
         BtNode_Announce(
-            name=f"Prompt for {field_name}",
+            name="Prompt for name and drink",
             bb_source=None,
-            message=f"Please tell me your {field_name}.",
+            message="Please tell me your name and your favorite drink after the beep.",
         )
     )
-    primary_loop.add_child(
-        BtNode_PhraseExtractionAction(
-            name=f"High-conf extract {field_name}",
-            wordlist=word_list,
-            bb_dest_key=storage_key,
-            timeout=7.0,
+    root.add_child(
+        py_trees.decorators.Retry(
+            name="Retry name+drink extract",
+            child=BtNode_NameDrinkExtractionAction(
+                name="Extract name and drink",
+                bb_name_key=name_key,
+                bb_drink_key=drink_key,
+                timeout=7.0,
+            ),
+            num_failures=10,
         )
     )
-    primary = py_trees.decorators.Retry(
-        name=f"Retry high-conf {field_name}",
-        child=primary_loop,
-        num_failures=10
-    )
-
-    fallback = py_trees.composites.Sequence(
-        name=f"Last-resort confirm {field_name}",
-        memory=True,
-    )
-    fallback.add_child(
-        BtNode_Announce(
-            name=f"Fallback prompt for {field_name}",
-            bb_source=None,
-            message=f"Let me try again. Please tell me your {field_name} clearly.",
-        )
-    )
-    fallback.add_child(
-        BtNode_PhraseExtractionAction(
-            name=f"High-conf extract {field_name}",
-            wordlist=word_list,
-            bb_dest_key=storage_key,
-            timeout=7.0,
-        )
-    )
-    fallback.add_child(
-        BtNode_Confirm(
-            name=f"Confirm {field_name}",
-            key_confirmed=storage_key,
-            type=field_name,
-        )
-    )
-    fallback.add_child(
-        BtNode_GetConfirmationAction(
-            name=f"Get {field_name} confirmation",
-            timeout=5.0,
-        )
-    )
-
-    root = py_trees.composites.Selector(
-        name=f"Get {field_name}",
-        memory=True,
-    )
-    root.add_child(primary)
-    root.add_child(py_trees.decorators.Retry(name="retry 3 times", child=fallback, num_failures=3))
     return root
 
 
@@ -589,8 +544,7 @@ def createGuestIntake(guest_idx: int):
         name=f"Guest {guest_idx} info intake",
         memory=True,
     )
-    info_intake.add_child(_create_get_info("name", name_key, NAMES))
-    info_intake.add_child(_create_get_info("favorite drink", drink_key, DRINKS))
+    info_intake.add_child(_create_get_name_drink(name_key, drink_key))
 
     maintain_eye_contact = BtNode_MaintainEyeContact(
         name=f"Maintain eye contact during guest {guest_idx} info intake",
@@ -782,6 +736,10 @@ def createEscortAndSeat(guest_idx: int):
                     bb_key_points=KEY_SEAT_POINTS,
                     bb_key_init_pose=KEY_ARM_POINT_TO,
                     target_id=0,
+                    # seat_recommend_bbox centroid is pi-rotated about base Z
+                    # vs base_link; without this the pan lands outside the arm's
+                    # [-pi/2, pi/2] range and the point-to goal is rejected.
+                    pan_bias=math.pi,
                 ),
                 num_failures=3,
             ),

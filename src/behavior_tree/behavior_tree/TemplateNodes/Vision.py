@@ -1862,6 +1862,10 @@ class BtNode_MaintainEyeContact(ActionHandler):
         self._cancel_pending = False
         if self.mock_mode:
             self.feedback_message = "MOCK: eye-contact goal sent"
+            # The real path sets start_time at the end of send_goal(); set it here
+            # too so update()'s `time.time() - self.start_time` follow-timeout check
+            # doesn't hit `None` (start_time is None until a goal is sent).
+            self.start_time = time.time()
             class MockFuture:
                 def done(self):
                     return True
