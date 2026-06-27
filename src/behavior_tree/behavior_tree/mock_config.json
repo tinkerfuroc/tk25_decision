@@ -56,7 +56,8 @@
           "BtNode_MoveArmJoint": "KEYPRESS",
           "BtNode_MoveArmSingle": "KEYPRESS",
           "BtNode_GripperAction": "KEYPRESS",
-          "BtNode_PointTo": "KEYPRESS"
+          "BtNode_PointTo": "KEYPRESS",
+          "BtNode_ScanAndPlace": "IMMEDIATE"
         }
       },
       "navigation": {
