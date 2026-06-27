@@ -78,6 +78,15 @@ from .pick_and_place import (
 # key. PopWorkItem writes it per-policy for cleanup; breakfast writes FIXED_POINT.
 _KEY_ACTIVE_PLACEMENT_MODE = "pp_active_placement_mode"
 
+# 'pp_active_skip_scan' is BtNode_ScanAndPlace's default bb_skip_scan_move key.
+# PopWorkItem writes it True for cleanup; breakfast writes True too (the BT
+# positions the arm itself, so the server must not re-move it).
+_KEY_ACTIVE_SKIP_SCAN = "pp_active_skip_scan"
+
+# Dedicated key for the per-item "<label> going to <class>" announce string
+# composed by _ComposeItemAnnounceLeaf and spoken by the following Announce.
+_KEY_ITEM_ANNOUNCE_MSG = "pp_item_announce_msg"
+
 # Frozen breakfast table: (item, source_pose_key, arm_pose_key, point_key).
 BREAKFAST = [
     ("bowl", KEY_POSE_KITCHEN_SHELF, KEY_ARM_TABLE, KEY_POINT_BREAKFAST_BOWL),
@@ -163,6 +172,50 @@ class _SummarizeScoreLeaf(py_trees.behaviour.Behaviour):
             f"Placed {placed} item{'s' if placed != 1 else ''}. "
             f"Estimated {points} points."
         )
+        return py_trees.common.Status.SUCCESS
+
+
+class _ComposeItemAnnounceLeaf(py_trees.behaviour.Behaviour):
+    """Compose the per-item perception+destination announce string.
+
+    Spec §8.3/§3 (communicate-perception): the per-item announce must speak the
+    object label AND its destination class. Reads KEY_OBJECT_LABEL +
+    KEY_ACTIVE_OBJECT_CLASS (both stamped by BtNode_PopWorkItem) and writes
+    "<label> going to <class>" to _KEY_ITEM_ANNOUNCE_MSG for the following
+    BtNode_Announce. Plain Behaviour: runs its real logic under BT_MOCK_MODE
+    (it is not a Handler and must NOT be registered in mock_config). Always
+    SUCCESS.
+    """
+
+    def __init__(self, name):
+        super().__init__(name=name)
+        self.bb = self.attach_blackboard_client(name=name)
+        self.bb.register_key(
+            key="label",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", KEY_OBJECT_LABEL),
+        )
+        self.bb.register_key(
+            key="klass",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", KEY_ACTIVE_OBJECT_CLASS),
+        )
+        self.bb.register_key(
+            key="msg",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", _KEY_ITEM_ANNOUNCE_MSG),
+        )
+
+    def update(self):
+        try:
+            label = str(self.bb.label)
+        except Exception:  # pragma: no cover - label unset in standalone runs
+            label = ""
+        try:
+            klass = str(self.bb.klass)
+        except Exception:  # pragma: no cover - class unset in standalone runs
+            klass = ""
+        self.bb.msg = f"{label} going to {klass}"
         return py_trees.common.Status.SUCCESS
 
 
@@ -374,9 +427,13 @@ def handleOneItem(place_policy="vlm", phase="cleanup"):
     body.add_child(_goto("active item source", KEY_ACTIVE_SOURCE_POSE))
     body.add_child(_arm("arm to scan (active item)", KEY_ARM_TABLE))
     body.add_child(_reDetectActive())
-    # Per-object perception+destination announce (speaks the popped label).
+    # Per-object perception+destination announce (spec §8.3): speak the popped
+    # label AND its destination class as "<label> going to <class>". The compose
+    # leaf stages the string into _KEY_ITEM_ANNOUNCE_MSG; the single Announce
+    # speaks it.
+    body.add_child(_ComposeItemAnnounceLeaf(name="compose active item announce"))
     body.add_child(
-        BtNode_Announce(name="announce active item", bb_source=KEY_OBJECT_LABEL)
+        BtNode_Announce(name="announce active item", bb_source=_KEY_ITEM_ANNOUNCE_MSG)
     )
 
     happy = py_trees.composites.Sequence("grasp then route", memory=True)
@@ -505,6 +562,18 @@ def _breakfastItem(item, src_key, arm_key, point_key):
             bb_source=None,
             bb_key=_KEY_ACTIVE_PLACEMENT_MODE,
             object=PLACEMENT_MODE_FIXED_POINT,
+        )
+    )
+    # The BT already positioned the arm (_arm above), so tell the server to skip
+    # its own scan-pose move (object is in the gripper). Same key the cleanup
+    # path uses (PopWorkItem 'skip_scan' -> BtNode_ScanAndPlace bb_skip_scan_move).
+    s.add_child(
+        BtNode_WriteToBlackboard(
+            name=f"skip server scan move ({item})",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=_KEY_ACTIVE_SKIP_SCAN,
+            object=True,
         )
     )
     s.add_child(

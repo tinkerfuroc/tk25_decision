@@ -47,6 +47,7 @@ TICK_CAP = 4000  # leaf-count x ~3 mock ticks x phases, with margin
 # Stable private all-mock config path, written once and reused across tests.
 _FORCED_CONFIG_PATH = None
 _SAVED_BT_MOCK_CONFIG = None
+_SAVED_BT_MOCK_MODE = None
 
 _ALL_SUBSYSTEMS = (
     "vision",
@@ -82,7 +83,7 @@ def _force_full_mock():
     mtime-triggered reload (config._maybe_reload_config) reads OUR all-mock file,
     so a concurrent un-mock of the workspace config can never leak in mid-run.
     """
-    global _FORCED_CONFIG_PATH, _SAVED_BT_MOCK_CONFIG
+    global _FORCED_CONFIG_PATH, _SAVED_BT_MOCK_CONFIG, _SAVED_BT_MOCK_MODE
     if _FORCED_CONFIG_PATH is None:
         fd, path = tempfile.mkstemp(prefix="pp_all_mock_", suffix=".json")
         with os.fdopen(fd, "w") as f:
@@ -90,6 +91,7 @@ def _force_full_mock():
         _FORCED_CONFIG_PATH = path
 
     _SAVED_BT_MOCK_CONFIG = os.environ.get("BT_MOCK_CONFIG")
+    _SAVED_BT_MOCK_MODE = os.environ.get("BT_MOCK_MODE")
     os.environ["BT_MOCK_MODE"] = "true"
     os.environ["BT_MOCK_CONFIG"] = _FORCED_CONFIG_PATH
 
@@ -105,12 +107,22 @@ def _force_full_mock():
 
 
 def _restore_config():
-    """Undo BT_MOCK_CONFIG override + reload from disk so later test modules in a
-    full-suite run see the on-disk config again."""
+    """Undo BT_MOCK_CONFIG/BT_MOCK_MODE overrides + reload from disk so later test
+    modules in a full-suite run see the on-disk config again, and remove the temp
+    all-mock config file so we don't leak /tmp/pp_all_mock_*.json per run."""
+    global _FORCED_CONFIG_PATH
     if _SAVED_BT_MOCK_CONFIG is None:
         os.environ.pop("BT_MOCK_CONFIG", None)
     else:
         os.environ["BT_MOCK_CONFIG"] = _SAVED_BT_MOCK_CONFIG
+    if _SAVED_BT_MOCK_MODE is None:
+        os.environ.pop("BT_MOCK_MODE", None)
+    else:
+        os.environ["BT_MOCK_MODE"] = _SAVED_BT_MOCK_MODE
+    if _FORCED_CONFIG_PATH is not None:
+        if os.path.exists(_FORCED_CONFIG_PATH):
+            os.remove(_FORCED_CONFIG_PATH)
+        _FORCED_CONFIG_PATH = None
     try:
         btcfg._config._load_mock_config(force=True)
     except Exception:
