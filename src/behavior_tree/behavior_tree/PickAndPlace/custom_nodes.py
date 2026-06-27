@@ -16,6 +16,31 @@ from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
 from behavior_tree.messages import Categorize, ObjectDetectionGeneralist, GetImage
 from geometry_msgs.msg import Pose
 
+import time
+
+from behavior_tree.config import get_config
+from behavior_tree.PickAndPlace.categorization import classify_destination
+from behavior_tree.PickAndPlace.config import (
+    CUTLERY_LABELS,
+    TABLEWARE_LABELS,
+    DESIGNATED_TRASH_LABELS,
+    CATEGORY_MAP,
+    DESTINATION_ROUTING,
+    PLACEMENT_MODE_FIXED_POINT,
+    PLACEMENT_MODE_NONE,
+    KEY_SCAN_RESULTS_TABLE,
+    KEY_INVENTORY_TABLE,
+    KEY_WORK_QUEUE,
+    KEY_POSE_TABLE,
+    KEY_ACTIVE_OBJECT_CLASS,
+    KEY_OBJECT_LABEL,
+    KEY_ACTIVE_PROMPT,
+    KEY_ACTIVE_SOURCE_POSE,
+    KEY_ACTIVE_TARGET_POSE,
+    KEY_ACTIVE_TARGET_POINT,
+    KEY_SCORE_TRACE,
+)
+
 
 class BtNode_WriteFoundItems(py_trees.behaviour.Behaviour):
     """Writes found items from the generalist detection result to the blackboard for TTS announcement."""
@@ -371,3 +396,283 @@ class BtNode_CategorizeGrocery(ActionHandler):
             self.feedback_message = f"ERROR:  {feedback.status} - {feedback.message}"
         else:
             self.feedback_message = f"INFO:  {feedback.status} - {feedback.message}"
+
+
+def _abs(key):
+    return py_trees.blackboard.Blackboard.absolute_name("/", key)
+
+
+# Lazily-built map from a config KEY_* name to its materialized constant. Built
+# on first use so config import order never matters.
+_CONST_BY_KEY = None
+
+
+def _const_by_key():
+    global _CONST_BY_KEY
+    if _CONST_BY_KEY is None:
+        import behavior_tree.PickAndPlace.config as cfg
+        _CONST_BY_KEY = {
+            cfg.KEY_POSE_TABLE: cfg.POSE_TABLE,
+            cfg.KEY_POSE_WASH_STAGING: cfg.POSE_WASH_STAGING,
+            cfg.KEY_POSE_CABINET: cfg.POSE_CABINET,
+            cfg.KEY_POSE_TRASH_BIN: cfg.POSE_TRASH_BIN,
+            cfg.KEY_POSE_KITCHEN_SHELF: cfg.POSE_KITCHEN_SHELF,
+            cfg.KEY_POSE_EXTRA_SURFACE: cfg.POSE_EXTRA_SURFACE,
+            cfg.KEY_ARM_TABLE: cfg.ARM_POS_TABLE,
+            cfg.KEY_ARM_WASH: cfg.ARM_POS_WASH,
+            cfg.KEY_ARM_CABINET: cfg.ARM_POS_CABINET,
+            cfg.KEY_ARM_TRASH: cfg.ARM_POS_TRASH,
+            cfg.KEY_POINT_WASH_STAGING: cfg.POINT_WASH_STAGING,
+            cfg.KEY_POINT_CABINET_DEFAULT: cfg.POINT_CABINET_DEFAULT,
+            cfg.KEY_POINT_EXTRA_SURFACE: cfg.POINT_EXTRA_SURFACE,
+        }
+    return _CONST_BY_KEY
+
+
+def _new_score_trace():
+    return {"visited_phases": [], "events": [], "place_policy": ""}
+
+
+def record_event(blackboard, phase, item, action, outcome, points_est=0):
+    """Append a scored event to the global KEY_SCORE_TRACE.
+
+    `blackboard` is accepted for call-site symmetry (nodes pass their own
+    client); the score-trace is a single global key, so a dedicated client does
+    the read-modify-write to avoid per-caller key-registration coupling.
+    Shape: {'visited_phases': [], 'events': [{phase,item,action,outcome,points_est}], 'place_policy': str}.
+    """
+    client = py_trees.blackboard.Client(name="pp_record_event")
+    client.register_key(key="trace", access=py_trees.common.Access.READ, remap_to=_abs(KEY_SCORE_TRACE))
+    client.register_key(key="trace", access=py_trees.common.Access.WRITE, remap_to=_abs(KEY_SCORE_TRACE))
+    try:
+        trace = client.trace
+    except Exception:
+        trace = None
+    if not isinstance(trace, dict):
+        trace = _new_score_trace()
+    trace.setdefault("visited_phases", [])
+    trace.setdefault("events", [])
+    trace.setdefault("place_policy", "")
+    trace["events"].append({
+        "phase": phase, "item": item, "action": action,
+        "outcome": outcome, "points_est": points_est,
+    })
+    client.trace = trace
+    return None
+
+
+class BtNode_BuildInventory(py_trees.behaviour.Behaviour):
+    """Build the cleanup inventory + work queue from a generalist scan result.
+
+    Reads the scan result, classifies each label via classify_destination,
+    sorts cabinet-bound items by category (so same-category placements run
+    consecutively for the +20 grouping), and writes inventory + queue. In mock
+    mode (or when `mock_seed` is set) with an empty upstream result, seeds a
+    canned queue so the per-item loop body actually runs. Always SUCCESS.
+    Plain Behaviour — never mocked, always runs real logic.
+    """
+
+    def __init__(self, name, in_key=KEY_SCAN_RESULTS_TABLE, out_inventory=KEY_INVENTORY_TABLE,
+                 out_queue=KEY_WORK_QUEUE, source_pose_key=KEY_POSE_TABLE, mock_seed=None):
+        super().__init__(name)
+        self.source_pose_key = source_pose_key
+        self.mock_seed = mock_seed
+        self._in = self.attach_blackboard_client(name=f"{name}_in")
+        self._in.register_key(key="scan", access=py_trees.common.Access.READ, remap_to=_abs(in_key))
+        self._out = self.attach_blackboard_client(name=f"{name}_out")
+        self._out.register_key(key="inventory", access=py_trees.common.Access.WRITE, remap_to=_abs(out_inventory))
+        self._out.register_key(key="queue", access=py_trees.common.Access.WRITE, remap_to=_abs(out_queue))
+
+    def _labels_from_scan(self):
+        try:
+            scan = self._in.scan
+        except Exception:
+            return []
+        objs = getattr(scan, "objects", None) or []
+        labels = []
+        for o in objs:
+            lbl = getattr(o, "cls", None) or getattr(o, "class_name", None)
+            if lbl:
+                labels.append((str(lbl), getattr(o, "segment", None)))
+        return labels
+
+    def update(self):
+        labels = self._labels_from_scan()
+        if not labels and (self.mock_seed is not None or get_config().is_mock_mode()):
+            seed = self.mock_seed or ["bowl", "paper cup", "pringles"]
+            labels = [(str(s), None) for s in seed]
+
+        items = []
+        for label, segment in labels:
+            dest = classify_destination(
+                label, cutlery=CUTLERY_LABELS, tableware=TABLEWARE_LABELS,
+                trash=DESIGNATED_TRASH_LABELS, category_map=CATEGORY_MAP,
+            )
+            items.append({
+                "label": label, "segment": segment, "destination": dest.klass,
+                "reference_label": dest.reference_label, "source_pose_key": self.source_pose_key,
+            })
+
+        cabinet = [it for it in items if it["destination"] == "cabinet"]
+        other = [it for it in items if it["destination"] != "cabinet"]
+        cabinet.sort(key=lambda it: it["reference_label"])
+        ordered = other + cabinet
+
+        self._out.inventory = items
+        self._out.queue = ordered
+        self.feedback_message = f"inventory={len(items)} queue={len(ordered)}"
+        return py_trees.common.Status.SUCCESS
+
+
+class BtNode_PopWorkItem(py_trees.behaviour.Behaviour):
+    """Pop the front work item and stamp the active-item blackboard keys.
+
+    Resolves DESTINATION_ROUTING and applies place_policy to derive the
+    effective placement_mode + fixed_target. SUCCESS if an item was popped,
+    FAILURE on an empty queue — this is the cleanup-loop terminator and must
+    stay un-masked (only its FAILURE exits the Repeat loop). Plain Behaviour —
+    never mocked.
+    """
+
+    def __init__(self, name, queue=KEY_WORK_QUEUE, place_policy="vlm"):
+        super().__init__(name)
+        self.place_policy = place_policy
+        self._q = self.attach_blackboard_client(name=f"{name}_q")
+        self._q.register_key(key="queue", access=py_trees.common.Access.READ, remap_to=_abs(queue))
+        self._q.register_key(key="queue", access=py_trees.common.Access.WRITE, remap_to=_abs(queue))
+        self._w = self.attach_blackboard_client(name=f"{name}_w")
+        self._writes = {
+            "object_class": KEY_ACTIVE_OBJECT_CLASS,
+            "object_label": KEY_OBJECT_LABEL,
+            "prompt": KEY_ACTIVE_PROMPT,
+            "source_pose": KEY_ACTIVE_SOURCE_POSE,
+            "target_pose": KEY_ACTIVE_TARGET_POSE,
+            "target_point": KEY_ACTIVE_TARGET_POINT,
+            "reference_label": "pp_active_reference_label",
+            "placement_mode": "pp_active_placement_mode",
+            "scan_pose": "pp_active_scan_pose",
+            "skip_scan": "pp_active_skip_scan",
+        }
+        for local, key in self._writes.items():
+            self._w.register_key(key=local, access=py_trees.common.Access.WRITE, remap_to=_abs(key))
+
+    def update(self):
+        try:
+            queue = self._q.queue
+        except Exception:
+            queue = None
+        if not queue:
+            self.feedback_message = "work queue empty -> FAILURE (loop exit)"
+            return py_trees.common.Status.FAILURE
+
+        item = queue[0]
+        self._q.queue = list(queue[1:])
+
+        klass = item["destination"]
+        nav_pose_key, arm_pose_key, vlm_mode, hardcoded_point_key = DESTINATION_ROUTING[klass]
+        consts = _const_by_key()
+
+        self._w.object_class = klass
+        self._w.object_label = item["label"]
+        self._w.prompt = item["label"]
+        self._w.reference_label = item.get("reference_label", "")
+        self._w.source_pose = consts.get(item["source_pose_key"])
+        self._w.target_pose = consts.get(nav_pose_key)
+        # The BT positions the arm itself (handleOneItem._arm); hand the server an
+        # empty scan pose + skip_scan_move=True so it does NOT re-move the arm.
+        # NB: ARM_POS_* are RADIANS but scan_pose_deg is DEGREES — never forward
+        # the arm_pose_key constant (arm_pose_key) here as degrees.
+        self._w.scan_pose = []
+        self._w.skip_scan = True
+
+        if klass == "trash":
+            self._w.placement_mode = PLACEMENT_MODE_NONE
+            self._w.target_point = None
+        elif self.place_policy == "hardcoded":
+            self._w.placement_mode = PLACEMENT_MODE_FIXED_POINT
+            self._w.target_point = consts.get(hardcoded_point_key)
+        else:  # 'vlm'
+            self._w.placement_mode = vlm_mode
+            self._w.target_point = consts.get(hardcoded_point_key)
+
+        self.feedback_message = f"popped {item['label']} -> {klass} (mode {self._w.placement_mode})"
+        return py_trees.common.Status.SUCCESS
+
+
+class BtNode_DeadlineGuard(py_trees.behaviour.Behaviour):
+    """Wall-clock budget guard. Plain Behaviour — never mocked, so it runs its
+    real logic even in mock (large budgets never fire in a fast run).
+
+    initialise() latches deadline = clock() + budget_sec (on entry, not at
+    construction). update() returns RUNNING until clock() >= deadline, then
+    SUCCESS. Never returns FAILURE. `clock` is injectable for deterministic
+    tests; default time.monotonic needs no ROS node handle.
+    """
+
+    def __init__(self, name, budget_sec, clock=None):
+        super().__init__(name)
+        self.budget_sec = float(budget_sec)
+        self.clock = clock or time.monotonic
+        self._deadline = None
+
+    def initialise(self):
+        self._deadline = self.clock() + self.budget_sec
+
+    def update(self):
+        if self._deadline is None:
+            self._deadline = self.clock() + self.budget_sec
+        if self.clock() >= self._deadline:
+            self.feedback_message = "deadline reached"
+            return py_trees.common.Status.SUCCESS
+        self.feedback_message = "within budget"
+        return py_trees.common.Status.RUNNING
+
+
+class BtNode_GuardActiveClass(py_trees.behaviour.Behaviour):
+    """Route guard: SUCCESS iff the active object class matches `expected`,
+    else FAILURE. Plain condition Behaviour — never a Handler (a mocked guard
+    would auto-succeed and route everything to the first branch)."""
+
+    def __init__(self, name, expected, key=KEY_ACTIVE_OBJECT_CLASS):
+        super().__init__(name)
+        self.expected = expected
+        self._bb = self.attach_blackboard_client(name=f"{name}_g")
+        self._bb.register_key(key="klass", access=py_trees.common.Access.READ, remap_to=_abs(key))
+
+    def update(self):
+        try:
+            klass = self._bb.klass
+        except Exception:
+            klass = None
+        if klass == self.expected:
+            self.feedback_message = f"class {klass} == {self.expected}"
+            return py_trees.common.Status.SUCCESS
+        self.feedback_message = f"class {klass} != {self.expected}"
+        return py_trees.common.Status.FAILURE
+
+
+class BtNode_MarkPhase(py_trees.behaviour.Behaviour):
+    """Append `phase` to the score-trace visited_phases. Always SUCCESS."""
+
+    def __init__(self, name, phase, key=KEY_SCORE_TRACE):
+        super().__init__(name)
+        self.phase = phase
+        self._bb = self.attach_blackboard_client(name=f"{name}_phase")
+        self._bb.register_key(key="trace", access=py_trees.common.Access.READ, remap_to=_abs(key))
+        self._bb.register_key(key="trace", access=py_trees.common.Access.WRITE, remap_to=_abs(key))
+
+    def update(self):
+        try:
+            trace = self._bb.trace
+        except Exception:
+            trace = None
+        if not isinstance(trace, dict):
+            trace = _new_score_trace()
+        trace.setdefault("visited_phases", [])
+        trace.setdefault("events", [])
+        trace.setdefault("place_policy", "")
+        if self.phase not in trace["visited_phases"]:
+            trace["visited_phases"].append(self.phase)
+        self._bb.trace = trace
+        self.feedback_message = f"phase {self.phase} marked"
+        return py_trees.common.Status.SUCCESS
