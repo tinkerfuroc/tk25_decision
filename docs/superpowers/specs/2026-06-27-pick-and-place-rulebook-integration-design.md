@@ -295,7 +295,8 @@ Server smoke: `ros2 run arm_api scan_and_place_action` + a documented `dry_run=t
 `KEY_SCORE_TRACE` (already declared, unused) holds:
 ```
 { "visited_phases": [],   # phase names, appended by markPhase(name)
-  "events": [] }          # list of {phase, item, action, outcome, points_est}
+  "events": [],           # list of {phase, item, action, outcome, points_est}
+  "place_policy": str }   # 'vlm' (default) | 'hardcoded'; mirrors §8.0 + record_event
 ```
 Initialized in `createConstantWriter`. A small `record_event(blackboard, phase, item, action, outcome, points_est)` helper is called by `BtNode_ScanAndPlace.process_result`, the grasp-failure/skip leaf, and `markPhase`. `phaseSummary()` announces a rollup. **Layer-B test asserts `set(visited_phases) ⊇ {"table","breakfast","extra"}`** and that ≥1 place event was recorded.
 
@@ -361,6 +362,7 @@ Build/verify follows workspace rules: no raw colcon; `tkbuild`/build-wrapper; pr
 - `grocery_categorize` / `start_drop` server availability — both behind feature checks; static label path + kinematic trash release are the self-sufficient defaults.
 - `constants.json` placeholders (extra-surface pose, breakfast geometry adjacency) — verify on hardware later.
 - Concurrent committers on manip/decision repos — commit new only, never `--amend`/rebase, selective `git add` by path.
+- Re-detect uses the generic table prompt; the grasp targets the popped item via `object_label`. Narrowing the generalist scan prompt to the per-item label is an on-robot refinement (the generalist node would need a blackboard-sourced prompt).
 
 ---
 
