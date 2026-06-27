@@ -194,6 +194,14 @@ class BtNode_Grasp(ActionHandler):
             )
 
     def send_goal(self):
+        # Handle mock mode — when vision is mocked, vision_result is a
+        # MockMessage with no .header/.rgb_image/.segments, so skip real goal
+        # construction and use the base ActionHandler mock path (mirrors the
+        # sibling manip nodes, e.g. BtNode_MoveArmSingle ~line 540).
+        if self.mock_mode:
+            self.feedback_message = "MOCK: Grasp succeeded"
+            super().send_goal()
+            return
         try:
             goal = Grasp.Goal()
             goal.header = self.blackboard.vision_result.header
