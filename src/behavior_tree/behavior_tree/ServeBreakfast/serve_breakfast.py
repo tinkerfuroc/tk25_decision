@@ -70,7 +70,7 @@ prompts = [prompt_milk, prompt_cereal, prompt_bowl, prompt_spoon]
 
 MAX_SCAN_DISTANCE = 2.0
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 place_service_name = "place_service"
 point_cloud_service_name = "get_point_cloud_service"
@@ -110,7 +110,7 @@ def createGoPositionAndFind(obj_name, position):
     scan_at_pos = py_trees.composites.Sequence(name="Scan at pos 1", memory=True)
     
     # move to scan position
-    scan_at_pos.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=True), 3))
+    scan_at_pos.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=True), 3))
     scan_at_pos.add_child(py_trees.decorators.Retry("retry", BtNode_GotoAction(f"Goto grasp position {position}", key=KEY_TABLE_SCAN_POSE[position]), 5))
 
     # move arm for scan
@@ -118,7 +118,7 @@ def createGoPositionAndFind(obj_name, position):
     scan_poses = py_trees.composites.Selector(name="Scan at Poses", memory=True)
     for j in range(N_ARM_POS_SCAN):
         scan_j = py_trees.composites.Sequence(name="Scan", memory=True)
-        scan_j.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCANS[j], add_octomap=True), 3))
+        scan_j.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCANS[j], add_octomap=True), 3))
         scan_j.add_child(BtNode_FindObj(name=f"find {obj_name}", bb_source=None, bb_namespace=None, bb_key=KEY_OBJECT, object=obj_name, target_object_cls=obj_name))
         scan_poses.add_child(scan_j)
     scan_at_pos.add_child(scan_poses)
@@ -159,7 +159,7 @@ def createGraspAndPlace(obj_name="object", drop_position=0):
     root.add_child(parallel_grasp)
 
     # move arm back
-    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 3))
+    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 3))
 
     # go to drop pose and drop
     drop_at_poses = py_trees.composites.Selector(name="Drop at Poses", memory=True)

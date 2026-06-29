@@ -60,7 +60,7 @@ KEY_TARGET_FRAME = "target_frame"
 KEY_PROMPT = "prompt"
 KEY_GRASP_ANNOUNCEMENT = "grasp_announcement"
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 place_service_name = "place_action"
 point_target_frame = "base_link"
@@ -85,17 +85,17 @@ def createPlaceOnShelf():
                                             bb_target_frame=KEY_TARGET_FRAME, bb_key_result_point=KEY_POINT_PLACE, 
                                             bb_key_env_points=KEY_ENV_POINTS, bb_key_reason=KEY_REASON,
                                             bb_key_shelf_left=KEY_POINT_SHELF_LEFT, bb_key_shelf_right=KEY_POINT_SHELF_RIGHT,))
-    root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
+    root.add_child(BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     # announce placing on shelf
     root.add_child(BtNode_Announce(name="Announce placing on shelf", bb_source=None, message="Placing on shelf"))
     root.add_child(BtNode_Place(name="Place object on shelf", bb_key_point=KEY_POINT_PLACE, bb_key_pose=KEY_GRASP_POSE, bb_key_env_points=KEY_ENV_POINTS, action_name=place_service_name))
-    root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN))
+    root.add_child(BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN))
     return root
 
 def createPlaceOnce():
     root = py_trees.composites.Sequence(name="Place once", memory=True)
     # root.add_child(BtNode_GripperAction(name="close gripper", open_gripper=False))
-    root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    root.add_child(BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     root.add_child(BtNode_FindObjTable("Find object", KEY_PROMPT, KEY_TABLE_IMG, KEY_OBJ_SEG, KEY_OBJECT, KEY_GRASP_ANNOUNCEMENT))
     root.add_child(createPlaceOnShelf())
     return root

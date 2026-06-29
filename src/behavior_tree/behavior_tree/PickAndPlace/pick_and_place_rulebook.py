@@ -21,6 +21,7 @@ from behavior_tree.TemplateNodes.Manipulation import (
     BtNode_GripperAction,
     BtNode_ScanAndPlace,
 )
+from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
 
 from .config import (
     GRASP_RETRY_LIMIT,
@@ -68,7 +69,6 @@ from .custom_nodes import (
 )
 from .pick_and_place import (
     createConstantWriter as _writeBaseConstants,
-    enterArena,
     _gotoRetryWith_Announcement,
     _moveArmRetry,
     _scanForGeneralistRetry,
@@ -232,6 +232,20 @@ def _arm(label, arm_key):
     return _moveArmRetry(label, arm_key, add_octomap=True)
 
 
+# Head-tilt presets applied right before each grasp/place (operator spec): the
+# pan-tilt head looks 0 deg at flat tables/surfaces and 25 deg at a
+# cabinet/shelf. Pan (x) stays 0 = facing forward. Trash uses a gripper release
+# (no surface scan) so it gets no tilt set.
+HEAD_TILT_SURFACE = 0.0
+HEAD_TILT_CABINET_SHELF = 25.0
+
+
+def _headTilt(label, tilt_deg):
+    return BtNode_TurnPanTilt(
+        name=f"head tilt {int(tilt_deg)}deg ({label})", x=0.0, y=float(tilt_deg)
+    )
+
+
 def _reDetectActive():
     # NOTE(hardware): narrow the prompt to KEY_ACTIVE_PROMPT once the generalist
     # node exposes a bb-sourced prompt; the literal is mock-inert.
@@ -305,8 +319,22 @@ def phaseSummary():
 
 
 def phaseEnterArena():
-    # Reuse: Retry(cap) > BtNode_DoorDetection, wrapped FailureIsSuccess.
-    return enterArena()
+    # Door detection is DEPRECATED (no door_detection_srv server; under a real
+    # run its setup() blocks tree.setup() on wait_for_service -> timeout). Skip
+    # the wait-for-open-door step entirely and just announce entry; the first
+    # phase's nav (_goto "dining table") drives the robot into the arena. To
+    # restore a real door-wait, re-add a gated detection node here.
+    seq = py_trees.composites.Sequence("phase: enter arena", memory=True)
+    seq.add_child(
+        BtNode_Announce(
+            name="announce enter arena",
+            bb_source=None,
+            message="Entering the arena.",
+        )
+    )
+    return py_trees.decorators.FailureIsSuccess(
+        name="enter arena (always success)", child=seq
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -379,6 +407,7 @@ def _routeByDestination(place_policy, phase="cleanup"):
         BtNode_GuardActiveClass(name="is wash_staging?", expected="wash_staging")
     )
     wash.add_child(_goto("wash staging", KEY_ACTIVE_TARGET_POSE))
+    wash.add_child(_headTilt("wash-staging place", HEAD_TILT_SURFACE))
     wash.add_child(_arm("arm to wash place", KEY_ARM_WASH))
     wash.add_child(BtNode_ScanAndPlace(name="place at wash-staging"))
     wash.add_child(
@@ -392,6 +421,7 @@ def _routeByDestination(place_policy, phase="cleanup"):
     cab = py_trees.composites.Sequence("route cabinet", memory=True)
     cab.add_child(BtNode_GuardActiveClass(name="is cabinet?", expected="cabinet"))
     cab.add_child(_goto("cabinet", KEY_ACTIVE_TARGET_POSE))
+    cab.add_child(_headTilt("cabinet place", HEAD_TILT_CABINET_SHELF))
     cab.add_child(_arm("arm to cabinet place", KEY_ARM_CABINET))
     cab.add_child(BtNode_ScanAndPlace(name="place at cabinet (grouped)"))
     cab.add_child(
@@ -425,6 +455,7 @@ def handleOneItem(place_policy="vlm", phase="cleanup"):
     """
     body = py_trees.composites.Sequence("handle one item", memory=True)
     body.add_child(_goto("active item source", KEY_ACTIVE_SOURCE_POSE))
+    body.add_child(_headTilt("surface grasp", HEAD_TILT_SURFACE))
     body.add_child(_arm("arm to scan (active item)", KEY_ARM_TABLE))
     body.add_child(_reDetectActive())
     # Per-object perception+destination announce (spec §8.3): speak the popped
@@ -526,6 +557,7 @@ def phaseTableCleanup(place_policy="vlm"):
 def _breakfastItem(item, src_key, arm_key, point_key):
     s = py_trees.composites.Sequence(f"retrieve+place {item}", memory=True)
     s.add_child(_goto(f"{item} source", src_key))
+    s.add_child(_headTilt(f"{item} retrieve (shelf/cabinet)", HEAD_TILT_CABINET_SHELF))
     s.add_child(_arm(f"arm to {item} retrieve", arm_key))
     s.add_child(
         _scanForGeneralistRetry(
@@ -553,6 +585,7 @@ def _breakfastItem(item, src_key, arm_key, point_key):
         )
     )
     s.add_child(_goto("clean table (breakfast)", KEY_POSE_TABLE))
+    s.add_child(_headTilt("breakfast table place", HEAD_TILT_SURFACE))
     s.add_child(_arm("arm to table place (breakfast)", KEY_ARM_TABLE))
     # Breakfast is ALWAYS FIXED_POINT at the item's own point (policy-independent).
     s.add_child(

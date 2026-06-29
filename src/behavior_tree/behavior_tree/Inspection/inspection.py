@@ -56,7 +56,7 @@ KEY_ARM_NAVIGATING = "arm_navigating"
 KEY_DOOR_STATUS = "door_status"
 
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 
 def createConstantWriter():
     root = py_trees.composites.Parallel(name="Write constants to blackboard", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
@@ -92,7 +92,7 @@ def createInspection():
     root = py_trees.composites.Sequence(name="Inspection Root", memory=True)
     # write all the constants to blackboard first
     root.add_child(createConstantWriter())
-    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
     root.add_child(createToIspection())
 

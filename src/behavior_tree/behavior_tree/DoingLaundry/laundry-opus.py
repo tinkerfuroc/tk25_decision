@@ -43,7 +43,7 @@ from .config import (
     ARM_POS_PICK_WASHER,
     ARM_POS_PLACING,
     ARM_POS_SCAN,
-    ARM_SERVICE_NAME,
+    ARM_ACTION_NAME,
     CLOTHING_SCAN_PROMPT,
     DO_FOLD_PICKED_PIECES,
     DO_PICK_FROM_BASKET,
@@ -152,7 +152,7 @@ def _moveArmRetry(name: str, arm_pose_key: str, *, add_octomap: bool = False, re
         name=f"Retry {name}",
         child=BtNode_MoveArmSingle(
             name=name,
-            service_name=ARM_SERVICE_NAME,
+            action_name=ARM_ACTION_NAME,
             arm_pose_bb_key=arm_pose_key,
             add_octomap=add_octomap,
         ),

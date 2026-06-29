@@ -143,14 +143,14 @@ KEY_PLACE_REASON = "place_reason"
 
 KEY_SCAN_RESULT = "scan_result"
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 place_service_name = "place_action"
 point_target_frame = "base_link"
 
 def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter arena", memory=True)
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_pose_bb_key=KEY_ARM_NAVIGATING), num_failures=5))
     if DO_NAV:
         root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
         # pass
@@ -183,10 +183,10 @@ def createConstantWriter():
 def createGraspOnce(retry_times=5):
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
     root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=20.0))
-    root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
+    root.add_child(BtNode_MoveArmSingle("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     parallel_move_arm = py_trees.composites.Parallel("Move arm to find object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_move_arm.add_child(BtNode_Announce(name="Announce moving arm", bb_source=None, message="Moving arm to find object"))
-    parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
+    parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     root.add_child(parallel_move_arm)
 
     find_and_grasp = py_trees.composites.Sequence(name="find and grasp", memory=True)
@@ -199,13 +199,13 @@ def createGraspOnce(retry_times=5):
     find_and_grasp.add_child(parallel_grasp)
 
     root.add_child(find_and_grasp)
-    root.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
+    root.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
     return py_trees.decorators.Retry(name=f"retry {retry_times} times", child=root, num_failures=retry_times)
 
 def createPlaceOnShelf():
     root = py_trees.composites.Sequence(name="Place object", memory=True)
     # move arm to navigating position
-    root.add_child(BtNode_MoveArmSingle("Move arm to navigating for easier scanning", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    root.add_child(BtNode_MoveArmSingle("Move arm to navigating for easier scanning", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=25.0))
     # move arm to scan position
     scan_parallel = py_trees.composites.Parallel("Scan object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
@@ -217,7 +217,7 @@ def createPlaceOnShelf():
                                             bb_key_shelf_left=KEY_POINT_SHELF_LEFT, bb_key_shelf_right=KEY_POINT_SHELF_RIGHT))
     root.add_child(scan_parallel)
     if DO_PLACE:
-        root.add_child(BtNode_MoveArmSingle("Move arm to scan", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
+        root.add_child(BtNode_MoveArmSingle("Move arm to scan", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     # announce placing on shelf
     place_parallel = py_trees.composites.Parallel("Place object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     place_parallel.add_child(BtNode_Announce(name="Announce placing on shelf", bb_source=KEY_PLACE_REASON))
@@ -243,14 +243,14 @@ def createPlaceOnShelf():
     root.add_child(place_parallel)
     # Not sure if this works
     root.add_child(py_trees.decorators.Retry("retry", 
-                                             BtNode_MoveArmSingle("Move arm to drop", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_DROP, add_octomap=False),
+                                             BtNode_MoveArmSingle("Move arm to drop", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_DROP, add_octomap=False),
                                              3))
     root.add_child(py_trees.decorators.Retry("retry",
                                              BtNode_GripperAction("open gripper", True),
                                              3))
     root.add_child(BtNode_Announce(name="Announce placing complete", bb_source=None, message="Placing on shelf complete"))
     root.add_child(py_trees.decorators.Retry("retry",
-                                             BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING),
+                                             BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING),
                                              3))
     root.add_child(BtNode_TurnPanTilt(name="turn pantilt", x=0.0, y=20.0))
     return py_trees.decorators.Retry(name="retry 5 times", child=root, num_failures=5)
@@ -287,7 +287,7 @@ def createGraspAndDrop():
     root.add_child(BtNode_Announce("announce grasp successful", bb_source=None, message="grasp successful."))
     root.add_child(BtNode_Announce(name="announce unable to reach shelf", bb_source=None, message="Unable to reach shelf. Dropping object in hand."))
     root.add_child(py_trees.decorators.Retry("retry", 
-                                             BtNode_MoveArmSingle("Move arm to drop", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_DROP, add_octomap=False),
+                                             BtNode_MoveArmSingle("Move arm to drop", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_DROP, add_octomap=False),
                                              3))
     root.add_child(py_trees.decorators.Retry("retry",
                                              BtNode_GripperAction("open gripper", True),

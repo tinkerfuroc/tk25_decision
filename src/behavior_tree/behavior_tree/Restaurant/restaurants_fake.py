@@ -242,7 +242,7 @@ def createDeliverOneItem():
     ))
     seq.add_child(BtNode_MoveArmSingle(
         name="Arm to serving pose (at bar)",
-        service_name="arm_joint_service",
+        action_name="joint_move_action",
         arm_pose_bb_key=KEY_ARM_SERVING,
         add_octomap=False,
     ))
@@ -259,7 +259,7 @@ def createDeliverOneItem():
     seq.add_child(BtNode_GripperAction(name="Close gripper", open_gripper=False))
     seq.add_child(BtNode_MoveArmSingle(
         name="Arm to navigating pose",
-        service_name="arm_joint_service",
+        action_name="joint_move_action",
         arm_pose_bb_key=KEY_ARM_NAVIGATING,
         add_octomap=False,
     ))
@@ -277,7 +277,7 @@ def createDeliverOneItem():
     deliver.add_child(BtNode_MaintainEyeContact(name="Eye-contact (serving)"))
     deliver.add_child(BtNode_MoveArmSingle(
         name="Arm to serving pose (at table)",
-        service_name="arm_joint_service",
+        action_name="joint_move_action",
         arm_pose_bb_key=KEY_ARM_SERVING,
         add_octomap=False,
     ))
@@ -294,7 +294,7 @@ def createDeliverOneItem():
     deliver.add_child(BtNode_GripperAction(name="Release item", open_gripper=True))
     deliver.add_child(BtNode_MoveArmSingle(
         name="Arm to navigating pose",
-        service_name="arm_joint_service",
+        action_name="joint_move_action",
         arm_pose_bb_key=KEY_ARM_NAVIGATING,
         add_octomap=False,
     ))

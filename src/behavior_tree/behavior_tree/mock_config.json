@@ -13,7 +13,7 @@
     "auto_detect": false,
     "subsystems": {
       "vision": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": false,
         "description": "Per-node mock mode for vision nodes. Allowed values: NO_MOCK, KEYPRESS, TELEOP, IMMEDIATE",
         "nodes": {
@@ -61,7 +61,7 @@
         }
       },
       "navigation": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": false,
         "description": "Per-node mock mode for navigation nodes",
         "nodes": {
@@ -116,7 +116,7 @@
     }
   },
   "keyboard_control": {
-    "enabled": true,
+    "enabled": false,
     "description": "When false, KEYPRESS mode degrades to IMMEDIATE"
   },
   "mock_keyboard": {

@@ -68,7 +68,7 @@ KEY_POSE_BATHROOM = "bathroom"
 KEY_POSE_QA_POINT = "QA_point"
 KEY_POSE_COMMAND = "pose_command"
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 point_target_frame = "base_link"
 
@@ -87,7 +87,7 @@ def createConstantWriter():
 def createEnterArena():
     root = py_trees.composites.Sequence("Enter Arena", True)
     root.add_child(BtNode_Announce(name="announce entering arena", bb_source=None, message="Starting GPSR. Entering the arena now."))
-    root.add_child(BtNode_MoveArmSingle(name="move arm to navigating position", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
+    root.add_child(BtNode_MoveArmSingle(name="move arm to navigating position", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     root.add_child(BtNode_GripperAction(name="open gripper before navigation", open_gripper=True))
     root.add_child(BtNode_TurnPanTilt(name="turn pan tilt up", y=45.0))
     root.add_child(BtNode_WaitKeyboardPress(name="wait for start key", key="s"))

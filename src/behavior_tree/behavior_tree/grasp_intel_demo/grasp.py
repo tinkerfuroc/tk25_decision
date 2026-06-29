@@ -20,7 +20,7 @@ ARM_POS_GRASP = [x / 180 * math.pi for x in [0.0, 13.4, -8.7, 83.0, 8.0, 72.3, 0
 
 KEY_ARM_GRASP = "arm_pose_grasp"
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 
 KEY_OBJECT = "detected_object"
@@ -36,13 +36,13 @@ def createConstantWriter():
 
 def createGraspOnce(retry_times=5):
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
-    root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_GRASP, add_octomap=False))
+    root.add_child(BtNode_MoveArmSingle("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_GRASP, add_octomap=False))
 
     root.add_child(BtNode_FindObj(name=f"find bottle", bb_source=None, bb_namespace=None, bb_key=KEY_OBJECT, object="bottle", target_object_cls="bottle"))
 
     root.add_child(BtNode_Grasp(f"Grasp object on table", bb_source=KEY_OBJECT, action_name=grasp_service_name))
  
-    root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_GRASP, add_octomap=False))
+    root.add_child(BtNode_MoveArmSingle("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_GRASP, add_octomap=False))
 
     return py_trees.decorators.Retry(name=f"retry {retry_times} times", child=root, num_failures=retry_times)
 

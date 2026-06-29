@@ -41,6 +41,14 @@ class BtNode_DetectCallingCustomer(ServiceHandler):
         )
 
     def initialise(self):
+        super().initialise()
+        if self.mock_mode:
+            # No real /detect_waving_persons client exists in mock mode
+            # (call_service_async returns None). Publish an empty waver list so
+            # downstream packing still sees the key, and skip the service call.
+            self.blackboard.results = []
+            self.feedback_message = "MOCK: detect calling customer (no wavers)"
+            return
         request = DetectWaving.Request()
         request.threshold_meters = self.threshold_meters
         request.target_frame = self.target_frame
@@ -48,6 +56,13 @@ class BtNode_DetectCallingCustomer(ServiceHandler):
         self.feedback_message = "Looking for calling or waving customer"
 
     def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return py_trees.common.Status.FAILURE
+
         if not self.response.done():
             return py_trees.common.Status.RUNNING
 
@@ -142,15 +157,28 @@ class BtNode_DetectTray(ServiceHandler):
         )
     
     def initialise(self):
+        super().initialise()
+        if self.mock_mode:
+            # No real detection client in mock mode (self.client is None).
+            self.blackboard.tray_location = None
+            self.feedback_message = "MOCK: detect tray (no tray)"
+            return
         request = ObjectDetectionGeneralist.Request()
         request.prompt = "tray"
         request.use_vlm_sam_fallback = True
         request.camera = "orbbec"
         request.target_frame = "map"
-        self.response = self.client.call_async(request)
+        self.response = self.call_service_async(request)
         self.feedback_message = "Looking for available tray"
-    
+
     def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return py_trees.common.Status.FAILURE
+
         if self.response.done():
             result = self.response.result()
             if result.status == 0 and len(result.objects) > 0:
@@ -235,11 +263,19 @@ class BtNode_ScanForCallingCustomer(ServiceHandler):
         self.pan_tilt_publisher.publish(msg)
     
     def initialise(self):
+        super().initialise()
         self.start_time = time.time()
         self.current_position = 0
         self.position_start_time = time.time()
         self.camera_initialized = False
-        
+
+        if self.mock_mode:
+            # No real detection client / pan-tilt in mock mode; skip the
+            # blocking camera sweep and service call.
+            self.blackboard.customer_location = None
+            self.feedback_message = "MOCK: scan for calling customer (none)"
+            return
+
         # 首先将相机调整到水平位置（Y轴30度对应实际的水平位置）
         self.move_camera_to_position(0.0, 30.0)
         
@@ -264,13 +300,20 @@ class BtNode_ScanForCallingCustomer(ServiceHandler):
         request.use_vlm_sam_fallback = True
         request.camera = "orbbec"
         request.target_frame = "map"
-        self.response = self.client.call_async(request)
-    
+        self.response = self.call_service_async(request)
+
     def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
         if time.time() - self.start_time > self.timeout:
             self.feedback_message = "Timeout: No calling customer found after scanning all positions"
             return py_trees.common.Status.FAILURE
-        
+
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return py_trees.common.Status.FAILURE
+
         if self.response.done():
             result = self.response.result()
             if result.status == 0 and len(result.objects) > 0:

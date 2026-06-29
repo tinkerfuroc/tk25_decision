@@ -77,7 +77,7 @@ KEY_ALL_WAVING_PERSONS = "all_waving_persons"
 
 WAVING_PERSON_THRESHOLD_METERS = 6.0
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 point_target_frame = "base_link"
 
@@ -120,7 +120,7 @@ prompt_list = " . ".join([prompt_drinks, prompt_foods, prompt_snacks, prompt_fru
 
 def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter arena", memory=True)
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_pose_bb_key=KEY_ARM_NAVIGATING), num_failures=5))
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
     root.add_child(BtNode_WaitTicks("wait for 10 ticks", 10))
     parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
@@ -164,10 +164,10 @@ def createGotoWaving():
 def createGrasp():
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
     root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=20.0))
-    root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
+    root.add_child(BtNode_MoveArmSingle("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     parallel_move_arm = py_trees.composites.Parallel("Move arm to find object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_move_arm.add_child(BtNode_Announce(name="Announce moving arm", bb_source=None, message="Moving arm to find object"))
-    parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
+    parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     root.add_child(parallel_move_arm)
 
     find_and_grasp = py_trees.composites.Sequence(name="find and grasp", memory=True)
@@ -180,11 +180,11 @@ def createGrasp():
     find_and_grasp.add_child(parallel_grasp)
 
     root.add_child(find_and_grasp)
-    root.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
+    root.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
     grasp_root = py_trees.decorators.Retry(name=f"retry 3 times", child=root, num_failures=3)
 
     ex_machina_grasp = py_trees.composites.Sequence("grasp ex machina", True)
-    ex_machina_grasp.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
+    ex_machina_grasp.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
     ex_machina_grasp.add_child(BtNode_GripperAction("open gripper", True))
     ex_machina_grasp.add_child(BtNode_Announce("announce help grasp", bb_source=KEY_TARGET_OBJECT_NAME, message="Dear referee, please help me grasp the "))
     ex_machina_grasp.add_child(BtNode_Announce("announce help grasp2", bb_source=None, message="Put it in my gripper please. Thank you"))
