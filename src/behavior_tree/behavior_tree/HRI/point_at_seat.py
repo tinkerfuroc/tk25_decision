@@ -112,9 +112,10 @@ def build() -> py_trees.behaviour.Behaviour:
             bb_key_points=KEY_SEAT_POINTS,
             bb_key_init_pose=KEY_ARM_POINT_TO,
             target_id=0,
-            # seat_recommend_bbox centroid is pi-rotated about base Z vs
-            # base_link; matches the production seat-pointing in hri.py.
-            pan_bias=math.pi,
+            # Camera TF is calibrated correct (pan-tilt camera_mount fixed
+            # 2026-06-27): the seat centroid is already correct in base_link, so
+            # joint0 = atan2(y, x) aims directly. Matches production hri.py.
+            pan_bias=0.0,
         )
     )
     return root

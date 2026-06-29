@@ -736,10 +736,13 @@ def createEscortAndSeat(guest_idx: int):
                     bb_key_points=KEY_SEAT_POINTS,
                     bb_key_init_pose=KEY_ARM_POINT_TO,
                     target_id=0,
-                    # seat_recommend_bbox centroid is pi-rotated about base Z
-                    # vs base_link; without this the pan lands outside the arm's
-                    # [-pi/2, pi/2] range and the point-to goal is rejected.
-                    pan_bias=math.pi,
+                    # Camera TF is calibrated correct (pan-tilt camera_mount
+                    # fixed 2026-06-27): the seat centroid is already correct in
+                    # base_link, so joint0 = atan2(y, x) aims the arm directly.
+                    # The old pan_bias=pi compensated a ~180deg-wrong camera TF
+                    # (camera physically forward, modelled backward) and must be
+                    # 0 now that the TF is correct (else the arm points 180deg off).
+                    pan_bias=0.0,
                 ),
                 num_failures=3,
             ),
@@ -925,12 +928,25 @@ def createTwoWayIntroduction():
         BtNode_TurnTo(name="Look at guest2", bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, target_id=2)
     )
     turn_pantilt_and_arm1.add_child(
-        BtNode_PointTo(
-            name="Point arm at guest1",
-            bb_key_persons=KEY_PERSONS,
-            bb_key_points=KEY_PERSON_CENTROIDS,
-            bb_key_init_pose=KEY_ARM_POINT_TO,
-            target_id=1,
+        py_trees.decorators.FailureIsSuccess(
+            name="Point arm at guest1 (best-effort)",
+            child=py_trees.decorators.Retry(
+                name="Retry point arm at guest1",
+                child=BtNode_PointTo(
+                    name="Point arm at guest1",
+                    bb_key_persons=KEY_PERSONS,
+                    bb_key_points=KEY_PERSON_CENTROIDS,
+                    bb_key_init_pose=KEY_ARM_POINT_TO,
+                    target_id=1,
+                    # Camera TF is calibrated correct (pan-tilt camera_mount
+                    # fixed 2026-06-27): the centroid is already correct in
+                    # base_link, so joint0 = atan2(y, x) aims the arm directly.
+                    # Same change as the seat-pointing path in createEscortAndSeat;
+                    # pan_bias was pi only to cancel a ~180deg-wrong camera TF.
+                    pan_bias=0.0,
+                ),
+                num_failures=3,
+            ),
         )
     )
     # Build the announce + gaze parallel; SuccessOnSelected wants node
@@ -972,12 +988,25 @@ def createTwoWayIntroduction():
         BtNode_TurnTo(name="Look at guest1", bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, target_id=1)
     )
     turn_pantilt_and_arm2.add_child(
-        BtNode_PointTo(
-            name="Point arm at guest2",
-            bb_key_persons=KEY_PERSONS,
-            bb_key_points=KEY_PERSON_CENTROIDS,
-            bb_key_init_pose=KEY_ARM_POINT_TO,
-            target_id=2,
+        py_trees.decorators.FailureIsSuccess(
+            name="Point arm at guest2 (best-effort)",
+            child=py_trees.decorators.Retry(
+                name="Retry point arm at guest2",
+                child=BtNode_PointTo(
+                    name="Point arm at guest2",
+                    bb_key_persons=KEY_PERSONS,
+                    bb_key_points=KEY_PERSON_CENTROIDS,
+                    bb_key_init_pose=KEY_ARM_POINT_TO,
+                    target_id=2,
+                    # Camera TF is calibrated correct (pan-tilt camera_mount
+                    # fixed 2026-06-27): the centroid is already correct in
+                    # base_link, so joint0 = atan2(y, x) aims the arm directly.
+                    # Same change as the seat-pointing path in createEscortAndSeat;
+                    # pan_bias was pi only to cancel a ~180deg-wrong camera TF.
+                    pan_bias=0.0,
+                ),
+                num_failures=3,
+            ),
         )
     )
     intro2.add_child(turn_pantilt_and_arm2)
