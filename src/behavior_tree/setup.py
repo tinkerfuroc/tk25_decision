@@ -77,8 +77,14 @@ setup(
             # HRI finalized 2026 production tree (real follow bag flow)
             "hri-2026 = behavior_tree.HRI.hri_2026:main",
             "pick-and-place = behavior_tree.PickAndPlace.cli:main",
-            "doing-laundry = behavior_tree.DoingLaundry.cli:main",
+            # "doing-laundry = behavior_tree.DoingLaundry.cli:main",
             "laundry-test = behavior_tree.DoingLaundry.sampling:main",
+            # DoingLaundry finalization test modules (new, 2026)
+            "laundry-test-fold-action = behavior_tree.DoingLaundry.test_fold_clothing_action:main",
+            "laundry-test-pick = behavior_tree.DoingLaundry.test_pick_clothing:main",
+            "laundry-test-locate = behavior_tree.DoingLaundry.test_locate_and_approach:main",
+            # DoingLaundry finalized 2026 production tree (real FoldClothing + perception pick)
+            "doing-laundry = behavior_tree.DoingLaundry.laundry:main",
             "GPSR = behavior_tree.GPSR.gpsr_new:main",
             "gpsr-full = behavior_tree.GPSR.gpsr_full:main",
             "gpsr-orchestrator = behavior_tree.GPSR.gpsr_orchestrator:main",
@@ -99,8 +105,26 @@ setup(
             "gpsr-test-tell = behavior_tree.GPSR.dev_tests:main_tell_info",
             "gpsr-test-say = behavior_tree.GPSR.dev_tests:main_say",
             "gpsr-test-orchestrator = behavior_tree.GPSR.dev_tests:main_orchestrator",
+            # GPSR finalization tests (new, 2026): the 7 ACTION_FACTORIES not covered
+            # by dev_tests + an orchestrator grammar/plan harness
+            "gpsr-test-announce = behavior_tree.GPSR.test_uncovered_actions:main_announce",
+            "gpsr-test-approach-person = behavior_tree.GPSR.test_uncovered_actions:main_approach_person",
+            "gpsr-test-ask-person = behavior_tree.GPSR.test_uncovered_actions:main_ask_person",
+            "gpsr-test-describe-person = behavior_tree.GPSR.test_uncovered_actions:main_describe_person",
+            "gpsr-test-record-position = behavior_tree.GPSR.test_uncovered_actions:main_record_position",
+            "gpsr-test-vlm = behavior_tree.GPSR.test_uncovered_actions:main_vlm_fallback",
+            "gpsr-test-llm = behavior_tree.GPSR.test_uncovered_actions:main_llm_fallback",
+            "gpsr-test-cmd = behavior_tree.GPSR.test_orchestrator_grammar:main",
             "restaurant = behavior_tree.Restaurant.cli:main",
             "restaurant-simplified = behavior_tree.Restaurant.cli:simplified",
+            # Restaurant finalization tests (new, 2026): isolate the production phases
+            "test-restaurant-deliver-loop = behavior_tree.Restaurant.test_deliver_loop:main",
+            "test-restaurant-collect-order = behavior_tree.Restaurant.test_collect_one_order:main",
+            "test-restaurant-barman = behavior_tree.Restaurant.test_barman_phase:main",
+            # Restaurant order capture via free-form name+drink action (new, 2026)
+            "restaurant-test-name-drink-order = behavior_tree.Restaurant.order_intake_name_drink:main",
+            # Restaurant finalized 2026 production tree (captured bar pose + name+drink intake)
+            "restaurant-2026 = behavior_tree.Restaurant.restaurant_v2:main",
             "grasp_once = behavior_tree.grasp_intel_demo.grasp:main",
             # Mock mode test scripts
             "test-mock-mode = behavior_tree.test_mock_mode:main",
@@ -119,6 +143,14 @@ setup(
             "pp-table-placing = behavior_tree.PickAndPlace.dev_cli:table_placing",
             "pp-drop-trash = behavior_tree.PickAndPlace.dev_cli:drop_trash",
             "pp-cabinet-categorization = behavior_tree.PickAndPlace.dev_cli:cabinet_categorization",
+            # PickAndPlace finalization tests (new, 2026)
+            "pp-test-imports = behavior_tree.PickAndPlace.test_imports_smoke:main",
+            "pp-test-grasp-place-e2e = behavior_tree.PickAndPlace.test_grasp_to_place_e2e:main",
+            "pp-test-cabinet-place = behavior_tree.PickAndPlace.test_cabinet_place:main",
+            # PickAndPlace breakfast assembly (new, 2026): rulebook 2nd main goal
+            "pp-test-breakfast = behavior_tree.PickAndPlace.breakfast_assembly:main",
+            # PickAndPlace finalized 2026 production tree (routed real place + breakfast)
+            "pick-and-place-2026 = behavior_tree.PickAndPlace.pick_and_place_v2:main",
         ],
     },
 )

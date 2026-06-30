@@ -30,6 +30,7 @@ Fully offline (no servers, auto-advance)::
         ros2 run behavior_tree hri-2026
 """
 
+from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
 import py_trees
 import py_trees_ros
 import rclpy
@@ -45,16 +46,14 @@ from behavior_tree.TemplateNodes.Manipulation import (
 from behavior_tree.visualization import create_post_tick_visualizer
 
 
-def createBagFlowReal2026(
-    stop_phrase: str = "you can stop here",
-    listen_timeout: float = 8.0,
-):
+def createBagFlowReal2026():
     """Real bag flow: handover -> real follow-host (termination-gated) -> real drop.
 
     Drop-in replacement for ``hri.createBagFlow``. Mirrors the canonical
     handover (gripper open -> ask -> wait -> close -> arm to nav pose with bag),
-    then runs the REAL follow process until the host signals to stop, then the
-    real arm drop on HRI's configured drop pose.
+    then runs the REAL follow process until it is termination-gated by the nav
+    person-stationary verdict + spoken confirmation, then the real arm drop on
+    HRI's configured drop pose.
     """
     root = py_trees.composites.Sequence(
         name="HRI bag flow (real follow, 2026)", memory=True
@@ -101,15 +100,17 @@ def createBagFlowReal2026(
     )
 
     # --- real follow host until the host signals to stop ---
+    root.add_child(BtNode_TurnPanTilt(name=f"Look at host", x=0.0, y=45.0, speed=0.0))
     root.add_child(
         BtNode_Announce(
             name="Follow host announcement",
             bb_source=None,
-            message="I'll follow you and carry the bag. Tell me when to stop.",
+            message="Stand in front of me please. I'll follow you and carry the bag.",
         )
     )
+
     root.add_child(
-        createFollowHostUntilStop(stop_phrase=stop_phrase, listen_timeout=listen_timeout)
+        createFollowHostUntilStop()
     )
 
     # --- real drop on HRI's configured drop pose ---
@@ -172,7 +173,7 @@ def main():
     tree = py_trees_ros.trees.BehaviourTree(root=createHRITask2026())
     tree.setup(timeout=15, node_name="hri_2026")
     print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(title="hri-2026")
-    tree.tick_tock(period_ms=500.0, post_tick_handler=print_tree)
+    tree.tick_tock(period_ms=200.0, post_tick_handler=print_tree)
     try:
         rclpy.spin(tree.node)
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):

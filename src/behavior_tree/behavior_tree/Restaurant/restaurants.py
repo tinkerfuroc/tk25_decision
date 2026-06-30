@@ -310,11 +310,11 @@ def _create_legacy_detection_pass():
         )
     )
     root.add_child(seq)
-    root.add_child(BtNode_Announce(
-        name="Announce legacy detection",
-        bb_source=None,
-        message="Scanning for customers with legacy detection..",)
-    )
+    # root.add_child(BtNode_Announce(
+    #     name="Announce legacy detection",
+    #     bb_source=None,
+    #     message="Scanning for customers with legacy detection..",)
+    # )
     return root
 
 
@@ -333,8 +333,13 @@ def createDetectAndArbitrateCustomers(x: float = 0.0, y: float = 35.0):
             queue_key=KEY_CUSTOMER_QUEUE,
         )
     )
+    root.add_child(BtNode_Announce(
+        name="Announce scanning",
+        bb_source=None,
+        message="Please raise your hand",)
+    )
     detect.add_child(_create_waving_detection_pass())
-    detect.add_child(_create_legacy_detection_pass())
+    # detect.add_child(_create_legacy_detection_pass())
     root.add_child(detect)
     root.add_child(
         BtNode_QueueHasQueued(

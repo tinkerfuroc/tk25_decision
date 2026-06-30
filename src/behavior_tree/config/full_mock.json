@@ -1,5 +1,5 @@
 {
-  "description": "Mock mode configuration for behavior tree nodes",
+  "description": "Full-mock config: every subsystem mocked, keyboard disabled (KEYPRESS auto-advances). Use via BT_MOCK_CONFIG for offline / CI-style runs of any tree. Generated from mock_config.json; do not hand-edit node lists here \u2014 mirror mock_config.json.",
   "version": "2.0",
   "force_mock_nodes": {
     "BtNode_MoveArmTeleop": {
@@ -9,7 +9,7 @@
     }
   },
   "mock_mode": {
-    "enabled":false,
+    "enabled": true,
     "auto_detect": false,
     "subsystems": {
       "vision": {
@@ -53,12 +53,11 @@
           "BtNode_GraspWithPose": "KEYPRESS",
           "BtNode_Place": "KEYPRESS",
           "BtNode_Drop": "KEYPRESS",
-          "BtNode_JointMoveAction": "KEYPRESS",
+          "BtNode_MoveArmJoint": "KEYPRESS",
           "BtNode_MoveArmSingle": "KEYPRESS",
           "BtNode_GripperAction": "KEYPRESS",
           "BtNode_PointTo": "KEYPRESS",
-          "BtNode_FoldClothingAction": "KEYPRESS",
-          "BtNode_FoldClothingDn": "KEYPRESS"
+          "BtNode_FoldClothingAction": "KEYPRESS"
         }
       },
       "navigation": {
@@ -119,7 +118,7 @@
     }
   },
   "keyboard_control": {
-    "enabled": true,
+    "enabled": false,
     "description": "When false, KEYPRESS mode degrades to IMMEDIATE"
   },
   "mock_keyboard": {

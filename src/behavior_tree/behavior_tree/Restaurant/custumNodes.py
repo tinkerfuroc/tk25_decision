@@ -142,6 +142,14 @@ class BtNode_DetectTray(ServiceHandler):
         )
     
     def initialise(self):
+        if self.mock_mode:
+            # No perception backend under mock; self.client is None. Report
+            # "no tray" (FAILURE in update) so the Optional tray transport
+            # Selector falls through to the direct-carry branch — the
+            # competition default — instead of crashing on a None client.
+            self.response = None
+            self.feedback_message = "MOCK: no tray available (direct carry)"
+            return
         request = ObjectDetectionGeneralist.Request()
         request.prompt = "tray"
         request.use_vlm_sam_fallback = True
@@ -149,8 +157,11 @@ class BtNode_DetectTray(ServiceHandler):
         request.target_frame = "map"
         self.response = self.client.call_async(request)
         self.feedback_message = "Looking for available tray"
-    
+
     def update(self):
+        if self.mock_mode:
+            self.feedback_message = "MOCK: no tray found, will carry items directly"
+            return py_trees.common.Status.FAILURE
         if self.response.done():
             result = self.response.result()
             if result.status == 0 and len(result.objects) > 0:
