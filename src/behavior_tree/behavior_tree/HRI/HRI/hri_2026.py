@@ -31,6 +31,7 @@ Fully offline (no servers, auto-advance)::
 """
 
 from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
+from behavior_tree.TemplateNodes.OperatorGate import BtNode_PressEnterToSucceed
 import py_trees
 import py_trees_ros
 import rclpy
@@ -123,6 +124,7 @@ def createBagFlowReal2026():
 def createHRITask2026() -> py_trees.behaviour.Behaviour:
     """Canonical ``createHRITask`` with the stubbed bag flow swapped for the real one."""
     root = py_trees.composites.Sequence(name="HRI Task 2026", memory=True)
+    root.add_child(BtNode_PressEnterToSucceed(name="Wait for operator to start"))
     root.add_child(hri.createConstantWriter())
     root.add_child(
         BtNode_Announce(
