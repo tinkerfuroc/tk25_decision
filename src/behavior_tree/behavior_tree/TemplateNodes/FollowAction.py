@@ -186,6 +186,7 @@ class BtNode_FollowAction(ActionHandler):
     DEFAULT_BB_KEY_DISTANCE = "follow/distance"
     DEFAULT_BB_KEY_REACQ = "follow/reacq"
     DEFAULT_BB_KEY_GOAL_HELD = "follow/goal_held"
+    DEFAULT_BB_KEY_ARRIVED = "follow/arrived"
 
     def __init__(
         self,
@@ -197,6 +198,7 @@ class BtNode_FollowAction(ActionHandler):
         bb_key_distance: str = DEFAULT_BB_KEY_DISTANCE,
         bb_key_reacq: str = DEFAULT_BB_KEY_REACQ,
         bb_key_goal_held: str = DEFAULT_BB_KEY_GOAL_HELD,
+        bb_key_arrived: str = DEFAULT_BB_KEY_ARRIVED,
         action_name: str = "follow_server",
         wait_for_server_timeout_sec: float = -3.0,
     ):
@@ -211,6 +213,8 @@ class BtNode_FollowAction(ActionHandler):
             bb_key_distance: Blackboard key for the distance-to-person.
             bb_key_reacq: Blackboard key for the reacquisition state.
             bb_key_goal_held: Blackboard key for the goal-held flag.
+            bb_key_arrived: Blackboard key for the person-stationary arrival
+                latch (set True in process_result on OK_PERSON_STATIONARY).
             action_name: ROS2 action server name.
             wait_for_server_timeout_sec: Timeout for server connection.
         """
@@ -234,6 +238,7 @@ class BtNode_FollowAction(ActionHandler):
         self.bb_key_distance = bb_key_distance
         self.bb_key_reacq = bb_key_reacq
         self.bb_key_goal_held = bb_key_goal_held
+        self.bb_key_arrived = bb_key_arrived
 
         # Feedback buffer for handling the fast feedback rate
         self._feedback_buffer = FollowFeedbackBuffer()
@@ -275,6 +280,12 @@ class BtNode_FollowAction(ActionHandler):
         self._bb_writer.register_key(
             self.bb_key_goal_held, access=py_trees.common.Access.WRITE
         )
+        # Person-stationary arrival latch: register WRITE and seed False once so
+        # the key always exists for the downstream termination gate to consume.
+        self._bb_writer.register_key(
+            self.bb_key_arrived, access=py_trees.common.Access.WRITE
+        )
+        self._bb_writer.set(self.bb_key_arrived, False, overwrite=True)
 
         self.logger.debug(f"Setup complete for {self.name}")
 
@@ -290,6 +301,10 @@ class BtNode_FollowAction(ActionHandler):
         self._bb_writer.set(self.bb_key_distance, -1.0, overwrite=True)
         self._bb_writer.set(self.bb_key_reacq, REACQ_TRACKING, overwrite=True)
         self._bb_writer.set(self.bb_key_goal_held, False, overwrite=True)
+
+        # NOTE: follow/arrived is a cross-attempt latch (set True on OK_PERSON_STATIONARY
+        # in process_result, reset only by the arrival detector). Never clear it here —
+        # a mid-follow re-dispatch would erase a just-set arrival.
 
         # Now call parent — in mock mode send_goal() overwrites with mock data.
         super().initialise()
@@ -392,6 +407,12 @@ class BtNode_FollowAction(ActionHandler):
             - Goal was cancelled (normal termination — SUCCESS).
             - Goal was aborted (unexpected termination — FAILURE).
 
+        On person-stationary success (OK_PERSON_STATIONARY) this latches
+        ``follow/arrived`` = True so the downstream termination gate can detect
+        arrival — the SUCCEEDED state never reaches the ``follow/state``
+        blackboard key (the server breaks before publishing it in feedback).
+        Cancel is NOT arrival, so the latch is left untouched in that branch.
+
         Returns:
             SUCCESS if cancelled or succeeded, FAILURE otherwise.
         """
@@ -400,6 +421,8 @@ class BtNode_FollowAction(ActionHandler):
         if self.result_status == action_msgs.GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "Follow completed (person stationary)"
             self.logger.info("Follow action succeeded")
+            # Latch arrival for the termination gate (only on real SUCCEEDED).
+            self._bb_writer.set(self.bb_key_arrived, True, overwrite=True)
             return py_trees.common.Status.SUCCESS
         elif self.result_status == action_msgs.GoalStatus.STATUS_CANCELED:
             self.feedback_message = "Follow cancelled successfully"

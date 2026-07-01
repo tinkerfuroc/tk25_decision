@@ -19,11 +19,14 @@ Estimated yield with these constraints: ~+1635 of the 4415 ceiling.
 """
 
 import py_trees
+import py_trees_ros
+import rclpy
 
+from behavior_tree.visualization import create_post_tick_visualizer
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import (
-    BtNode_FoldClothing,
+    BtNode_FoldClothingDn,
     BtNode_Grasp,
     BtNode_GripperAction,
     BtNode_MoveArmSingle,
@@ -55,7 +58,7 @@ from .config import (
     # DO_PICK_FROM_BASKET,
     # DO_PICK_FROM_WASHER,
     # DO_REQUEST_WASHER_HELP,
-    FOLD_ACTION_NAME,
+    # FOLD_ACTION_NAME,  # no longer used — fold now uses BtNode_FoldClothingDn (fold_dn_action)
     # FOLD_CYCLES,
     # GRASP_ACTION_NAME,
     # GRASP_RETRY_LIMIT,
@@ -148,12 +151,7 @@ def createConstantWriter() -> py_trees.composites.Parallel:
         ("Write arm fold start", KEY_ARM_FOLD_START, ARM_POS_FOLD_START),
         ("Write arm pre pick basket", KEY_ARM_PRE_PICK_BASKET, ARM_POS_PRE_PICK_BASKET),
         ("Write arm pick clothing", KEY_ARM_PICK_CLOTHING, ARM_POS_PICK_CLOTHING),
-        (
-            "Write arm pre pick clothing",
-            KEY_ARM_PRE_PICK_CLOTHING,
-            ARM_POS_PRE_PICK_CLOTHING,
-            ARM_POS_PRE_PICK_CLOTHING,
-        ),
+        ("Write arm pre pick clothing", KEY_ARM_PRE_PICK_CLOTHING, ARM_POS_PRE_PICK_CLOTHING),
         ("Write target frame", KEY_TARGET_FRAME, TARGET_FRAME),
         # ("Write max runtime", KEY_MAX_RUNTIME, MAX_RUNTIME_SEC),
         # ("Write clothing object label", KEY_OBJECT_LABEL, OBJECT_LABEL_CLOTHING),
@@ -365,48 +363,36 @@ def goAndPlaceBasket():
 
 
 def foldClothingOnce():
-    root = py_trees.composites.Sequence(name=f"Fold clothing", memory=True)
-    root.add_child(
-        _moveArmRetry(
-            name="Stretch out to get clothing",
-            arm_pose_key=KEY_ARM_NAVIGATING,
-            add_octomap=False,
-        )
-    )
-    root.add_child(_gripperOpenSafe(name="Ensure gripper empty before folding"))
+    # The fold_dn_action fold is vision-driven and fully autonomous: the server
+    # moves to its own scan pose, detects the garment keypoints, and runs the
+    # metric-offset folds, managing the arm AND gripper itself (returning to scan
+    # when done). So the tree only needs to get a garment laid flat on the table
+    # and then hand off to the action — no manual gripper/arm-pose steps here
+    # (they would conflict with the server's own scan-pose + grasp/release).
+    root = py_trees.composites.Sequence(name="Fold clothing", memory=True)
     root.add_child(
         BtNode_Announce(
             name="Announce folding start",
             bb_source=None,
-            message=f"Start folding, please put a clothes in my gripper. It may be on the floor or on the table.",
+            message="Start folding, please help me to lay a piece of clothing flat on the table.",
         )
     )
     root.add_child(
-        py_trees.timers.Timer(name="Wait for clothing piece to fold", duration=5.0)
-    )
-    root.add_child(_gripperCloseSafe(name="Wait for clothing piece to fold"))
-    root.add_child(
-        _moveArmRetry(
-            "Move arm to fold start pose",
-            arm_pose_key=KEY_ARM_FOLD_START,
-            add_octomap=False,
-        )
+        py_trees.timers.Timer(name="Wait for clothing to be laid flat", duration=5.0)
     )
     root.add_child(
-        BtNode_FoldClothing(
-            name="Fold clothing piece",
-            action_name=FOLD_ACTION_NAME,
+        BtNode_FoldClothingDn(
+            name="Fold clothing piece (fold_dn_action)",
+            return_to_scan=True,
         )
     )
-    root.add_child(_gripperOpenSafe(name="Release folded clothing piece"))
     root.add_child(
         BtNode_Announce(
             name="Announce folding complete",
             bb_source=None,
-            message=f"Please help me to fold the current cloth into half and move away the clothes on table.",
+            message="Please help me to fold the current cloth into half and move away the clothes on table.",
         )
     )
-    # TODO: maybe sleep 5 seconds here to allow for human-assisted folding, if we want to avoid a hard dependency on the fold action server being functional
     return root
 
 
@@ -458,3 +444,25 @@ def createDoingLaundry():
         )
     )
     return root
+
+
+def main():
+    rclpy.init()
+    tree = py_trees_ros.trees.BehaviourTree(root=createDoingLaundry())
+    tree.setup(timeout=15, node_name="doing_laundry")
+    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+        title="doing-laundry"
+    )
+    tree.tick_tock(period_ms=500.0, post_tick_handler=print_tree)
+    try:
+        rclpy.spin(tree.node)
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    finally:
+        shutdown_visualizer()
+        tree.shutdown()
+        rclpy.try_shutdown()
+
+
+if __name__ == "__main__":
+    main()

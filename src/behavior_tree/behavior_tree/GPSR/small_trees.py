@@ -882,7 +882,7 @@ def create_grasp():
     primary.add_child(BtNode_TurnPanTilt("turn pantilt down", x=0.0, y=20.0))
     primary.add_child(BtNode_MoveArmSingle(
         "arm to navigating",
-        action_name=ARM_ACTION_NAME,
+        service_name=ARM_ACTION_NAME,
         arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
         add_octomap=False,
     ))
@@ -896,7 +896,7 @@ def create_grasp():
     ))
     par_scan.add_child(BtNode_MoveArmSingle(
         "arm to scan",
-        action_name=ARM_ACTION_NAME,
+        service_name=ARM_ACTION_NAME,
         arm_pose_bb_key=bb_keys.ARM_SCAN,
         add_octomap=True,
     ))
@@ -952,7 +952,7 @@ def create_grasp():
         "retry arm back",
         BtNode_MoveArmSingle(
             "arm back to navigating",
-            action_name=ARM_ACTION_NAME,
+            service_name=ARM_ACTION_NAME,
             arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
         ),
         num_failures=5,
@@ -975,7 +975,7 @@ def create_grasp():
         "retry arm back",
         BtNode_MoveArmSingle(
             "arm to navigating",
-            action_name=ARM_ACTION_NAME,
+            service_name=ARM_ACTION_NAME,
             arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
         ),
         num_failures=5,

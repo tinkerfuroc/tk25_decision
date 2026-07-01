@@ -38,6 +38,8 @@
 #     Opens or closes the gripper.
 # BtNode_PointTo
 #     Points the arm towards a specific person.
+# BtNode_FoldClothingDn
+#     Folds a garment via the YOLO-driven "dn" server (fold_dn_action).
 #
 # Mock Mode
 # ---------
@@ -69,6 +71,7 @@ import action_msgs.msg as action_msgs
 
 from .BaseBehaviors import ServiceHandler
 from .ActionBase import ActionHandler
+from .FoldClothingAction import BtNode_FoldClothingAction
 from .pointing_math import compute_point_to_pan
 import math
 
@@ -158,6 +161,8 @@ class BtNode_Grasp(ActionHandler):
         action_name: str = "start_grasp",
         bb_key_vision_res: Optional[str] = None,
         bb_key_object_label: Optional[str] = None,
+        use_mesh: bool = True,
+        stay: bool = False,
     ):
         """
         executed when creating tree diagram, therefor very minimal
@@ -192,15 +197,23 @@ class BtNode_Grasp(ActionHandler):
                     "/", bb_key_object_label
                 ),
             )
+        self.stay = stay
+        self.use_mesh = use_mesh
 
     def send_goal(self):
-        # Handle mock mode — when vision is mocked, vision_result is a
-        # MockMessage with no .header/.rgb_image/.segments, so skip real goal
-        # construction and use the base ActionHandler mock path (mirrors the
-        # sibling manip nodes, e.g. BtNode_MoveArmSingle ~line 540).
+        # Mock guard: initialise() calls send_goal() even in mock mode, but the
+        # action client is None (skipped in setup). Mirror ActionHandler.send_goal's
+        # mock branch so offline runs don't hit a None client. (update() routes
+        # mock ticks through wait_for_keypress_in_mock; this just satisfies the
+        # initialise() call.)
         if self.mock_mode:
-            self.feedback_message = "MOCK: Grasp succeeded"
-            super().send_goal()
+            self.feedback_message = "MOCK: grasp goal sent (mock mode)"
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
             return
         try:
             goal = Grasp.Goal()
@@ -208,6 +221,8 @@ class BtNode_Grasp(ActionHandler):
             goal.rgb_image = self.blackboard.vision_result.rgb_image
             goal.depth_image = self.blackboard.vision_result.depth_image
             goal.segments = self.blackboard.vision_result.segments
+            goal.use_mesh = self.use_mesh
+            goal.stay = self.stay
             # Resolve object_label: explicit bb key > vision_result.objects[0].cls > ""
             if self._bb_key_object_label is not None:
                 goal.object_label = str(self.blackboard.object_label or "")
@@ -346,48 +361,84 @@ class BtNode_Drop(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 
-class BtNode_FoldClothing(ActionHandler):
-    """
-    Folds a piece of clothing on a target point.
+# class BtNode_FoldClothing(ActionHandler):
+#     """
+#     Folds a piece of clothing on a target point.
 
-    Sends a `FoldClothing` action goal carrying:
-      - target_point: PointStamped where the cloth currently sits / should be folded
-      - object_label: cloth class hint (e.g. "shirt", "towel"), routed via blackboard
-      - env_points: latest environment PointCloud2 for collision avoidance
-      - fold_cycles: number of fold passes the action should perform
+#     Sends a `FoldClothing` action goal carrying:
+#       - target_point: PointStamped where the cloth currently sits / should be folded
+#       - object_label: cloth class hint (e.g. "shirt", "towel"), routed via blackboard
+#       - env_points: latest environment PointCloud2 for collision avoidance
+#       - fold_cycles: number of fold passes the action should perform
+#     """
+
+#     def __init__(
+#         self,
+#         name: str,
+#         action_name: str = "fold_action",
+#     ):
+#         super().__init__(name, Fold, action_name, None, wait_for_server_timeout_sec=-3)
+
+#     def send_goal(self):
+#         try:
+#             goal = Fold.Goal()
+#             self.send_goal_request(goal)
+#         except Exception as e:
+#             self.feedback_message = f"Failed to send fold goal; error: {e}"
+#             self.logger.error(f"Failed to send fold goal; error: {e}")
+#             return pytree.common.Status.FAILURE
+
+#     def process_result(self):
+#         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+#             err = getattr(getattr(self, "result_message", None), "result", None)
+#             self.feedback_message = f"Fold failed with status: {self.result_status}"
+#             return pytree.common.Status.FAILURE
+#         self.feedback_message = "Fold succeeded"
+#         return pytree.common.Status.SUCCESS
+
+#     def feedback_callback(self, msg: Any):
+#         return super().feedback_callback(msg)
+
+
+class BtNode_FoldClothingDn(BtNode_FoldClothingAction):
+    """Fold a garment via the YOLO-driven "dn" server (``fold_dn_action``).
+
+    Replaces the retired ``BtNode_FoldClothing`` above (which sent an empty
+    ``Fold.Goal()`` to the old garment-agnostic ``fold_action``). The dn server
+    (``arm_api/fold_clothing_dn.py``) speaks the SAME ``tinker_arm_msgs/FoldClothing``
+    contract as ``fold_clothing_action``, so this node reuses
+    ``BtNode_FoldClothingAction`` wholesale — feedback handling (the
+    non-conformant feedback override), result mapping, and garment-label
+    resolution are all inherited; only the default ``action_name`` differs.
+
+    The dn server runs fixed metric-offset folds, so it IGNORES
+    ``garment_label`` / ``bottom_fold_mode`` (kept here for contract parity and to
+    let trees swap nodes freely); it HONORS ``return_to_scan``.
+
+    Mock mode: registered as ``BtNode_FoldClothingDn`` under the ``manipulation``
+    subsystem in ``mock_config.json`` (mock is keyed by class name, so a subclass
+    needs its own entry).
     """
 
     def __init__(
         self,
         name: str,
-        action_name: str = "fold_action",
+        bb_key_garment_label: Optional[str] = None,
+        garment_label: str = "",
+        bottom_fold_mode: int = 0,
+        return_to_scan: bool = True,
+        action_name: str = "fold_dn_action",
+        wait_for_server_timeout_sec: float = -3.0,
     ):
         super().__init__(
-            name, Fold, action_name, None, wait_for_server_timeout_sec=-3
+            name=name,
+            bb_key_garment_label=bb_key_garment_label,
+            garment_label=garment_label,
+            bottom_fold_mode=bottom_fold_mode,
+            return_to_scan=return_to_scan,
+            action_name=action_name,
+            wait_for_server_timeout_sec=wait_for_server_timeout_sec,
         )
-
-
-    def send_goal(self):
-        try:
-            goal = Fold.Goal()
-            self.send_goal_request(goal)
-        except Exception as e:
-            self.feedback_message = f"Failed to send fold goal; error: {e}"
-            self.logger.error(f"Failed to send fold goal; error: {e}")
-            return pytree.common.Status.FAILURE
-
-    def process_result(self):
-        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            err = getattr(getattr(self, "result_message", None), "result", None)
-            self.feedback_message = (
-                f"Fold failed with status: {self.result_status}"
-            )
-            return pytree.common.Status.FAILURE
-        self.feedback_message = "Fold succeeded"
-        return pytree.common.Status.SUCCESS
-
-    def feedback_callback(self, msg: Any):
-        return super().feedback_callback(msg)
 
 
 class BtNode_Place(ActionHandler):
@@ -431,6 +482,17 @@ class BtNode_Place(ActionHandler):
         )
 
     def send_goal(self):
+        # Mock guard: see BtNode_Grasp.send_goal — initialise() calls this even
+        # under mock, where the action client is None. Mirror the base mock branch.
+        if self.mock_mode:
+            self.feedback_message = "MOCK: place goal sent (mock mode)"
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
+            return
         try:
             goal = Place.Goal()
             goal.target_point = self.blackboard.target_point
@@ -757,13 +819,13 @@ class BtNode_PointTo(ActionHandler):
     ``pan_bias`` (radians, default ``0.0``) corrects a constant rotation
     between the target point's source frame and the arm joint0 frame before the
     range check. It is subtracted from the raw ``atan2(y, x)`` bearing and the
-    result is wrapped to ``(-pi, pi]``. The ``seat_recommend_bbox_service``
-    centroid is rotated ``pi`` about the base Z axis relative to ``base_link``,
-    so seat-pointing call sites pass ``pan_bias=math.pi`` to keep the commanded
-    pan inside the reachable ``[-pi/2, pi/2]`` window. With the default ``0.0``
-    the joint0 math is byte-for-byte identical to the legacy behaviour, so
-    person-pointing callers (Receptionist, Inspection, HRI introductions) are
-    unaffected.
+    result is wrapped to ``(-pi, pi]``. With a correctly-calibrated camera TF the
+    seat/person centroid is correct in ``base_link`` and the arm base is aligned
+    with ``base_link``, so ALL call sites use ``pan_bias=0.0`` (joint0 =
+    ``atan2(y, x)`` directly). Historically seat-pointing passed
+    ``pan_bias=math.pi`` to cancel a ~180deg-wrong camera TF (camera physically
+    forward but modelled backward); that camera_mount calibration was fixed
+    2026-06-27, after which pan_bias=math.pi would point the arm 180deg off.
     """
 
     def __init__(
@@ -1064,3 +1126,63 @@ class BtNode_ScanAndPlace(ActionHandler):
         import time
         self.action_stage = msg.feedback.stage
         self.last_feedback_time = time.time()
+
+
+class BtNode_JointMoveAction(ActionHandler):
+    def __init__(
+        self,
+        name: str,
+        arm_pose_bb_key: str,
+        action_name="joint_move_action",
+        # TODO: add octomap
+    ):
+        super().__init__(
+            name,
+            JointMove,
+            action_name,
+            arm_pose_bb_key,
+            wait_for_server_timeout_sec=-3,
+        )
+        self.blackboard.register_key(
+            key="arm_joint_pose",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", arm_pose_bb_key),
+        )
+
+    def setup(self, **kwargs):
+        return super().setup(**kwargs)
+
+    def send_goal(self):
+        try:
+            goal = JointMove.Goal()
+            goal.joint0 = self.blackboard.arm_joint_pose[0]
+            goal.joint1 = self.blackboard.arm_joint_pose[1]
+            goal.joint2 = self.blackboard.arm_joint_pose[2]
+            goal.joint3 = self.blackboard.arm_joint_pose[3]
+            goal.joint4 = self.blackboard.arm_joint_pose[4]
+            goal.joint5 = self.blackboard.arm_joint_pose[5]
+            goal.joint6 = self.blackboard.arm_joint_pose[6]
+            self.send_goal_request(goal)
+            self.feedback_message = "Send goal pose"
+        except Exception as e:
+            self.feedback_message = f"Failed to send JointMove goal {e}"
+            pass
+
+    def feedback_callback(self, msg: Any):
+        pass
+
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = f"JointMoveAction failed"
+            self.logger.debug(f"MoveArmJointPC failed")
+            return pytree.common.Status.FAILURE
+        else:
+            result = self.result_message.result
+            if result.success:
+                self.feedback_message = f"JointMoveAction succeeded"
+                self.logger.debug(f"JointMoveAction succeeded")
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"JointMoveAction failed"
+                self.logger.debug(f"JointMoveAction failed")
+                return pytree.common.Status.FAILURE

@@ -143,8 +143,6 @@ def scanAllPositions(target_frame="base_link"):
         -60.0,
         0.0,
         60.0,
-        120.0 - 120.0,
-        -180.0,
         0.0,
         60.0,
         120.0,

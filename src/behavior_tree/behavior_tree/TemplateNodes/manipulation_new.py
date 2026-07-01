@@ -1,77 +1,31 @@
-from typing import Any, Optional
-import py_trees
-from py_trees.common import Status
+# Copyright 2025 Tinker Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-from tinker_arm_msgs.action import JointMove
-import action_msgs.msg as action_msgs
-from .ActionBase import ActionHandler
-import math
+"""Compatibility re-export shim for ``behavior_tree.TemplateNodes.manipulation_new``.
 
-class BtNode_JointMoveAction(ActionHandler):
-    def __init__(
-        self,
-        name: str,
-        arm_pose_bb_key: str,
-        action_name="joint_move_action"
-        # TODO: add octomap
-    ):
-        super().__init__(
-            name,
-            JointMove,
-            action_name,
-            arm_pose_bb_key,
-            wait_for_server_timeout_sec=-3
-        )
-        self.blackboard.register_key(
-            key="arm_joint_pose",
-            access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", arm_pose_bb_key),
-        )
-    
-    def setup(self, **kwargs):
-        return super().setup(**kwargs)
-    
-    def send_goal(self):
-        try:
-            goal = JointMove.Goal()
-            goal.joint0 = self.blackboard.arm_joint_pose[0]
-            goal.joint1 = self.blackboard.arm_joint_pose[1]
-            goal.joint2 = self.blackboard.arm_joint_pose[2]
-            goal.joint3 = self.blackboard.arm_joint_pose[3]
-            goal.joint4 = self.blackboard.arm_joint_pose[4]
-            goal.joint5 = self.blackboard.arm_joint_pose[5]
-            goal.joint6 = self.blackboard.arm_joint_pose[6]
-            self.send_goal_request(goal)
-            self.feedback_message="Send goal pose"
-        except Exception as e:
-            self.feedback_message = (
-                f"Failed to send JointMove goal {e}"
-            )
-            pass
-    
-    def feedback_callback(self, msg: Any):
-        pass
+Several task modules (``DoingLaundry/laundry.py``, ``DoingLaundry/sampling.py``
+and the ``PickAndPlace`` dev subtrees) import ``BtNode_JointMoveAction`` from
+``behavior_tree.TemplateNodes.manipulation_new``. The canonical definitions live
+in :mod:`behavior_tree.TemplateNodes.Manipulation`; this thin module re-exports
+them so the historical import path keeps resolving (it was otherwise a missing
+module that raised ``ModuleNotFoundError`` at import time, breaking the
+``doing-laundry`` and ``pp-*`` entry points).
 
-    def process_result(self):
-        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            self.feedback_message = (
-                f"JointMoveAction failed"
-            )
-            self.logger.debug(
-                f"MoveArmJointPC failed"
-            )
-            return py_trees.common.Status.FAILURE
-        else:
-            result = self.result_message.result
-            if result.success:
-                self.feedback_message = (
-                    f"JointMoveAction succeeded"
-                )
-                self.logger.debug(f"JointMoveAction succeeded")
-                return py_trees.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"JointMoveAction failed"
-                self.logger.debug(
-                    f"JointMoveAction failed"
-                )
-                return py_trees.common.Status.FAILURE
+New code should import directly from ``behavior_tree.TemplateNodes.Manipulation``.
+"""
+
+from behavior_tree.TemplateNodes.Manipulation import *  # noqa: F401,F403
+from behavior_tree.TemplateNodes.Manipulation import (  # noqa: F401
+    BtNode_JointMoveAction,
+)

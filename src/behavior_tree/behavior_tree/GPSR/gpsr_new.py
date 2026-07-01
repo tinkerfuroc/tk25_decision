@@ -1,6 +1,7 @@
 import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
+from behavior_tree.TemplateNodes.OperatorGate import BtNode_PressEnterToSucceed
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction, BtNode_ListenAction
 from behavior_tree.TemplateNodes.Vision import BtNode_DoorDetection, BtNode_TurnPanTilt
@@ -299,6 +300,7 @@ def createCompleteOneCommand():
 
 def createGPSR():
     root = py_trees.composites.Sequence("GPSR", True)
+    root.add_child(BtNode_PressEnterToSucceed(name="Wait for operator to start"))
     root.add_child(createConstantWriter())
     # root.add_child(createEnterArena())
 

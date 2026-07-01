@@ -134,7 +134,7 @@ class ActionHandler(py_trees.behaviour.Behaviour):
                  name: str,
                  action_type: Any,
                  action_name: str,
-                 key: str,
+                 key: str | None,
                  wait_for_server_timeout_sec: float=-3.0,
                  action_timeout_ticks:int = 0
                  ):

@@ -27,11 +27,14 @@ package — ``create_follow_person_tree`` (live ``BtNode_TrackPersonAction`` @
 ``/track_person`` + ``BtNode_FollowAction`` @ ``follow_server`` + the reacq /
 two-pass recovery reactions). Because that follow tree is a never-self-completing
 ``Parallel`` (it stays alive through transient losses by design), HRI needs it
-**termination-gated** so the robot can stop following and drop the bag: we run it
-beside a *termination detector* inside a ``Parallel(SuccessOnOne)`` — when the
-detector fires (host says a stop phrase, or operator key in offline tests), the
-parallel succeeds, the follow subtree goes INVALID and cancels its goals, and the
-flow proceeds to the drop.
+**termination-gated** so the robot can stop following and drop the bag. Termination
+is now autonomous: the nav follow executive's own ``OK_PERSON_STATIONARY`` verdict
+(guest parked + robot behind them) is latched onto the ``follow/arrived`` blackboard
+bool by ``BtNode_FollowAction``; ``BtNode_CheckFollowArrived`` consumes that latch
+inside a ``Parallel(SuccessOnOne)`` to end the follow, then the robot asks a spoken
+confirmation ("should I place the bag here?") — "yes" drops the bag, "no" resumes
+following. No reliance on the guest volunteering a stop phrase (voice keyword
+termination is removed entirely).
 
 It writes NO existing files. ``hri.py`` is untouched; swapping the production
 tree to call ``createHRIBagFlowReal`` is a separate, approval-gated one-liner.
@@ -40,15 +43,13 @@ Standalone harness::
 
     ros2 run behavior_tree hri-follow-real
 
-The harness uses an operator-key terminator, so it needs no audio server; for a
-fully auto-advancing offline run (mock every subsystem) use the bundled config::
+The harness passes an operator-key arrival override (the mock Follow action never
+latches ``follow/arrived`` offline), so it needs no audio server beyond the spoken
+confirmation; for a fully auto-advancing offline run (mock every subsystem) use the
+bundled config::
 
     BT_MOCK_CONFIG=$(ros2 pkg prefix behavior_tree)/share/behavior_tree/config/full_mock.json \
         ros2 run behavior_tree hri-follow-real
-
-NOTE: ``createHRIBagFlowReal`` with the *default* (voice) terminator instantiates
-``BtNode_ListenAction``, which targets the real ``listen_action`` server unless
-audio is mocked — run it on-robot or with the full-mock config above.
 """
 
 import os
@@ -58,7 +59,10 @@ import py_trees_ros
 import rclpy
 
 from behavior_tree.FollowPerson.follow_person import create_follow_person_tree
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
+from behavior_tree.TemplateNodes.Audio import (
+    BtNode_Announce,
+    BtNode_GetConfirmationAction,
+)
 from behavior_tree.TemplateNodes.BaseBehaviors import (
     BtNode_WriteToBlackboard,
     BtNode_WaitKeyboardPress,
@@ -81,70 +85,101 @@ KEY_ARM_NAVIGATING = "hri/arm_nav_pose"
 _DUMMY_ARM_POSE = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 
-def _default_termination(stop_phrase: str, listen_timeout: float):
-    """Default follow-termination detector: host voice keyword, operator fallback.
+class BtNode_CheckFollowArrived(py_trees.behaviour.Behaviour):
+    """SUCCESS once the follow executive reported the guest is stationary.
 
-    A memoryless ``Selector`` of [listen-for-stop-phrase, operator-key], wrapped
-    in ``FailureIsRunning`` so a failed/han-up listen never FAILs the enclosing
-    ``Parallel`` (which would abort the follow). SUCCESS only when the host says
-    the stop phrase or an operator presses a key.
+    The nav follow_server stationary gate (guest within 0.3 m for 5 s, 3 s stable
+    lock, robot within 2.5 m, then a completed final park) ends the Follow action
+    with OK_PERSON_STATIONARY. That terminal SUCCEEDED state is NOT published in
+    Follow feedback (the server breaks before publishing), so we cannot poll
+    ``follow/state``; ``BtNode_FollowAction`` latches the result onto the
+    ``follow/arrived`` blackboard bool, which this node consumes.
 
-    NOTE: ``BtNode_ListenAction`` targets the real ``listen_action`` server
-    (audio is REAL in the default mock config), so this default is for on-robot
-    use. Offline tests pass an operator-key terminator instead (see ``main``).
+    Re-arms each follow attempt: ``initialise`` clears the latch, then ``update``
+    returns SUCCESS once it flips True (else RUNNING).
     """
-    listen = BtNode_ListenAction(
-        name=f"listen for stop phrase ('{stop_phrase}')",
-        bb_dest_key="hri/follow_stop_heard",
-        timeout=listen_timeout,
-    )
-    operator = BtNode_WaitKeyboardPress(name="operator: end follow")
-    selector = py_trees.composites.Selector(
-        name="follow stop trigger", memory=False, children=[listen, operator]
-    )
-    return py_trees.decorators.FailureIsRunning(
-        name="follow stop trigger (stay alive)", child=selector
-    )
+
+    def __init__(self, name="guest stopped (follow stationary)",
+                 bb_key_arrived="follow/arrived"):
+        super().__init__(name=name)
+        self.bb_key_arrived = bb_key_arrived
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=f"{self.name}_bb")
+        self._bb.register_key(self.bb_key_arrived, access=py_trees.common.Access.READ)
+        self._bb.register_key(self.bb_key_arrived, access=py_trees.common.Access.WRITE)
+
+    def initialise(self):
+        # Re-arm for this follow attempt.
+        self._bb.set(self.bb_key_arrived, False, overwrite=True)
+        self.feedback_message = "waiting for follow to report person stationary"
+
+    def update(self):
+        try:
+            arrived = self._bb.get(self.bb_key_arrived)
+        except KeyError:
+            return py_trees.common.Status.RUNNING
+        if arrived:
+            self.feedback_message = "follow reported person stationary"
+            return py_trees.common.Status.SUCCESS
+        return py_trees.common.Status.RUNNING
 
 
 def createFollowHostUntilStop(
-    stop_phrase: str = "you can stop here",
-    listen_timeout: float = 8.0,
     target_frame=None,
     use_breadcrumbs: bool = False,
-    termination_child=None,
+    arrived_override=None,
+    confirm_question: str = "It looks like you have stopped. Should I place the bag here?",
+    num_attempts: int = -1,
 ):
-    """Real follow-host stage that ends on a termination signal.
+    """Follow the host until the nav stack reports them stationary, then confirm.
 
-    Runs ``create_follow_person_tree`` (the real follow process) beside a
-    termination detector under ``Parallel(SuccessOnOne)``. The follow tree never
-    self-completes, so the detector is what ends the stage; on SUCCESS the
-    follow subtree is invalidated and its ``/track_person`` + ``follow_server``
-    goals are cancelled.
+    Structure (proven HelpMeCarry follow-confirm loop):
+
+        Retry(num_attempts,
+          Sequence(memory=True, [
+            Parallel(SuccessOnOne, [ create_follow_person_tree(nav), arrived_detector ]),
+            Announce(confirm_question),
+            BtNode_GetConfirmationAction(),   # yes -> SUCCESS (drop); no -> FAILURE (re-follow)
+          ]))
+
+    The follow tree never self-completes; ``arrived_detector`` ends the inner
+    Parallel when the follow executive's OK_PERSON_STATIONARY latch fires, which
+    cancels /track_person + follow_server and triggers the confirmation. A "no"
+    (or no answer) fails the sequence so Retry resumes following; "yes" exits to
+    the bag drop. ``num_attempts=-1`` = follow until confirmed (matches HMC).
 
     Args:
-        stop_phrase: keyword the host says to end following (default detector).
-        listen_timeout: per-attempt listen timeout for the default detector.
-        target_frame / use_breadcrumbs: forwarded to ``create_follow_person_tree``.
-        termination_child: override the detector (e.g. an operator-key node for
-            offline tests). When ``None`` the default voice+operator detector is
-            built.
-
-    Returns:
-        A ``Parallel(SuccessOnOne)`` behaviour.
+        arrived_override: alternate arrival detector (e.g. an operator-key node
+            for offline tests, where the mock Follow action never latches
+            ``follow/arrived``). None -> BtNode_CheckFollowArrived.
     """
     follow = create_follow_person_tree(
         target_frame=target_frame,
         enable_navigation=True,
         use_breadcrumbs=use_breadcrumbs,
     )
-    if termination_child is None:
-        termination_child = _default_termination(stop_phrase, listen_timeout)
+    arrived = (arrived_override if arrived_override is not None
+               else BtNode_CheckFollowArrived())
 
-    return py_trees.composites.Parallel(
-        name="Follow host until stop",
+    follow_until_arrived = py_trees.composites.Parallel(
+        name="Follow until guest stops",
         policy=py_trees.common.ParallelPolicy.SuccessOnOne(),
-        children=[follow, termination_child],
+        children=[follow, arrived],
+    )
+
+    loop = py_trees.composites.Sequence(
+        name="follow + confirm arrival", memory=True,
+        children=[
+            follow_until_arrived,
+            BtNode_Announce(name="ask if arrived", bb_source=None, message=confirm_question),
+            BtNode_GetConfirmationAction(name="confirm drop here"),
+        ],
+    )
+    return py_trees.decorators.Retry(
+        name="follow host until confirmed stop",
+        child=loop,
+        num_failures=num_attempts,
     )
 
 
@@ -213,9 +248,8 @@ def createBagDropReal(
 
 
 def createHRIBagFlowReal(
-    stop_phrase: str = "you can stop here",
-    listen_timeout: float = 8.0,
-    termination_child=None,
+    arrived_override=None,
+    confirm_question: str = "It looks like you have stopped. Should I place the bag here?",
 ):
     """Full real bag flow: lightweight handover -> real follow-host -> drop.
 
@@ -248,14 +282,13 @@ def createHRIBagFlowReal(
         BtNode_Announce(
             name="Follow host announcement",
             bb_source=None,
-            message="I'll follow you and carry the bag. Tell me when to stop.",
+            message="Stand in front of me please. I'll follow you and carry the bag.",
         )
     )
     root.add_child(
         createFollowHostUntilStop(
-            stop_phrase=stop_phrase,
-            listen_timeout=listen_timeout,
-            termination_child=termination_child,
+            arrived_override=arrived_override,
+            confirm_question=confirm_question,
         )
     )
 
@@ -292,12 +325,13 @@ def main():
             object=list(_DUMMY_ARM_POSE),
         )
     )
-    # Operator-key terminator: press the success key to end the follow stage.
+    # Operator-key arrival override: press the success key to mark the guest as
+    # stationary (the mock Follow action never latches ``follow/arrived`` offline).
     operator_terminator = BtNode_WaitKeyboardPress(
-        name="operator: press to end follow and drop"
+        name="operator: press to mark arrived"
     )
     root.add_child(
-        createHRIBagFlowReal(termination_child=operator_terminator)
+        createHRIBagFlowReal(arrived_override=operator_terminator)
     )
     root.add_child(py_trees.behaviours.Running("idle (ctrl-c to exit)"))
 
