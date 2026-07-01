@@ -19,8 +19,8 @@ description_path = os.environ.get("HOST_DESC_PATH", "/home/tinker/tk25_ws/host.t
     
 
 KEY_PANTILT_ORIENTATION="pantilt_orientation"
-if USE_NAV_ORIENTATION_ANGLE_SERVICE:
-    from behavior_tree.TemplateNodes.Navigation import BtNode_GetOrientationAngle
+# if USE_NAV_ORIENTATION_ANGLE_SERVICE:
+#     from behavior_tree.TemplateNodes.Navigation import BtNode_GetOrientationAngle
 
 from behavior_tree.TemplateNodes.Audio import (
     BtNode_Announce,
@@ -251,17 +251,17 @@ def gazeAtSofa():
             name="Turn pan-tilt to sofa orientation", 
             memory=True
         )
-        turn_pantilt_to_sofa.add_child(
-            BtNode_GetOrientationAngle(
-                name="get orientation angle to sofa",
-                bb_dest_key=KEY_PANTILT_ORIENTATION
-            )
-        )
+        # turn_pantilt_to_sofa.add_child(
+        #     BtNode_GetOrientationAngle(
+        #         name="get orientation angle to sofa",
+        #         bb_dest_key=KEY_PANTILT_ORIENTATION
+        #     )
+        # )
         turn_pantilt_to_sofa.add_child(
             BtNode_TurnPanTilt(
                 name="Turn pan-tilt to sofa orientation",
                 x=0.0,
-                y=20.0,
+                y=15.0,
                 x_key=KEY_PANTILT_ORIENTATION
             )
         )
@@ -381,6 +381,7 @@ def _create_get_name_drink(name_key: str, drink_key: str):
         name="Get name and drink",
         memory=True,
     )
+
     root.add_child(
         BtNode_Announce(
             name="Prompt for name and drink",
@@ -389,16 +390,18 @@ def _create_get_name_drink(name_key: str, drink_key: str):
         )
     )
     root.add_child(
-        py_trees.decorators.Retry(
-            name="Retry name+drink extract",
-            child=BtNode_NameDrinkExtractionAction(
-                name="Extract name and drink",
-                bb_name_key=name_key,
-                bb_drink_key=drink_key,
-                timeout=7.0,
-            ),
-            num_failures=10,
+        BtNode_NameDrinkExtractionAction(
+            name="Extract name and drink",
+            bb_name_key=name_key,
+            bb_drink_key=drink_key,
+            timeout=7.0,
         )
+    )
+
+    return py_trees.decorators.Retry(
+        name="retry get name and drink",
+        child=root,
+        num_failures=5
     )
     return root
 
@@ -559,7 +562,7 @@ def createGuestIntake(guest_idx: int):
 
     root.add_child(info_intake_with_eye_contact)
 
-    root.add_child(BtNode_TurnPanTilt(name="look up", x=0.0, y=45.0))
+    root.add_child(BtNode_TurnPanTilt(name="look up", x=0.0, y=35.0))
     root.add_child(
         BtNode_Announce(
             name="announce stand in front of me", 
@@ -580,7 +583,7 @@ def createGuestIntake(guest_idx: int):
                 bb_dest_key=feature_key,
                 bb_image_key=image_key,
             ),
-            num_failures=3,
+            num_failures=5,
         )
     )
     root.add_child(
