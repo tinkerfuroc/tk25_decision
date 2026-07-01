@@ -154,7 +154,7 @@ setup(
             "pp-test-grasp-place-e2e = behavior_tree.PickAndPlace.test_grasp_to_place_e2e:main",
             "pp-test-cabinet-place = behavior_tree.PickAndPlace.test_cabinet_place:main",
             # PickAndPlace breakfast assembly (new, 2026): rulebook 2nd main goal
-            "pp-test-breakfast = behavior_tree.PickAndPlace.breakfast_assembly:main",
+            "pp-test-breakfast-assembly = behavior_tree.PickAndPlace.breakfast_assembly:main",
             # PickAndPlace finalized 2026 production tree (routed real place + breakfast)
             "pick-and-place-2026 = behavior_tree.PickAndPlace.pick_and_place_v2:main",
         ],

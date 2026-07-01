@@ -27,12 +27,12 @@ real orientation, point `grasp_pose_key` at that key instead.
 
 Standalone smoke test (assemble all four breakfast items, fixed-point place)::
 
-    ros2 run behavior_tree pp-test-breakfast
+    ros2 run behavior_tree pp-test-breakfast-assembly
 
 Fully offline (auto-advance, no servers)::
 
     BT_MOCK_CONFIG=$(ros2 pkg prefix behavior_tree)/share/behavior_tree/config/full_mock.json \
-        ros2 run behavior_tree pp-test-breakfast
+        ros2 run behavior_tree pp-test-breakfast-assembly
 """
 
 import py_trees
@@ -261,7 +261,7 @@ def main():
     tree = py_trees_ros.trees.BehaviourTree(root=create_tree())
     tree.setup(timeout=15, node_name="pp_breakfast_assembly")
     print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
-        title="pp-test-breakfast"
+        title="pp-test-breakfast-assembly"
     )
     tree.tick_tock(period_ms=400.0, post_tick_handler=print_tree)
     try:
