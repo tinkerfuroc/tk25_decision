@@ -360,7 +360,7 @@ def createArrivalTrigger():
         BtNode_Announce(
             "announce speak to me after the beep sound",
             bb_source=None,
-            message="Hi guest, please speak to me after the beep sound."
+            message="Hi guest please enter. Speak to me after the beep sound please."
         )
     )
     return root
