@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.2.12] - 2026-07-01
+
+### 🚪 Inspection: trimmed door→announce→inspect→enter→exit flow + robust Enter-wait
+
+Rewrote `createInspection()` to the competition flow: tuck arm to the nav pose →
+wait for the door to open (`BtNode_DoorDetection` under `Retry(999)`) →
+**announce "door open"** (previously missing) → navigate to InspectionPoint →
+briefly introduce ("Dear referees, I am Tinker.", replacing the verbose
+self-description) → wait for the operator to press Enter → announce "Heading to
+the exit." → navigate to ExitPoint. Dropped the unused Q&A subtree and its dead
+imports/keys. Poses still load from `Inspection/constants.json` (`map` frame);
+`cli.py` / `setup.py` entry (`ros2 run behavior_tree inspection`) unchanged.
+
+Hardened `BtNode_PressEnterToSucceed` (`Inspection/customNodes.py`): the old
+`is_enter_pressed()` fired on any pending stdin and never consumed it, so a
+keystroke buffered during the door-wait/navigation could skip the human
+checkpoint. It now drains stale buffered input on `initialise()` (EOF-guarded so
+a closed fd can't spin), returns SUCCESS only when a full Enter-terminated line
+is read — consuming it — and guards EOF symmetrically in `update()` (returns
+RUNNING, never a false SUCCESS on a closed/piped stdin). Also decoupled the
+module from the `behavior_tree.messages` import chain (dropped a dead
+`PointStamped` import).
+
+Tests: `test/test_inspection_tree.py` (tree structure: child order, the new
+"door open" announce sits right after door detection, verbose self-intro gone)
+and `test/test_press_enter_node.py` (RUNNING/SUCCESS/consume, stale-input drain,
+EOF guards in both `initialise` and `update`).
+
 ## [2.2.11] - 2026-06-14
 
 ### 👋 follow-person: wave-to-reseed escape from the NEEDS_HELP hold
