@@ -377,6 +377,7 @@ def _create_get_name_drink(name_key: str, drink_key: str):
     for a missing field. Wrapped in a Retry so a fully-failed extraction (server
     abort) re-prompts instead of failing the intake.
     """
+    real_root = py_trees.composites.Selector(name="Get Name and Drink Outer Selector", memory=True)
     root = py_trees.composites.Sequence(
         name="Get name and drink",
         memory=True,
@@ -398,12 +399,30 @@ def _create_get_name_drink(name_key: str, drink_key: str):
         )
     )
 
-    return py_trees.decorators.Retry(
+    root_after_fail = py_trees.composites.Sequence(name="get name and drink after first fail", memory=True)
+    root_after_fail.add_child(
+        BtNode_Announce(
+            name="Prompt for name and drink",
+            bb_source=None,
+            message="I'm sorry, please tell me your name and your favorite drink again.",
+        )
+    )
+    root_after_fail.add_child(
+        BtNode_NameDrinkExtractionAction(
+            name="Extract name and drink",
+            bb_name_key=name_key,
+            bb_drink_key=drink_key,
+            timeout=7.0,
+        )
+    )
+
+    root_retry= py_trees.decorators.Retry(
         name="retry get name and drink",
-        child=root,
+        child=root_after_fail,
         num_failures=5
     )
-    return root
+    real_root.add_children([root, root_retry])
+    return real_root
 
 
 def createWriteHostInfo():
