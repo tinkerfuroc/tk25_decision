@@ -70,3 +70,13 @@ def test_initialise_drain_stops_on_eof(monkeypatch):
     node = C.BtNode_PressEnterToSucceed()
     node.initialise()
     assert calls["n"] <= 2                               # broke on first EOF read
+
+
+def test_update_returns_running_on_eof(monkeypatch):
+    # A closed/piped stdin selects readable but readline() -> "" (EOF).
+    # update() must treat EOF as "not Enter" and keep waiting, never SUCCESS.
+    fake = FakeStdin()  # readline() always "" (EOF)
+    _install(monkeypatch, fake, lambda: True)  # always "ready"
+    node = C.BtNode_PressEnterToSucceed()
+    node.initialise()  # drain loop breaks immediately on the first EOF read
+    assert node.update() == py_trees.common.Status.RUNNING

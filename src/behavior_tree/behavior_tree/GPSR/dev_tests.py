@@ -383,7 +383,10 @@ def main_orchestrator():
     later for debugging (``python <that_file>.py``).
     """
     from pathlib import Path
-    from .orchestrator import create_execute_command, create_orchestrator_init
+    from .orchestrator import (
+        create_execute_command, create_orchestrator_init,
+        create_goto_command_point, has_command_point,
+    )
     from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
     from .small_trees import BtNode_AnnounceFromBB
 
@@ -396,6 +399,13 @@ def main_orchestrator():
     rclpy.init()
     cycle = py_trees.composites.Sequence("Test orchestrator", memory=True)
     _arm_constants_to_bb(cycle)
+    # GPSR: go to the command point to receive the next command — runs at the
+    # top of every round (memory Sequence re-enters here after each command).
+    if has_command_point():
+        cycle.add_child(create_goto_command_point())
+    else:
+        print("[gpsr-test-orchestrator] 'command_point' has no pose in "
+              "constants.json possible_poses — skipping the return-to-command-point step.")
     if command:
         cycle.add_child(BtNode_WriteToBlackboard(
             "command (env)", bb_namespace="", bb_source=None,

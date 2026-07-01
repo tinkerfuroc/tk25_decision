@@ -51,6 +51,7 @@ from .small_trees import (
     BtNode_AnnounceFromBB,
     BtNode_BlackboardSet,
     SEARCH_POSE_KEYS,
+    create_goto,
 )
 
 
@@ -100,11 +101,31 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     ROOM_SEARCH_SPOTS.clear()
     with open(constants_path, "r") as fh:
         constants = json.load(fh)
+
+    def _try_pose(key, value):
+        """Parse a pose entry, skipping (with a warning) malformed/empty ones.
+
+        A placeholder like ``"command_point": {}`` the operator hasn't filled in
+        yet must NOT crash the whole load — it just isn't a known location until
+        its point/orientation are set.
+        """
+        try:
+            return _parse_pose_stamped(value)
+        except (KeyError, TypeError):
+            print(f"[gpsr] constants: location {key!r} has no valid "
+                  "point/orientation yet — skipping it (fill it in to enable).")
+            return None
+
     for key, value in constants.get("possible_poses", {}).items():
-        KNOWN_LOCATIONS[key] = _parse_pose_stamped(value)
+        pose = _try_pose(key, value)
+        if pose is not None:
+            KNOWN_LOCATIONS[key] = pose
     for key, value in constants.get("egpsr_rooms", {}).items():
-        # Don't overwrite if already present in possible_poses.
-        KNOWN_LOCATIONS.setdefault(key, _parse_pose_stamped(value))
+        if key in KNOWN_LOCATIONS:
+            continue  # possible_poses wins
+        pose = _try_pose(key, value)
+        if pose is not None:
+            KNOWN_LOCATIONS[key] = pose
     for key, value in constants.get("possible_objects", {}).items():
         KNOWN_OBJECT_PROMPTS[key] = value
     # Object default locations (skip _comment-style keys).
@@ -180,13 +201,16 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         then ``approach_person`` in the same plan (locate the person and walk
         to them before leading). Never use ``guide`` to express "go
         yourself" — that is ``goto``.
-    - grasp(object: str)
+    - grasp(object: str, from_shelf?: bool)
         Pick up an object from the surface in front of the robot. ``grasp`` moves
         the arm to the table-grasp scan pose, detects the object on the table
         with the ARM (RealSense) camera ITSELF, and picks it up — you do NOT add
         a separate find/scan step before it and you do NOT use the head camera.
         Always plan a ``goto(location)`` first so the robot is at the table where
-        the object is.
+        the object is. Set ``from_shelf=true`` when the object is on a SHELF or
+        bookcase (the command says shelf, or the object's Default location is
+        ``shelf``): the robot CANNOT safely grasp from a shelf, so it skips the
+        grasp and asks a human referee to hand the object over instead.
     - place(location: str)
         Place the currently-held object at ``location``. The robot navigates
         to ``location`` itself — do not add a separate ``goto`` before it.
@@ -373,6 +397,11 @@ SYSTEM_PROMPT = textwrap.dedent("""
        location from the "Default object locations" list. Plain ``goto`` +
        ``find_object`` / ``count`` are still correct for NON-grasp finds and
        counts (e.g. "how many cokes are in the kitchen").
+    17. If the object being grasped is on a SHELF — the command says
+       "shelf"/"bookcase", or the object's Default location (list above) is
+       ``shelf`` — set ``from_shelf=true`` on the ``grasp`` step. The robot
+       cannot reach into a shelf safely and will ask a referee to hand it over
+       instead of attempting the grasp.
 """).strip()
 
 
@@ -712,6 +741,10 @@ class BtNode_PopNextAction(Behaviour):
         self._bb.register_key(bb_keys.START_POSE, access=Access.READ)
         self._bb.register_key(bb_keys.DYNAMIC_LOCATIONS, access=Access.READ)
         self._bb.register_key(bb_keys.CURRENT_DYNLABEL, access=Access.WRITE)
+        # written by goto/search_object, read back by grasp (shelf inference)
+        self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.READ)
+        self._bb.register_key(bb_keys.GRASP_FROM_SHELF, access=Access.WRITE)
         for search_pose_key in SEARCH_POSE_KEYS:
             self._bb.register_key(search_pose_key, access=Access.WRITE)
 
@@ -775,6 +808,11 @@ class BtNode_PopNextAction(Behaviour):
             if pose is not None:
                 self._bb.set(bb_keys.TARGET_POSE, pose, overwrite=True)
 
+        # Track where the robot navigates so a following grasp can tell it is a
+        # shelf grasp (the fetch flow is goto(location) -> grasp(object)).
+        if action == "goto":
+            self._bb.set(bb_keys.LAST_NAV_LOCATION, str(params.get("location") or ""), overwrite=True)
+
         # search_object: resolve the room's sweep spots into SEARCH_POSE_0..N.
         # location is optional — when omitted, fall back to the object's default
         # location (DEFAULT_OBJECT_LOCATIONS). A location with no explicit
@@ -787,10 +825,33 @@ class BtNode_PopNextAction(Behaviour):
                 loc = DEFAULT_OBJECT_LOCATIONS.get(str(obj).lower())
             if loc:
                 self._bb.set(bb_keys.TARGET_LOCATION, loc, overwrite=True)
+            # Remember where we searched so a following grasp can tell it is a
+            # shelf grasp even if the planner forgot the from_shelf flag.
+            self._bb.set(bb_keys.LAST_NAV_LOCATION, str(loc or ""), overwrite=True)
             spot_names = ROOM_SEARCH_SPOTS.get(str(loc).lower(), [loc]) if loc else []
             for i, search_key in enumerate(SEARCH_POSE_KEYS):
                 pose = self._resolve_pose(spot_names[i]) if i < len(spot_names) else None
                 self._bb.set(search_key, pose, overwrite=True)
+
+        # grasp: decide whether this is a SHELF grasp. The robot cannot safely
+        # grasp from a shelf, so a shelf grasp skips the real grasp and asks a
+        # referee. Truthy from ANY signal: the planner's from_shelf flag, a
+        # shelf-ish location/surface on the grasp step, OR the location the
+        # preceding search_object actually used (covers default-shelf objects).
+        if action == "grasp":
+            def _is_shelf(v) -> bool:
+                return "shelf" in str(v or "").lower()
+            try:
+                last_nav = self._bb.get(bb_keys.LAST_NAV_LOCATION)
+            except KeyError:
+                last_nav = ""
+            from_shelf = bool(
+                params.get("from_shelf")
+                or _is_shelf(params.get("location"))
+                or _is_shelf(params.get("surface"))
+                or _is_shelf(last_nav)
+            )
+            self._bb.set(bb_keys.GRASP_FROM_SHELF, from_shelf, overwrite=True)
 
         # record_position: stash the label so the small tree registers the
         # captured pose under it.
@@ -1234,6 +1295,8 @@ def create_execute_command(
     root.add_child(BtNode_BlackboardSet("reset state_log", bb_keys.STATE_LOG, []))
     root.add_child(BtNode_BlackboardSet("reset correction", bb_keys.CORRECTION_COUNT, 0))
     root.add_child(BtNode_BlackboardSet("reset last_failure", bb_keys.LAST_FAILURE, ""))
+    root.add_child(BtNode_BlackboardSet("reset nav location", bb_keys.LAST_NAV_LOCATION, ""))
+    root.add_child(BtNode_BlackboardSet("reset from_shelf", bb_keys.GRASP_FROM_SHELF, False))
     root.add_child(plan)
     if emit_plan_dir is not None:
         root.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
@@ -1243,6 +1306,36 @@ def create_execute_command(
         root.add_child(create_announce_plan())
     root.add_child(loop_done_ok)
     return root
+
+
+COMMAND_POINT_LOCATION = "command_point"
+
+
+def has_command_point() -> bool:
+    """True once ``command_point`` is a filled-in pose in constants.json."""
+    return COMMAND_POINT_LOCATION in KNOWN_LOCATIONS
+
+
+def create_goto_command_point() -> py_trees.composites.Sequence:
+    """Drive to the fixed command point to receive the next command.
+
+    RoboCup GPSR requires the robot to be at the instruction/command point to be
+    given the next task, so this runs at the top of every command round. It
+    reuses the ``goto`` small tree (announce → tuck arm → navigate), pointed at
+    the ``command_point`` pose from constants.json. Only add this when
+    :func:`has_command_point` is True (otherwise ``command_point`` has no pose
+    yet and the goto would have nothing to navigate to).
+    """
+    seq = py_trees.composites.Sequence("goto_command_point", memory=True)
+    seq.add_child(BtNode_BlackboardSet(
+        "set command-point location", bb_keys.TARGET_LOCATION, "command point",
+    ))
+    seq.add_child(BtNode_BlackboardSet(
+        "set command-point pose", bb_keys.TARGET_POSE,
+        KNOWN_LOCATIONS.get(COMMAND_POINT_LOCATION),
+    ))
+    seq.add_child(create_goto())
+    return seq
 
 
 def create_orchestrator_init(capture_pose: bool = True) -> py_trees.composites.Sequence:

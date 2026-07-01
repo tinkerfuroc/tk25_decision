@@ -31,6 +31,8 @@ from .gpsr_full import CONSTANTS_PATH, _load_arm_constants
 from .orchestrator import (
     create_execute_command,
     create_orchestrator_init,
+    create_goto_command_point,
+    has_command_point,
     load_knowledge_from_constants,
 )
 from .small_trees import bb_keys
@@ -69,6 +71,9 @@ def createGPSROrchestrator(
 
     root = py_trees.composites.Sequence("GPSR orchestrator", memory=True)
     _arm_constants_to_bb(root)
+    # GPSR: go to the command point to receive the command first.
+    if has_command_point():
+        root.add_child(create_goto_command_point())
     root.add_child(BtNode_WriteToBlackboard(
         "write command", bb_namespace="", bb_source=None,
         bb_key=bb_keys.COMMAND, object=cmd,

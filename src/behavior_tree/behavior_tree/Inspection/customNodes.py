@@ -14,26 +14,35 @@ class BtNode_PressEnterToSucceed(py_trees.behaviour.Behaviour):
     buffered input, so a keystroke pressed earlier (e.g. during the preceding
     door-wait or navigation) cannot instantly satisfy the wait.
 
-    Assumes an interactive, line-buffered (cooked) terminal, as provided by
-    ``ros2 run``: stdin only selects readable once a full Enter-terminated line
-    is available.
+    EOF handling is symmetric: a closed/piped stdin (no TTY) selects readable
+    but ``readline()`` returns ``""``. ``initialise`` breaks its drain loop on
+    that; ``update`` treats it as "not Enter" and keeps waiting (RUNNING),
+    rather than falsely succeeding. Assumes an interactive, line-buffered
+    (cooked) terminal, as provided by ``ros2 run``: stdin only selects readable
+    once a full Enter-terminated line is available.
     """
 
     def __init__(self, name: str = "Press Enter to Succeed"):
         super().__init__(name=name)
 
+    def _stdin_ready(self) -> bool:
+        """True when stdin has data pending (non-blocking)."""
+        return bool(select.select([sys.stdin], [], [], 0)[0])
+
     def initialise(self) -> None:
         # Drain stale/buffered stdin lines so a stray earlier keystroke can't
         # instantly satisfy the Enter-wait. Guard EOF (piped/closed stdin) so
         # the loop can't spin — a closed fd reads select-ready but readline()->"".
-        while select.select([sys.stdin], [], [], 0)[0]:
+        while self._stdin_ready():
             if sys.stdin.readline() == "":  # EOF
                 break
         self.logger.info(f"'{self.name}': Press ENTER to continue...")
 
     def update(self) -> py_trees.common.Status:
-        if select.select([sys.stdin], [], [], 0)[0]:
-            sys.stdin.readline()  # consume the line incl. the trailing '\n'
+        if self._stdin_ready():
+            if sys.stdin.readline() == "":  # EOF (closed/piped stdin), not Enter
+                self.feedback_message = "stdin at EOF; still waiting for Enter"
+                return py_trees.common.Status.RUNNING
             self.feedback_message = "Enter detected"
             return py_trees.common.Status.SUCCESS
         self.feedback_message = "Waiting for user to press Enter..."

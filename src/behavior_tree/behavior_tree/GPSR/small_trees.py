@@ -108,6 +108,14 @@ class bb_keys:
     GRASP_ANNOUNCEMENT = "gpsr/grasp_announcement"
     ARM_NAVIGATING = "gpsr/arm_navigating"
     ARM_SCAN = "gpsr/arm_scan"
+    LAST_NAV_LOCATION = "gpsr/last_nav_location"  # str — location the robot most
+                                           #   recently navigated to (goto /
+                                           #   search_object); lets a later grasp
+                                           #   infer a shelf grasp.
+    GRASP_FROM_SHELF = "gpsr/grasp_from_shelf"  # bool — the object is on a shelf:
+                                           #   skip the real grasp (unsafe /
+                                           #   might damage the shelf) and go
+                                           #   straight to the ask-referee branch.
 
 
 ARM_ACTION_NAME = "joint_move_action"
@@ -392,6 +400,34 @@ class BtNode_CheckBBKeySet(Behaviour):
             return Status.FAILURE
         if value is None:
             self.feedback_message = f"{self._key} is None"
+            return Status.FAILURE
+        return Status.SUCCESS
+
+
+class BtNode_CheckNotFromShelf(Behaviour):
+    """SUCCESS unless ``GRASP_FROM_SHELF`` is truthy.
+
+    Guards the primary grasp so a shelf grasp is skipped: when the object is on
+    a shelf the robot cannot grasp it safely (and risks damaging the shelf), so
+    this fails, the grasp Selector falls straight through to the ask-referee
+    (deus-ex-machina) branch, and no arm scan / grasp is ever attempted.
+    """
+
+    def __init__(self, name: str = "not from shelf?"):
+        super().__init__(name)
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(bb_keys.GRASP_FROM_SHELF, access=Access.READ)
+
+    def update(self):
+        try:
+            from_shelf = bool(self._client.get(bb_keys.GRASP_FROM_SHELF))
+        except Exception:
+            from_shelf = False
+        if from_shelf:
+            self.feedback_message = "object is on the shelf — skipping to ask-referee"
             return Status.FAILURE
         return Status.SUCCESS
 
@@ -926,6 +962,14 @@ def create_grasp():
         "retry primary 3x", primary, num_failures=3,
     )
 
+    # Only attempt the real grasp when the object is NOT on a shelf. A shelf
+    # grasp fails this guard immediately (no arm scan, no grasp motion) so the
+    # Selector drops through to the ask-referee branch below — the robot cannot
+    # safely reach into a shelf and could damage it.
+    guarded_primary = py_trees.composites.Sequence("grasp/try_unless_shelf", memory=True)
+    guarded_primary.add_child(BtNode_CheckNotFromShelf("skip primary if from shelf"))
+    guarded_primary.add_child(primary_with_retry)
+
     ex_machina = py_trees.composites.Sequence("grasp/ex_machina", memory=True)
     ex_machina.add_child(py_trees.decorators.Retry(
         "retry arm back",
@@ -950,7 +994,7 @@ def create_grasp():
     return py_trees.composites.Selector(
         "small/grasp",
         memory=True,
-        children=[primary_with_retry, ex_machina],
+        children=[guarded_primary, ex_machina],
     )
 
 
