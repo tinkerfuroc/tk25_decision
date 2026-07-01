@@ -210,3 +210,6 @@ COLCON_IGNORE
 AMENT_IGNORE
 
 # End of https://www.toptal.com/developers/gitignore/api/ros2,python
+
+# Claude Code native git worktrees
+.claude/worktrees/
