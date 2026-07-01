@@ -4,7 +4,7 @@ from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
-from behavior_tree.TemplateNodes.Vision import  BtNode_DoorDetection 
+from behavior_tree.TemplateNodes.Vision import  BtNode_DoorDetection, BtNode_TurnPanTilt
 
 from .customNodes import BtNode_PressEnterToSucceed
 
@@ -81,6 +81,13 @@ def createInspection():
 
     # tuck the arm into the navigating pose
     root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+
+    # announce readiness and aim the pan-tilt at the referees, in parallel,
+    # before waiting on the door
+    ready = py_trees.composites.Parallel(name="Announce ready + aim pan-tilt", policy=py_trees.common.ParallelPolicy.SuccessOnAll(synchronise=False))
+    ready.add_child(BtNode_Announce(name="Announce ready for inspection", bb_source=None, message="I am ready for inspection, please open the door"))
+    ready.add_child(BtNode_TurnPanTilt(name="Aim pan-tilt for inspection", x=0.0, y=45.0))
+    root.add_child(ready)
 
     # wait until the door is detected open (Retry keeps polling on closed/error)
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))

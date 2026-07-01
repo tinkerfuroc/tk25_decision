@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.2.13] - 2026-07-01
+
+### 🚪 Inspection: announce readiness + aim pan-tilt before the door-wait
+
+Added an opening step to `createInspection()`: right after the arm tucks to the
+nav pose (so the robot genuinely *is* ready) and before the door-detection wait,
+a `Parallel` (`SuccessOnAll`) runs two children together — `BtNode_Announce`
+"I am ready for inspection, please open the door" and `BtNode_TurnPanTilt`
+(pan=0°, tilt=45°) to aim the head at the referees. The subsequent
+door-detection → "door open" announce → navigate → introduce → Enter-wait →
+exit flow is unchanged. Root child count 9 → 10.
+
+Tests: extended `test/test_inspection_tree.py` — updated child-order/count
+assertions, added `test_ready_announce_and_pan_tilt_run_in_parallel` (the
+parallel holds both the readiness announce and the pan=0/tilt=45 turn) and
+`test_ready_announce_precedes_door_detection`.
+
 ## [2.2.12] - 2026-07-01
 
 ### 🚪 Inspection: trimmed door→announce→inspect→enter→exit flow + robust Enter-wait
