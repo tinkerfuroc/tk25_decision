@@ -8,7 +8,7 @@
         -73.0, 
         -9.0
     ],
-    "arm_pos_scan": [
+    "arm_pos_scan_original": [
         0.0,
         -54.0,
         -1.0,
@@ -17,6 +17,16 @@
         47.0,
         -1.0
     ],
+    "arm_pos_scan": [
+        0.0,
+        -42.0,
+        0.0,
+        76.0,
+        0.0,
+        60.0,
+        0.0
+    ],
+
     "egpsr_rooms":{
         "living_room" : {
             "point":{
@@ -33,28 +43,28 @@
         },
         "office" : {
             "point": {
-            "x": -0.3470491829129409,
-            "y": 0.003852113546840608,
+            "x": 1.5708344128740712,
+            "y": 1.7963399939001017,
             "z": 0.0
-            },
-            "orientation": {
-                "x": 0.0,
-                "y": 0.0,
-                "z": -0.923731881965021,
-                "w": 0.38303969799664445
-            }
-        },
-        "kitchen" : {
-            "point":{
-                "x": 1.5708344128740712,
-                "y": 1.7963399939001017,
-                "z": 0.0
             },
             "orientation": {
                 "x": 0.0,
                 "y": 0.0,
                 "z": 0.41309520728941856,
                 "w": 0.9106878442773421
+            }
+        },
+        "kitchen" : {
+            "point":{
+                "x": 0.9106878442773421,
+                "y": -1.0748514577874644,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.9071797835710539,
+                "w": 0.42074319992125353
             }
         },
         "bedroom" : {
@@ -87,9 +97,9 @@
     "possible_poses":{
         "living_room" : {
             "point": {
-            "x": -7.859450129221588,
-            "y": 3.757777170173857,
-            "z": 0.0
+                "x": -7.859450129221588,
+                "y": 3.757777170173857,
+                "z": 0.0
             },
             "orientation": {
                 "x": 0.0,
@@ -100,28 +110,29 @@
         },
         "kitchen" : {
             "point":{
-                "x": -9.290557795428029,
-                "y": 2.673669328403716,
+                "x": -3.9106878442773421,
+                "y": -1.0748514577874644,
                 "z": 0.0
             },
             "orientation": {
                 "x": 0.0,
                 "y": 0.0,
-                "z": -0.7203336011800373,
-                "w": 0.6936277841976912
+                "z": -0.800565216563692,
+                "w": 0.5992456374712536
+
             }
         },
         "office" : {
-            "point":{
-                "x": -3.3020076141334957,
-                "y": -0.1692138223441299,
+            "point": {
+                "x": 1.5708344128740712,
+                "y": 1.7963399939001017,
                 "z": 0.0
             },
             "orientation": {
                 "x": 0.0,
                 "y": 0.0,
-                "z": -0.8235453136824079,
-                "w": 0.567250488154699
+                "z": 0.41309520728941856,
+                "w": 0.9106878442773421
             }
         },
         "shelf": {
@@ -264,6 +275,35 @@
         "oats": "whte cereal box",
         "mayo": "white bottle with black cap",
         "tuna": "blue tuna can"
+    },
+    "default_locations": {
+        "_comment": "Where each object USUALLY is. Used only when a fetch/find command names no location. EDIT each room to your arena layout. Each value must be a key in possible_poses / egpsr_rooms.",
+        "kuat": "kitchen",
+        "fanta": "kitchen",
+        "milk": "kitchen",
+        "orange juice": "kitchen",
+        "coke": "kitchen",
+        "coffee": "kitchen",
+        "ketchup": "kitchen",
+        "oats": "kitchen",
+        "mayo": "kitchen",
+        "tuna": "kitchen",
+        "lime": "shelf",
+        "tangerine": "shelf",
+        "pear": "shelf",
+        "lemon": "shelf",
+        "apple": "shelf",
+        "snack bag": "shelf",
+        "pringles": "shelf",
+        "chocolate": "shelf"
+    },
+    "search_spots": {
+        "_comment": "Per-room sweep order for search_object when the in-room spot is unknown (override case). Each entry is an ORDERED list of pose names; every name must be a key in possible_poses / egpsr_rooms. To make the robot sweep several spots in a room, add poses like living_room_2/living_room_3 to possible_poses and list them here. Max spots per room = MAX_SEARCH_SPOTS (small_trees.py).",
+        "living_room": ["living_room"],
+        "kitchen": ["kitchen"],
+        "office": ["office"],
+        "shelf": ["shelf"],
+        "bedroom": ["bedroom"]
     }
 }
 

@@ -676,6 +676,10 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-06-27** — PickAndPlace rulebook tree: `pickAndPlaceRulebook()`
+  (inventory→queue→per-item loop, breakfast, extra-surface), `BtNode_ScanAndPlace`
+  + inventory/queue/guard/deadline nodes, `--place-policy {hardcoded,vlm}`
+  (default `vlm`), whole-tree mock. Old demo kept as `pick-and-place-demo`.
 - **2026-06-15** — Recovery Pass-2 wave detection is now settle-gated and
   sequenced. At each scan angle the head must be fully stopped (≥ `settle_sec`,
   2 s, since the turn) before ONE `DetectWaving` fires; the scan then waits for

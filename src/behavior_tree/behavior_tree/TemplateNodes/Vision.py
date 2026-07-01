@@ -321,10 +321,19 @@ class BtNode_ScanForGeneralist(ServiceHandler):
 
         if self.response.done():
             result = self.response.result()
+            cam = "orbbec" if self.use_orbbec else "realsense"
+            n_obj = len(getattr(result, "objects", []) or [])
             if result.status == 0:
                 self.bb_write_client.set(self.bb_key, result, overwrite=True)
+                classes = [getattr(o, "cls", "?") for o in (result.objects or [])]
+                print(f"[VISION/{cam}/generalist] DETECTED {n_obj} object(s) for "
+                      f"'{self.object}': {classes} (source={result.detection_source})",
+                      flush=True)
                 self.feedback_message = f"Generalist found objects, stored to {self.bb_key} (source={result.detection_source})"
                 return pytree.common.Status.SUCCESS
+            print(f"[VISION/{cam}/generalist] NO DETECTION for '{self.object}' "
+                  f"(status={result.status}, objects={n_obj}, err={result.error_msg!r})",
+                  flush=True)
             self.feedback_message = (
                 f"ScanForGeneralist for {self.object} failed status={result.status}: {result.error_msg}"
             )

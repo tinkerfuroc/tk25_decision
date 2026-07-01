@@ -834,7 +834,7 @@ def createEscortAndSeat(guest_idx: int):
                 name=f"Retry move arm to navigation pose guest {guest_idx}",
                 child=BtNode_MoveArmSingle(
                     name=f"Move arm to navigation pose guest {guest_idx}",
-                    service_name="arm_joint_service",
+                    action_name="joint_move_action",
                     arm_pose_bb_key=KEY_ARM_NAVIGATING,
                     add_octomap=False,
                 ),
@@ -1053,7 +1053,7 @@ def createBagFlow():
             name="Retry arm to handover pose",
             child=BtNode_MoveArmSingle(
                 name="Move arm to handover pose",
-                service_name="arm_joint_service",
+                action_name="joint_move_action",
                 arm_pose_bb_key=KEY_ARM_HANDOVER,
                 add_octomap=False,
             ),
@@ -1083,7 +1083,7 @@ def createBagFlow():
                 name="Retry moving arm to navigation pose with bag",
                 child=BtNode_MoveArmSingle(
                     name="Move arm to navigation pose with bag",
-                    service_name="arm_joint_service",
+                    action_name="joint_move_action",
                     arm_pose_bb_key=KEY_ARM_NAVIGATING,
                     add_octomap=False,
                 ),
@@ -1164,7 +1164,7 @@ def createHRITask():
             name="Retry arm nav pose at start",
             child=BtNode_MoveArmSingle(
                 name="Move arm to navigation pose",
-                service_name="arm_joint_service",
+                action_name="joint_move_action",
                 arm_pose_bb_key=KEY_ARM_NAVIGATING,
                 add_octomap=False,
             ),

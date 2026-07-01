@@ -295,6 +295,43 @@ class CartesianMove(MockAction):
             self.target_pose = None
 
 
+class ScanAndPlace(MockAction):
+    """Mock ScanAndPlace action (arm_api scan_and_place_server).
+
+    Mirrors tinker_arm_msgs/action/ScanAndPlace after the rulebook append-only
+    extension: placement_mode 0 FREE_SPACE / 1 NEAR_SIMILAR / 2 FIXED_POINT,
+    plus reference_label / fixed_target / scan_pose_deg / skip_scan_move /
+    dry_run, and Result.placement_mode_used. Lets the BT assemble + tick the
+    goal on a host where tinker_arm_msgs is absent.
+    """
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.item_description = ""
+            self.margin_m = 0.0
+            self.orientation = None
+            self.max_candidates = 0
+            self.placement_mode = 0
+            self.reference_label = ""
+            self.fixed_target = None
+            self.scan_pose_deg = []
+            self.skip_scan_move = False
+            self.dry_run = False
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.placed_at = None
+            self.error_msg = ""
+            self.placement_mode_used = 0
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.stage = ""
+
+
 # Mock Audio Services
 class TTSCnRequest(MockService):
     """Mock TTS Chinese Request service."""

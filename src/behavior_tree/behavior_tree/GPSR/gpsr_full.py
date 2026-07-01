@@ -46,7 +46,7 @@ CONSTANTS_PATH = (
     "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/"
     "behavior_tree/GPSR/constants.json"
 )
-ARM_SERVICE_NAME = "arm_joint_service"
+ARM_ACTION_NAME = "joint_move_action"
 NUM_COMMANDS = 3
 DEBUG_COMMAND = os.environ.get("BT_GPSR_DEBUG_CMD", "").strip()
 
@@ -90,7 +90,7 @@ def create_enter_arena():
         "retry arm to nav",
         BtNode_MoveArmSingle(
             "arm to navigating",
-            service_name=ARM_SERVICE_NAME,
+            action_name=ARM_ACTION_NAME,
             arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
         ),
         num_failures=5,

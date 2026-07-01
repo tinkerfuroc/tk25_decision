@@ -508,7 +508,7 @@ def createPickupVerification():
     root.add_child(
         BtNode_MoveArmSingle(
             name="Arm to serving pose (bar receive)",
-            service_name="arm_joint_service",
+            action_name="joint_move_action",
             arm_pose_bb_key=KEY_ARM_SERVING,
             add_octomap=False,
         )
@@ -526,7 +526,7 @@ def createPickupVerification():
     root.add_child(
         BtNode_MoveArmSingle(
             name="Arm to navigating pose",
-            service_name="arm_joint_service",
+            action_name="joint_move_action",
             arm_pose_bb_key=KEY_ARM_NAVIGATING,
             add_octomap=False,
         )
@@ -567,7 +567,7 @@ def createDeliverOrder():
     normal.add_child(
         BtNode_MoveArmSingle(
             name="Arm to serving pose (at table)",
-            service_name="arm_joint_service",
+            action_name="joint_move_action",
             arm_pose_bb_key=KEY_ARM_SERVING,
             add_octomap=False,
         )
@@ -590,7 +590,7 @@ def createDeliverOrder():
     normal.add_child(
         BtNode_MoveArmSingle(
             name="Arm to navigating pose",
-            service_name="arm_joint_service",
+            action_name="joint_move_action",
             arm_pose_bb_key=KEY_ARM_NAVIGATING,
             add_octomap=False,
         )
@@ -643,7 +643,14 @@ def createCollectOneOrder():
         )
     )
     scan_for_customers = py_trees.composites.Selector(name="Scan for customers", memory=True)
-    for scan_pos in [(0.0, 35.0), (30.0, 35.0), (-30.0, 35.0)]:
+    for scan_pos in [
+        (0.0, 40.0), 
+        (30.0, 40.0), 
+        (-30.0, 40.0),
+        (0.0, 40.0), 
+        (45.0, 40.0), 
+        (-45.0, 40.0)
+        ]:
         scan_for_customers.add_child(createDetectAndArbitrateCustomers(x=scan_pos[0], y=scan_pos[1]))
     root.add_child(scan_for_customers)
     root.add_child(createApproachCustomer())
@@ -781,7 +788,7 @@ def createRestaurantTask():
             name="retry arm setup",
             child=BtNode_MoveArmSingle(
                 name="Move arm to navigation pose",
-                service_name="arm_joint_service",
+                action_name="joint_move_action",
                 arm_pose_bb_key=KEY_ARM_NAVIGATING,
                 add_octomap=False,
             ),

@@ -116,7 +116,7 @@ prompt_milk = "white milk carton"
 
 MAX_SCAN_DISTANCE = 2.0
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 place_service_name = "place_service"
 point_cloud_service_name = "get_point_cloud_service"
@@ -163,7 +163,7 @@ def createGraspOnce(obj_name="object"):
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
     parallel_move_arm = py_trees.composites.Parallel("Move arm to find object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_move_arm.add_child(BtNode_Announce(name="Announce moving arm", bb_source="", message="Moving arm to find object"))
-    parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
+    parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     # parallel_move_arm.add_child(BtNode_WriteToBlackboard(name="Write arm scan middle pose", bb_namespace="", bb_source=None, bb_key=KEY_OBJECT_CLASS, object=obj_name))
     root.add_child(parallel_move_arm)
     # find object on table
@@ -173,7 +173,7 @@ def createGraspOnce(obj_name="object"):
     parallel_grasp.add_child(BtNode_Announce(name="Announce grasping", bb_source="", message=f"grasping {obj_name}"))
     parallel_grasp.add_child(BtNode_GraspWithPose(f"Grasp object on table", bb_key_vision_res=KEY_OBJECT, bb_key_pose=KEY_GRASP_POSE, action_name=grasp_service_name))
     root.add_child(parallel_grasp)
-    root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    root.add_child(BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     return py_trees.decorators.Retry(name="retry 5 times", child=root, num_failures=5)
 
 def createFindAndPlace(key_find_location, key_drop_location, obj_name):

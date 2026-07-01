@@ -601,7 +601,7 @@ def createRestaurantSimplifiedTask():
             name="Retry arm setup",
             child=BtNode_MoveArmSingle(
                 name="Move arm to navigation pose",
-                service_name="arm_joint_service",
+                action_name="joint_move_action",
                 arm_pose_bb_key=KEY_ARM_NAVIGATING,
                 add_octomap=False,
             ),

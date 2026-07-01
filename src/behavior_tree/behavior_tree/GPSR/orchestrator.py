@@ -21,9 +21,11 @@ Blackboard contract:
 
 import json
 import math
+import random
 import re
 import textwrap
 import threading
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 import py_trees
@@ -43,7 +45,14 @@ from .config import (
     OPENAI_MAX_TOKENS,
 )
 from .planner_validators import validate_plan
-from .small_trees import ACTION_FACTORIES, bb_keys, BtNode_AnnounceFromBB
+from .small_trees import (
+    ACTION_FACTORIES,
+    bb_keys,
+    BtNode_AnnounceFromBB,
+    BtNode_BlackboardSet,
+    SEARCH_POSE_KEYS,
+    create_goto,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +64,13 @@ from .small_trees import ACTION_FACTORIES, bb_keys, BtNode_AnnounceFromBB
 
 KNOWN_LOCATIONS: Dict[str, PoseStamped] = {}
 KNOWN_OBJECT_PROMPTS: Dict[str, str] = {}
+# object name -> the location it usually lives at (used when a fetch command
+# names no location). Populated from constants.json "default_locations".
+DEFAULT_OBJECT_LOCATIONS: Dict[str, str] = {}
+# room/location name -> ordered list of pose names to sweep when the in-room
+# spot is unknown (the override case). Populated from constants.json
+# "search_spots"; a location with no entry falls back to [itself].
+ROOM_SEARCH_SPOTS: Dict[str, List[str]] = {}
 
 # Names the planner may use for "where the robot stood when it received the
 # command". Resolved from the blackboard (bb_keys.START_POSE, captured by
@@ -81,15 +97,48 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     """Populate KNOWN_LOCATIONS / KNOWN_OBJECT_PROMPTS from constants.json."""
     KNOWN_LOCATIONS.clear()
     KNOWN_OBJECT_PROMPTS.clear()
+    DEFAULT_OBJECT_LOCATIONS.clear()
+    ROOM_SEARCH_SPOTS.clear()
     with open(constants_path, "r") as fh:
         constants = json.load(fh)
+
+    def _try_pose(key, value):
+        """Parse a pose entry, skipping (with a warning) malformed/empty ones.
+
+        A placeholder like ``"command_point": {}`` the operator hasn't filled in
+        yet must NOT crash the whole load — it just isn't a known location until
+        its point/orientation are set.
+        """
+        try:
+            return _parse_pose_stamped(value)
+        except (KeyError, TypeError):
+            print(f"[gpsr] constants: location {key!r} has no valid "
+                  "point/orientation yet — skipping it (fill it in to enable).")
+            return None
+
     for key, value in constants.get("possible_poses", {}).items():
-        KNOWN_LOCATIONS[key] = _parse_pose_stamped(value)
+        pose = _try_pose(key, value)
+        if pose is not None:
+            KNOWN_LOCATIONS[key] = pose
     for key, value in constants.get("egpsr_rooms", {}).items():
-        # Don't overwrite if already present in possible_poses.
-        KNOWN_LOCATIONS.setdefault(key, _parse_pose_stamped(value))
+        if key in KNOWN_LOCATIONS:
+            continue  # possible_poses wins
+        pose = _try_pose(key, value)
+        if pose is not None:
+            KNOWN_LOCATIONS[key] = pose
     for key, value in constants.get("possible_objects", {}).items():
         KNOWN_OBJECT_PROMPTS[key] = value
+    # Object default locations (skip _comment-style keys).
+    for key, value in constants.get("default_locations", {}).items():
+        if str(key).startswith("_"):
+            continue
+        DEFAULT_OBJECT_LOCATIONS[str(key).lower()] = str(value)
+    # Per-room search-spot sweep lists (skip _comment-style keys).
+    for key, value in constants.get("search_spots", {}).items():
+        if str(key).startswith("_"):
+            continue
+        if isinstance(value, list) and value:
+            ROOM_SEARCH_SPOTS[str(key).lower()] = [str(v) for v in value]
 
 
 # ---------------------------------------------------------------------------
@@ -152,9 +201,16 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         then ``approach_person`` in the same plan (locate the person and walk
         to them before leading). Never use ``guide`` to express "go
         yourself" — that is ``goto``.
-    - grasp(object: str)
-        Pick up an object that is currently in view of the arm/vision system.
-        Always plan find_object + goto first.
+    - grasp(object: str, from_shelf?: bool)
+        Pick up an object from the surface in front of the robot. ``grasp`` moves
+        the arm to the table-grasp scan pose, detects the object on the table
+        with the ARM (RealSense) camera ITSELF, and picks it up — you do NOT add
+        a separate find/scan step before it and you do NOT use the head camera.
+        Always plan a ``goto(location)`` first so the robot is at the table where
+        the object is. Set ``from_shelf=true`` when the object is on a SHELF or
+        bookcase (the command says shelf, or the object's Default location is
+        ``shelf``): the robot CANNOT safely grasp from a shelf, so it skips the
+        grasp and asks a human referee to hand the object over instead.
     - place(location: str)
         Place the currently-held object at ``location``. The robot navigates
         to ``location`` itself — do not add a separate ``goto`` before it.
@@ -218,7 +274,12 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
     Example: "bring me the coke from the kitchen" =>
         [
           {"action": "goto", "params": {"location": "kitchen"}},
-          {"action": "find_object", "params": {"object": "coke", "location": "kitchen"}},
+          {"action": "grasp", "params": {"object": "coke"}},
+          {"action": "deliver", "params": {"object": "coke", "recipient": "me", "recipient_location": "start_position"}}
+        ]
+    Example: "fetch me a coke" (no location given -> use coke's default location) =>
+        [
+          {"action": "goto", "params": {"location": "kitchen"}},
           {"action": "grasp", "params": {"object": "coke"}},
           {"action": "deliver", "params": {"object": "coke", "recipient": "me", "recipient_location": "start_position"}}
         ]
@@ -239,7 +300,12 @@ SYSTEM_PROMPT = textwrap.dedent("""
       ]
     }
 
-    Use only the action names listed below. Use only known locations and objects.
+    Use only the action names listed below, and only known LOCATIONS. OBJECTS
+    are NOT restricted: the vision system is open-vocabulary, so pass through
+    whatever object word the command names (e.g. "bottle", "cup", "remote",
+    "coke"). The "Known objects" list is only the typical arena items as a hint —
+    NEVER refuse or announce "I cannot find a known object matching X"; just use
+    X as the object. Only refuse if there is no LOCATION you can resolve.
 
     Hard planning rules — your plan WILL be rejected if you violate any:
     1. Do not silently drop any clause from the command. Every clause must
@@ -257,9 +323,13 @@ SYSTEM_PROMPT = textwrap.dedent("""
        emit the step — or emit an ``announce`` that explains why.
     5. When the command says "follow X to the Y" or "follow them to the Y",
        emit ``follow`` then ``goto(location=Y)``.
-    6. If the command is impossible, return an empty plan with a reasoning
-       that explains why. Empty-with-reasoning is preferred to a partial
-       plan that is wrong.
+    6. NEVER return an empty plan, and never refuse. Always emit at least a
+       best-effort plan of known actions. If part of the command is impossible,
+       unknown, or unclear, still emit the steps you CAN do and finish with an
+       ``announce(text=...)`` that explains the part you could not do. A
+       non-empty plan is ALWAYS required — even "I could not find a known
+       location for X" must be expressed as an ``announce`` step, not an empty
+       plan.
     7. When the command names the place to search ("find X in the kitchen",
        "how many X on the shelf"), the FIRST step for that clause must be
        an explicit ``goto(location=...)``. Navigation is never implicit.
@@ -310,6 +380,28 @@ SYSTEM_PROMPT = textwrap.dedent("""
        announce) when one fits. Only fall back when nothing else does. For "go
        and look at X, then tell ME": ``vlm_fallback`` at X →
        ``goto(location=start_position)`` → text-less ``announce``.
+    15. Objects are NOT bound to a fixed room. When the command names WHERE to
+       fetch / find / count / grasp an object ("a coke FROM THE LIVING ROOM",
+       "the apple ON THE SHELF"), search THAT named location. NEVER refuse, and
+       NEVER return an empty plan, just because the object is one you would
+       normally expect somewhere else — the location named in the command always
+       wins over any default. Only when the command gives NO location may you
+       fall back to the object's usual place (the "Default object locations"
+       list above).
+    16. To FETCH / BRING / PICK UP an object: emit ``goto(location)`` then
+       ``grasp(object)`` (then ``deliver`` if it goes to someone). ``grasp``
+       moves the arm to the table-grasp pose and detects the object on the table
+       with the ARM camera itself — do NOT add any find/scan step before grasp
+       and do NOT use the head camera to look for it. ``location`` is the place
+       named in the command, or — if none is named — the object's default
+       location from the "Default object locations" list. Plain ``goto`` +
+       ``find_object`` / ``count`` are still correct for NON-grasp finds and
+       counts (e.g. "how many cokes are in the kitchen").
+    17. If the object being grasped is on a SHELF — the command says
+       "shelf"/"bookcase", or the object's Default location (list above) is
+       ``shelf`` — set ``from_shelf=true`` on the ``grasp`` step. The robot
+       cannot reach into a shelf safely and will ask a referee to hand it over
+       instead of attempting the grasp.
 """).strip()
 
 
@@ -352,14 +444,20 @@ def _build_planner_user_prompt(
     command: str,
     state_log: List[str],
     failure_msg: Optional[str] = None,
+    nonce: Optional[str] = None,
 ) -> str:
     from datetime import datetime
     known_loc = ", ".join(sorted(KNOWN_LOCATIONS.keys())) or "(none)"
     known_obj = ", ".join(sorted(KNOWN_OBJECT_PROMPTS.keys())) or "(none)"
+    default_loc = ", ".join(
+        f"{k}={v}" for k, v in sorted(DEFAULT_OBJECT_LOCATIONS.items())
+    ) or "(none)"
     body = (
         f"Current date and time: {datetime.now().strftime('%A, %B %d, %Y, %H:%M')}\n"
         f"Known locations: {known_loc}\n"
-        f"Known objects: {known_obj}\n\n"
+        f"Known objects (HINT ONLY — any object word is allowed, not just these): {known_obj}\n"
+        f"Default object locations (where each object usually is, used only when "
+        f"a fetch/find command names NO location): {default_loc}\n\n"
         f"{ACTION_CATALOGUE_DESCRIPTION}\n\n"
         f"Command:\n{command}\n\n"
         f"Completed steps so far:\n{json.dumps(state_log, indent=2)}\n"
@@ -369,17 +467,68 @@ def _build_planner_user_prompt(
             f"\nThe previous attempt failed with: {failure_msg}\n"
             "Re-plan from the current state. Do not repeat completed steps.\n"
         )
+    if nonce:
+        # A fresh nonce every call makes each planning request byte-unique, so
+        # re-issuing an identical command (or re-planning) cannot return a
+        # cached / deterministic copy of a previous refusal — the model
+        # re-evaluates from scratch. The token itself carries no meaning.
+        body += f"\n(Planning request id: {nonce} — ignore, ensures a fresh plan.)"
     body += "\nReturn the JSON plan now."
     return body
 
 
+def _clean_plan(plan_raw: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Keep only well-formed {action, params} steps using known actions."""
+    cleaned: List[Dict[str, Any]] = []
+    dropped: List[str] = []
+    if not isinstance(plan_raw, list):
+        return cleaned, [f"<{type(plan_raw).__name__}>"]
+    for step in plan_raw:
+        if not isinstance(step, dict):
+            dropped.append(f"<{type(step).__name__}>")
+            continue
+        action = step.get("action")
+        params = step.get("params", {}) or {}
+        if action in ACTION_FACTORIES:
+            cleaned.append({"action": action, "params": params})
+        else:
+            dropped.append(str(action))
+    return cleaned, dropped
+
+
+def _fallback_plan(command: str) -> List[Dict[str, Any]]:
+    """Guaranteed non-empty plan when the LLM cannot produce a valid one.
+
+    Never let the robot silently refuse: emit a single spoken acknowledgement so
+    the operator hears a response and the command always has *a* plan. Only hit
+    after every planning attempt failed — realistic commands never reach here.
+    """
+    return [{
+        "action": "announce",
+        "params": {
+            "text": "I heard your command but could not work out a complete "
+                    "plan for it. I will skip it for now.",
+        },
+    }]
+
+
 class BtNode_PlanActions(Behaviour):
-    """Call the LLM asynchronously, parse the returned plan, write it to BB."""
+    """Plan a command into actions, with internal retries and a guaranteed plan.
+
+    The planning thread loops up to ``max_attempts``: each attempt calls the LLM
+    (fresh nonce, temperature rising per attempt), then cleans + validates the
+    result locally. The *reason* a try was rejected (bad JSON, empty plan,
+    validator complaint) is fed back into the next prompt so the model fixes it
+    rather than resampling the same dead end. If every attempt fails it falls
+    back to a non-empty acknowledgement plan — so ``update()`` ALWAYS returns
+    SUCCESS with a non-empty plan and the orchestrator never silently refuses.
+    """
 
     def __init__(
         self,
         name: str = "Plan actions",
         rephrase_on_failure: bool = False,
+        max_attempts: int = 4,
     ):
         super().__init__(name)
         self._client_oai = openai.OpenAI(
@@ -388,9 +537,11 @@ class BtNode_PlanActions(Behaviour):
         )
         self._bb = None
         self._thread: Optional[threading.Thread] = None
-        self._response: Optional[Dict[str, Any]] = None
-        self._error: Optional[str] = None
+        self._plan_result: Optional[List[Dict[str, Any]]] = None
+        self._fell_back: bool = False
+        self._attempts_used: int = 0
         self._rephrase_on_failure = rephrase_on_failure
+        self._max_attempts = max(1, int(max_attempts))
 
     def setup(self, **kwargs):
         self._bb = self.attach_blackboard_client(name=self.name)
@@ -401,9 +552,52 @@ class BtNode_PlanActions(Behaviour):
         self._bb.register_key(bb_keys.LAST_FAILURE, access=Access.WRITE)
         self._bb.register_key(bb_keys.CORRECTION_COUNT, access=Access.WRITE)
 
+    def _call_llm(self, user_prompt: str, temperature: float) -> Tuple[Optional[dict], Optional[str]]:
+        """One LLM round-trip → (parsed JSON dict, error string). Exactly one is set."""
+        try:
+            # A fresh random seed every call makes the provider treat this as a
+            # brand-new request and sample anew — it defeats any response
+            # caching / dedup of identical consecutive requests (the "re-issue
+            # the same command and it refuses again until you say something else"
+            # symptom). Combined with the per-call nonce in the prompt, no two
+            # planning calls are ever identical.
+            kwargs = dict(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                seed=random.randint(1, 2_000_000_000),
+                # Reasoning models spend tokens thinking before the JSON; a high
+                # cap avoids truncation and costs nothing on a short reply.
+                max_tokens=max(OPENAI_MAX_TOKENS, 8192),
+                response_format={"type": "json_object"},
+            )
+            try:
+                resp = self._client_oai.chat.completions.create(**kwargs)
+            except Exception as exc:  # a model/provider that rejects `seed`?
+                if "seed" not in repr(exc).lower():
+                    raise
+                kwargs.pop("seed", None)
+                resp = self._client_oai.chat.completions.create(**kwargs)
+            msg = resp.choices[0].message
+            raw = (getattr(msg, "content", None) or "").strip()
+            if not raw:
+                raw = (getattr(msg, "reasoning", None) or "").strip()
+            parsed = _extract_json_object(raw)
+            if parsed is None:
+                return None, ("your reply was not parseable JSON "
+                              f"(content was {'empty' if not raw else 'non-JSON'}). "
+                              "Reply with ONLY the JSON object.")
+            return parsed, None
+        except Exception as exc:  # noqa: BLE001 — surface anything for retry
+            return None, f"LLM call error: {exc!r}"
+
     def initialise(self):
-        self._response = None
-        self._error = None
+        self._plan_result = None
+        self._fell_back = False
+        self._attempts_used = 0
         try:
             command = self._bb.get(bb_keys.COMMAND)
         except KeyError:
@@ -413,131 +607,98 @@ class BtNode_PlanActions(Behaviour):
         except KeyError:
             state_log = []
         try:
-            failure_msg = self._bb.get(bb_keys.LAST_FAILURE)
+            seed_failure = self._bb.get(bb_keys.LAST_FAILURE)
         except KeyError:
-            failure_msg = None
+            seed_failure = None
         if not self._rephrase_on_failure:
-            failure_msg = None
+            # Initial plan for a fresh command: plan from the command ALONE.
+            # Never carry session history (a previous command's completed/failed
+            # steps) into a new command's plan — that cross-command bleed is what
+            # made a re-issued command behave differently from the first issue.
+            seed_failure = None
+            state_log = []
 
-        user_prompt = _build_planner_user_prompt(command, state_log, failure_msg)
+        known_locs = set(KNOWN_LOCATIONS.keys())
+        known_loc_arg = (known_locs | START_LOCATION_ALIASES) if known_locs else None
+        known_actions = set(ACTION_FACTORIES.keys())
+        max_attempts = self._max_attempts
 
         def _call():
-            try:
-                resp = self._client_oai.chat.completions.create(
-                    model=OPENAI_MODEL,
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=OPENAI_TEMPERATURE,
-                    # Reasoning models (DeepSeek) spend thousands of tokens
-                    # thinking BEFORE the JSON; too small a cap truncates the
-                    # plan (finish_reason=length). 8192 leaves headroom for
-                    # reasoning + the plan. You only pay for tokens actually
-                    # produced, so a high cap costs nothing on a short reply.
-                    max_tokens=max(OPENAI_MAX_TOKENS, 8192),
-                    response_format={"type": "json_object"},
+            last_reason = seed_failure
+            for attempt in range(max_attempts):
+                # Fresh nonce each try → no cached/deterministic refusal. Warm the
+                # sampler as attempts climb so the model explores a new plan.
+                nonce = uuid.uuid4().hex[:8]
+                temperature = min(0.9, OPENAI_TEMPERATURE + 0.2 * attempt)
+                if last_reason and attempt == 0:
+                    temperature = min(0.9, OPENAI_TEMPERATURE + 0.5)
+                prompt = _build_planner_user_prompt(
+                    command, state_log, last_reason, nonce=nonce,
                 )
-                msg = resp.choices[0].message
-                # DeepSeek / reasoning models sometimes return content=None (the
-                # answer lands in `reasoning`, or the message was truncated/empty).
-                # Don't blindly .strip() — fall back to reasoning, then extract.
-                raw = (getattr(msg, "content", None) or "").strip()
-                if not raw:
-                    raw = (getattr(msg, "reasoning", None) or "").strip()
-                parsed = _extract_json_object(raw)
-                if parsed is None:
-                    self._error = (
-                        "LLM returned no parseable JSON object "
-                        f"(content was {'empty' if not raw else 'non-JSON'})"
+                parsed, err = self._call_llm(prompt, temperature)
+                if err is not None:
+                    last_reason = err
+                    print(f"[planner] attempt {attempt+1}/{max_attempts} -> {err}")
+                    continue
+                cleaned, dropped = _clean_plan(parsed.get("plan", []))
+                raw_actions = [
+                    s.get("action") if isinstance(s, dict) else f"<{type(s).__name__}>"
+                    for s in (parsed.get("plan", []) or [])
+                ]
+                print(f"[planner] attempt {attempt+1}/{max_attempts}: raw {raw_actions} "
+                      f"| kept {[s['action'] for s in cleaned]} | dropped {dropped}")
+                if not cleaned:
+                    last_reason = (
+                        "you returned an EMPTY plan (or only unknown actions). You "
+                        "MUST return a NON-EMPTY plan of the known actions — never "
+                        "refuse. If part of the command is impossible, still emit the "
+                        "doable steps and finish with announce(text=...) explaining "
+                        "what you could not do."
                     )
-                else:
-                    self._response = parsed
-            except Exception as exc:  # noqa: BLE001 — surface anything for retry
-                self._error = repr(exc)
+                    continue
+                ok, reason = validate_plan(
+                    cleaned, command or "", known_actions,
+                    known_locations=known_loc_arg,
+                )
+                if not ok:
+                    last_reason = reason
+                    print(f"[planner] attempt {attempt+1}/{max_attempts} REJECTED: {reason}")
+                    continue
+                # Accepted.
+                self._attempts_used = attempt + 1
+                self._plan_result = cleaned
+                print(f"[planner] accepted on attempt {attempt+1}: "
+                      f"{[s['action'] for s in cleaned]}")
+                return
+            # Every attempt failed → guaranteed non-empty fallback plan.
+            self._attempts_used = max_attempts
+            self._fell_back = True
+            self._plan_result = _fallback_plan(command or "")
+            print(f"[planner] all {max_attempts} attempts failed "
+                  f"(last reason: {last_reason}) -> fallback acknowledgement plan")
 
         self._thread = threading.Thread(target=_call, daemon=True)
         self._thread.start()
         self.feedback_message = "LLM planning..."
 
     def update(self):
-        if self._error is not None:
-            self.feedback_message = f"LLM error: {self._error}"
-            return Status.FAILURE
-        if self._response is None:
+        if self._plan_result is None:
             return Status.RUNNING
 
-        plan_raw = self._response.get("plan", [])
-        if not isinstance(plan_raw, list):
-            self.feedback_message = "LLM returned non-list plan"
-            return Status.FAILURE
-
-        cleaned: List[Dict[str, Any]] = []
-        dropped: List[str] = []
-        for step in plan_raw:
-            if not isinstance(step, dict):
-                dropped.append(f"<{type(step).__name__}>")
-                continue
-            action = step.get("action")
-            params = step.get("params", {}) or {}
-            if action in ACTION_FACTORIES:
-                cleaned.append({"action": action, "params": params})
-            else:
-                dropped.append(str(action))
-
-        # Visibility: log the raw LLM plan vs. what survived parsing. A partial
-        # drop (some steps kept, some dropped for unknown action names) silently
-        # truncates the plan — e.g. a 5-step "fetch" plan collapses to 1 step and
-        # then "exhausts" after the first action. Surface it loudly.
-        raw_actions = [
-            s.get("action") if isinstance(s, dict) else f"<{type(s).__name__}>"
-            for s in plan_raw
-        ]
-        print(f"[planner] command -> raw plan ({len(raw_actions)}): {raw_actions}")
-        print(f"[planner] kept {len(cleaned)}: {[s['action'] for s in cleaned]}"
-              f"  |  DROPPED {len(dropped)}: {dropped}")
-
-        # Schema drift: the model returned a non-empty plan but NONE of the
-        # steps were valid {"action", "params"} entries (reasoning models like
-        # DeepSeek occasionally emit steps as plain strings or unknown actions).
-        # An empty plan from a non-empty reply is a format error, not a genuine
-        # "impossible command" — fail so the self-correction sub-tree re-prompts
-        # with the exact schema rather than silently planning nothing.
-        if plan_raw and not cleaned:
-            self._bb.set(
-                bb_keys.LAST_FAILURE,
-                "plan steps were not in the required {\"action\": ..., "
-                "\"params\": {...}} format (or used unknown actions). Re-emit "
-                "every step using that exact JSON schema.",
-                overwrite=True,
-            )
-            self.feedback_message = "plan steps malformed (schema drift) — replanning"
-            return Status.FAILURE
-
-        try:
-            command_text = self._bb.get(bb_keys.COMMAND) or ""
-        except KeyError:
-            command_text = ""
-        known_locs = set(KNOWN_LOCATIONS.keys())
-        ok, reason = validate_plan(
-            cleaned, command_text, set(ACTION_FACTORIES.keys()),
-            known_locations=(known_locs | START_LOCATION_ALIASES) if known_locs else None,
-        )
-        if not ok:
-            self._bb.set(bb_keys.LAST_FAILURE, f"plan rejected: {reason}", overwrite=True)
-            self.feedback_message = f"plan rejected: {reason}"
-            return Status.FAILURE
-
-        self._bb.set(bb_keys.PLAN, cleaned, overwrite=True)
+        plan = self._plan_result
+        self._bb.set(bb_keys.PLAN, plan, overwrite=True)
         self._bb.set(bb_keys.PLAN_INDEX, 0, overwrite=True)
+        # Clear the stale failure so it isn't fed into the next planning call.
+        self._bb.set(bb_keys.LAST_FAILURE, "", overwrite=True)
         try:
             count = self._bb.get(bb_keys.CORRECTION_COUNT)
         except KeyError:
             count = 0
         self._bb.set(bb_keys.CORRECTION_COUNT, count, overwrite=True)
+        tag = " [FALLBACK]" if self._fell_back else ""
         self.feedback_message = (
-            f"Planned {len(cleaned)} step(s): {[s['action'] for s in cleaned]}"
-            + (f"  [DROPPED {len(dropped)}: {dropped}]" if dropped else "")
+            f"Planned {len(plan)} step(s) in {self._attempts_used} attempt(s){tag}: "
+            f"{[s['action'] for s in plan]}"
         )
         return Status.SUCCESS
 
@@ -580,6 +741,12 @@ class BtNode_PopNextAction(Behaviour):
         self._bb.register_key(bb_keys.START_POSE, access=Access.READ)
         self._bb.register_key(bb_keys.DYNAMIC_LOCATIONS, access=Access.READ)
         self._bb.register_key(bb_keys.CURRENT_DYNLABEL, access=Access.WRITE)
+        # written by goto/search_object, read back by grasp (shelf inference)
+        self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.READ)
+        self._bb.register_key(bb_keys.GRASP_FROM_SHELF, access=Access.WRITE)
+        for search_pose_key in SEARCH_POSE_KEYS:
+            self._bb.register_key(search_pose_key, access=Access.WRITE)
 
     def update(self):
         try:
@@ -604,31 +771,87 @@ class BtNode_PopNextAction(Behaviour):
         self.feedback_message = f"step {index+1}/{len(plan)}: {action}({params})"
         return Status.SUCCESS
 
+    def _resolve_pose(self, name: Any) -> Optional[PoseStamped]:
+        """Resolve a location name to a PoseStamped, or None if unknown.
+
+        Resolution order: start-position aliases (pose captured at command
+        start) → known map locations (exact then case-insensitive) →
+        runtime-recorded dynamic-location registry (labels fixed by an earlier
+        record_position step).
+        """
+        if not name:
+            return None
+        key = str(name).lower()
+        if key in START_LOCATION_ALIASES:
+            try:
+                return self._bb.get(bb_keys.START_POSE)
+            except KeyError:
+                return None
+        if name in KNOWN_LOCATIONS:
+            return KNOWN_LOCATIONS.get(name)
+        for known_name, pose in KNOWN_LOCATIONS.items():
+            if known_name.lower() == key:
+                return pose
+        try:
+            registry = self._bb.get(bb_keys.DYNAMIC_LOCATIONS) or {}
+        except KeyError:
+            registry = {}
+        return registry.get(key)
+
     def _materialise_params(self, action: str, params: Dict[str, Any]) -> None:
         """Translate the LLM's params into the BB keys the small trees consume."""
-        # Location → PoseStamped lookup. Resolution order: start-position
-        # aliases (pose captured at command start) → known map locations →
-        # runtime-recorded dynamic-location registry (labels fixed by an
-        # earlier record_position step).
+        # Location → PoseStamped lookup (see _resolve_pose for the order).
         loc_name = params.get("location") or params.get("recipient_location")
         if loc_name:
             self._bb.set(bb_keys.TARGET_LOCATION, loc_name, overwrite=True)
-            key = str(loc_name).lower()
-            if key in START_LOCATION_ALIASES:
-                try:
-                    pose = self._bb.get(bb_keys.START_POSE)
-                except KeyError:
-                    pose = None
-            elif loc_name in KNOWN_LOCATIONS:
-                pose = KNOWN_LOCATIONS.get(loc_name)
-            else:
-                try:
-                    registry = self._bb.get(bb_keys.DYNAMIC_LOCATIONS) or {}
-                except KeyError:
-                    registry = {}
-                pose = registry.get(key)
+            pose = self._resolve_pose(loc_name)
             if pose is not None:
                 self._bb.set(bb_keys.TARGET_POSE, pose, overwrite=True)
+
+        # Track where the robot navigates so a following grasp can tell it is a
+        # shelf grasp (the fetch flow is goto(location) -> grasp(object)).
+        if action == "goto":
+            self._bb.set(bb_keys.LAST_NAV_LOCATION, str(params.get("location") or ""), overwrite=True)
+
+        # search_object: resolve the room's sweep spots into SEARCH_POSE_0..N.
+        # location is optional — when omitted, fall back to the object's default
+        # location (DEFAULT_OBJECT_LOCATIONS). A location with no explicit
+        # search-spot list sweeps just itself. Unused slots are cleared to None
+        # so the sweep guards them out.
+        if action == "search_object":
+            loc = params.get("location")
+            obj = params.get("object")
+            if not loc and obj:
+                loc = DEFAULT_OBJECT_LOCATIONS.get(str(obj).lower())
+            if loc:
+                self._bb.set(bb_keys.TARGET_LOCATION, loc, overwrite=True)
+            # Remember where we searched so a following grasp can tell it is a
+            # shelf grasp even if the planner forgot the from_shelf flag.
+            self._bb.set(bb_keys.LAST_NAV_LOCATION, str(loc or ""), overwrite=True)
+            spot_names = ROOM_SEARCH_SPOTS.get(str(loc).lower(), [loc]) if loc else []
+            for i, search_key in enumerate(SEARCH_POSE_KEYS):
+                pose = self._resolve_pose(spot_names[i]) if i < len(spot_names) else None
+                self._bb.set(search_key, pose, overwrite=True)
+
+        # grasp: decide whether this is a SHELF grasp. The robot cannot safely
+        # grasp from a shelf, so a shelf grasp skips the real grasp and asks a
+        # referee. Truthy from ANY signal: the planner's from_shelf flag, a
+        # shelf-ish location/surface on the grasp step, OR the location the
+        # preceding search_object actually used (covers default-shelf objects).
+        if action == "grasp":
+            def _is_shelf(v) -> bool:
+                return "shelf" in str(v or "").lower()
+            try:
+                last_nav = self._bb.get(bb_keys.LAST_NAV_LOCATION)
+            except KeyError:
+                last_nav = ""
+            from_shelf = bool(
+                params.get("from_shelf")
+                or _is_shelf(params.get("location"))
+                or _is_shelf(params.get("surface"))
+                or _is_shelf(last_nav)
+            )
+            self._bb.set(bb_keys.GRASP_FROM_SHELF, from_shelf, overwrite=True)
 
         # record_position: stash the label so the small tree registers the
         # captured pose under it.
@@ -836,6 +1059,11 @@ def describe_step(action: str, params: Optional[Dict[str, Any]]) -> str:
     table = {
         "goto": f"go to the {loc}" if loc else "move to the next location",
         "find_object": f"look for the {obj}" if obj else "look for the object",
+        "search_object": (
+            f"go to the {loc} and look for the {obj}" if loc and obj
+            else f"go and look for the {obj}" if obj
+            else "go and look for the object"
+        ),
         "find_person": f"find the {person}" if person else "find the person",
         "approach_person": "walk up to the person",
         "describe_person": "describe what the person looks like",
@@ -1060,6 +1288,15 @@ def create_execute_command(
     )
 
     root = py_trees.composites.Sequence("execute_command", memory=True)
+    # Hard per-command reset of execution state, right before planning. This runs
+    # every time a command is executed (independent of create_orchestrator_init),
+    # so a previous command's STATE_LOG / correction count / failure can never
+    # bleed into this command's plan or self-correction.
+    root.add_child(BtNode_BlackboardSet("reset state_log", bb_keys.STATE_LOG, []))
+    root.add_child(BtNode_BlackboardSet("reset correction", bb_keys.CORRECTION_COUNT, 0))
+    root.add_child(BtNode_BlackboardSet("reset last_failure", bb_keys.LAST_FAILURE, ""))
+    root.add_child(BtNode_BlackboardSet("reset nav location", bb_keys.LAST_NAV_LOCATION, ""))
+    root.add_child(BtNode_BlackboardSet("reset from_shelf", bb_keys.GRASP_FROM_SHELF, False))
     root.add_child(plan)
     if emit_plan_dir is not None:
         root.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
@@ -1069,6 +1306,36 @@ def create_execute_command(
         root.add_child(create_announce_plan())
     root.add_child(loop_done_ok)
     return root
+
+
+COMMAND_POINT_LOCATION = "command_point"
+
+
+def has_command_point() -> bool:
+    """True once ``command_point`` is a filled-in pose in constants.json."""
+    return COMMAND_POINT_LOCATION in KNOWN_LOCATIONS
+
+
+def create_goto_command_point() -> py_trees.composites.Sequence:
+    """Drive to the fixed command point to receive the next command.
+
+    RoboCup GPSR requires the robot to be at the instruction/command point to be
+    given the next task, so this runs at the top of every command round. It
+    reuses the ``goto`` small tree (announce → tuck arm → navigate), pointed at
+    the ``command_point`` pose from constants.json. Only add this when
+    :func:`has_command_point` is True (otherwise ``command_point`` has no pose
+    yet and the goto would have nothing to navigate to).
+    """
+    seq = py_trees.composites.Sequence("goto_command_point", memory=True)
+    seq.add_child(BtNode_BlackboardSet(
+        "set command-point location", bb_keys.TARGET_LOCATION, "command point",
+    ))
+    seq.add_child(BtNode_BlackboardSet(
+        "set command-point pose", bb_keys.TARGET_POSE,
+        KNOWN_LOCATIONS.get(COMMAND_POINT_LOCATION),
+    ))
+    seq.add_child(create_goto())
+    return seq
 
 
 def create_orchestrator_init(capture_pose: bool = True) -> py_trees.composites.Sequence:

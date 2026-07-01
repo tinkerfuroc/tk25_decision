@@ -5,6 +5,8 @@
 # Edit at https://www.toptal.com/developers/gitignore?templates=ros2,python
 .vscode/
 
+**_viz/
+
 ### Python ###
 # Byte-compiled / optimized / DLL files
 **__pycache__/

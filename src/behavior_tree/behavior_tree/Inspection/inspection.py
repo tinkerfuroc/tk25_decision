@@ -3,7 +3,7 @@ import py_trees
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-# from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
+from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
 from behavior_tree.TemplateNodes.Vision import  BtNode_DoorDetection, BtNode_TurnPanTilt
 
 from .customNodes import BtNode_PressEnterToSucceed
@@ -80,7 +80,7 @@ def createInspection():
     root.add_child(createConstantWriter())
 
     # tuck the arm into the navigating pose
-    # root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
 
     # announce readiness and aim the pan-tilt at the referees, in parallel,
     # before waiting on the door

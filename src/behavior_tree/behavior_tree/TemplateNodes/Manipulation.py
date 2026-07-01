@@ -62,6 +62,7 @@ from behavior_tree.messages import (
     CartesianMove,
     GripperCommand,
     Fold,
+    ScanAndPlace,
 )
 from py_trees.common import Status
 from behavior_tree.Constants import SCAN_POSES
@@ -546,25 +547,31 @@ class BtNode_MoveArm(ActionHandler):
 
     Migrated from the ``arm_joint_service`` service (ArmJointService) to the
     ``joint_move_action`` action (JointMove). The interfaces are field
-    equivalent (joint0..joint6 + add_octomap; result.success), so call sites
-    are unchanged. The legacy ``service_name`` kwarg is preserved and now maps
-    to the action name; a passed value of ``"arm_joint_service"`` is
-    transparently remapped to ``"joint_move_action"`` for back-compat.
+    equivalent (joint0..joint6 + add_octomap; result.success). The action name
+    is selected via the ``action_name`` kwarg (default ``"joint_move_action"``).
+    The legacy ``service_name`` kwarg is retained as a deprecated alias; a
+    passed value of ``"arm_joint_service"`` is transparently remapped to
+    ``"joint_move_action"`` for back-compat.
     """
 
     def __init__(
         self,
         name: str,
-        service_name: str,
         #  arm_joint_pose: list[float]
         arm_pose_bb_key,
+        action_name: str = "joint_move_action",
         add_octomap: bool = False,
+        *,
+        service_name: Optional[str] = None,  # deprecated alias for action_name
     ):
-        action_name = (
-            "joint_move_action"
-            if service_name == "arm_joint_service"
-            else service_name
-        )
+        # Back-compat: the node was migrated from the ``arm_joint_service``
+        # service to the ``joint_move_action`` action. The legacy
+        # ``service_name=`` kwarg and the old ``"arm_joint_service"`` value are
+        # still accepted and transparently mapped to ``action_name``.
+        if service_name is not None:
+            action_name = service_name
+        if action_name == "arm_joint_service":
+            action_name = "joint_move_action"
         super().__init__(
             name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
         )
@@ -654,10 +661,10 @@ class BtNode_MoveArmSingle(ActionHandler):
 
     Migrated from the ``arm_joint_service`` service (ArmJointService) to the
     ``joint_move_action`` action (JointMove). The interfaces are field
-    equivalent (joint0..joint6 + add_octomap; result.success), so the
-    constructor signature and all ~110 call sites are unchanged. The legacy
-    ``service_name`` kwarg is preserved and now maps to the action name; the
-    default ``"arm_joint_service"`` is transparently remapped to
+    equivalent (joint0..joint6 + add_octomap; result.success). The action name
+    is selected via the ``action_name`` kwarg (default ``"joint_move_action"``).
+    The legacy ``service_name`` kwarg is retained as a deprecated alias; a
+    passed value of ``"arm_joint_service"`` is transparently remapped to
     ``"joint_move_action"``.
     """
 
@@ -665,15 +672,20 @@ class BtNode_MoveArmSingle(ActionHandler):
         self,
         name: str,
         arm_pose_bb_key: str,
-        service_name: str = "arm_joint_service",
+        action_name: str = "joint_move_action",
         #  arm_joint_pose: list[float]
         add_octomap: bool = False,
+        *,
+        service_name: Optional[str] = None,  # deprecated alias for action_name
     ):
-        action_name = (
-            "joint_move_action"
-            if service_name == "arm_joint_service"
-            else service_name
-        )
+        # Back-compat: the node was migrated from the ``arm_joint_service``
+        # service to the ``joint_move_action`` action. The legacy
+        # ``service_name=`` kwarg and the old ``"arm_joint_service"`` value are
+        # still accepted and transparently mapped to ``action_name``.
+        if service_name is not None:
+            action_name = service_name
+        if action_name == "arm_joint_service":
+            action_name = "joint_move_action"
         super().__init__(
             name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
         )
@@ -798,10 +810,10 @@ class BtNode_PointTo(ActionHandler):
 
     Migrated from the ``arm_joint_service`` service (ArmJointService) to the
     ``joint_move_action`` action (JointMove). The interfaces are field
-    equivalent (joint0..joint6 + add_octomap; result.success), so the
-    constructor signature and all call sites are unchanged. The legacy
-    ``service_name`` kwarg is preserved and now maps to the action name; the
-    default ``"arm_joint_service"`` is transparently remapped to
+    equivalent (joint0..joint6 + add_octomap; result.success). The action name
+    is selected via the ``action_name`` kwarg (default ``"joint_move_action"``).
+    The legacy ``service_name`` kwarg is retained as a deprecated alias; a
+    passed value of ``"arm_joint_service"`` is transparently remapped to
     ``"joint_move_action"``.
 
     ``pan_bias`` (radians, default ``0.0``) corrects a constant rotation
@@ -823,14 +835,19 @@ class BtNode_PointTo(ActionHandler):
         bb_key_points: str,
         bb_key_init_pose: str,
         target_id: int = 0,
-        service_name: str = "arm_joint_service",
+        action_name: str = "joint_move_action",
+        *,
+        service_name: Optional[str] = None,  # deprecated alias for action_name
         pan_bias: float = 0.0,
     ):
-        action_name = (
-            "joint_move_action"
-            if service_name == "arm_joint_service"
-            else service_name
-        )
+        # Back-compat: the node was migrated from the ``arm_joint_service``
+        # service to the ``joint_move_action`` action. The legacy
+        # ``service_name=`` kwarg and the old ``"arm_joint_service"`` value are
+        # still accepted and transparently mapped to ``action_name``.
+        if service_name is not None:
+            action_name = service_name
+        if action_name == "arm_joint_service":
+            action_name = "joint_move_action"
         super().__init__(
             name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
         )
@@ -838,10 +855,10 @@ class BtNode_PointTo(ActionHandler):
         self.bb_key_points = bb_key_points
         self.target_id = target_id
         # Constant rotation (radians) between the point's source frame and the
-        # arm joint0 frame, subtracted from the raw bearing. With a correct
-        # camera TF the centroid is correct in base_link and the arm is aligned,
-        # so all call sites use 0.0 (see PointTo docs and
-        # TemplateNodes/pointing_math.compute_point_to_pan).
+        # arm joint0 frame, subtracted from the raw bearing. Default 0.0 keeps
+        # legacy behaviour; the seat-recommend centroid is pi-rotated about base
+        # Z, so seat-pointing call sites pass pan_bias=math.pi (see PointTo docs
+        # and TemplateNodes/pointing_math.compute_point_to_pan).
         self.pan_bias = pan_bias
         # Default value so the no-goal failure branch can safely format
         # `self.angle` even when send_goal skipped the happy-path assignment
@@ -948,6 +965,167 @@ class BtNode_PointTo(ActionHandler):
         # JointMove feedback is EMPTY; override the base (which reads
         # delay_limit/status/stage) to a no-op.
         pass
+
+
+# Deferred to the bottom of the module (not with the top imports) on purpose:
+# behavior_tree.PickAndPlace.__init__ eagerly imports pick_and_place, which
+# imports BtNode_GripperAction/BtNode_MoveArmSingle/BtNode_Grasp from THIS
+# module. Importing the PickAndPlace package while Manipulation is still
+# partially initialised (i.e. from the top) would deadlock that cycle. By the
+# time execution reaches here every class pick_and_place needs is defined, so
+# the triggered package import resolves cleanly (config.py itself is stdlib-only).
+from behavior_tree.PickAndPlace.config import (  # noqa: E402
+    SCAN_AND_PLACE_ACTION_NAME,
+    KEY_OBJECT_LABEL,
+    KEY_ACTIVE_TARGET_POINT,
+    PLACEMENT_MODE_FREE_SPACE,
+)
+
+
+class BtNode_ScanAndPlace(ActionHandler):
+    """Scan a destination surface and place the held object.
+
+    Wraps arm_api/scan_and_place_server (action `scan_and_place_action`). The
+    server owns *where-on-the-surface* placement; the BT owns *which surface*
+    (nav + arm scan pose + mode). Mode + target are read from the blackboard,
+    set by BtNode_PopWorkItem per the tree's place_policy:
+        0 FREE_SPACE | 1 NEAR_SIMILAR(reference_label) | 2 FIXED_POINT(fixed_target)
+    Auto-mocked under the `manipulation` subsystem (registered in
+    mock_config.json); under IMMEDIATE it auto-succeeds with no ROS client.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        bb_item_description: str = KEY_OBJECT_LABEL,
+        bb_placement_mode: str = "pp_active_placement_mode",
+        bb_reference_label: str = "pp_active_reference_label",
+        bb_margin: str = "pp_active_margin",
+        bb_orientation: str = "pp_active_orientation",
+        bb_fixed_target: str = KEY_ACTIVE_TARGET_POINT,
+        bb_scan_pose: str = "pp_active_scan_pose",
+        bb_skip_scan_move: str = "pp_active_skip_scan",
+        bb_dry_run: str = "pp_active_dry_run",
+        bb_out_placed_at: str = "pp_active_placed_at",
+        bb_out_status: str = "pp_active_place_status",
+        action_name: str = SCAN_AND_PLACE_ACTION_NAME,
+    ):
+        super().__init__(
+            name, ScanAndPlace, action_name, None, wait_for_server_timeout_sec=-3
+        )
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        # local-attr -> blackboard-key for every READ input.
+        self._reads = {
+            "item_description": bb_item_description,
+            "placement_mode": bb_placement_mode,
+            "reference_label": bb_reference_label,
+            "margin": bb_margin,
+            "orientation": bb_orientation,
+            "fixed_target": bb_fixed_target,
+            "scan_pose": bb_scan_pose,
+            "skip_scan_move": bb_skip_scan_move,
+            "dry_run": bb_dry_run,
+        }
+        for local, key in self._reads.items():
+            self.blackboard.register_key(
+                key=local,
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", key),
+            )
+        self.blackboard.register_key(
+            key="placed_at",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_out_placed_at),
+        )
+        # status/reason output (spec §6): {'status': int, 'reason': str}.
+        self.blackboard.register_key(
+            key="place_status",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_out_status),
+        )
+
+    def setup(self, **kwargs):
+        ActionHandler.setup(self, **kwargs)
+        self.logger.debug(f"Setup ScanAndPlace on {self.action_name}")
+
+    def _read(self, local, default):
+        try:
+            value = getattr(self.blackboard, local)
+        except Exception:
+            return default
+        return default if value is None else value
+
+    def send_goal(self):
+        # Mock mode: defer to the base (no goal assembly, no blackboard reads).
+        if self.mock_mode:
+            return super().send_goal()
+        try:
+            goal = ScanAndPlace.Goal()
+            goal.item_description = str(self._read("item_description", ""))
+            goal.placement_mode = int(self._read("placement_mode", PLACEMENT_MODE_FREE_SPACE))
+            goal.reference_label = str(self._read("reference_label", ""))
+            goal.margin_m = float(self._read("margin", 0.0))
+            goal.max_candidates = 0
+            orientation = self._read("orientation", None)
+            if orientation is not None:
+                goal.orientation = orientation
+            fixed_target = self._read("fixed_target", None)
+            if fixed_target is not None:
+                goal.fixed_target = fixed_target
+            scan_pose = self._read("scan_pose", None)
+            if scan_pose:
+                goal.scan_pose_deg = [float(x) for x in scan_pose]
+            goal.skip_scan_move = bool(self._read("skip_scan_move", False))
+            goal.dry_run = bool(self._read("dry_run", False))
+            self.send_goal_request(goal)
+            self.feedback_message = f"ScanAndPlace goal sent (mode {goal.placement_mode})"
+        except Exception as e:
+            self.feedback_message = f"Failed to send ScanAndPlace goal: {e}"
+            self.logger.error(self.feedback_message)
+            return pytree.common.Status.FAILURE
+
+    def process_result(self):
+        # Lazy import breaks the custom_nodes <-> Manipulation import cycle
+        # (custom_nodes imports BtNode_Grasp from this module).
+        from behavior_tree.PickAndPlace.custom_nodes import record_event
+
+        item = self._read("item_description", "")
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            err, st = "", -1
+            try:
+                err = self.result_message.result.error_msg
+                st = self.result_message.result.status
+            except Exception:
+                pass
+            try:
+                self.blackboard.place_status = {"status": st, "reason": err}
+            except Exception:
+                pass
+            record_event(self.blackboard, phase="", item=item,
+                         action="scan_and_place", outcome="failure", points_est=0)
+            self.feedback_message = f"ScanAndPlace failed: status={self.result_status} err={err}"
+            return pytree.common.Status.FAILURE
+        result = self.result_message.result
+        try:
+            self.blackboard.placed_at = result.placed_at
+        except Exception:
+            pass
+        try:
+            self.blackboard.place_status = {"status": result.status, "reason": result.error_msg}
+        except Exception:
+            pass
+        # Scoring is owned by the BT route leaf (_RecordEventLeaf in
+        # pick_and_place_rulebook). Do NOT record_event here on success, or the
+        # placement double-counts on the real robot.
+        self.feedback_message = "ScanAndPlace succeeded"
+        return pytree.common.Status.SUCCESS
+
+    def feedback_callback(self, msg: Any):
+        # ScanAndPlace.Feedback is stage-only (no delay_limit/status), so the
+        # base feedback_callback (which reads delay_limit/status) must NOT run.
+        import time
+        self.action_stage = msg.feedback.stage
+        self.last_feedback_time = time.time()
 
 
 class BtNode_JointMoveAction(ActionHandler):

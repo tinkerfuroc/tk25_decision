@@ -174,7 +174,6 @@ DO_FOLD_PICKED_PIECES                = bool(constants["do_fold_picked_pieces"])
 
 MAX_EXTRA_FOLDS = int(constants["max_extra_folds"])
 
-ARM_SERVICE_NAME    = "arm_joint_service"
 ARM_ACTION_NAME = "joint_move_action"
 GRASP_ACTION_NAME   = "start_grasp"
 FOLD_ACTION_NAME    = "fold_action"

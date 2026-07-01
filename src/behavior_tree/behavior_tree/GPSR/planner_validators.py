@@ -235,7 +235,7 @@ def validate_plan(
     if cats:
         cat_set = {w.lower() for w in category_words}
         for i, step in enumerate(plan):
-            if step.get("action") != "find_object":
+            if step.get("action") not in ("find_object", "search_object"):
                 continue
             obj = (step.get("params") or {}).get("object")
             if not isinstance(obj, str):
@@ -244,7 +244,7 @@ def validate_plan(
                 continue  # planner used a category noun (any form) — good
             return False, (
                 f"step {i}: command refers to category {cats!r} but "
-                f"find_object was emitted with concrete object {obj!r}. "
+                f"{step.get('action')} was emitted with concrete object {obj!r}. "
                 "Pass the category noun through as the object parameter so "
                 "the vision module searches for any matching item."
             )

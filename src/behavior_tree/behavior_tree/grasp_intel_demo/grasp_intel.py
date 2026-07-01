@@ -45,22 +45,22 @@ KEY_OBJECT = "object"
 
 KEY_DUMMY = 'dummy'
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 
 
 def createGraspOnce():
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
-    root.add_child(BtNode_MoveArmSingle("Move arm to scan middle", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN_MIDDLE))
-    root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN))
+    root.add_child(BtNode_MoveArmSingle("Move arm to scan middle", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN_MIDDLE))
+    root.add_child(BtNode_MoveArmSingle("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN))
     root.add_child(BtNode_FindObj(name="find object", bb_source=None, bb_namespace=None, bb_key=KEY_OBJECT, object="green bottle", target_object_cls='green bottle'))
     # add parallel node to grasp and announcing it is grasping
     parallel_grasp = py_trees.composites.Parallel("Parallel Grasp", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_grasp.add_child(BtNode_Announce(name="Announce grasping", bb_source="", message="grasping green water bottle"))
     parallel_grasp.add_child(BtNode_Grasp("Grasp trash", bb_source=KEY_OBJECT, action_name=grasp_service_name))
     root.add_child(parallel_grasp)
-    root.add_child(BtNode_MoveArmSingle("Move arm to scan middle", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN_MIDDLE))
-    root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    root.add_child(BtNode_MoveArmSingle("Move arm to scan middle", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN_MIDDLE))
+    root.add_child(BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     return root
 
 def create_demo():
@@ -76,7 +76,7 @@ def create_demo():
     parallel_to_bb.add_child(BtNode_WriteToBlackboard(name="Write table middle", bb_namespace="", bb_source=None, bb_key=KEY_POSE_TABLE_MIDDLE, object=pose_table_middle))
     root.add_child(parallel_to_bb)
 
-    root.add_child(BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    root.add_child(BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     root.add_child(BtNode_Announce(name="Announce start", bb_source=None, message="Hi, I'm Tinker, you can instruct me to do tasks for you"))
     root.add_child(py_trees.decorators.FailureIsSuccess(name="wrapper", child=BtNode_PhraseExtractionAction(name="Get command", wordlist=['table'], bb_dest_key=KEY_DUMMY, timeout=7.0)))
     

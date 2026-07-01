@@ -99,12 +99,12 @@ KEY_SEAT_RECOMMENDATION = "seat_recommendation"
 
 KEY_DOOR_STATUS = "door_status"
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 
 def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter", memory=True)
-    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
-    
+    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+
     if not DEBUG_NO_GOTO and False:
         root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
 
@@ -263,9 +263,9 @@ def createSecondIntroductionsSimple():
     if not DISABLE_FEATURE_MATCH:
         # point to guest1
         deco = py_trees.decorators.Retry(name="retry", child=BtNode_PointTo(
-            name="Point to guest1", 
-            service_name=arm_service_name, 
-            bb_key_persons=KEY_PERSONS, 
+            name="Point to guest1",
+            action_name=arm_action_name,
+            bb_key_persons=KEY_PERSONS,
             bb_key_points=KEY_PERSON_CENTROIDS, 
             bb_key_init_pose=KEY_ARM_INIT_POSE, 
             target_id=1
@@ -284,7 +284,7 @@ def createSecondIntroductionsSimple():
     if not DISABLE_FEATURE_MATCH:
         # point to guest
         # first_introductions.add_child(BtNode_PointTo(name="Point to guest", service_name=arm_service_name, bb_key_persons=KEY_PERSONS, bb_key_points=KEY_PERSON_CENTROIDS, bb_key_init_pose=KEY_ARM_INIT_POSE, target_id=1))
-        deco = py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle(name="Move arm to right", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_INIT_POSE, add_octomap=False), num_failures=3)
+        deco = py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle(name="Move arm to right", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_INIT_POSE, add_octomap=False), num_failures=3)
         introduce_w_followhead2.add_child(py_trees.decorators.FailureIsSuccess(name="failure is success", child=deco))
     introductions.add_child(introduce_w_followhead2)
 
@@ -404,7 +404,7 @@ def createSecondIntroductionsSimple():
 def createToDoor():
     root = py_trees.composites.Sequence(name="Go to door", memory=True)
     root.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
-    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
     if not DEBUG_NO_GOTO:
         root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to door", KEY_DOOR_POSE), num_failures=10))
     return root
@@ -413,7 +413,7 @@ def createToSofa(interest_key : str):
     root = py_trees.composites.Parallel(name="Go to sofa while chatting", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     navigation_seq = py_trees.composites.Sequence(name="Go to sofa", memory=True)
     navigation_seq.add_child(BtNode_TurnPanTilt(name="Turn head up", x=0.0, y=45.0, speed=0.0))
-    navigation_seq.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+    navigation_seq.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
     if not DEBUG_NO_GOTO:
         navigation_seq.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to sofa", KEY_SOFA_POSE), num_failures=10))
     root.add_child(navigation_seq)

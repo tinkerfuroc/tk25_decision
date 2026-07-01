@@ -86,7 +86,7 @@ KEY_MASTER_POSITION = "master_position"
 
 
 # 服务名称
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "grasp"
 point_target_frame = "base_link"
 follow_action_name = "human_following"
@@ -106,7 +106,7 @@ def createConstantWriter():
 
 def createFollow():
     root = py_trees.composites.Sequence(name="Follow", memory=True)
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_pose_bb_key=KEY_ARM_NAVIGATING), num_failures=5))
     root.add_child(BtNode_TurnPanTilt(name="Move pan tilt", x=0.0, y=45.0, speed=0.0))
     parallel_follow = py_trees.composites.Parallel("Follow", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
 
@@ -125,7 +125,7 @@ def createFindPointedLuggage():
 
     root.add_child(BtNode_TurnPanTilt(name="Move pan tilt", x=0.0, y=20.0, speed=0.0))
 
-    root.add_child(BtNode_MoveArmSingle("Move arm  back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
+    root.add_child(BtNode_MoveArmSingle("Move arm  back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING))
     # root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("go to starting point", KEY_POS_START), num_failures=10))
 
     # 宣布开始找行李
@@ -142,12 +142,12 @@ def createFindPointedLuggage():
     # 宣布找到行李
     root.add_child(BtNode_Announce(name="Announce found luggage", bb_source=KEY_ANNOUNCE_MSG))
 
-    root.add_child(BtNode_MoveArmSingle(name="Move arm to grasp", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
+    root.add_child(BtNode_MoveArmSingle(name="Move arm to grasp", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
 
     root.add_child(BtNode_Announce(name="Announce found luggage", bb_source=None, message="Please hand the luggage to me, thank you!"))
     root.add_child(BtNode_Announce(name="Announce found luggage", bb_source=None, message="Moving arm back"))
 
-    root.add_child(BtNode_MoveArmSingle(name="Move arm to grasp", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=True))
+    root.add_child(BtNode_MoveArmSingle(name="Move arm to grasp", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=True))
 
     root.add_child(BtNode_TurnPanTilt(name="Move pan tilt", x=0.0, y=45.0, speed=0.0))
     
@@ -187,7 +187,7 @@ def createGraspLuggage(arm_pose_key):
     # 先移动机械臂到扫描位置
     move_arm_parallel = py_trees.composites.Parallel("Move Arm for Scanning", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     move_arm_parallel.add_child(BtNode_Announce(name="Announce moving arm", bb_source=None, message="Moving my arm to better see the luggage"))
-    move_arm_parallel.add_child(BtNode_MoveArmSingle("Move arm to scan position", service_name=arm_service_name, arm_pose_bb_key=arm_pose_key, add_octomap=True))
+    move_arm_parallel.add_child(BtNode_MoveArmSingle("Move arm to scan position", action_name=arm_action_name, arm_pose_bb_key=arm_pose_key, add_octomap=True))
     root.add_child(move_arm_parallel)
 
     # root.add_child(BtNode_FindObj(
@@ -276,7 +276,7 @@ def createFollowWithTrackPerson(
     # Prepare robot for following - move arm to safe position
     root.add_child(py_trees.decorators.Retry(
         name="Retry Move Arm",
-        child=BtNode_MoveArmSingle("Move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING),
+        child=BtNode_MoveArmSingle("Move arm to navigating", arm_pose_bb_key=KEY_ARM_NAVIGATING),
         num_failures=5
     ))
     
@@ -350,7 +350,7 @@ def createPickUpBag():
     # Move arm to safe position first
     root.add_child(BtNode_MoveArmSingle(
         "Move arm back",
-        service_name=arm_service_name,
+        action_name=arm_action_name,
         arm_pose_bb_key=KEY_ARM_NAVIGATING
     ))
     
@@ -380,7 +380,7 @@ def createPickUpBag():
     # Move arm to receive position
     root.add_child(BtNode_MoveArmSingle(
         name="Move arm to receive",
-        service_name=arm_service_name,
+        action_name=arm_action_name,
         arm_pose_bb_key=KEY_ARM_SCAN,
         add_octomap=True
     ))
@@ -398,7 +398,7 @@ def createPickUpBag():
     # Move arm back to safe position
     root.add_child(BtNode_MoveArmSingle(
         name="Move arm back after receive",
-        service_name=arm_service_name,
+        action_name=arm_action_name,
         arm_pose_bb_key=KEY_ARM_NAVIGATING,
         add_octomap=True
     ))

@@ -88,20 +88,38 @@ class BtNode_FindObjTable(ServiceHandler):
             return self.wait_for_keypress_in_mock()
         self.logger.debug(f"Updating FindObjTable with prompt: {self.blackboard.prompt}")
         if self.response.done():
-            if self.response.result().status == 0:
-                response = self.response.result()
+            result = self.response.result()
+            prompt = self.blackboard.prompt
+            cam = "realsense" if self.use_realsense else "orbbec"
+            n_obj = len(getattr(result, "objects", []) or [])
+            if result.status == 0 and n_obj > 0:
+                response = result
                 self.blackboard.image = response.rgb_image
                 self.blackboard.segmentation = response.segments[0]
                 self.blackboard.result = response
-                self.blackboard.announcement_msg = f"Grasping {response.objects[0].cls}"
+                cls = response.objects[0].cls
+                self.blackboard.announcement_msg = f"Grasping {cls}"
                 try:
-                    self.blackboard.object_label = response.objects[0].cls
+                    self.blackboard.object_label = cls
                 except AttributeError:
                     pass
-                self.feedback_message = f"Found object: {response.objects[0].cls}"
+                # Surface the detection on the DECISION terminal so the operator
+                # sees what the (RealSense) vision actually found.
+                classes = [getattr(o, "cls", "?") for o in response.objects]
+                print(f"[VISION/{cam}] DETECTED {n_obj} object(s) for '{prompt}': "
+                      f"{classes} -> grasping '{cls}'", flush=True)
+                self.feedback_message = f"Found object: {cls}"
                 return py_trees.common.Status.SUCCESS
             else:
-                self.feedback_message = f"Failed to find object with {self.response.result().status} and error message {self.response.result().error_msg}"
+                # status==0 with 0 objects, or a real error status.
+                err = getattr(result, "error_msg", "")
+                print(f"[VISION/{cam}] NO DETECTION for '{prompt}' "
+                      f"(status={result.status}, objects={n_obj}"
+                      f"{', err=' + repr(err) if err else ''})", flush=True)
+                self.feedback_message = (
+                    f"No object for '{prompt}' on {cam} "
+                    f"(status={result.status}, objects={n_obj}, err={err})"
+                )
                 return py_trees.common.Status.FAILURE
         else:
             self.feedback_message = "Waiting for response from find object service"
@@ -218,7 +236,13 @@ class BtNode_GraspWithPose(BtNode_Grasp):
                  bb_key_pose: str,
                  action_name: str = "grasp",
                  bb_key_object_label: str = None):
-        super().__init__(name, bb_key_vision_res, action_name, bb_key_object_label=bb_key_object_label)
+        # NOTE: pass bb_key_vision_res as a KEYWORD. BtNode_Grasp's 2nd positional
+        # is bb_source, not bb_key_vision_res — passing it positionally left
+        # bb_key_vision_res=None, so the "vision_result" key was never registered
+        # and send_goal failed with "no read/write access to '/vision_result'".
+        super().__init__(name, bb_key_vision_res=bb_key_vision_res,
+                         action_name=action_name,
+                         bb_key_object_label=bb_key_object_label)
         self.blackboard.register_key(
             key="pose",
             access=py_trees.common.Access.WRITE,

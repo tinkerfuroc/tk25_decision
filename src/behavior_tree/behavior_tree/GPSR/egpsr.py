@@ -54,7 +54,7 @@ KEY_POSE_WAVING_PERSON = "waving_person"
 KEY_DOOR_STATUS = "door_status"
 KEY_ALL_WAVING_PERSONS = "all_waving_persons"
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 point_target_frame = "base_link"
 

@@ -31,6 +31,8 @@ from .gpsr_full import CONSTANTS_PATH, _load_arm_constants
 from .orchestrator import (
     create_execute_command,
     create_orchestrator_init,
+    create_goto_command_point,
+    has_command_point,
     load_knowledge_from_constants,
 )
 from .small_trees import bb_keys
@@ -69,6 +71,9 @@ def createGPSROrchestrator(
 
     root = py_trees.composites.Sequence("GPSR orchestrator", memory=True)
     _arm_constants_to_bb(root)
+    # GPSR: go to the command point to receive the command first.
+    if has_command_point():
+        root.add_child(create_goto_command_point())
     root.add_child(BtNode_WriteToBlackboard(
         "write command", bb_namespace="", bb_source=None,
         bb_key=bb_keys.COMMAND, object=cmd,
@@ -92,12 +97,19 @@ def main():
     tree = py_trees_ros.trees.BehaviourTree(root=root)
     tree.setup(timeout=15, node_name="gpsr_orchestrator")
     print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(title="GPSR orchestrator")
-    tree.tick_tock(period_ms=500.0, post_tick_handler=print_tree)
+    # Per-command logging (plan + each step's result + the failing node's feedback).
+    from .command_logger import create_command_logger, combine_post_tick_handlers
+    log_tree, shutdown_logger = create_command_logger(str(DEFAULT_PLAN_DIR / "logs"))
+    tree.tick_tock(
+        period_ms=500.0,
+        post_tick_handler=combine_post_tick_handlers(print_tree, log_tree),
+    )
     try:
         rclpy.spin(tree.node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        shutdown_logger()
         shutdown_visualizer()
         tree.shutdown()
         rclpy.try_shutdown()

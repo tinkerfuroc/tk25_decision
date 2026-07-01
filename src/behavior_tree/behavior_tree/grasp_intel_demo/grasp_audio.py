@@ -18,7 +18,7 @@ KEY_ARM_SCAN = "arm_scan"
 KEY_ARM_HANDING = "arm_handing"
 KEY_ARM_HOLD = "arm_hold"
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 
 def createGraspAudio():
@@ -40,15 +40,15 @@ def createGraspAudio():
     get_target.add_child(py_trees.decorators.SuccessIsFailure(BtNode_Announce("Announce unable to extract target", message="Sorry, I didn't hear you")))
     root.add_child(py_trees.decorators.Retry(name="retry", child=get_target, num_failures=10))
 
-    root.add_child(BtNode_MoveArm("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN))
+    root.add_child(BtNode_MoveArm("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN))
     root.add_child(BtNode_FindObj(name="find object", bb_source=KEY_OBJECT_NAME, bb_namespace=None, bb_key=KEY_OBJECT, object=None))
     root.add_child(BtNode_Grasp("Grasp object", bb_source=KEY_OBJECT, action_name=grasp_service_name))
-    root.add_child(BtNode_MoveArm("Move arm to hand object", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_HANDING))
+    root.add_child(BtNode_MoveArm("Move arm to hand object", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_HANDING))
     # announce handing object
     root.add_child(BtNode_Announce("Announce object handed", message="Please take the object"))
     root.add_child(BtNode_GripperAction("Open gripper", open_gripper=True))
     # move arm back to hold
-    root.add_child(BtNode_MoveArm("Move arm back to hold", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_HOLD))
+    root.add_child(BtNode_MoveArm("Move arm back to hold", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_HOLD))
 
     return root
 

@@ -77,6 +77,11 @@ setup(
             # HRI finalized 2026 production tree (real follow bag flow)
             "hri-2026 = behavior_tree.HRI.hri_2026:main",
             "pick-and-place = behavior_tree.PickAndPlace.cli:main",
+            "pick-and-place-demo = behavior_tree.PickAndPlace.cli_demo:main",
+            "pp-test-scan-place = behavior_tree.PickAndPlace.samplings:main_scan_place",
+            "pp-test-categorize = behavior_tree.PickAndPlace.samplings:main_categorize",
+            "pp-test-cleanup-loop = behavior_tree.PickAndPlace.samplings:main_cleanup_loop",
+            "pp-test-breakfast = behavior_tree.PickAndPlace.samplings:main_breakfast",
             # "doing-laundry = behavior_tree.DoingLaundry.cli:main",
             "laundry-test = behavior_tree.DoingLaundry.sampling:main",
             # DoingLaundry finalization test modules (new, 2026)
@@ -98,6 +103,7 @@ setup(
             "gpsr-test-guide = behavior_tree.GPSR.dev_tests:main_guide",
             "gpsr-test-greet = behavior_tree.GPSR.dev_tests:main_greet",
             "gpsr-test-grasp = behavior_tree.GPSR.dev_tests:main_grasp",
+            "gpsr-test-grasp-diag = behavior_tree.GPSR.dev_tests:main_grasp_diag",
             "gpsr-test-place = behavior_tree.GPSR.dev_tests:main_place",
             "gpsr-test-deliver = behavior_tree.GPSR.dev_tests:main_deliver",
             "gpsr-test-count = behavior_tree.GPSR.dev_tests:main_count",
