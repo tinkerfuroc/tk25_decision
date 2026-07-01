@@ -2,9 +2,9 @@ import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
-from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
-from behavior_tree.TemplateNodes.Vision import  BtNode_DoorDetection 
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+# from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
+from behavior_tree.TemplateNodes.Vision import  BtNode_DoorDetection, BtNode_TurnPanTilt
 
 from .customNodes import BtNode_PressEnterToSucceed
 
@@ -43,20 +43,17 @@ pose_exit = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id
                                                             w=constants["pose_exit"]["orientation"]["w"]))
                             )
 
-tinker_description = constants["tinker_description"]
-
 ARM_POS_NAVIGATING = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
 
 
 
 KEY_INSPECTION_POSE = "inspection_pose"
 KEY_EXIT_POSE = "exit_pose"
-KEY_LISTEN_RESULT = "listen_result"
 KEY_ARM_NAVIGATING = "arm_navigating"
 KEY_DOOR_STATUS = "door_status"
 
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 
 def createConstantWriter():
     root = py_trees.composites.Parallel(name="Write constants to blackboard", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
@@ -76,31 +73,35 @@ def createToExit():
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_GotoAction("Go to exit", KEY_EXIT_POSE), num_failures=10))
     return root
 
-def createQandA():
-    # TODO (for audio)
-    # audio package should create a new node for general Q & A (just answering questions)
-    # the node should accept a question (string) and an optional background_info (string)
-    root = py_trees.composites.Sequence(name="Q & A", memory=True)
-    root.add_child(BtNode_ListenAction(name="listen", bb_dest_key=KEY_LISTEN_RESULT))
-    # TODO: replace these announce nodes with a call to the audio node for Q & A (listen result as question, tinker_description as background_info)
-    # announce the results with the call to audio instead
-    root.add_child(BtNode_Announce(name="announce I heard you", bb_source=None, message="I hear you, you said"))
-    root.add_child(BtNode_Announce(name="repeat result of listen", bb_source=KEY_LISTEN_RESULT))
-    return root
-
 def createInspection():
     root = py_trees.composites.Sequence(name="Inspection Root", memory=True)
+
     # write all the constants to blackboard first
     root.add_child(createConstantWriter())
-    root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+
+    # tuck the arm into the navigating pose
+    # root.add_child(py_trees.decorators.Retry("retry", BtNode_MoveArmSingle(name="Move arm to nav", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False), 3))
+
+    # announce readiness and aim the pan-tilt at the referees, in parallel,
+    # before waiting on the door
+    ready = py_trees.composites.Parallel(name="Announce ready + aim pan-tilt", policy=py_trees.common.ParallelPolicy.SuccessOnAll(synchronise=False))
+    ready.add_child(BtNode_Announce(name="Announce ready for inspection", bb_source=None, message="I am ready for inspection, please open the door"))
+    ready.add_child(BtNode_TurnPanTilt(name="Aim pan-tilt for inspection", x=0.0, y=45.0))
+    root.add_child(ready)
+
+    # wait until the door is detected open (Retry keeps polling on closed/error)
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
+
+    # announce as soon as the door is open
+    root.add_child(BtNode_Announce(name="Announce door open", bb_source=None, message="door open"))
+
+    # navigate to the inspection point
     root.add_child(createToIspection())
 
-    root.add_child(BtNode_Announce(name="Announce: I am ready to inspect", bb_source=None, message="I am Tinker, I am ready for inspection. I will briefly introduce myself."))
-    root.add_child(BtNode_Announce(name="inrtoduce self", bb_source=None, message=tinker_description))
-    
-    # answer three questions (currently just repeats the question without answering)
-    # root.add_child(py_trees.decorators.Repeat(name="repeat 3 times", child=createQandA(), num_success=3))
+    # brief self-introduction for the referees
+    root.add_child(BtNode_Announce(name="introduce self", bb_source=None, message="Dear referees, I am Tinker."))
+
+    # wait for the operator to press Enter, then head out
     root.add_child(BtNode_PressEnterToSucceed())
 
     root.add_child(BtNode_Announce(name="announce leaving", bb_source=None, message="Heading to the exit."))
