@@ -663,6 +663,13 @@ def create_enter_arena():
     In mock mode the detection auto-succeeds immediately.
     """
     detect = py_trees.composites.Sequence("detect door + enter", memory=True)
+    # Greet + request the door ONCE, before sensing. The memory Sequence runs
+    # this to SUCCESS then advances to the door watch and stays there while the
+    # door is closed, so the announcement plays exactly once (not every tick).
+    detect.add_child(BtNode_Announce(
+        "announce ready for gpsr", bb_source=None,
+        message="Hi, I am Tinker. I am ready for GPSR. Please open the door.",
+    ))
     detect.add_child(py_trees.decorators.FailureIsRunning(
         "keep sensing until door opens",
         BtNode_DoorDetection(
