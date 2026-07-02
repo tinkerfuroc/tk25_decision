@@ -101,7 +101,7 @@ def createBagFlowReal2026():
     )
 
     # --- real follow host until the host signals to stop ---
-    root.add_child(BtNode_TurnPanTilt(name=f"Look at host", x=0.0, y=45.0, speed=0.0))
+    root.add_child(BtNode_TurnPanTilt(name=f"Look at host", x=0.0, y=35.0, speed=0.0))
     root.add_child(
         BtNode_Announce(
             name="Follow host announcement",
