@@ -35,7 +35,7 @@ from .orchestrator import (
     has_command_point,
     load_knowledge_from_constants,
 )
-from .small_trees import bb_keys
+from .small_trees import bb_keys, create_enter_arena
 
 DEFAULT_COMMAND = "Go to the kitchen and bring me a coke."
 DEFAULT_PLAN_DIR = Path(os.environ.get("BT_GPSR_PLAN_DIR", "gpsr_runs")).resolve()
@@ -70,6 +70,9 @@ def createGPSROrchestrator(
     cmd = command or os.environ.get("BT_GPSR_CMD", DEFAULT_COMMAND)
 
     root = py_trees.composites.Sequence("GPSR orchestrator", memory=True)
+    # The robot starts OUTSIDE the arena in front of the door: wait for it to
+    # open and enter — once, before anything else.
+    root.add_child(create_enter_arena())
     _arm_constants_to_bb(root)
     # GPSR: go to the command point to receive the command first.
     if has_command_point():

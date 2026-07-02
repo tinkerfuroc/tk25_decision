@@ -680,7 +680,9 @@ _Append-only. Newest entries on top._
   (`BtNode_PressEnterToSucceed`), then waits for the arena door via
   `door_detection_srv` (Inspection-style Retry) before navigating to the
   folding table. Fold prompt now asks to "lay the shirt out in the manner as
-  shown on my screen"; lay-out wait extended 5 s → 10 s.
+  shown on my screen"; lay-out wait extended 5 s → 10 s. Launch-order
+  requirement: door_detection_srv (vision_util) must be serving when the task
+  launches — tree.setup() fails fast (~15 s RuntimeError) without it.
 - **2026-06-27** — PickAndPlace rulebook tree: `pickAndPlaceRulebook()`
   (inventory→queue→per-item loop, breakfast, extra-surface), `BtNode_ScanAndPlace`
   + inventory/queue/guard/deadline nodes, `--place-policy {hardcoded,vlm}`

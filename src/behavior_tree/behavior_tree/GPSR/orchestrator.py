@@ -760,6 +760,8 @@ class BtNode_PopNextAction(Behaviour):
         self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.WRITE)
         self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.READ)
         self._bb.register_key(bb_keys.GRASP_ASK_REFEREE, access=Access.WRITE)
+        self._bb.register_key(bb_keys.GRASP_REFEREE_LOCATION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.GRASP_REFEREE_POSE, access=Access.WRITE)
         for search_pose_key in SEARCH_POSE_KEYS:
             self._bb.register_key(search_pose_key, access=Access.WRITE)
 
@@ -873,6 +875,35 @@ class BtNode_PopNextAction(Behaviour):
                 or _is_no_grasp(last_nav)
             )
             self._bb.set(bb_keys.GRASP_ASK_REFEREE, ask_referee, overwrite=True)
+            # When bypassing to the referee, drive to the no-grasp furniture
+            # first (the grasp small tree's ex_machina branch gotos this pose).
+            # Figure out WHICH furniture: an explicit flag maps 1:1, otherwise
+            # take the no-grasp word that matched location / surface / last_nav.
+            referee_loc, referee_pose = "", None
+            if ask_referee:
+                flag_map = {
+                    "from_shelf": "shelf",
+                    "from_cabinet": "cabinet",
+                    "from_coat_rack": "coat_rack",
+                }
+                for flag, furn in flag_map.items():
+                    if params.get(flag):
+                        referee_loc = furn
+                        break
+                if not referee_loc:
+                    for cand in (params.get("location"), params.get("surface"), last_nav):
+                        s = str(cand or "").lower()
+                        for furn in NO_GRASP_LOCATIONS:
+                            if furn in s or furn.replace("_", " ") in s:
+                                referee_loc = furn
+                                break
+                        if referee_loc:
+                            break
+                if referee_loc:
+                    referee_pose = self._resolve_pose(referee_loc)
+            self._bb.set(bb_keys.GRASP_REFEREE_LOCATION,
+                         referee_loc.replace("_", " "), overwrite=True)
+            self._bb.set(bb_keys.GRASP_REFEREE_POSE, referee_pose, overwrite=True)
 
         # record_position: stash the label so the small tree registers the
         # captured pose under it.

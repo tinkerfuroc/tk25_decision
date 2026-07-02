@@ -43,7 +43,13 @@ if _config.has_dependency('tinker_audio_msgs'):
     from tinker_audio_msgs.action import NameDrinkExtraction as NameDrinkExtractionAction
     from tinker_audio_msgs.action import Doorbell
     from tinker_audio_msgs.action import NameDrinkExtraction as NameDrinkExtractionAction
-    from tinker_audio_msgs.action import OrderExtraction as OrderExtractionAction
+    try:
+        from tinker_audio_msgs.action import OrderExtraction as OrderExtractionAction
+    except ImportError:
+        # tinker_audio_msgs present but does not export the OrderExtraction
+        # action (older build on this host) -> use the mock stub so importing
+        # behavior_tree still succeeds. Only Restaurant/order flows use it.
+        from behavior_tree.mock_messages import OrderExtractionAction
 else:
     from behavior_tree.mock_messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
     from behavior_tree.mock_messages import GetConfirmationAction, ListenAction

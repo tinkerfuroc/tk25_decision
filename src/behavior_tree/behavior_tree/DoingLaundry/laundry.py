@@ -416,7 +416,7 @@ def createDoingLaundry():
             message="Starting laundry task!",
         )
     )
-    start_parallel.add_child(BtNode_TurnPanTilt("look at desktop"))
+    # start_parallel.add_child(BtNode_TurnPanTilt("look at desktop"))
     root.add_child(start_parallel)
 
     # Door wait, mirroring Inspection: announce ready + aim head, then poll the
@@ -468,6 +468,7 @@ def createDoingLaundry():
         _gotoRetry(name="Navigate to laundry area", pose_key=KEY_POSE_FOLDING_TABLE)
     )
 
+    root.add_child(BtNode_TurnPanTilt("Looking at the desktop"))
     root.add_child(
         BtNode_Announce(
             name="Announce folding start",

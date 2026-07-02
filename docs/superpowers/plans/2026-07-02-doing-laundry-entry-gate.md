@@ -307,6 +307,8 @@ Expected: `Summary: 1 package finished`. (If the user prefers to drive builds, h
 source /home/tinker/tk25_ws/src/tk25_decision/install/setup.zsh 2>/dev/null || source /home/tinker/tk25_ws/install/setup.zsh
 BT_MOCK_MODE=true ros2 run behavior_tree doing-laundry
 ```
+NOTE (verified 2026-07-02): as-is this command fails on this machine — the shipped mock_config.json has vision.enabled=false, which overrides BT_MOCK_MODE=true (config.py:347-349), so BtNode_DoorDetection stays real and tree.setup() dies after 15 s waiting for door_detection_srv. Use a BT_MOCK_CONFIG override JSON with all subsystems enabled (see .superpowers/sdd/task-3-report.md for the working invocation).
+
 Expected interaction: tree idles at `Wait for operator to start` until Enter is pressed → Setup runs → "Announce ready + aim pan-tilt" → `Door detection` waits for 's' keypress (mock KEYPRESS mode per `mock_config.json:33`) → "Announce door open" → arm/nav mocks → fold loop announces the new screen prompt and sits in the 10 s timer. Ctrl+C to exit.
 
 - [ ] **Step 3: Hand live verification to the operator**

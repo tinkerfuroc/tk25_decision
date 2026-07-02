@@ -388,7 +388,7 @@ def main_orchestrator():
         create_goto_command_point, has_command_point,
     )
     from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
-    from .small_trees import BtNode_AnnounceFromBB
+    from .small_trees import BtNode_AnnounceFromBB, create_enter_arena
 
     load_knowledge_from_constants(CONSTANTS_PATH)
     command = os.environ.get("BT_GPSR_DEBUG_CMD", "").strip()
@@ -398,6 +398,10 @@ def main_orchestrator():
 
     rclpy.init()
     cycle = py_trees.composites.Sequence("Test orchestrator", memory=True)
+    # Enter the arena through the door once, before the first command. The
+    # ARENA_ENTERED latch inside makes this a no-op on later loop rounds (the
+    # memory Sequence re-enters from the top after each command).
+    cycle.add_child(create_enter_arena())
     _arm_constants_to_bb(cycle)
     # GPSR: go to the command point to receive the next command — runs at the
     # top of every round (memory Sequence re-enters here after each command).
