@@ -793,6 +793,13 @@ Apache 2.0
 
 ## Changelog
 
+- 2026-07-02 — HRI: host (KEY_PERSONS[0]) excluded from feature matching
+  (`BtNode_FeatureMatching(trim_first_person=True)` in the two-way intro;
+  centroids None-padded at index 0 to preserve persons↔centroids index
+  alignment). `createWriteHostInfo` no longer reads host reference files
+  from disk — host features/image are seeded empty; name/drink constants
+  unchanged. Spec: docs/superpowers/specs/2026-07-02-hri-trim-host-from-matching-design.md.
+
 - **2026-06-11** — feat(restaurant): both kitchen-bar returns (Phase-2 barman
   trip and the per-item Phase-3 pickup verification) now drive through goal
   projection. A new `BtNode_ProjectPose` ServiceHandler calls
