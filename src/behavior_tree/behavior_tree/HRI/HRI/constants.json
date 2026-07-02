@@ -1,0 +1,136 @@
+{
+    "_pose_door": {
+        "point": {
+            "x": 0.45051199197769165,
+            "y": -0.6419785618782043,
+            "z": 0.0
+        },
+        "orientation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -0.7071067811865475,
+            "w": 0.7071067811865476
+        }
+    },
+    "_pose_sofa": {
+        "point": {
+            "x": 0.29283300042152405,
+            "y": -0.1389051169157028,
+            "z": 0.0
+        },
+        "orientation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.006493039123429778,
+            "w": 0.9999789199992876
+        }
+    },
+    "pose_door": {
+        "point": {
+            "x": 1.9318,
+            "y": 0.108,
+            "z": 0.0
+        },
+        "orientation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -1.0,
+            "w": 0.0
+        }
+    },
+    "pose_sofa": {
+        "point": {
+            "x": 1.937199592590332,
+            "y": -0.7546064257621765,
+            "z": 0.0
+        },
+        "orientation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -0.7377466204153854,
+            "w": 0.6750777170561011
+        }
+    },
+    "_seat_catalog": [
+        "leftmost chair",
+        "middlemost chair",
+        "rightmost chair"
+    ],
+    "seat_catalog": [
+        "left stool",
+        "front middle stool",
+        "right stool",
+        "left spot on sofa",
+        "middle spot on sofa",
+        "right spot on sofa"
+    ],
+    "arm_pos_navigating": [
+        -87.4,
+        -58.8,
+        -2.4,
+        8.0,
+        12.3,
+        -68.5,
+        -8.2
+    ],
+    "arm_pos_point_to": [
+        -85.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -90.0,
+        0.0
+    ],
+    "arm_pos_handover": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -90.0,
+        0.0
+    ],
+    "arm_pos_drop": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+    ],
+    "host_name": "John",
+    "host_drink": "coffee",
+    "drinks": [
+        "orange",
+        "water",
+        "sprite",
+        "cola"
+    ],
+    "names": [
+        "Jack",
+        "John",
+        "Allen",
+        "Richard",
+        "Mike",
+        "Grace",
+        "Linda",
+        "Lily",
+        "Lucy",
+        "Jennier"
+    ],
+    "follow": {
+        "lost_short_sec": 5.0,
+        "lost_long_sec": 15.0,
+        "n_nav_retry": 3,
+        "n_restart": 2,
+        "follow_timeout_sec": 2.0,
+        "target_frame": "map",
+        "target_point_topic": "/target_points",
+        "track_action_name": "track_person",
+        "follow_action_name": "tracking_server",
+        "announce_short": "Please stop and wait for Tinker to catch up.",
+        "announce_long": "I've lost you. Please come back in front of Tinker."
+    }
+}

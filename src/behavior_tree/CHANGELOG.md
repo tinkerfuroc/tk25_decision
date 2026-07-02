@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.2.14] - 2026-07-02
+
+### 🔭 hri-2026: "Look at host" tilt 45° → 35°
+
+The bag-flow follow stage commanded the pan-tilt head 45° up right before
+follow start (`createBagFlowReal2026`), putting the camera on the
+ceiling/crowd instead of the host — the tracker then acquired low-confidence
+background "person" blobs and fed phantom points to the follower
+(2026-07-02 vision_log evidence). Lowered to 35°, matching the canonical
+`hri.py` "look up" value. Both `HRI/hri_2026.py` and the `HRI/HRI/`
+duplicate updated in lockstep. Regression-locked by
+`test_hri_2026_start_gate.py::test_look_at_host_tilt_is_35_degrees`.
+
 ## [2.2.13] - 2026-07-01
 
 ### 🚪 Inspection: announce readiness + aim pan-tilt before the door-wait
