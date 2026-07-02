@@ -676,6 +676,31 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-07-02** — feat(GPSR): `approach_person` now drives real navigation.
+  `create_approach_person()` replaces a same-day no-op mock with
+  `BtNode_Approach` against `approach_planner`'s `go_to_approach` action,
+  goal pinned to `desired=1.3m/min=1.0m/max=1.6m/timeout=45s` (all three
+  distance bounds are required — see that package's changelog for the
+  `STATUS_INVALID_REQUEST` guard this avoids). Dropped
+  `BtNode_PointToPoseStamped`/`PERSON_NAV_POSE`; `BtNode_Approach` is now
+  registered in all three mock configs. New hard dependency:
+  `approach_planner` must be launched (`master_gpsr.sh` navigation-window
+  pane 3, tk25_basic) or the action server never advertises. Caution:
+  Stage B of `approach_planner`'s optional two-stage mode (default off)
+  ignores `desired_distance` and stops at its own 0.7 m `final_standoff`.
+- **2026-07-02** — DoingLaundry fold out-of-range prompt. `foldClothingOnce()`
+  is now a `Selector` (memory): the fold branch resets `dl_fold_out_of_range`
+  to `False`, runs `BtNode_FoldClothingDn(bb_key_out_of_range=...)`, and
+  announces completion; if the `fold_dn_action` server aborts with an
+  `OUT_OF_RANGE` token in `Result.message` (grasp target past its `max_range`),
+  `BtNode_FoldClothingDn` writes `True` to the flag and the fold branch fails.
+  The second branch then `BtNode_CheckIfEmpty(dl_fold_out_of_range)` SUCCEEDs,
+  announces "The clothing is too far, please put it closer.", and the enclosing
+  `Repeat` re-attempts (operator repositions). Any non-out-of-range fold failure
+  leaves the flag `False` → `CheckIfEmpty` FAILs → task ends exactly as before.
+  `BtNode_FoldClothingDn` gained a `bb_key_out_of_range` ctor arg (localized to
+  the subclass; the shared `BtNode_FoldClothingAction` base is untouched). New
+  config key `KEY_FOLD_OUT_OF_RANGE = "dl_fold_out_of_range"`.
 - **2026-07-02** — DoingLaundry: task now starts behind an operator Enter gate
   (`BtNode_PressEnterToSucceed`), then waits for the arena door via
   `door_detection_srv` (Inspection-style Retry) before navigating to the

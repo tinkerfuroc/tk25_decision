@@ -1,5 +1,71 @@
 # Changelog
 
+## [2.2.16] - 2026-07-02
+
+### 🧭 GPSR: approach_person wired to real go_to_approach navigation, 1.3 m standoff
+
+`create_approach_person()` (`GPSR/small_trees.py`) — previously a same-day
+temporary no-op mock (`py_trees.behaviours.Success`) — now drives a real
+`BtNode_Approach` against the `approach_planner` package's `go_to_approach`
+action, reading `bb_keys.TARGET_PERSON_POSE` directly (dropped the
+`PointStamped`→`PoseStamped` conversion hop). The goal always passes
+`desired_distance=1.3` / `min_distance=1.0` / `max_distance=1.6` /
+`timeout_sec=45.0` together, as module constants. The bounds trio is
+mandatory, not cosmetic: `approach_planner`'s attempt-2 costmap-ring
+recompute rejects any goal with `desired` outside `[min, max]`
+(`STATUS_INVALID_REQUEST`, `algorithm.py:184`), and a bare
+`desired_distance=1.3` call (server defaults `min=0.5`/`max=1.0`) would have
+silently disabled that whole fallback path. Deleted the now-dead
+`BtNode_PointToPoseStamped` helper and the `bb_keys.PERSON_NAV_POSE` key
+(plus 3 now-unused `geometry_msgs` imports). `BtNode_Approach` is registered
+`IMMEDIATE` in all three mock configs (`mock_config.json`,
+`config/f4_mock_config.json`, `config/full_mock.json`) — previously it was
+reachable only via the navigation subsystem's catch-all.
+
+New hard runtime dependency: the `approach_planner` node must be launched
+for GPSR's `approach_person` step to do anything — `master_gpsr.sh`
+(tk25_basic) now brings it up as a third pane in the `navigation` window,
+mirroring the existing Restaurant-task pane in `tmux_slam_navigation.sh`.
+
+CAUTION: if `approach_planner`'s `two_stage_approach` mode is ever turned
+on, Stage B ignores the goal's `desired_distance` entirely and stops at its
+own fixed `final_standoff` (0.7 m) — the 1.3 m standoff documented here only
+holds with `two_stage_approach` at its current default-off.
+
+New test `test/test_gpsr_approach_person.py` (2 tests) pins the
+`BtNode_Approach` wiring and the bounds ordering.
+
+HONESTY NOTE: commit `3d1c431` also carries an in-flight pan-tilt-sweep
+refactor (`_pantilt_sweep`, `find_object`/`find_person`/`describe_person`
+reshuffle) from a concurrent session that was interleaved uncommitted in
+`small_trees.py` at commit time — unrelated to this wiring, called out here
+so it isn't a surprise to future readers of that commit.
+
+## [2.2.15] - 2026-07-02
+
+### 🧺 DoingLaundry: "move it closer" prompt on an out-of-range fold
+
+`foldClothingOnce()` is now a `Selector` (memory) instead of a flat `Sequence`.
+The first branch resets the `dl_fold_out_of_range` blackboard flag to `False`,
+runs `BtNode_FoldClothingDn(bb_key_out_of_range=KEY_FOLD_OUT_OF_RANGE)`, and
+announces completion. When the `fold_dn_action` server aborts because the grasp
+target is beyond its `max_range` (0.85 m default), it reports an `OUT_OF_RANGE`
+token in the existing `FoldClothing.Result.message` field (no interface change);
+`BtNode_FoldClothingDn.process_result()` detects the token, writes `True` to the
+flag, and returns FAILURE. The Selector's second branch then runs
+`BtNode_CheckIfEmpty(dl_fold_out_of_range)` — SUCCESS iff the flag is truthy —
+followed by the announce "The clothing is too far, please put it closer.", so
+the Selector succeeds and the enclosing `Repeat(num_success=999)` retries (the
+operator repositions the garment and the next iteration re-prompts + folds). Any
+NON-out-of-range fold failure leaves the reset flag `False` → `CheckIfEmpty`
+FAILs → Selector FAILs → task ends, exactly as before.
+
+`BtNode_FoldClothingDn` gained a `bb_key_out_of_range` ctor arg with a `setup()`
+override that attaches a WRITE blackboard client and a `process_result()`
+override that publishes the flag; the change is localized to the subclass — the
+shared `BtNode_FoldClothingAction` base (also used by `fold_clothing_action`) is
+untouched. New config constant `KEY_FOLD_OUT_OF_RANGE = "dl_fold_out_of_range"`.
+
 ## [2.2.14] - 2026-07-02
 
 ### 🔭 hri-2026: "Look at host" tilt 45° → 35°
