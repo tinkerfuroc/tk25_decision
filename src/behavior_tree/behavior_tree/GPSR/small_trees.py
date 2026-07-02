@@ -109,6 +109,14 @@ class bb_keys:
     GRASP_ANNOUNCEMENT = "gpsr/grasp_announcement"
     ARM_NAVIGATING = "gpsr/arm_navigating"
     ARM_SCAN = "gpsr/arm_scan"
+    ARM_ORBBEC_LOOK = "gpsr/arm_orbbec_look"  # arm pose that clears the orbbec
+                                           #   head camera's view; moved to
+                                           #   before any orbbec scan (find_object
+                                           #   / count / vlm / find_person /
+                                           #   describe_person) AND used as the
+                                           #   stow pose for navigation (replaces
+                                           #   arm_pos_navigating). NOT the arm
+                                           #   RealSense grasp scan (uses ARM_SCAN).
     LAST_NAV_LOCATION = "gpsr/last_nav_location"  # str — location the robot most
                                            #   recently navigated to (goto /
                                            #   search_object); lets a later grasp
@@ -597,25 +605,53 @@ class BtNode_CountDetections(Behaviour):
 # ---------------------------------------------------------------------------
 
 def _tuck_arm_for_nav(label: str = "tuck arm for nav"):
-    """Move the arm to the ``base_moving`` (navigating) pose before driving.
+    """Move the arm to the stow pose before driving.
 
-    The arm must be folded back to ``arm_pos_navigating`` so it does not block
-    the lidar / occupy the robot's footprint during base motion. Every small
-    tree that issues a base move (goto / follow / guide / approach / deliver /
-    place) tucks first. The pose is read from ``bb_keys.ARM_NAVIGATING``, seeded
-    once at startup by the orchestrator entry point (``_arm_constants_to_bb``).
-    Retry-wrapped and propagates failure: if the arm cannot tuck, we do NOT
-    drive with the arm sticking out — the orchestrator self-correction handles it.
+    The arm must be folded back so it does not block the lidar / occupy the
+    robot's footprint during base motion. Every small tree that issues a base
+    move (goto / follow / guide / approach / deliver / place) tucks first. The
+    pose is read from ``bb_keys.ARM_ORBBEC_LOOK`` — per the "use
+    arm_pos_orbbec_look instead of arm_pos_navigating from now on" decision, the
+    orbbec-look pose is the single stow pose used for both navigation and orbbec
+    scanning — seeded once at startup (``_arm_constants_to_bb``). Retry-wrapped
+    and propagates failure: if the arm cannot tuck, we do NOT drive with the arm
+    sticking out — the orchestrator self-correction handles it.
     """
     return py_trees.decorators.Retry(
         f"retry {label}",
         BtNode_MoveArmSingle(
             label,
             action_name=ARM_ACTION_NAME,
-            arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
+            arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
             add_octomap=False,
         ),
         num_failures=3,
+    )
+
+
+def _arm_to_orbbec_look(label: str = "arm to orbbec look"):
+    """Move the arm to ``arm_pos_orbbec_look`` so it clears the ORBBEC head
+    camera's field of view before an orbbec scan (find_object / count / vlm /
+    find_person / describe_person). This is NOT the arm-mounted RealSense grasp
+    scan, which needs the arm at ``ARM_SCAN`` — that path is left untouched.
+
+    Best-effort: Retry-wrapped and FailureIsSuccess so a MoveIt hiccup (or an
+    un-seeded ARM_ORBBEC_LOOK key) never fails the scan. The pose is read from
+    ``bb_keys.ARM_ORBBEC_LOOK``, seeded once at startup alongside the nav/scan
+    poses; if it is unset the move simply no-ops and the scan proceeds.
+    """
+    return py_trees.decorators.FailureIsSuccess(
+        f"{label} (best effort)",
+        py_trees.decorators.Retry(
+            f"retry {label}",
+            BtNode_MoveArmSingle(
+                label,
+                action_name=ARM_ACTION_NAME,
+                arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
+                add_octomap=False,
+            ),
+            num_failures=3,
+        ),
     )
 
 
@@ -742,6 +778,7 @@ def create_find_object():
     the base. Locate-only: it does NOT pick a single instance.
     """
     seq = py_trees.composites.Sequence("small/find_object", memory=True)
+    seq.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
     seq.add_child(_pantilt_sweep("find_object", OBJECT_TILT_DEG, _object_scan_and_verify))
     seq.add_child(BtNode_AnnounceFromBB(
         "announce found", bb_keys.TARGET_OBJECT_NAME, prefix="I can see the "
@@ -869,6 +906,7 @@ def create_find_person():
         "announce searching", bb_source=None,
         message="Looking for a person, please stay still.",
     ))
+    seq.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
     seq.add_child(_pantilt_sweep("find_person", HUMAN_TILT_DEG, _person_scan_strategies))
     seq.add_child(BtNode_Announce(
         "announce found person", bb_source=None,
@@ -892,6 +930,7 @@ def create_describe_person():
         "announce describing", bb_source=None,
         message="Let me take a look at this person.",
     ))
+    seq.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
     # Sweep pan 0/+45/-45 across HUMAN_TILT_DEG (up at a standing person, then
     # lower); extract the description at each angle and stop at the first that
     # succeeds, so a person not squarely in front / a different height is framed.
@@ -1004,7 +1043,7 @@ def create_grasp():
     primary.add_child(BtNode_MoveArmSingle(
         "arm to navigating",
         service_name=ARM_ACTION_NAME,
-        arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
+        arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
         add_octomap=False,
     ))
     par_scan = py_trees.composites.Parallel(
@@ -1074,7 +1113,7 @@ def create_grasp():
         BtNode_MoveArmSingle(
             "arm back to navigating",
             service_name=ARM_ACTION_NAME,
-            arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
+            arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
         ),
         num_failures=5,
     ))
@@ -1099,7 +1138,7 @@ def create_grasp():
         BtNode_MoveArmSingle(
             "arm to navigating",
             service_name=ARM_ACTION_NAME,
-            arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
+            arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
         ),
         num_failures=5,
     ))
@@ -1212,6 +1251,7 @@ def create_count():
     """
     primary = py_trees.composites.Sequence("count/by_detector", memory=True)
     primary.add_child(BtNode_TurnPanTilt("turn pantilt", x=0.0, y=10.0))
+    primary.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
     primary.add_child(BtNode_Announce(
         "announce scanning", bb_source=None, message="I am counting now."
     ))
@@ -1350,6 +1390,7 @@ def create_vlm_fallback():
     """
     seq = py_trees.composites.Sequence("small/vlm_fallback", memory=True)
     seq.add_child(BtNode_TurnPanTilt("turn pantilt forward", x=0.0, y=15.0))
+    seq.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
     seq.add_child(BtNode_Announce(
         "announce looking", bb_source=None, message="Let me take a look.",
     ))

@@ -27,7 +27,7 @@ from rclpy.executors import ExternalShutdownException
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.visualization import create_post_tick_visualizer
 
-from .gpsr_full import CONSTANTS_PATH, _load_arm_constants
+from .gpsr_full import CONSTANTS_PATH, _load_arm_constants, _load_arm_orbbec_look
 from .orchestrator import (
     create_execute_command,
     create_orchestrator_init,
@@ -42,7 +42,7 @@ DEFAULT_PLAN_DIR = Path(os.environ.get("BT_GPSR_PLAN_DIR", "gpsr_runs")).resolve
 
 
 def _arm_constants_to_bb(seq: py_trees.composites.Sequence) -> None:
-    """Seed the arm navigating/scan poses the grasp small tree consumes."""
+    """Seed the arm navigating/scan/orbbec-look poses the small trees consume."""
     arm_nav, arm_scan = _load_arm_constants()
     seq.add_child(BtNode_WriteToBlackboard(
         "arm scan", bb_namespace="", bb_source=None,
@@ -51,6 +51,10 @@ def _arm_constants_to_bb(seq: py_trees.composites.Sequence) -> None:
     seq.add_child(BtNode_WriteToBlackboard(
         "arm nav", bb_namespace="", bb_source=None,
         bb_key=bb_keys.ARM_NAVIGATING, object=arm_nav,
+    ))
+    seq.add_child(BtNode_WriteToBlackboard(
+        "arm orbbec look", bb_namespace="", bb_source=None,
+        bb_key=bb_keys.ARM_ORBBEC_LOOK, object=_load_arm_orbbec_look(),
     ))
 
 

@@ -27,7 +27,7 @@ from behavior_tree.visualization import create_post_tick_visualizer
 
 from .orchestrator import load_knowledge_from_constants, KNOWN_LOCATIONS, KNOWN_OBJECT_PROMPTS
 from .small_trees import ACTION_FACTORIES, bb_keys
-from .gpsr_full import CONSTANTS_PATH, _load_arm_constants
+from .gpsr_full import CONSTANTS_PATH, _load_arm_constants, _load_arm_orbbec_look
 
 
 def _identity_pose(location_key: str = "kitchen") -> PoseStamped:
@@ -67,6 +67,10 @@ def _arm_constants_to_bb(seq: py_trees.composites.Sequence) -> None:
     seq.add_child(BtNode_WriteToBlackboard(
         "arm nav", bb_namespace="", bb_source=None,
         bb_key=bb_keys.ARM_NAVIGATING, object=arm_nav,
+    ))
+    seq.add_child(BtNode_WriteToBlackboard(
+        "arm orbbec look", bb_namespace="", bb_source=None,
+        bb_key=bb_keys.ARM_ORBBEC_LOOK, object=_load_arm_orbbec_look(),
     ))
 
 
@@ -230,6 +234,8 @@ def main_grasp_diag():
                                            bb_key=bb_keys.ARM_SCAN, object=arm_scan))
     seq.add_child(BtNode_WriteToBlackboard("arm nav", bb_namespace="", bb_source=None,
                                            bb_key=bb_keys.ARM_NAVIGATING, object=arm_nav))
+    seq.add_child(BtNode_WriteToBlackboard("arm orbbec look", bb_namespace="", bb_source=None,
+                                           bb_key=bb_keys.ARM_ORBBEC_LOOK, object=_load_arm_orbbec_look()))
     seq.add_child(BtNode_WriteToBlackboard("obj", bb_namespace="", bb_source=None,
                                            bb_key=bb_keys.TARGET_OBJECT_NAME, object=obj))
     seq.add_child(BtNode_WriteToBlackboard("obj prompt", bb_namespace="", bb_source=None,
