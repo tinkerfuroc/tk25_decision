@@ -39,7 +39,6 @@ from behavior_tree.TemplateNodes.Vision import (
     BtNode_SeatRecommendBbox,
     BtNode_TurnPanTilt,
     BtNode_TurnTo,
-    BtNode_LoadPersonReference
 )
 from behavior_tree.Receptionist.customNodes import (
     BtNode_CombinePerson,
@@ -360,7 +359,7 @@ def createArrivalTrigger():
         BtNode_Announce(
             "announce speak to me after the beep sound",
             bb_source=None,
-            message="Hi guest, please speak to me after the beep sound."
+            message="Hi guest, please enter and speak to me after the beep sound. Be very loud."
         )
     )
     return root
@@ -387,7 +386,7 @@ def _create_get_name_drink(name_key: str, drink_key: str):
         BtNode_Announce(
             name="Prompt for name and drink",
             bb_source=None,
-            message="Please tell me your name and your favorite drink after the beep.",
+            message="Please loudly tell me your name and your favorite drink.",
         )
     )
     root.add_child(
@@ -404,7 +403,7 @@ def _create_get_name_drink(name_key: str, drink_key: str):
         BtNode_Announce(
             name="Prompt for name and drink",
             bb_source=None,
-            message="I'm sorry, please tell me your name and your favorite drink again.",
+            message="I'm sorry, Please speak super loude. Tell me your name and your favorite drink again.",
         )
     )
     root_after_fail.add_child(
@@ -440,13 +439,26 @@ def createWriteHostInfo():
     root = py_trees.composites.Sequence(
         name="Write host info", memory=True
     )
+    # Host features are not known beforehand and the host is never
+    # recognized (feature matching runs with trim_first_person=True), so
+    # no reference files are read. Seed the two keys BtNode_CombinePerson
+    # hard-reads (KeyError if absent) with empty media instead.
     root.add_child(
-        BtNode_LoadPersonReference(
-            name="load host ref",
-            image_path=image_path,
-            description_path=description_path,
-            bb_features_key=KEY_HOST_FEATURES,
-            bb_image_key=KEY_HOST_IMAGE
+        BtNode_WriteToBlackboard(
+            name="Write empty host features",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_HOST_FEATURES,
+            object="",
+        )
+    )
+    root.add_child(
+        BtNode_WriteToBlackboard(
+            name="Write empty host image",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_HOST_IMAGE,
+            object=None,
         )
     )
     root.add_child(
@@ -899,6 +911,10 @@ def createTwoWayIntroduction():
                     bb_dest_key=KEY_PERSON_CENTROIDS,
                     bb_persons_key=KEY_PERSONS,
                     trim_last_person=False,
+                    # Host at KEY_PERSONS[0]: features unknown, never
+                    # recognized. Centroids come back None-padded at index
+                    # 0, so guest target_id=1/2 below stay valid.
+                    trim_first_person=True,
                 ),
                 num_failures=3,
             ),
@@ -988,6 +1004,8 @@ def createTwoWayIntroduction():
             # Targeted-lock: gaze stays on guest2 (the introducee) even if a
             # closer bystander appears. KEY_PERSON_CENTROIDS is populated by
             # the BtNode_FeatureMatching above (line ~653, trim_last_person=False).
+            # index 0 (host) is a None pad since trim_first_person=True; only
+            # target_id 1/2 are dereferenced.
             # BtNode_MaintainEyeContact(
             #     name="Maintain eye contact during intro1",
             #     target_id=2,
@@ -1037,7 +1055,7 @@ def createTwoWayIntroduction():
         key_person=KEY_PERSONS,
         target_id=1,
         introduced_id=2,
-        describe_introduced=True,
+        describe_introduced=False,
     )
     announce_with_gaze2 = py_trees.composites.Parallel(
         name="Announce intro2 + maintain gaze",

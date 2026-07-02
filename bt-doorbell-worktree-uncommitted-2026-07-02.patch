@@ -1,0 +1,181 @@
+diff --git a/src/behavior_tree/README.md b/src/behavior_tree/README.md
+index 22dd882..bc7f0c4 100644
+--- a/src/behavior_tree/README.md
++++ b/src/behavior_tree/README.md
+@@ -584,3 +584,11 @@ Apache 2.0
+ - [py_trees Documentation](https://py-trees.readthedocs.io/)
+ - [RoboCup@Home Rules](https://athome.robocup.org/)
+ - [ROS2 Documentation](https://docs.ros.org/)
++
++## Changelog
++
++- 2026-05-03 — Add `BtNode_Doorbell` (`TemplateNodes/Audio.py`) wrapping
++  tk_24_audio's `doorbell_action` (tinker_audio_msgs/action/Doorbell).
++  Goal has no fields (server hardcodes 10s window). Optional `bb_dest_key`
++  receives the result `transcription` string. Registered under
++  `audio_input` in `mock_config.json`.
+diff --git a/src/behavior_tree/behavior_tree/TemplateNodes/Audio.py b/src/behavior_tree/behavior_tree/TemplateNodes/Audio.py
+index 5d428bc..6299a75 100644
+--- a/src/behavior_tree/behavior_tree/TemplateNodes/Audio.py
++++ b/src/behavior_tree/behavior_tree/TemplateNodes/Audio.py
+@@ -43,6 +43,8 @@
+ #     Action-based listen wrapping tk_24_audio's `listen_action`.
+ # BtNode_CompareInterest
+ #     Compares interests between two statements for conversation matching.
++# BtNode_Doorbell
++#     Action-based doorbell detection wrapping tk_24_audio's `doorbell_action`.
+ #
+ # Mock Mode
+ # ---------
+@@ -69,6 +71,7 @@ from behavior_tree.messages import (
+     GetConfirmationAction,
+     ListenAction,
+     PhraseExtractionAction,
++    DoorbellAction,
+ )
+ 
+ from .BaseBehaviors import ServiceHandler
+@@ -1101,3 +1104,96 @@ class BtNode_PhraseExtractionAction(ActionHandler):
+         self._bb.phrase = phrase
+         self.feedback_message = f"extracted high-confidence phrase: '{phrase}'"
+         return Status.SUCCESS
++
++
++class BtNode_Doorbell(ActionHandler):
++    """
++    Action-client node for tk_24_audio's `doorbell_action`
++    (tinker_audio_msgs/action/Doorbell).
++
++    Listens for a doorbell sound matching a stored template via normalized
++    cross-correlation. The server uses a fixed 10s listen window (Goal has
++    no fields). Returns SUCCESS when the doorbell is detected, FAILURE on
++    timeout / error / cancel.
++
++    If `bb_dest_key` is provided, the result `transcription` string
++    (e.g. "Doorbell detected (correlation=0.42)") is written there.
++    """
++
++    def __init__(
++        self,
++        name: str,
++        bb_dest_key: Optional[str] = None,
++        action_name: str = "doorbell_action",
++        wait_for_server_timeout_sec: float = -3.0,
++    ):
++        super().__init__(
++            name,
++            DoorbellAction,
++            action_name,
++            key=None,
++            wait_for_server_timeout_sec=wait_for_server_timeout_sec,
++        )
++        # Server hardcodes LISTEN_TIMEOUT=10s; allow generous feedback margin.
++        self._feedback_timeout_secs = 30.0
++        self.bb_dest_key = bb_dest_key
++        self._bb = None
++        if bb_dest_key is not None:
++            self._bb = self.attach_blackboard_client(
++                name=f"{self.name}_DoorbellAction"
++            )
++            self._bb.register_key(
++                key="transcription",
++                access=pytree.common.Access.WRITE,
++                remap_to=pytree.blackboard.Blackboard.absolute_name(
++                    "/", bb_dest_key
++                ),
++            )
++
++    def send_goal(self):
++        if self.mock_mode:
++            mock_msg = "Doorbell detected (mock)"
++            if self._bb is not None:
++                self._bb.transcription = mock_msg
++            self.feedback_message = "MOCK: Doorbell goal sent"
++            print(f"🔔 MOCK DOORBELL (action): '{mock_msg}'")
++            self.send_goal_future = _MockFuture()
++            return
++        goal = DoorbellAction.Goal()
++        self.send_goal_request(goal)
++        self.feedback_message = "sent Doorbell goal"
++
++    def feedback_callback(self, msg):
++        feedback = msg.feedback
++        self.last_feedback_time = time.time()
++        self.feedback_timeout = self._feedback_timeout_secs
++        self.action_status = 0
++        elapsed = getattr(feedback, "elapsed", 0.0)
++        partial = getattr(feedback, "partial_transcription", "")
++        self.feedback_message = (
++            f"doorbell elapsed={elapsed:.1f}s"
++            + (f" [partial: '{partial}']" if partial else "")
++        )
++
++    def process_result(self):
++        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
++            result = getattr(self.result_message, "result", None)
++            status = getattr(result, "status", -1)
++            err = getattr(result, "error_message", "")
++            self.feedback_message = (
++                f"Doorbell action did not succeed "
++                f"(action={self.result_status_string}, server status={status}): {err}"
++            )
++            return Status.FAILURE
++        result = self.result_message.result
++        if getattr(result, "status", 0) != 0:
++            self.feedback_message = (
++                f"Doorbell failed with code {result.status}: "
++                f"{getattr(result, 'error_message', '')}"
++            )
++            return Status.FAILURE
++        transcription = getattr(result, "transcription", "")
++        if self._bb is not None:
++            self._bb.transcription = transcription
++        self.feedback_message = f"Doorbell detected: '{transcription}'"
++        return Status.SUCCESS
+diff --git a/src/behavior_tree/behavior_tree/messages.py b/src/behavior_tree/behavior_tree/messages.py
+index 2baa82d..8511bf5 100644
+--- a/src/behavior_tree/behavior_tree/messages.py
++++ b/src/behavior_tree/behavior_tree/messages.py
+@@ -35,10 +35,12 @@ if _config.has_dependency('tinker_audio_msgs'):
+     from tinker_audio_msgs.srv import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
+     from tinker_audio_msgs.action import GetConfirmation as GetConfirmationAction, Listen as ListenAction
+     from tinker_audio_msgs.action import PhraseExtraction as PhraseExtractionAction
++    from tinker_audio_msgs.action import Doorbell as DoorbellAction
+ else:
+     from behavior_tree.mock_messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
+     from behavior_tree.mock_messages import GetConfirmationAction, ListenAction
+     from behavior_tree.mock_messages import PhraseExtractionAction
++    from behavior_tree.mock_messages import DoorbellAction
+ 
+ if _config.has_dependency('tinker_nav_msgs'):
+     from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp, OrientationAngle
+diff --git a/src/behavior_tree/behavior_tree/mock_config.json b/src/behavior_tree/behavior_tree/mock_config.json
+index ccfae5c..1e33bf2 100644
+--- a/src/behavior_tree/behavior_tree/mock_config.json
++++ b/src/behavior_tree/behavior_tree/mock_config.json
+@@ -83,7 +83,8 @@
+           "BtNode_CompareInterest": "KEYPRESS",
+           "BtNode_GetConfirmationAction": "KEYPRESS",
+           "BtNode_ListenAction": "KEYPRESS",
+-          "BtNode_PhraseExtractionAction": "KEYPRESS"
++          "BtNode_PhraseExtractionAction": "KEYPRESS",
++          "BtNode_Doorbell": "KEYPRESS"
+         }
+       },
+       "announcement": {
+diff --git a/src/behavior_tree/behavior_tree/mock_messages.py b/src/behavior_tree/behavior_tree/mock_messages.py
+index 78b4966..e8db010 100644
+--- a/src/behavior_tree/behavior_tree/mock_messages.py
++++ b/src/behavior_tree/behavior_tree/mock_messages.py
+@@ -493,6 +493,11 @@ class ListenAction(MockAction):
+     pass
+ 
+ 
++class DoorbellAction(MockAction):
++    """Mock Doorbell action from tinker_audio_msgs."""
++    pass
++
++
+ class TrackPerson(MockAction):
+     """Mock TrackPerson action (tk26_vision)."""
+     class Goal(MockAction.Goal):
