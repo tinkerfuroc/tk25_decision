@@ -71,6 +71,11 @@ DEFAULT_OBJECT_LOCATIONS: Dict[str, str] = {}
 # spot is unknown (the override case). Populated from constants.json
 # "search_spots"; a location with no entry falls back to [itself].
 ROOM_SEARCH_SPOTS: Dict[str, List[str]] = {}
+# Furniture the robot must NOT grasp from — a grasp there is bypassed straight to
+# the ask-referee branch. Populated from constants.json "no_grasp_locations"
+# (default shelf / cabinet / coat_rack). Matched case-insensitively, and both the
+# underscore and space spellings ("coat_rack" / "coat rack") are recognised.
+NO_GRASP_LOCATIONS: set = {"shelf", "cabinet", "coat_rack"}
 
 # Names the planner may use for "where the robot stood when it received the
 # command". Resolved from the blackboard (bb_keys.START_POSE, captured by
@@ -139,6 +144,12 @@ def load_knowledge_from_constants(constants_path: str) -> None:
             continue
         if isinstance(value, list) and value:
             ROOM_SEARCH_SPOTS[str(key).lower()] = [str(v) for v in value]
+    # No-grasp furniture (grasp there -> ask referee). Config-driven; defaults to
+    # shelf / cabinet / coat_rack when the key is absent.
+    ng = constants.get("no_grasp_locations")
+    if isinstance(ng, list) and ng:
+        NO_GRASP_LOCATIONS.clear()
+        NO_GRASP_LOCATIONS.update(str(x).lower() for x in ng if not str(x).startswith("_"))
 
 
 # ---------------------------------------------------------------------------
@@ -201,16 +212,18 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         then ``approach_person`` in the same plan (locate the person and walk
         to them before leading). Never use ``guide`` to express "go
         yourself" — that is ``goto``.
-    - grasp(object: str, from_shelf?: bool)
+    - grasp(object: str, from_shelf?: bool, from_cabinet?: bool, from_coat_rack?: bool)
         Pick up an object from the surface in front of the robot. ``grasp`` moves
         the arm to the table-grasp scan pose, detects the object on the table
         with the ARM (RealSense) camera ITSELF, and picks it up — you do NOT add
         a separate find/scan step before it and you do NOT use the head camera.
-        Always plan a ``goto(location)`` first so the robot is at the table where
-        the object is. Set ``from_shelf=true`` when the object is on a SHELF or
-        bookcase (the command says shelf, or the object's Default location is
-        ``shelf``): the robot CANNOT safely grasp from a shelf, so it skips the
-        grasp and asks a human referee to hand the object over instead.
+        Always plan a ``goto(location)`` first so the robot is at the surface
+        where the object is. The robot CANNOT safely grasp from a SHELF, a
+        CABINET, or a COAT RACK — set the matching flag (``from_shelf`` /
+        ``from_cabinet`` / ``from_coat_rack`` = true) when the object is on one of
+        those (the command says so, or the object's Default location is one of
+        them). It then skips the grasp and asks a human referee to hand the
+        object over instead.
     - place(location: str)
         Place the currently-held object at ``location``. The robot navigates
         to ``location`` itself — do not add a separate ``goto`` before it.
@@ -397,11 +410,13 @@ SYSTEM_PROMPT = textwrap.dedent("""
        location from the "Default object locations" list. Plain ``goto`` +
        ``find_object`` / ``count`` are still correct for NON-grasp finds and
        counts (e.g. "how many cokes are in the kitchen").
-    17. If the object being grasped is on a SHELF — the command says
-       "shelf"/"bookcase", or the object's Default location (list above) is
-       ``shelf`` — set ``from_shelf=true`` on the ``grasp`` step. The robot
-       cannot reach into a shelf safely and will ask a referee to hand it over
-       instead of attempting the grasp.
+    17. The robot CANNOT safely grasp from a SHELF, a CABINET, or a COAT RACK.
+       If the object being grasped is on one of these — the command says
+       "shelf"/"bookcase", "cabinet"/"cupboard", or "coat rack"/"coatrack", or
+       the object's Default location (list above) is one of them — set the
+       matching flag on the ``grasp`` step: ``from_shelf`` / ``from_cabinet`` /
+       ``from_coat_rack`` = true. The robot will then ask a referee to hand the
+       object over instead of attempting the grasp.
 """).strip()
 
 
@@ -744,7 +759,7 @@ class BtNode_PopNextAction(Behaviour):
         # written by goto/search_object, read back by grasp (shelf inference)
         self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.WRITE)
         self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.READ)
-        self._bb.register_key(bb_keys.GRASP_FROM_SHELF, access=Access.WRITE)
+        self._bb.register_key(bb_keys.GRASP_ASK_REFEREE, access=Access.WRITE)
         for search_pose_key in SEARCH_POSE_KEYS:
             self._bb.register_key(search_pose_key, access=Access.WRITE)
 
@@ -833,25 +848,31 @@ class BtNode_PopNextAction(Behaviour):
                 pose = self._resolve_pose(spot_names[i]) if i < len(spot_names) else None
                 self._bb.set(search_key, pose, overwrite=True)
 
-        # grasp: decide whether this is a SHELF grasp. The robot cannot safely
-        # grasp from a shelf, so a shelf grasp skips the real grasp and asks a
-        # referee. Truthy from ANY signal: the planner's from_shelf flag, a
-        # shelf-ish location/surface on the grasp step, OR the location the
-        # preceding search_object actually used (covers default-shelf objects).
+        # grasp: decide whether to bypass the real grasp and ask a referee. The
+        # robot cannot safely grasp from a shelf, cabinet, or coat rack. Truthy
+        # from ANY signal: an explicit planner flag (from_shelf / from_cabinet /
+        # from_coat_rack / ask_referee), a no-grasp word in the grasp step's
+        # location/surface, OR the location the robot last navigated to (covers
+        # default-furniture objects even if the planner omits the flag).
         if action == "grasp":
-            def _is_shelf(v) -> bool:
-                return "shelf" in str(v or "").lower()
+            def _is_no_grasp(v) -> bool:
+                s = str(v or "").lower()
+                return any(loc in s or loc.replace("_", " ") in s
+                           for loc in NO_GRASP_LOCATIONS)
             try:
                 last_nav = self._bb.get(bb_keys.LAST_NAV_LOCATION)
             except KeyError:
                 last_nav = ""
-            from_shelf = bool(
+            ask_referee = bool(
                 params.get("from_shelf")
-                or _is_shelf(params.get("location"))
-                or _is_shelf(params.get("surface"))
-                or _is_shelf(last_nav)
+                or params.get("from_cabinet")
+                or params.get("from_coat_rack")
+                or params.get("ask_referee")
+                or _is_no_grasp(params.get("location"))
+                or _is_no_grasp(params.get("surface"))
+                or _is_no_grasp(last_nav)
             )
-            self._bb.set(bb_keys.GRASP_FROM_SHELF, from_shelf, overwrite=True)
+            self._bb.set(bb_keys.GRASP_ASK_REFEREE, ask_referee, overwrite=True)
 
         # record_position: stash the label so the small tree registers the
         # captured pose under it.
@@ -1296,7 +1317,7 @@ def create_execute_command(
     root.add_child(BtNode_BlackboardSet("reset correction", bb_keys.CORRECTION_COUNT, 0))
     root.add_child(BtNode_BlackboardSet("reset last_failure", bb_keys.LAST_FAILURE, ""))
     root.add_child(BtNode_BlackboardSet("reset nav location", bb_keys.LAST_NAV_LOCATION, ""))
-    root.add_child(BtNode_BlackboardSet("reset from_shelf", bb_keys.GRASP_FROM_SHELF, False))
+    root.add_child(BtNode_BlackboardSet("reset grasp-referee", bb_keys.GRASP_ASK_REFEREE, False))
     root.add_child(plan)
     if emit_plan_dir is not None:
         root.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))

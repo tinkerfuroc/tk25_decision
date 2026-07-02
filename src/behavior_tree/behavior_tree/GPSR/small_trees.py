@@ -112,10 +112,12 @@ class bb_keys:
                                            #   recently navigated to (goto /
                                            #   search_object); lets a later grasp
                                            #   infer a shelf grasp.
-    GRASP_FROM_SHELF = "gpsr/grasp_from_shelf"  # bool — the object is on a shelf:
-                                           #   skip the real grasp (unsafe /
-                                           #   might damage the shelf) and go
-                                           #   straight to the ask-referee branch.
+    GRASP_ASK_REFEREE = "gpsr/grasp_ask_referee"  # bool — the object is on
+                                           #   furniture the robot must NOT grasp
+                                           #   from (shelf / cabinet / coat_rack):
+                                           #   skip the real grasp (unsafe / might
+                                           #   damage it) and go straight to the
+                                           #   ask-referee (deus-ex-machina) branch.
 
 
 ARM_ACTION_NAME = "joint_move_action"
@@ -404,30 +406,30 @@ class BtNode_CheckBBKeySet(Behaviour):
         return Status.SUCCESS
 
 
-class BtNode_CheckNotFromShelf(Behaviour):
-    """SUCCESS unless ``GRASP_FROM_SHELF`` is truthy.
+class BtNode_CheckGraspAllowed(Behaviour):
+    """SUCCESS unless ``GRASP_ASK_REFEREE`` is truthy.
 
-    Guards the primary grasp so a shelf grasp is skipped: when the object is on
-    a shelf the robot cannot grasp it safely (and risks damaging the shelf), so
+    Guards the primary grasp so it is skipped when the object sits on furniture
+    the robot must not grasp from (shelf / cabinet / coat_rack). In that case
     this fails, the grasp Selector falls straight through to the ask-referee
     (deus-ex-machina) branch, and no arm scan / grasp is ever attempted.
     """
 
-    def __init__(self, name: str = "not from shelf?"):
+    def __init__(self, name: str = "grasp allowed?"):
         super().__init__(name)
         self._client = None
 
     def setup(self, **kwargs):
         self._client = self.attach_blackboard_client(name=self.name)
-        self._client.register_key(bb_keys.GRASP_FROM_SHELF, access=Access.READ)
+        self._client.register_key(bb_keys.GRASP_ASK_REFEREE, access=Access.READ)
 
     def update(self):
         try:
-            from_shelf = bool(self._client.get(bb_keys.GRASP_FROM_SHELF))
+            ask_referee = bool(self._client.get(bb_keys.GRASP_ASK_REFEREE))
         except Exception:
-            from_shelf = False
-        if from_shelf:
-            self.feedback_message = "object is on the shelf — skipping to ask-referee"
+            ask_referee = False
+        if ask_referee:
+            self.feedback_message = "object is on no-grasp furniture (shelf/cabinet/coat_rack) — skipping to ask-referee"
             return Status.FAILURE
         return Status.SUCCESS
 
@@ -962,12 +964,13 @@ def create_grasp():
         "retry primary 3x", primary, num_failures=3,
     )
 
-    # Only attempt the real grasp when the object is NOT on a shelf. A shelf
-    # grasp fails this guard immediately (no arm scan, no grasp motion) so the
-    # Selector drops through to the ask-referee branch below — the robot cannot
-    # safely reach into a shelf and could damage it.
-    guarded_primary = py_trees.composites.Sequence("grasp/try_unless_shelf", memory=True)
-    guarded_primary.add_child(BtNode_CheckNotFromShelf("skip primary if from shelf"))
+    # Only attempt the real grasp when the object is NOT on no-grasp furniture
+    # (shelf / cabinet / coat_rack). Such a grasp fails this guard immediately
+    # (no arm scan, no grasp motion) so the Selector drops through to the
+    # ask-referee branch below — the robot cannot safely reach into those and
+    # could damage them.
+    guarded_primary = py_trees.composites.Sequence("grasp/try_unless_no_grasp", memory=True)
+    guarded_primary.add_child(BtNode_CheckGraspAllowed("skip primary at no-grasp furniture"))
     guarded_primary.add_child(primary_with_retry)
 
     ex_machina = py_trees.composites.Sequence("grasp/ex_machina", memory=True)
