@@ -32,6 +32,7 @@ from behavior_tree.TemplateNodes.Vision import (
     BtNode_ScanForGeneralist,
     BtNode_TurnPanTilt,
     BtNode_FeatureExtraction,
+    BtNode_DoorDetection,
 )
 from behavior_tree.TemplateNodes.Manipulation import (
     BtNode_MoveArmSingle,
@@ -118,6 +119,18 @@ class bb_keys:
                                            #   skip the real grasp (unsafe / might
                                            #   damage it) and go straight to the
                                            #   ask-referee (deus-ex-machina) branch.
+    GRASP_REFEREE_LOCATION = "gpsr/grasp_referee_location"  # str — the no-grasp
+                                           #   furniture name the ask-referee
+                                           #   branch drives to first.
+    GRASP_REFEREE_POSE = "gpsr/grasp_referee_pose"  # PoseStamped — its resolved
+                                           #   pose (None if unresolvable; the
+                                           #   goto is then a best-effort no-op).
+
+    # Arena entry (GPSR starts OUTSIDE the arena, in front of the door)
+    DOOR_STATUS = "gpsr/door_status"       # int — 1 open / 0 closed (BtNode_DoorDetection)
+    ARENA_ENTERED = "gpsr/arena_entered"   # truthy once the robot has crossed the
+                                           #   threshold; latched so the door step
+                                           #   runs exactly once per mission.
 
 
 ARM_ACTION_NAME = "joint_move_action"
@@ -596,6 +609,43 @@ def _tuck_arm_for_nav(label: str = "tuck arm for nav"):
     )
 
 
+def create_enter_arena():
+    """Enter the arena ONCE, at mission start.
+
+    GPSR starts the robot OUTSIDE the arena, standing in front of the (usually
+    closed) entrance door. This KEEPS SENSING the door until it opens:
+    ``BtNode_DoorDetection`` returns FAILURE while the door is closed, and the
+    ``FailureIsRunning`` decorator maps that to RUNNING, so the node is re-ticked
+    (re-sensed) every tick and the tree simply waits — it never gives up and
+    never proceeds through a closed door. Once the door reads open the node
+    succeeds, we announce, and latch ``ARENA_ENTERED`` so the whole step is
+    skipped on every later command round. The robot only crosses the threshold
+    once; subsequent rounds return to the command point, never back to the door.
+
+    In mock mode the detection auto-succeeds immediately.
+    """
+    detect = py_trees.composites.Sequence("detect door + enter", memory=True)
+    detect.add_child(py_trees.decorators.FailureIsRunning(
+        "keep sensing until door opens",
+        BtNode_DoorDetection(
+            "detect open door", bb_door_state_key=bb_keys.DOOR_STATUS,
+        ),
+    ))
+    detect.add_child(BtNode_Announce(
+        "announce entering arena", bb_source=None,
+        message="The door is open. Entering the arena.",
+    ))
+    detect.add_child(BtNode_BlackboardSet(
+        "latch arena entered", bb_keys.ARENA_ENTERED, True,
+    ))
+    # Run detect at most once: after the first success ARENA_ENTERED is set, so
+    # the guard short-circuits the Selector on every later round.
+    once = py_trees.composites.Selector("enter arena (once)", memory=False)
+    once.add_child(BtNode_CheckBBKeySet("already entered arena?", bb_keys.ARENA_ENTERED))
+    once.add_child(detect)
+    return once
+
+
 def create_goto():
     """Navigate to ``bb_keys.TARGET_POSE`` (filled by orchestrator)."""
     seq = py_trees.composites.Sequence("small/goto", memory=True)
@@ -974,6 +1024,7 @@ def create_grasp():
     guarded_primary.add_child(primary_with_retry)
 
     ex_machina = py_trees.composites.Sequence("grasp/ex_machina", memory=True)
+    # Tuck the arm first so it does not block the lidar during the drive.
     ex_machina.add_child(py_trees.decorators.Retry(
         "retry arm back",
         BtNode_MoveArmSingle(
@@ -982,6 +1033,27 @@ def create_grasp():
             arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
         ),
         num_failures=5,
+    ))
+    # Drive to the no-grasp furniture BEFORE asking the referee, so the robot is
+    # standing at the shelf/cabinet/coat_rack (where the object and referee are)
+    # when it presents its gripper. Guarded + best-effort: if the orchestrator
+    # could not resolve a pose (GRASP_REFEREE_POSE unset/None) the whole goto is
+    # skipped and we ask from the current spot instead of sending a null goal.
+    goto_referee = py_trees.composites.Sequence("goto no-grasp furniture", memory=True)
+    goto_referee.add_child(BtNode_CheckBBKeySet(
+        "no-grasp furniture pose set?", bb_keys.GRASP_REFEREE_POSE,
+    ))
+    goto_referee.add_child(BtNode_AnnounceFromBB(
+        "announce approaching no-grasp furniture",
+        bb_keys.GRASP_REFEREE_LOCATION, prefix="I cannot grasp safely there, going to the ",
+    ))
+    goto_referee.add_child(py_trees.decorators.Retry(
+        "retry goto no-grasp furniture",
+        BtNode_GotoAction("goto no-grasp furniture", key=bb_keys.GRASP_REFEREE_POSE),
+        num_failures=5,
+    ))
+    ex_machina.add_child(py_trees.decorators.FailureIsSuccess(
+        "goto no-grasp furniture (best effort)", goto_referee,
     ))
     ex_machina.add_child(BtNode_GripperAction("open gripper", True))
     ex_machina.add_child(BtNode_AnnounceFromBB(
