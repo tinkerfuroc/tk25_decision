@@ -35,7 +35,7 @@ def test_fold_announce_references_screen():
     announce = next(
         b for b in fold.iterate() if b.name == "Announce folding start"
     )
-    assert "as shown on my screen" in announce.given_msg
+    assert "lay the shirt out in the manner as shown on my screen" in announce.given_msg
 
 
 def test_fold_wait_extended_to_ten_seconds():
