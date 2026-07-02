@@ -676,6 +676,11 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-07-02** — DoingLaundry: task now starts behind an operator Enter gate
+  (`BtNode_PressEnterToSucceed`), then waits for the arena door via
+  `door_detection_srv` (Inspection-style Retry) before navigating to the
+  folding table. Fold prompt now asks to "lay the shirt out in the manner as
+  shown on my screen"; lay-out wait extended 5 s → 10 s.
 - **2026-06-27** — PickAndPlace rulebook tree: `pickAndPlaceRulebook()`
   (inventory→queue→per-item loop, breakfast, extra-surface), `BtNode_ScanAndPlace`
   + inventory/queue/guard/deadline nodes, `--place-policy {hardcoded,vlm}`

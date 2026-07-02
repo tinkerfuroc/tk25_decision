@@ -40,6 +40,7 @@ from behavior_tree.TemplateNodes.Vision import (
 )
 from behavior_tree.TemplateNodes.WaitKeyPress import BtNode_WaitKeyboardPress
 from behavior_tree.TemplateNodes.manipulation_new import BtNode_JointMoveAction
+from behavior_tree.TemplateNodes.OperatorGate import BtNode_PressEnterToSucceed
 
 from .config import (
     ARM_POS_FOLD_START,
@@ -71,7 +72,7 @@ from .config import (
     # KEY_ARM_PICK_WASHER,
     # KEY_ARM_PLACING,
     # KEY_ARM_SCAN,
-    # KEY_DOOR_STATUS,
+    KEY_DOOR_STATUS,
     # KEY_ENV_POINTS,
     # KEY_FOLD_COUNT,
     # KEY_GRASP_ANNOUNCEMENT,
@@ -374,11 +375,11 @@ def foldClothingOnce():
         BtNode_Announce(
             name="Announce folding start",
             bb_source=None,
-            message="Start folding, please help me to lay a piece of clothing flat on the table.",
+            message="Start folding, please lay the shirt out in the manner as shown on my screen.",
         )
     )
     root.add_child(
-        py_trees.timers.Timer(name="Wait for clothing to be laid flat", duration=5.0)
+        py_trees.timers.Timer(name="Wait for clothing to be laid flat", duration=10.0)
     )
     root.add_child(
         BtNode_FoldClothingDn(
@@ -390,7 +391,7 @@ def foldClothingOnce():
         BtNode_Announce(
             name="Announce folding complete",
             bb_source=None,
-            message="Please help me to fold the current cloth into half and move away the clothes on table.",
+            message="Folding Complete. Please help me to move the folded cloth away.",
         )
     )
     return root
@@ -398,6 +399,10 @@ def foldClothingOnce():
 
 def createDoingLaundry():
     root = py_trees.composites.Sequence(name="Doing Laundry", memory=True)
+
+    # Operator gate: nothing runs until a deliberate Enter (same gate as GPSR/HRI).
+    root.add_child(BtNode_PressEnterToSucceed(name="Wait for operator to start"))
+
     root.add_child(createConstantWriter())
 
     start_parallel = py_trees.composites.Parallel(
@@ -408,14 +413,49 @@ def createDoingLaundry():
         BtNode_Announce(
             name="Announce task start",
             bb_source=None,
-            message="Starting laundry task! Navigating to laundry area.",
+            message="Starting laundry task!",
         )
     )
+    start_parallel.add_child(BtNode_TurnPanTilt("look at desktop"))
     root.add_child(start_parallel)
 
-    root.add_child(pickupOneClothing())
-    root.add_child(pickupLaundryBasket())
-    root.add_child(goAndPlaceBasket())
+    # Door wait, mirroring Inspection: announce ready + aim head, then poll the
+    # door_detection_srv until it reports open (FAILURE on closed keeps Retry going).
+    ready = py_trees.composites.Parallel(
+        name="Announce ready + aim pan-tilt",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll(synchronise=False),
+    )
+    ready.add_child(
+        BtNode_Announce(
+            name="Announce ready for laundry",
+            bb_source=None,
+            message="I am ready for the laundry task, please open the door.",
+        )
+    )
+    ready.add_child(BtNode_TurnPanTilt(name="Aim pan-tilt at door", x=0.0, y=45.0))
+    root.add_child(ready)
+
+    root.add_child(
+        py_trees.decorators.Retry(
+            name="Retry door detection",
+            child=BtNode_DoorDetection(
+                name="Door detection", bb_door_state_key=KEY_DOOR_STATUS
+            ),
+            num_failures=999,
+        )
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            name="Announce door open",
+            bb_source=None,
+            message="The door is open. Heading to the folding table.",
+        )
+    )
+
+    # root.add_child(pickupOneClothing())
+    # root.add_child(pickupLaundryBasket())
+    # root.add_child(goAndPlaceBasket())
 
     root.add_child(
         _moveArmRetry(
