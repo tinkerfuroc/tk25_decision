@@ -17,7 +17,7 @@ import py_trees
 from py_trees.behaviour import Behaviour
 from py_trees.common import Access, Status
 from py_trees.blackboard import Blackboard
-from geometry_msgs.msg import PoseStamped, PointStamped, Pose, Point, Quaternion
+from geometry_msgs.msg import PointStamped, Point
 from std_msgs.msg import Header
 import rclpy
 
@@ -26,6 +26,7 @@ from behavior_tree.TemplateNodes.Navigation import (
     BtNode_GotoAction,
     BtNode_ConvertGraspPose,
     BtNode_CaptureCurrentPose,
+    BtNode_Approach,
 )
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
 from behavior_tree.TemplateNodes.Vision import (
@@ -82,7 +83,6 @@ class bb_keys:
     TARGET_PERSON_PROMPT = "gpsr/target_person_prompt"  # str
     TARGET_PERSON_POSE = "gpsr/target_person_pose"      # PoseStamped/PointStamped
     TARGET_PERSON_DETECTION = "gpsr/target_person_detection"
-    PERSON_NAV_POSE = "gpsr/person_nav_pose"            # PoseStamped (approach goal)
     PERSON_VISION_PROMPT = "gpsr/person_vision_prompt"  # str (descriptor -> vision prompt)
     ALL_WAVING_PERSONS = "gpsr/all_waving_persons"
     ANNOUNCE_TEXT = "gpsr/announce_text"
@@ -137,6 +137,25 @@ ARM_ACTION_NAME = "joint_move_action"
 GRASP_SERVICE_NAME = "start_grasp"
 WAVING_THRESHOLD_METERS = 6.0
 
+# GPSR person-approach standoff (BtNode_Approach -> go_to_approach goal).
+# desired = approach_planner's tuned desired_distance_default (1.0 m,
+# config/approach_planner.yaml) + 0.3 m extra personal space for GPSR
+# interactions (describe / ask / handover). min/max MUST bracket desired:
+# the server-side attempt-2 solve rejects desired outside [min, max] with
+# STATUS_INVALID_REQUEST (approach_planner/algorithm.py:184), which would
+# silently disable the costmap recompute safety net. min=1.0 keeps
+# ~0.75 m bumper-to-person even at the inward ring floor (footprint front
+# extent 0.25 m); max=1.6 lets a wall-blocked 1.3 m ring degrade outward
+# instead of failing NO_CANDIDATE. Per-goal overrides only — the shared
+# yaml defaults used by other callers (Restaurant etc.) are untouched.
+PERSON_APPROACH_DESIRED_DISTANCE_M = 1.3
+PERSON_APPROACH_MIN_DISTANCE_M = 1.0
+PERSON_APPROACH_MAX_DISTANCE_M = 1.6
+# Per-goal wall-clock cap (goal.timeout_sec; 0 would fall back to the
+# server's nav_total_timeout_sec). Retry(num_failures=3) x 45 s ~= 135 s
+# worst case for one approach_person plan step.
+PERSON_APPROACH_TIMEOUT_SEC = 45.0
+
 # Fixed capacity for the room sweep (create_search_object). The dispatcher
 # builds every small tree once, before any command, so the sweep cannot size
 # itself to the runtime location's spot list — it is built with this many
@@ -145,6 +164,16 @@ WAVING_THRESHOLD_METERS = 6.0
 # a room ever needs more than this many recorded search spots.
 MAX_SEARCH_SPOTS = 6
 SEARCH_POSE_KEYS = [f"gpsr/search_pose_{i}" for i in range(MAX_SEARCH_SPOTS)]
+
+# Pan-tilt search sweep (degrees). When looking for a target the robot tries
+# every (pan, tilt) combination in turn, stopping at the first one where the
+# target is detected (see _pantilt_sweep). Higher tilt looks up, lower looks
+# down (matching the existing nodes: 45 = up at a standing person, 20 = down at
+# a table, 0 = level). Each list is swept in order, pan-inner / tilt-outer, so
+# the first tilt is the primary look.
+PAN_SWEEP_DEG = [0.0, 45.0, -45.0]   # centre first, then left, then right
+HUMAN_TILT_DEG = [45.0, 20.0]        # up at a standing person, then lower
+OBJECT_TILT_DEG = [0.0, 20.0]        # level, then angled down at a surface
 
 
 # ---------------------------------------------------------------------------
@@ -312,50 +341,6 @@ class BtNode_ExtractDetection(Behaviour):
         self.feedback_message = (
             f"Picked detection at ({picked.centroid.x:.2f}, {picked.centroid.y:.2f})"
         )
-        return Status.SUCCESS
-
-
-class BtNode_PointToPoseStamped(Behaviour):
-    """Convert a PointStamped on the blackboard to a PoseStamped facing the point.
-
-    Used so small trees can hand a navigation-ready goal to BtNode_GotoAction
-    when vision only gives them a PointStamped.
-    """
-
-    def __init__(self, name: str, bb_point_key: str, bb_pose_key: str):
-        super().__init__(name)
-        self._point_key = bb_point_key
-        self._pose_key = bb_pose_key
-        self._client = None
-
-    def setup(self, **kwargs):
-        self._client = self.attach_blackboard_client(name=self.name)
-        self._client.register_key(self._point_key, access=Access.READ)
-        self._client.register_key(self._pose_key, access=Access.WRITE)
-
-    def update(self):
-        try:
-            point = self._client.get(self._point_key)
-        except Exception as exc:
-            self.feedback_message = f"Missing point key: {exc}"
-            return Status.FAILURE
-
-        if isinstance(point, PoseStamped):
-            self._client.set(self._pose_key, point, overwrite=True)
-            return Status.SUCCESS
-        if not isinstance(point, PointStamped):
-            self.feedback_message = f"Unsupported type for {self._point_key}: {type(point)}"
-            return Status.FAILURE
-
-        # Build a PoseStamped at the target location with identity orientation.
-        pose = PoseStamped(
-            header=Header(stamp=rclpy.time.Time().to_msg(), frame_id=point.header.frame_id or "map"),
-            pose=Pose(
-                position=Point(x=point.point.x, y=point.point.y, z=0.0),
-                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
-        )
-        self._client.set(self._pose_key, pose, overwrite=True)
         return Status.SUCCESS
 
 
@@ -609,6 +594,34 @@ def _tuck_arm_for_nav(label: str = "tuck arm for nav"):
     )
 
 
+def _pantilt_sweep(label: str, tilts, make_detect):
+    """Sweep the pan-tilt across every (pan, tilt) combination until the
+    detection subtree ``make_detect()`` SUCCEEDS.
+
+    Iterates ``tilts`` (outer) × ``PAN_SWEEP_DEG`` (inner), so the robot does a
+    full left/centre/right pan at the first tilt, then repeats at the next tilt,
+    stopping the instant a combination detects the target. ``make_detect`` is a
+    zero-arg factory that must return a FRESH detection behaviour on each call —
+    a py_trees node can only occupy one slot in the tree, so every branch needs
+    its own instance. ``tilts`` picks the look range: ``HUMAN_TILT_DEG`` (up at a
+    standing person) or ``OBJECT_TILT_DEG`` (level/down at a surface).
+
+    Returns a memory Selector: SUCCESS the moment a combination detects the
+    target, FAILURE only after every (pan, tilt) has been tried with no hit.
+    """
+    sweep = py_trees.composites.Selector(f"{label} pantilt sweep", memory=True)
+    for tilt in tilts:
+        for pan in PAN_SWEEP_DEG:
+            branch = py_trees.composites.Sequence(
+                f"{label} pan={pan:+.0f} tilt={tilt:+.0f}", memory=True)
+            branch.add_child(BtNode_TurnPanTilt(
+                f"pan {pan:+.0f} tilt {tilt:+.0f}", x=pan, y=tilt,
+            ))
+            branch.add_child(make_detect())
+            sweep.add_child(branch)
+    return sweep
+
+
 def create_enter_arena():
     """Enter the arena ONCE, at mission start.
 
@@ -661,16 +674,13 @@ def create_goto():
     return seq
 
 
-def create_find_object():
-    """Scan for the object named in ``bb_keys.TARGET_OBJECT_PROMPT``.
-
-    Locate-only: stores the full detection result and verifies at least one
-    match exists. It deliberately does NOT pick a single instance — choosing
-    the object to manipulate is the grasp tree's job (``BtNode_FindObjTable``
-    re-detects on the table surface with the arm camera).
-    """
-    seq = py_trees.composites.Sequence("small/find_object", memory=True)
-    seq.add_child(BtNode_TurnPanTilt("turn pantilt down", x=0.0, y=20.0))
+def _object_scan_and_verify():
+    """Fresh object-detection subtree for one pan/tilt: generalist scan on the
+    orbbec, then verify at least one match (FAILURE if none, so the sweep moves
+    on). Returns new node instances each call so it drops into every sweep
+    branch. Locate-only — it does NOT pick a single instance; choosing the
+    object to grasp is the grasp tree's job (arm-camera re-detect)."""
+    seq = py_trees.composites.Sequence("object scan+verify", memory=True)
     seq.add_child(BtNode_ScanForGeneralist(
         name="generalist scan",
         bb_source=bb_keys.TARGET_OBJECT_PROMPT,
@@ -687,6 +697,20 @@ def create_find_object():
         bb_count_dst=bb_keys.COUNT_VALUE,
         fail_if_zero=True,
     ))
+    return seq
+
+
+def create_find_object():
+    """Scan for the object named in ``bb_keys.TARGET_OBJECT_PROMPT``.
+
+    Sweeps the pan-tilt across ``PAN_SWEEP_DEG`` × ``OBJECT_TILT_DEG`` (level,
+    then angled down at a surface), scanning + verifying at each angle and
+    stopping at the first (pan, tilt) where the object is seen — so an object
+    off to the side or on a higher/lower surface is still found without moving
+    the base. Locate-only: it does NOT pick a single instance.
+    """
+    seq = py_trees.composites.Sequence("small/find_object", memory=True)
+    seq.add_child(_pantilt_sweep("find_object", OBJECT_TILT_DEG, _object_scan_and_verify))
     seq.add_child(BtNode_AnnounceFromBB(
         "announce found", bb_keys.TARGET_OBJECT_NAME, prefix="I can see the "
     ))
@@ -728,48 +752,50 @@ def create_approach_person():
     """Navigate to the person pose stored by the most recent ``find_person``.
 
     Atomic action — the LLM plans ``find_person`` then ``approach_person``
-    when an interaction (describe / follow / guide / handover) needs the robot
-    standing next to the person rather than across the room. Converts
-    ``bb_keys.TARGET_PERSON_POSE`` (PointStamped from vision) into a nav goal
-    and drives there.
+    when an interaction (describe / follow / guide / handover) needs the
+    robot standing next to the person rather than across the room. Drives
+    the ``go_to_approach`` action (``approach_planner`` package) against
+    ``bb_keys.TARGET_PERSON_POSE`` (PointStamped from vision, map frame):
+    attempt 1 projects a standoff pose ``desired_distance`` back along the
+    robot→person axis and hands it to Nav2; on nav abort/stall, attempt 2
+    ring-searches the live global costmap between min/max_distance with
+    reachability gating (see ``BtNode_Approach``).
+
+    Requires the ``approach_planner`` node to be running (``ros2 launch
+    approach_planner approach_planner.launch.py``) — wired as pane 2 of
+    master_gpsr.sh's navigation window.
+
+    CAUTION: if ``two_stage_approach`` is ever flipped ON in
+    approach_planner, Stage B stops at its own ``final_standoff`` param
+    (0.7 m) and IGNORES this goal's desired_distance — the GPSR standoff
+    would silently regress. Default-off today, pinned by
+    ``test_config_invariants.test_two_stage_approach_default_off``.
     """
     seq = py_trees.composites.Sequence("small/approach_person", memory=True)
-    seq.add_child(BtNode_PointToPoseStamped(
-        "person point to nav pose",
-        bb_point_key=bb_keys.TARGET_PERSON_POSE,
-        bb_pose_key=bb_keys.PERSON_NAV_POSE,
-    ))
     seq.add_child(_tuck_arm_for_nav("tuck arm before approach"))
     seq.add_child(py_trees.decorators.Retry(
         "retry approach",
-        BtNode_GotoAction("goto person", key=bb_keys.PERSON_NAV_POSE),
+        BtNode_Approach(
+            "approach person",
+            bb_target_key=bb_keys.TARGET_PERSON_POSE,
+            desired_distance=PERSON_APPROACH_DESIRED_DISTANCE_M,
+            min_distance=PERSON_APPROACH_MIN_DISTANCE_M,
+            max_distance=PERSON_APPROACH_MAX_DISTANCE_M,
+            timeout_sec=PERSON_APPROACH_TIMEOUT_SEC,
+        ),
         num_failures=3,
     ))
     return seq
 
 
-def create_find_person():
-    """Scan for a person matching ``bb_keys.TARGET_PERSON_PROMPT`` and store
-    their pose. Locate-only — it does NOT move the robot.
+def _person_scan_strategies():
+    """Fresh person-detection Selector for one pan angle.
 
-    The waving-person specialist only runs when the descriptor actually
-    mentions waving; otherwise the generalist scans with a vision prompt built
-    from the descriptor (bare names collapse to "person"). To stand next to
-    the person, the planner emits ``approach_person`` as a separate step.
+    Waving-person specialist first (only when the descriptor mentions waving),
+    else the generalist vision scan with a prompt built from the descriptor.
+    Returns NEW node instances each call so it can be dropped into every branch
+    of the pan-tilt sweep (see ``_pantilt_sweep``).
     """
-    seq = py_trees.composites.Sequence("small/find_person", memory=True)
-    # Look FORWARD/up to see a standing person's body+face, not down at the floor.
-    seq.add_child(BtNode_TurnPanTilt("turn pantilt forward", x=0.0, y=45.0))
-    seq.add_child(BtNode_BuildPersonPrompt(
-        "descriptor to vision prompt",
-        bb_descriptor_key=bb_keys.TARGET_PERSON_PROMPT,
-        bb_prompt_key=bb_keys.PERSON_VISION_PROMPT,
-    ))
-    seq.add_child(BtNode_Announce(
-        "announce searching", bb_source=None,
-        message="Looking for a person, please stay still.",
-    ))
-
     selector = py_trees.composites.Selector("person scan strategies", memory=False)
     # waving-person specialist — only when the descriptor calls for it
     waving_branch = py_trees.composites.Sequence("waving person branch", memory=True)
@@ -801,7 +827,33 @@ def create_find_person():
         bb_point_dst=bb_keys.TARGET_PERSON_POSE,
     ))
     selector.add_child(generalist_branch)
-    seq.add_child(selector)
+    return selector
+
+
+def create_find_person():
+    """Scan for a person matching ``bb_keys.TARGET_PERSON_PROMPT`` and store
+    their pose. Locate-only — it does NOT move the robot.
+
+    Sweeps the pan-tilt across every (pan, tilt) in ``PAN_SWEEP_DEG`` ×
+    ``HUMAN_TILT_DEG`` (up at a standing person, then lower), running the
+    person-scan strategies at each angle and stopping at the first combination
+    where a person is seen — so a person off to the side or a different height
+    is still found without moving the base. The waving-person specialist only
+    runs when the descriptor mentions waving; otherwise the generalist scans
+    with a prompt built from the descriptor. To stand next to the person, the
+    planner emits ``approach_person`` separately.
+    """
+    seq = py_trees.composites.Sequence("small/find_person", memory=True)
+    seq.add_child(BtNode_BuildPersonPrompt(
+        "descriptor to vision prompt",
+        bb_descriptor_key=bb_keys.TARGET_PERSON_PROMPT,
+        bb_prompt_key=bb_keys.PERSON_VISION_PROMPT,
+    ))
+    seq.add_child(BtNode_Announce(
+        "announce searching", bb_source=None,
+        message="Looking for a person, please stay still.",
+    ))
+    seq.add_child(_pantilt_sweep("find_person", HUMAN_TILT_DEG, _person_scan_strategies))
     seq.add_child(BtNode_Announce(
         "announce found person", bb_source=None,
         message="Found a person.",
@@ -820,19 +872,20 @@ def create_describe_person():
     tree frames the face, extracts the description, and announces it.
     """
     seq = py_trees.composites.Sequence("small/describe_person", memory=True)
-    seq.add_child(BtNode_TurnPanTilt("turn pantilt up", x=0.0, y=45.0))
     seq.add_child(BtNode_Announce(
         "announce describing", bb_source=None,
         message="Let me take a look at this person.",
     ))
-    seq.add_child(py_trees.decorators.Retry(
-        "retry feature extraction",
-        BtNode_FeatureExtraction(
+    # Sweep pan 0/+45/-45 across HUMAN_TILT_DEG (up at a standing person, then
+    # lower); extract the description at each angle and stop at the first that
+    # succeeds, so a person not squarely in front / a different height is framed.
+    seq.add_child(_pantilt_sweep(
+        "describe_person", HUMAN_TILT_DEG,
+        lambda: BtNode_FeatureExtraction(
             "extract person description",
             bb_dest_key=bb_keys.DESCRIBE_FEATURES,
             bb_image_key=bb_keys.DESCRIBE_IMAGE,
         ),
-        num_failures=3,
     ))
     seq.add_child(BtNode_AnnounceFromBB(
         "announce description", bb_keys.DESCRIBE_FEATURES,

@@ -69,6 +69,7 @@
           "BtNode_ConvertGraspPose": "KEYPRESS",
           "BtNode_GoToLuggage": "KEYPRESS",
           "BtNode_GotoAction": "KEYPRESS",
+          "BtNode_Approach": "IMMEDIATE",
           "BtNode_FollowAction": "KEYPRESS",
           "BtNode_FindApproachPose": "IMMEDIATE",
           "BtNode_ProjectPose": "IMMEDIATE",
