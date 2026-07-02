@@ -982,6 +982,7 @@ class BtNode_FeatureMatching(ServiceHandler):
                  max_distance: float = 6.0,
                  target_frame: str = "base_link",
                  trim_last_person: bool = True,
+                 trim_first_person: bool = False,
                  ):
         """
         Args:
@@ -991,6 +992,14 @@ class BtNode_FeatureMatching(ServiceHandler):
                 drop the last feature vector before sending. Set to False
                 in HRI-style intros where **all** registered persons are
                 already seated and their centroids are needed.
+            trim_first_person: when True, drop the FIRST registered person
+                (HRI's host at KEY_PERSONS[0] — features unknown, never
+                recognized) from the request, and re-pad the returned
+                centroid list with None at index 0 so it stays
+                index-aligned with the persons list. Downstream consumers
+                (TurnTo/PointTo target_id=1/2) need no re-indexing; nothing
+                reads index 0, and a future reader fails loudly on None
+                rather than aiming at a bogus point.
         """
         super().__init__(name, service_name, FeatureMatching)
         self.blackboard = self.attach_blackboard_client(name=self.name)
@@ -1013,8 +1022,28 @@ class BtNode_FeatureMatching(ServiceHandler):
         self.max_distance = max_distance
         self.target_frame = target_frame
         self.trim_last_person = trim_last_person
+        self.trim_first_person = trim_first_person
 
         self.node = None
+
+    @staticmethod
+    def _apply_trims(features, images, trim_first, trim_last):
+        """Trim request lists; first = HRI host slot, last = Receptionist's
+        not-yet-seated newest guest. Independent and composable."""
+        if trim_last and features:
+            features = features[:-1]
+            images = images[:-1]
+        if trim_first and features:
+            features = features[1:]
+            images = images[1:]
+        return list(features), list(images)
+
+    @staticmethod
+    def _pad_centroids(centroids, trim_first):
+        """Restore persons↔centroids index alignment after a first-trim.
+        None (not a zeroed point) so an unexpected reader fails loudly."""
+        out = list(centroids)
+        return ([None] + out) if trim_first else out
 
     def initialise(self):
         super().initialise()
@@ -1027,6 +1056,8 @@ class BtNode_FeatureMatching(ServiceHandler):
             n = len(persons)
             if self.trim_last_person and n > 0:
                 n -= 1
+            if self.trim_first_person and n > 0:
+                n -= 1
             n = max(n, 1)  # keep a single centroid even if persons is empty
             centroids = []
             for i in range(n):
@@ -1036,7 +1067,9 @@ class BtNode_FeatureMatching(ServiceHandler):
                 mc.point.z = 1.3
                 mc.header.frame_id = self.target_frame
                 centroids.append(mc)
-            self.blackboard.centroids = centroids
+            self.blackboard.centroids = self._pad_centroids(
+                centroids, self.trim_first_person
+            )
             self.feedback_message = f"MOCK: Feature matching → {n} centroid(s)"
             return
 
@@ -1049,18 +1082,21 @@ class BtNode_FeatureMatching(ServiceHandler):
             p.comparison_image if p.comparison_image is not None else Image()
             for p in persons
         ]
-        if self.trim_last_person:
-            # Receptionist flow: the newest registered guest has not sat down yet
-            # and won't match anything at the sofa scan, so drop them.
-            request.features = request.features[:-1]
-            request.comparison_images = request.comparison_images[:-1]
+        # trim_last: Receptionist flow — the newest registered guest has not
+        # sat down yet and won't match anything at the sofa scan.
+        # trim_first: HRI flow — the host at index 0 has no known features
+        # and is never recognized; centroids are re-padded in update().
+        request.features, request.comparison_images = self._apply_trims(
+            request.features, request.comparison_images,
+            self.trim_first_person, self.trim_last_person,
+        )
         request.max_distance = self.max_distance
         request.target_frame = self.target_frame
         self.response = self.call_service_async(request)
         self.feedback_message = (
             f"Initialized feature matching (|features|={len(request.features)}, "
             f"|images|={len(request.comparison_images)}, "
-            f"trim_last={self.trim_last_person})"
+            f"trim_last={self.trim_last_person}, trim_first={self.trim_first_person})"
         )
 
     def update(self) -> Status:
@@ -1079,7 +1115,9 @@ class BtNode_FeatureMatching(ServiceHandler):
         if self.response.done():
             result : FeatureMatching.Response = self.response.result()
             if result.status == 0:
-                self.blackboard.centroids = result.centroids
+                self.blackboard.centroids = self._pad_centroids(
+                    result.centroids, self.trim_first_person
+                )
                 # for p in self.blackboard.centroids:
                 #     # p.point.z = 1.30
                 #     fac = p.point.x / 0.6
