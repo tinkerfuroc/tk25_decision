@@ -7,6 +7,7 @@ from behavior_tree.GPSR.small_trees import (  # noqa: E402
     PERSON_APPROACH_DESIRED_DISTANCE_M,
     PERSON_APPROACH_MAX_DISTANCE_M,
     PERSON_APPROACH_MIN_DISTANCE_M,
+    PERSON_APPROACH_TIMEOUT_SEC,
     create_approach_person,
 )
 from behavior_tree.TemplateNodes.Navigation import BtNode_Approach  # noqa: E402
@@ -27,6 +28,7 @@ def test_approach_person_calls_real_navigation():
     assert node.desired_distance == PERSON_APPROACH_DESIRED_DISTANCE_M
     assert node.min_distance == PERSON_APPROACH_MIN_DISTANCE_M
     assert node.max_distance == PERSON_APPROACH_MAX_DISTANCE_M
+    assert node.timeout_sec == PERSON_APPROACH_TIMEOUT_SEC
     # NOTE: bb_target_key is NOT a readable attribute on BtNode_Approach —
     # ActionHandler.__init__ only uses it to wire a blackboard-client remap
     # to "goal"; asserting on it would raise AttributeError. The blackboard
@@ -47,3 +49,4 @@ def test_approach_person_distance_bounds_satisfy_planner_guard():
     )
     # 1.3 = approach_planner's tuned 1.0 m default + the requested 0.3 m.
     assert PERSON_APPROACH_DESIRED_DISTANCE_M == 1.3
+    assert PERSON_APPROACH_TIMEOUT_SEC == 45.0
