@@ -146,6 +146,16 @@ WAVING_THRESHOLD_METERS = 6.0
 MAX_SEARCH_SPOTS = 6
 SEARCH_POSE_KEYS = [f"gpsr/search_pose_{i}" for i in range(MAX_SEARCH_SPOTS)]
 
+# Pan-tilt search sweep (degrees). When looking for a target the robot tries
+# every (pan, tilt) combination in turn, stopping at the first one where the
+# target is detected (see _pantilt_sweep). Higher tilt looks up, lower looks
+# down (matching the existing nodes: 45 = up at a standing person, 20 = down at
+# a table, 0 = level). Each list is swept in order, pan-inner / tilt-outer, so
+# the first tilt is the primary look.
+PAN_SWEEP_DEG = [0.0, 45.0, -45.0]   # centre first, then left, then right
+HUMAN_TILT_DEG = [45.0, 20.0]        # up at a standing person, then lower
+OBJECT_TILT_DEG = [0.0, 20.0]        # level, then angled down at a surface
+
 
 # ---------------------------------------------------------------------------
 # Tiny utility behaviours used inside the small trees
@@ -609,6 +619,34 @@ def _tuck_arm_for_nav(label: str = "tuck arm for nav"):
     )
 
 
+def _pantilt_sweep(label: str, tilts, make_detect):
+    """Sweep the pan-tilt across every (pan, tilt) combination until the
+    detection subtree ``make_detect()`` SUCCEEDS.
+
+    Iterates ``tilts`` (outer) × ``PAN_SWEEP_DEG`` (inner), so the robot does a
+    full left/centre/right pan at the first tilt, then repeats at the next tilt,
+    stopping the instant a combination detects the target. ``make_detect`` is a
+    zero-arg factory that must return a FRESH detection behaviour on each call —
+    a py_trees node can only occupy one slot in the tree, so every branch needs
+    its own instance. ``tilts`` picks the look range: ``HUMAN_TILT_DEG`` (up at a
+    standing person) or ``OBJECT_TILT_DEG`` (level/down at a surface).
+
+    Returns a memory Selector: SUCCESS the moment a combination detects the
+    target, FAILURE only after every (pan, tilt) has been tried with no hit.
+    """
+    sweep = py_trees.composites.Selector(f"{label} pantilt sweep", memory=True)
+    for tilt in tilts:
+        for pan in PAN_SWEEP_DEG:
+            branch = py_trees.composites.Sequence(
+                f"{label} pan={pan:+.0f} tilt={tilt:+.0f}", memory=True)
+            branch.add_child(BtNode_TurnPanTilt(
+                f"pan {pan:+.0f} tilt {tilt:+.0f}", x=pan, y=tilt,
+            ))
+            branch.add_child(make_detect())
+            sweep.add_child(branch)
+    return sweep
+
+
 def create_enter_arena():
     """Enter the arena ONCE, at mission start.
 
@@ -661,16 +699,13 @@ def create_goto():
     return seq
 
 
-def create_find_object():
-    """Scan for the object named in ``bb_keys.TARGET_OBJECT_PROMPT``.
-
-    Locate-only: stores the full detection result and verifies at least one
-    match exists. It deliberately does NOT pick a single instance — choosing
-    the object to manipulate is the grasp tree's job (``BtNode_FindObjTable``
-    re-detects on the table surface with the arm camera).
-    """
-    seq = py_trees.composites.Sequence("small/find_object", memory=True)
-    seq.add_child(BtNode_TurnPanTilt("turn pantilt down", x=0.0, y=20.0))
+def _object_scan_and_verify():
+    """Fresh object-detection subtree for one pan/tilt: generalist scan on the
+    orbbec, then verify at least one match (FAILURE if none, so the sweep moves
+    on). Returns new node instances each call so it drops into every sweep
+    branch. Locate-only — it does NOT pick a single instance; choosing the
+    object to grasp is the grasp tree's job (arm-camera re-detect)."""
+    seq = py_trees.composites.Sequence("object scan+verify", memory=True)
     seq.add_child(BtNode_ScanForGeneralist(
         name="generalist scan",
         bb_source=bb_keys.TARGET_OBJECT_PROMPT,
@@ -687,6 +722,20 @@ def create_find_object():
         bb_count_dst=bb_keys.COUNT_VALUE,
         fail_if_zero=True,
     ))
+    return seq
+
+
+def create_find_object():
+    """Scan for the object named in ``bb_keys.TARGET_OBJECT_PROMPT``.
+
+    Sweeps the pan-tilt across ``PAN_SWEEP_DEG`` × ``OBJECT_TILT_DEG`` (level,
+    then angled down at a surface), scanning + verifying at each angle and
+    stopping at the first (pan, tilt) where the object is seen — so an object
+    off to the side or on a higher/lower surface is still found without moving
+    the base. Locate-only: it does NOT pick a single instance.
+    """
+    seq = py_trees.composites.Sequence("small/find_object", memory=True)
+    seq.add_child(_pantilt_sweep("find_object", OBJECT_TILT_DEG, _object_scan_and_verify))
     seq.add_child(BtNode_AnnounceFromBB(
         "announce found", bb_keys.TARGET_OBJECT_NAME, prefix="I can see the "
     ))
@@ -748,28 +797,14 @@ def create_approach_person():
     return seq
 
 
-def create_find_person():
-    """Scan for a person matching ``bb_keys.TARGET_PERSON_PROMPT`` and store
-    their pose. Locate-only — it does NOT move the robot.
+def _person_scan_strategies():
+    """Fresh person-detection Selector for one pan angle.
 
-    The waving-person specialist only runs when the descriptor actually
-    mentions waving; otherwise the generalist scans with a vision prompt built
-    from the descriptor (bare names collapse to "person"). To stand next to
-    the person, the planner emits ``approach_person`` as a separate step.
+    Waving-person specialist first (only when the descriptor mentions waving),
+    else the generalist vision scan with a prompt built from the descriptor.
+    Returns NEW node instances each call so it can be dropped into every branch
+    of the pan-tilt sweep (see ``_pantilt_sweep``).
     """
-    seq = py_trees.composites.Sequence("small/find_person", memory=True)
-    # Look FORWARD/up to see a standing person's body+face, not down at the floor.
-    seq.add_child(BtNode_TurnPanTilt("turn pantilt forward", x=0.0, y=45.0))
-    seq.add_child(BtNode_BuildPersonPrompt(
-        "descriptor to vision prompt",
-        bb_descriptor_key=bb_keys.TARGET_PERSON_PROMPT,
-        bb_prompt_key=bb_keys.PERSON_VISION_PROMPT,
-    ))
-    seq.add_child(BtNode_Announce(
-        "announce searching", bb_source=None,
-        message="Looking for a person, please stay still.",
-    ))
-
     selector = py_trees.composites.Selector("person scan strategies", memory=False)
     # waving-person specialist — only when the descriptor calls for it
     waving_branch = py_trees.composites.Sequence("waving person branch", memory=True)
@@ -801,7 +836,33 @@ def create_find_person():
         bb_point_dst=bb_keys.TARGET_PERSON_POSE,
     ))
     selector.add_child(generalist_branch)
-    seq.add_child(selector)
+    return selector
+
+
+def create_find_person():
+    """Scan for a person matching ``bb_keys.TARGET_PERSON_PROMPT`` and store
+    their pose. Locate-only — it does NOT move the robot.
+
+    Sweeps the pan-tilt across every (pan, tilt) in ``PAN_SWEEP_DEG`` ×
+    ``HUMAN_TILT_DEG`` (up at a standing person, then lower), running the
+    person-scan strategies at each angle and stopping at the first combination
+    where a person is seen — so a person off to the side or a different height
+    is still found without moving the base. The waving-person specialist only
+    runs when the descriptor mentions waving; otherwise the generalist scans
+    with a prompt built from the descriptor. To stand next to the person, the
+    planner emits ``approach_person`` separately.
+    """
+    seq = py_trees.composites.Sequence("small/find_person", memory=True)
+    seq.add_child(BtNode_BuildPersonPrompt(
+        "descriptor to vision prompt",
+        bb_descriptor_key=bb_keys.TARGET_PERSON_PROMPT,
+        bb_prompt_key=bb_keys.PERSON_VISION_PROMPT,
+    ))
+    seq.add_child(BtNode_Announce(
+        "announce searching", bb_source=None,
+        message="Looking for a person, please stay still.",
+    ))
+    seq.add_child(_pantilt_sweep("find_person", HUMAN_TILT_DEG, _person_scan_strategies))
     seq.add_child(BtNode_Announce(
         "announce found person", bb_source=None,
         message="Found a person.",
@@ -820,19 +881,20 @@ def create_describe_person():
     tree frames the face, extracts the description, and announces it.
     """
     seq = py_trees.composites.Sequence("small/describe_person", memory=True)
-    seq.add_child(BtNode_TurnPanTilt("turn pantilt up", x=0.0, y=45.0))
     seq.add_child(BtNode_Announce(
         "announce describing", bb_source=None,
         message="Let me take a look at this person.",
     ))
-    seq.add_child(py_trees.decorators.Retry(
-        "retry feature extraction",
-        BtNode_FeatureExtraction(
+    # Sweep pan 0/+45/-45 across HUMAN_TILT_DEG (up at a standing person, then
+    # lower); extract the description at each angle and stop at the first that
+    # succeeds, so a person not squarely in front / a different height is framed.
+    seq.add_child(_pantilt_sweep(
+        "describe_person", HUMAN_TILT_DEG,
+        lambda: BtNode_FeatureExtraction(
             "extract person description",
             bb_dest_key=bb_keys.DESCRIBE_FEATURES,
             bb_image_key=bb_keys.DESCRIBE_IMAGE,
         ),
-        num_failures=3,
     ))
     seq.add_child(BtNode_AnnounceFromBB(
         "announce description", bb_keys.DESCRIBE_FEATURES,
