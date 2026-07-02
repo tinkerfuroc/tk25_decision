@@ -680,8 +680,9 @@ _Append-only. Newest entries on top._
   `create_approach_person()` replaces a same-day no-op mock with
   `BtNode_Approach` against `approach_planner`'s `go_to_approach` action,
   goal pinned to `desired=1.3m/min=1.0m/max=1.6m/timeout=45s` (all three
-  distance bounds are required — see that package's changelog for the
-  `STATUS_INVALID_REQUEST` guard this avoids). Dropped
+  distance bounds are required — see the `PERSON_APPROACH_*` constants-block
+  comment in `GPSR/small_trees.py` and this package's CHANGELOG `[2.2.16]`
+  entry for the `STATUS_INVALID_REQUEST` guard this avoids). Dropped
   `BtNode_PointToPoseStamped`/`PERSON_NAV_POSE`; `BtNode_Approach` is now
   registered in all three mock configs. New hard dependency:
   `approach_planner` must be launched (`master_gpsr.sh` navigation-window
