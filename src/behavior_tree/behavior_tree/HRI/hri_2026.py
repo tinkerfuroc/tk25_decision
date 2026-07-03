@@ -37,13 +37,18 @@ import py_trees_ros
 import rclpy
 
 import behavior_tree.HRI.hri as hri
-from behavior_tree.HRI.config import KEY_ARM_DROP, KEY_ARM_NAVIGATING
+from behavior_tree.HRI.config import (
+    KEY_ARM_DROP,
+    KEY_ARM_NAVIGATING,
+    KEY_SOFA_POSE_REVERSED,
+)
 from behavior_tree.HRI.follow_real import createBagDropReal, createFollowHostUntilStop
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.Manipulation import (
     BtNode_GripperAction,
     BtNode_MoveArmSingle,
 )
+from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.visualization import create_post_tick_visualizer
 
 
@@ -79,7 +84,14 @@ def createBagFlowReal2026():
         )
     )
     root.add_child(
-        py_trees.timers.Timer(name="Wait for bag placement", duration=3.0)
+        py_trees.timers.Timer(name="Wait for bag placement", duration=5.0)
+    )
+    root.add_child(
+        BtNode_Announce(
+            name="Ask for bag handover",
+            bb_source=None,
+            message="I will be closing my gripper. Please be careful"
+        )
     )
     root.add_child(
         BtNode_GripperAction(name="Close gripper with bag", open_gripper=False)
@@ -100,13 +112,47 @@ def createBagFlowReal2026():
         )
     )
 
+    # Turn 180 deg in place: same map point as the sofa waypoint, heading
+    # flipped (POSE_SOFA_REVERSED), so the robot faces away from the sofa
+    # and the host can stand in front of it for the follow. Best-effort:
+    # a nav refusal must not forfeit the follow-to-drop (200) scoring.
+    root.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name="Turn around at sofa (best effort)",
+            child=py_trees.decorators.Retry(
+                name="Retry turn around at sofa",
+                child=BtNode_GotoAction(
+                    name="Turn around at sofa",
+                    key=KEY_SOFA_POSE_REVERSED,
+                ),
+                num_failures=3,
+            ),
+        )
+    )
+
     # --- real follow host until the host signals to stop ---
     root.add_child(BtNode_TurnPanTilt(name=f"Look at host", x=0.0, y=35.0, speed=0.0))
     root.add_child(
         BtNode_Announce(
             name="Follow host announcement",
             bb_source=None,
-            message="Stand in front of me please. I'll follow you and carry the bag.",
+            message="Dear host, please stand in front of me now. I will carry the bag and follow you.",
+        )
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            name="Follow host announcement",
+            bb_source=None,
+            message="Waiting.",
+        )
+    )
+
+    root.add_child(
+        BtNode_Announce(
+            name="Follow host announcement",
+            bb_source=None,
+            message="After this announcement, I will start following you",
         )
     )
 

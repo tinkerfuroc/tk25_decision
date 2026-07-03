@@ -51,6 +51,7 @@ from .config import (
     ARM_POS_DROP,
     ARM_POS_HANDOVER,
     ARM_POS_NAVIGATING,
+    ARM_POS_ORBBEC_LOOK,
     ARM_POS_POINT_TO,
     DRINKS,
     FOLLOW_CONFIG,
@@ -59,6 +60,7 @@ from .config import (
     KEY_ARM_DROP,
     KEY_ARM_HANDOVER,
     KEY_ARM_NAVIGATING,
+    KEY_ARM_ORBBEC_LOOK,
     KEY_ARM_POINT_TO,
     KEY_DOOR_POSE,
     KEY_DOOR_STATUS,
@@ -82,9 +84,11 @@ from .config import (
     KEY_SEAT_POINTS,
     KEY_SEAT_RECOMMENDATION,
     KEY_SOFA_POSE,
+    KEY_SOFA_POSE_REVERSED,
     NAMES,
     POSE_DOOR,
     POSE_SOFA,
+    POSE_SOFA_REVERSED,
     SEAT_CATALOG,
 )
 
@@ -177,11 +181,29 @@ def createConstantWriter():
     )
     root.add_child(
         BtNode_WriteToBlackboard(
+            name="Write reversed sofa pose",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_SOFA_POSE_REVERSED,
+            object=POSE_SOFA_REVERSED,
+        )
+    )
+    root.add_child(
+        BtNode_WriteToBlackboard(
             name="Write arm nav pose",
             bb_namespace="",
             bb_source=None,
             bb_key=KEY_ARM_NAVIGATING,
             object=ARM_POS_NAVIGATING,
+        )
+    )
+    root.add_child(
+        BtNode_WriteToBlackboard(
+            name="Write arm orbbec look pose",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_ARM_ORBBEC_LOOK,
+            object=ARM_POS_ORBBEC_LOOK,
         )
     )
     root.add_child(
@@ -242,6 +264,25 @@ def createConstantWriter():
         )
     )
     return root
+
+
+def _armToPoseBestEffort(name: str, arm_pose_key: str, *, retries: int = 3):
+    """Best-effort arm move: retries, then FailureIsSuccess so a stuck arm
+    controller never blocks the rest of the task."""
+    return py_trees.decorators.FailureIsSuccess(
+        name=f"Best-effort {name}",
+        child=py_trees.decorators.Retry(
+            name=f"Retry {name}",
+            child=BtNode_MoveArmSingle(
+                name=name,
+                action_name="joint_move_action",
+                arm_pose_bb_key=arm_pose_key,
+                add_octomap=False,
+            ),
+            num_failures=retries,
+        ),
+    )
+
 
 def gazeAtSofa():
     root = py_trees.composites.Sequence(name="Gaze at sofa", memory=True)
@@ -520,18 +561,26 @@ def createScanHostFeatures():
     root.add_child(parallel_going)
     root.add_child(gazeAtSofa())
 
-    parallel_scan = py_trees.composites.Parallel(
-        name="Parallel host scan",
-        policy=py_trees.common.ParallelPolicy.SuccessOnAll()
+    # Lower the arm to orbbec-look the moment the scan announcement starts —
+    # by the time the announcement finishes speaking the arm is already clear
+    # of the head camera's frame, so feature extraction isn't delayed by a
+    # serial arm move.
+    announce_and_lower_arm = py_trees.composites.Parallel(
+        name="Announce host scan + lower arm to orbbec-look",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
-    parallel_scan.add_child(
+    announce_and_lower_arm.add_child(
         BtNode_Announce(
             name="Announce host scan",
             bb_source=None,
             message="Scanning host.",
         )
     )
-    parallel_scan.add_child(
+    announce_and_lower_arm.add_child(
+        _armToPoseBestEffort("Move arm to orbbec-look for host scan", KEY_ARM_ORBBEC_LOOK)
+    )
+    root.add_child(announce_and_lower_arm)
+    root.add_child(
         py_trees.decorators.Retry(
             name="Retry host feature extraction",
             child=BtNode_FeatureExtraction(
@@ -542,7 +591,6 @@ def createScanHostFeatures():
             num_failures=4,
         )
     )
-    root.add_child(parallel_scan)
     root.add_child(
         BtNode_CombinePerson(
             name="Register host profile",
@@ -555,6 +603,9 @@ def createScanHostFeatures():
     )
     root.add_child(
         BtNode_TurnPanTilt(name="Look forward after host scan", x=0.0, y=35.0, speed=0.0)
+    )
+    root.add_child(
+        _armToPoseBestEffort("Move arm back to navigating after host scan", KEY_ARM_NAVIGATING)
     )
     return root
 
@@ -573,7 +624,18 @@ def createGuestIntake(guest_idx: int):
         image_key = KEY_GUEST2_COMPARISON_IMAGE
 
     root = py_trees.composites.Sequence(name=f"Guest {guest_idx} intake", memory=True)
-    
+
+    # Arm to orbbec-look right after arrival (the goto-door in
+    # createArrivalTrigger just finished), BEFORE the rest of the intake —
+    # info_intake_with_eye_contact below runs BtNode_MaintainEyeContact for
+    # the whole name/drink conversation, so the arm needs to already be clear
+    # of the head camera before that starts, not just before feature
+    # extraction at the end. Same timing as the sofa arrival (see
+    # createEscortAndSeat's vision_branch).
+    root.add_child(
+        _armToPoseBestEffort(f"Move arm to orbbec-look guest {guest_idx}", KEY_ARM_ORBBEC_LOOK)
+    )
+
     info_intake = py_trees.composites.Sequence(
         name=f"Guest {guest_idx} info intake",
         memory=True,
@@ -594,10 +656,11 @@ def createGuestIntake(guest_idx: int):
     root.add_child(info_intake_with_eye_contact)
 
     root.add_child(BtNode_TurnPanTilt(name="look up", x=0.0, y=35.0))
+
     root.add_child(
         BtNode_Announce(
-            name="announce stand in front of me", 
-            bb_source=None, 
+            name="announce stand in front of me",
+            bb_source=None,
             message="Please stand about two meters in front of me so I can remember you. Thank you"
         )
     )
@@ -627,6 +690,11 @@ def createGuestIntake(guest_idx: int):
             key_image=image_key,
         )
     )
+    root.add_child(
+        _armToPoseBestEffort(
+            f"Move arm back to navigating after guest {guest_idx} scan", KEY_ARM_NAVIGATING
+        )
+    )
     return root
 
 
@@ -651,6 +719,14 @@ def createEscortAndSeat(guest_idx: int):
 
     vision_branch = py_trees.composites.Sequence(
         name=f"Scan seated personnel guest {guest_idx}", memory=True
+    )
+    # This branch runs in parallel with other_branch's "Arrived at sofa...
+    # scanning" announcement below (both are children of the same
+    # scan_and_announce Parallel started on the same tick), so lowering the
+    # arm here overlaps with that announcement instead of adding a serial
+    # delay before the seat scan.
+    vision_branch.add_child(
+        _armToPoseBestEffort(f"Move arm to orbbec-look guest {guest_idx} seat scan", KEY_ARM_ORBBEC_LOOK)
     )
     vision_branch.add_child(
         BtNode_SeatRecommendBbox(
@@ -1111,10 +1187,17 @@ def createBagFlow():
         BtNode_Announce(
             name="Ask for bag handover",
             bb_source=None,
-            message="Please place your bag in my gripper.",
+            message="Dear guest, please come close to me and place your bag in my gripper.",
         )
     )
-    root.add_child(py_trees.timers.Timer(name="Wait for bag placement", duration=3.0))
+    root.add_child(py_trees.timers.Timer(name="Wait for bag placement", duration=5.0))
+    root.add_child(
+        BtNode_Announce(
+            name="Ask for bag handover",
+            bb_source=None,
+            message="I will be closing my gripper. Please be careful"
+        )
+    )
     root.add_child(BtNode_GripperAction(name="Close gripper with bag", open_gripper=False))
     root.add_child(
         py_trees.decorators.FailureIsSuccess(
@@ -1136,7 +1219,7 @@ def createBagFlow():
         BtNode_Announce(
             name="Follow host announcement",
             bb_source=None,
-            message="I'll follow you and carry the bag.",
+            message="Dear host, please stand up and move in front of me. I will start to follow you and carry the bag.",
         )
     )
     root.add_child(BtNode_Announce(
