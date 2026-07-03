@@ -134,6 +134,7 @@ def scan_once(pan: float, tilt: float = 40.0, target_frame="base_link"):
             # on the fast-only CV path and this bench script never actually
             # exercises the VLM augmentation it exists to let you test.
             min_waving_persons=2,
+            bb_key_pictures="test_scan_waving_pictures",
         )
     )
     root.add_child(
