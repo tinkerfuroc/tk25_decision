@@ -275,15 +275,21 @@ class BtNode_RequireActiveCustomer(py_trees.behaviour.Behaviour):
 
 
 class BtNode_QueueHasQueued(py_trees.behaviour.Behaviour):
-    """Guard: SUCCESS iff ``customer_queue`` has at least one ``status="queued"`` entry.
+    """Guard: SUCCESS iff ``customer_queue`` has at least ``n_gate`` ``status="queued"`` entries.
 
     Placed as the first child of the Phase-1 Detection Selector so scanning is
     short-circuited when the queue already has pending candidates. This is the
     dedup for same-person re-scans across Phase-1 iterations.
+
+    ``n_gate`` defaults to 1 (original semantics). A caller sweeping for
+    multiple customers before committing to approach anyone (see
+    ``restaurants.createScanForUpToNCustomers``) can pass a higher ``n_gate``
+    to gate an early-stop-scanning decision instead.
     """
 
-    def __init__(self, name: str, *, queue_key: str):
+    def __init__(self, name: str, *, queue_key: str, n_gate: int = 1):
         super().__init__(name=name)
+        self.n_gate = n_gate
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="queue",
@@ -297,10 +303,10 @@ class BtNode_QueueHasQueued(py_trees.behaviour.Behaviour):
         except Exception:
             queue = []
         n = sum(1 for item in queue if item.get("status") == "queued")
-        if n == 0:
-            self.feedback_message = "Queue has no queued entries"
+        if n < self.n_gate:
+            self.feedback_message = f"Queue has {n} queued entries (< {self.n_gate})"
             return py_trees.common.Status.FAILURE
-        self.feedback_message = f"Queue has {n} queued entries"
+        self.feedback_message = f"Queue has {n} queued entries (>= {self.n_gate})"
         return py_trees.common.Status.SUCCESS
 
 

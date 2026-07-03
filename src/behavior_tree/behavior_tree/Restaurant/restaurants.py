@@ -336,7 +336,12 @@ def createDetectAndArbitrateCustomers(x: float = 0.0, y: float = 35.0):
     root.add_child(BtNode_Announce(
         name="Announce scanning",
         bb_source=None,
-        message="Please raise your hand",)
+        message="Dear customer, if you need to order, Please raise your hand high above your head.",)
+    )
+    root.add_child(BtNode_Announce(
+        name="Announce scanning",
+        bb_source=None,
+        message="Thank you",)
     )
     detect.add_child(_create_waving_detection_pass())
     # detect.add_child(_create_legacy_detection_pass())
@@ -344,6 +349,75 @@ def createDetectAndArbitrateCustomers(x: float = 0.0, y: float = 35.0):
     root.add_child(
         BtNode_QueueHasQueued(
             name="Queue has queued entries?",
+            queue_key=KEY_CUSTOMER_QUEUE,
+        )
+    )
+    root.add_child(
+        BtNode_SelectNextQueuedCustomer(
+            name="Select next caller",
+            queue_key=KEY_CUSTOMER_QUEUE,
+            selected_pose_key=KEY_CUSTOMER_LOCATION,
+            active_id_key=KEY_ACTIVE_CUSTOMER_ID,
+            picture_path_key=KEY_ACTIVE_CUSTOMER_PICTURE,
+        )
+    )
+    return root
+
+
+def createScanForUpToNCustomers(scan_positions, n_gate: int = 2):
+    """Sweep ``scan_positions`` looking for up to ``n_gate`` waving customers
+    before committing to approach anyone, then select the oldest queued one.
+
+    ``createDetectAndArbitrateCustomers`` bundles detect-and-select into one
+    step, so a Selector of per-position calls to it stops sweeping as soon as
+    ONE candidate is found -- it never looks further to see if a second
+    customer is also waving from another direction. This instead visits every
+    position in ``scan_positions`` (skipping the actual scan at a given
+    position, via ``BtNode_QueueHasQueued(n_gate=...)``, once enough are
+    already queued -- a position where nobody is detected is not a failure,
+    it just moves on to the next one), and only selects an active target
+    *after* the full sweep. Proceeds with a single customer if the sweep
+    never turns up a second one.
+    """
+    root = py_trees.composites.Sequence(
+        name=f"Scan for up to {n_gate} customers", memory=True
+    )
+    for x, y in scan_positions:
+        per_position = py_trees.composites.Selector(
+            name=f"Gate or scan ({x}, {y})", memory=True
+        )
+        per_position.add_child(
+            BtNode_QueueHasQueued(
+                name="Enough customers queued already?",
+                queue_key=KEY_CUSTOMER_QUEUE,
+                n_gate=n_gate,
+            )
+        )
+        detect_at_pos = py_trees.composites.Sequence(
+            name=f"Detect at ({x}, {y})", memory=True
+        )
+        detect_at_pos.add_child(BtNode_TurnPanTilt("turn pan tilt forwards", x=x, y=y))
+        detect_at_pos.add_child(BtNode_Announce(
+            name="Announce scanning",
+            bb_source=None,
+            message="Dear customer, if you need to order, Please raise your hand high above your head.",
+        ))
+        detect_at_pos.add_child(BtNode_Announce(
+            name="Announce scanning",
+            bb_source=None,
+            message="Thank you",
+        ))
+        detect_at_pos.add_child(_create_waving_detection_pass())
+        per_position.add_child(
+            py_trees.decorators.FailureIsSuccess(
+                name="Nobody here -- keep sweeping",
+                child=detect_at_pos,
+            )
+        )
+        root.add_child(per_position)
+    root.add_child(
+        BtNode_QueueHasQueued(
+            name="Any customers queued?",
             queue_key=KEY_CUSTOMER_QUEUE,
         )
     )

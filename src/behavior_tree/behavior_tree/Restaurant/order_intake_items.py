@@ -54,7 +54,7 @@ from behavior_tree.visualization import create_post_tick_visualizer
 # Reuse the canonical Phase-1 factories + helper nodes unchanged.
 from .restaurants import (
     createApproachCustomer,
-    createDetectAndArbitrateCustomers,
+    createScanForUpToNCustomers,
 )
 from .custumNodes import BtNode_ConfirmOrder, BtNode_RecordOrder
 from .state_nodes import (
@@ -182,19 +182,18 @@ def createCollectOneOrderItems() -> py_trees.composites.Sequence:
             pickup_verified_key=KEY_PICKUP_VERIFIED,
         )
     )
-    scan_for_customers = py_trees.composites.Selector(name="Scan for customers", memory=True)
-    for scan_pos in [
-        (0.0, 40.0),
-        (30.0, 40.0),
-        (-30.0, 40.0),
-        (0.0, 40.0),
-        (45.0, 40.0),
-        (-45.0, 40.0),
-    ]:
-        scan_for_customers.add_child(
-            createDetectAndArbitrateCustomers(x=scan_pos[0], y=scan_pos[1])
+    root.add_child(
+        createScanForUpToNCustomers(
+            scan_positions=[
+                (30.0, 0.0),
+                (30.0, 60.0),
+                (30.0, 120.0),
+                (30.0, -60.0),
+                (30.0, -120.0),
+            ],
+            n_gate=2,
         )
-    root.add_child(scan_for_customers)
+    )
     root.add_child(createApproachCustomer())
     root.add_child(
         BtNode_RequireActiveCustomer(
