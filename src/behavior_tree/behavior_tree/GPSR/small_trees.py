@@ -133,6 +133,19 @@ class bb_keys:
     GRASP_REFEREE_POSE = "gpsr/grasp_referee_pose"  # PoseStamped — its resolved
                                            #   pose (None if unresolvable; the
                                            #   goto is then a best-effort no-op).
+    GRASP_REFEREE_IS_APPLIANCE = "gpsr/grasp_referee_is_appliance"  # bool — the
+                                           #   no-grasp furniture is a closed
+                                           #   appliance (refrigerator / fridge /
+                                           #   washing machine / dishwasher) the
+                                           #   robot cannot open: the ask-referee
+                                           #   branch MUST first ask the referee to
+                                           #   open it, deterministically.
+    APPLIANCE_OPENED = "gpsr/appliance_opened"  # bool — the referee has already
+                                           #   been asked to open the appliance
+                                           #   (by an explicit open() step or the
+                                           #   grasp branch's own open-ask), so the
+                                           #   grasp branch does not ask twice.
+                                           #   Reset False per task.
 
     # Arena entry (GPSR starts OUTSIDE the arena, in front of the door)
     DOOR_STATUS = "gpsr/door_status"       # int — 1 open / 0 closed (BtNode_DoorDetection)
@@ -477,6 +490,34 @@ class BtNode_CheckBBKeySet(Behaviour):
         return Status.SUCCESS
 
 
+class BtNode_CheckBBTrue(Behaviour):
+    """SUCCESS iff the value at ``key`` is truthy (FAILURE if falsy/unset).
+
+    A generic boolean guard — used to gate the ask-referee-to-open step on
+    ``GRASP_REFEREE_IS_APPLIANCE`` (only closed appliances) and, via an
+    ``Inverter``, to skip it when ``APPLIANCE_OPENED`` is already set.
+    """
+
+    def __init__(self, name: str, key: str):
+        super().__init__(name)
+        self._key = key
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._key, access=Access.READ)
+
+    def update(self):
+        try:
+            value = self._client.get(self._key)
+        except Exception:
+            value = None
+        if bool(value):
+            return Status.SUCCESS
+        self.feedback_message = f"{self._key} is not truthy"
+        return Status.FAILURE
+
+
 class BtNode_CheckGraspAllowed(Behaviour):
     """SUCCESS unless ``GRASP_ASK_REFEREE`` is truthy.
 
@@ -769,8 +810,44 @@ def create_enter_arena():
     return once
 
 
+# Reassurance lines the robot cycles through WHILE navigating. A slow route plan
+# would otherwise leave the robot silent, and a referee may shut the task down if
+# it looks like it hung — so it keeps talking until the drive lands.
+GOTO_KEEPALIVE_LINES = [
+    "I am trying to go to the destination.",
+    "I am planning, please wait for a while.",
+    "Please give me a moment to arrive at the destination.",
+]
+
+
+def _goto_keepalive_announcer() -> py_trees.behaviour.Behaviour:
+    """A never-terminating announcer that loops ``GOTO_KEEPALIVE_LINES``.
+
+    A memory Sequence of BLOCKING announces (each returns only once its phrase
+    finishes) speaks the lines in order. ``SuccessIsRunning`` turns the Sequence's
+    completion back into RUNNING so it re-enters from the first line next tick — an
+    endless loop. ``FailureIsSuccess`` makes a TTS hiccup a non-event so the
+    announcer NEVER returns FAILURE (a failing sibling would abort the parallel and
+    with it the drive). Net effect: always RUNNING — the parallel is driven purely
+    by the goto child, and this just fills the silence until it is stopped.
+    """
+    lines = py_trees.composites.Sequence("keep-alive lines", memory=True)
+    for i, msg in enumerate(GOTO_KEEPALIVE_LINES):
+        lines.add_child(BtNode_Announce(
+            f"nav keepalive {i}", bb_source=None, message=msg,
+        ))
+    return py_trees.decorators.SuccessIsRunning(
+        "loop nav keepalive",
+        py_trees.decorators.FailureIsSuccess("nav keepalive best-effort", lines),
+    )
+
+
 def create_goto():
-    """Navigate to ``bb_keys.TARGET_POSE`` (filled by orchestrator)."""
+    """Navigate to ``bb_keys.TARGET_POSE`` (filled by orchestrator).
+
+    While the drive is in progress the robot loops ``GOTO_KEEPALIVE_LINES`` in
+    parallel with the nav, so a slow route plan never leaves it silent.
+    """
     seq = py_trees.composites.Sequence("small/goto", memory=True)
     seq.add_child(BtNode_AnnounceFromBB(
         "announce going", bb_keys.TARGET_LOCATION, prefix="Going to "
@@ -780,10 +857,20 @@ def create_goto():
     seq.add_child(_tuck_arm_for_nav(
         "tuck arm before goto", pose_key=bb_keys.ARM_NAVIGATING,
     ))
-    seq.add_child(py_trees.decorators.Retry(
+    drive = py_trees.decorators.Retry(
         "retry goto",
         BtNode_GotoAction("goto target", key=bb_keys.TARGET_POSE),
         num_failures=5,
+    )
+    # Drive + keep-alive chatter run together; the parallel finishes EXACTLY when
+    # the drive does (SuccessOnSelected targets the drive child). The announcer
+    # never succeeds or fails, so it neither ends the parallel early nor aborts it.
+    seq.add_child(py_trees.composites.Parallel(
+        "goto + keep talking",
+        policy=py_trees.common.ParallelPolicy.SuccessOnSelected(
+            children=[drive], synchronise=False,
+        ),
+        children=[drive, _goto_keepalive_announcer()],
     ))
     return seq
 
@@ -1164,8 +1251,12 @@ def create_grasp():
         num_failures=5,
     ))
 
+    # Grasp is EXPENSIVE (full arm scan → detect → pick → arm-back cycle), so cap
+    # the whole-cycle retry at a single re-attempt (num_failures=2 = one try + one
+    # retry). On the second failure the Selector drops straight to the ask-referee
+    # ex_machina branch rather than burning more time on a third heavy cycle.
     primary_with_retry = py_trees.decorators.Retry(
-        "retry primary 3x", primary, num_failures=3,
+        "retry primary once", primary, num_failures=2,
     )
 
     # Only attempt the real grasp when the object is NOT on no-grasp furniture
@@ -1209,6 +1300,31 @@ def create_grasp():
     ex_machina.add_child(py_trees.decorators.FailureIsSuccess(
         "goto no-grasp furniture (best effort)", goto_referee,
     ))
+    # MUST-DO for closed appliances (refrigerator / fridge / washing machine /
+    # dishwasher): before the handover, ask the referee to OPEN it — the robot
+    # cannot. This is deterministic (gated on GRASP_REFEREE_IS_APPLIANCE, set by
+    # the orchestrator), so it fires even when the planner did not emit a separate
+    # open() step. Skipped (via APPLIANCE_OPENED) when an explicit open() step
+    # already asked, so we never double-ask. Best-effort: a non-appliance or an
+    # already-opened appliance just falls through to the handover.
+    open_appliance = py_trees.composites.Sequence("ask referee to open appliance", memory=True)
+    open_appliance.add_child(BtNode_CheckBBTrue(
+        "furniture is a closed appliance?", bb_keys.GRASP_REFEREE_IS_APPLIANCE))
+    open_appliance.add_child(py_trees.decorators.Inverter(
+        "not already opened?",
+        BtNode_CheckBBTrue("already opened?", bb_keys.APPLIANCE_OPENED)))
+    open_appliance.add_child(BtNode_AnnounceFromBB(
+        "ask referee to open", bb_keys.GRASP_REFEREE_LOCATION,
+        prefix="Dear referee, I cannot open it myself. Please open the "))
+    open_appliance.add_child(BtNode_Announce(
+        "announce leave open", bb_source=None,
+        message="Thank you. Please leave it open for me."))
+    open_appliance.add_child(BtNode_WaitTicks("wait for referee to open", 8))
+    open_appliance.add_child(BtNode_BlackboardSet(
+        "mark appliance opened", bb_keys.APPLIANCE_OPENED, True))
+    ex_machina.add_child(py_trees.decorators.FailureIsSuccess(
+        "open appliance if needed (best effort)", open_appliance,
+    ))
     ex_machina.add_child(BtNode_GripperAction("open gripper", True))
     ex_machina.add_child(BtNode_AnnounceFromBB(
         "ask referee", bb_keys.TARGET_OBJECT_NAME, prefix="Dear referee, please help me grasp the "
@@ -1225,6 +1341,32 @@ def create_grasp():
         memory=True,
         children=[guarded_primary, ex_machina],
     )
+
+
+def create_open():
+    """Ask a human referee to open a container/appliance the robot cannot open
+    itself — a refrigerator/fridge, washing machine, or dishwasher (and cabinets).
+
+    The robot has already driven to it via the preceding ``goto``; here it just
+    requests help and waits, then leaves the door open for the following scan /
+    ask-referee grasp. Always SUCCESS-ish (announce + wait) so it never blocks the
+    rest of the plan — the object retrieval itself is handled by the ex-machina
+    grasp, which asks the referee to hand the item over.
+    """
+    seq = py_trees.composites.Sequence("small/open", memory=True)
+    seq.add_child(BtNode_AnnounceFromBB(
+        "ask referee to open", bb_keys.TARGET_LOCATION,
+        prefix="Dear referee, I cannot open it myself. Please open the "))
+    seq.add_child(BtNode_Announce(
+        "announce leave open", bb_source=None,
+        message="Thank you. Please leave it open for me.",
+    ))
+    seq.add_child(BtNode_WaitTicks("wait for referee to open", 8))
+    # Mark it opened so a following grasp's ask-referee branch does not repeat the
+    # open request (the grasp branch opens deterministically when this step was
+    # skipped, e.g. the planner omitted open() for a dishwasher).
+    seq.add_child(BtNode_BlackboardSet("mark appliance opened", bb_keys.APPLIANCE_OPENED, True))
+    return seq
 
 
 def create_place():
@@ -1492,6 +1634,7 @@ ACTION_FACTORIES = {
     "follow": create_follow,
     "guide": create_guide,
     "grasp": create_grasp,
+    "open": create_open,
     "place": create_place,
     "deliver": create_deliver,
     "count": create_count,
