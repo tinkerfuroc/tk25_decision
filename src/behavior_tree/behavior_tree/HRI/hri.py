@@ -967,7 +967,10 @@ def createTwoWayIntroduction():
     root.add_child(BtNode_Announce(
         name=f"Complete escort announcement",
         bb_source=None,
-        message="Please sit down and make yourself comfortable. Remain seated please."
+        message=(
+            "Please sit down and make yourself comfortable. "
+            "Please look at my head camera and remain seated."
+        )
     ))
 
     root.add_child(gazeAtSofa())
