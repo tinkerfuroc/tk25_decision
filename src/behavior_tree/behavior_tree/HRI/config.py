@@ -16,6 +16,7 @@ from pathlib import Path
 
 try:
     import rclpy
+    import rclpy.time
 except ModuleNotFoundError:  # pragma: no cover - exercised in non-ROS unit tests
     rclpy = None
 try:

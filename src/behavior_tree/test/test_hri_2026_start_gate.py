@@ -45,3 +45,8 @@ def test_host_seating_instruction_is_fourth():
         "Dear host, please sit down on the sofa and remain seated. "
         "Please do not walk around the room during the task."
     )
+
+
+def test_real_bag_flow_wired_into_full_tree():
+    root = createHRITask2026()
+    assert root.children[13].name == "HRI bag flow (real follow, 2026)"
