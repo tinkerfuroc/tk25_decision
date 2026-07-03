@@ -169,7 +169,21 @@ def scanAllPositions(target_frame="base_link"):
                 name="gate", bb_key_list=KEY_CUSTOMER_CENTROIDS, n_gate=30
             )
         )
-        pre_gate.add_child(scan_once(pan, target_frame=target_frame))
+        # BtNode_ScanForWavingPerson (unlike the old BtNode_DetectCallingCustomer
+        # it replaced) returns FAILURE when the scan finds zero wavers at this
+        # pan angle -- expected at most positions, not an error. Without this
+        # wrapper the outer Sequence can't advance past a failing position and
+        # tick_tock re-ticks the same pan forever. FailureIsSuccess lets a
+        # "found nothing here" position still count as done and move on; a
+        # position where wavers WERE found still runs BtNode_PackWavingCustomers
+        # (the Sequence only short-circuits past it on FAILURE, i.e. when there
+        # was nothing to pack anyway).
+        pre_gate.add_child(
+            py_trees.decorators.FailureIsSuccess(
+                name=f"scan at {pan} (no wavers found is OK, not a failure)",
+                child=scan_once(pan, target_frame=target_frame),
+            )
+        )
         root.add_child(pre_gate)
 
     return root
