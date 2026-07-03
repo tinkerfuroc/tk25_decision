@@ -9,7 +9,7 @@
     }
   },
   "mock_mode": {
-    "enabled": false,
+    "enabled": true,
     "auto_detect": false,
     "subsystems": {
       "vision": {
@@ -79,7 +79,7 @@
         }
       },
       "audio_input": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": false,
         "description": "Per-node mock mode for audio input nodes (not announcement)",
         "nodes": {

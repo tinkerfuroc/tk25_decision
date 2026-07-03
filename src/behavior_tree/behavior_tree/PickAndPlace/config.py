@@ -111,6 +111,9 @@ POSE_KITCHEN_ENTRY = _pose_reader(constants["pose_kitchen_entry"])
 # Single source pose for the cleanup loop; pose_table_2..6 stay in JSON as
 # future hooks for a multi-table sweep.
 POSE_TABLE = _pose_reader(constants["pose_table_1"])
+# Detour/staging waypoint reached before the table (operator clears a chair).
+# PLACEHOLDER identity pose in constants.json until surveyed at Setup Days.
+POSE_DETOUR = _pose_reader(constants["pose_detour"])
 POSE_WASH_STAGING = _pose_reader(constants["pose_wash_staging"])
 POSE_TRASH_BIN = _pose_reader(constants["pose_trash_bin"])
 POSE_CABINET = _pose_reader(constants["pose_cabinet"])
@@ -171,6 +174,7 @@ TARGET_FRAME = "base_link"
 # Poses
 KEY_POSE_KITCHEN_ENTRY = "pp_pose_kitchen_entry"
 KEY_POSE_TABLE = "pp_pose_table"
+KEY_POSE_DETOUR = "pp_pose_detour"
 KEY_POSE_WASH_STAGING = "pp_pose_wash_staging"
 KEY_POSE_TRASH_BIN = "pp_pose_trash_bin"
 KEY_POSE_CABINET = "pp_pose_cabinet"

@@ -71,17 +71,31 @@
       "w": 0.8955046774973311
     }
   },
-  "pose_table_1": {
+  "pose_detour": {
+    "_comment": "PLACEHOLDER detour/staging waypoint reached BEFORE the table so the operator can clear a chair in front of the robot. TODO(setup-days): capture from /amcl_pose and fill point + orientation; currently identity placeholder.",
     "point": {
-      "x": 0.6757674217224121,
-      "y": -2.3088715076446533,
+      "x": 0.0,
+      "y": 0.0,
       "z": 0.0
     },
     "orientation": {
       "x": 0.0,
       "y": 0.0,
-      "z": 0.2951263067082714,
-      "w": 0.9554582476951755
+      "z": 0.0,
+      "w": 1.0
+    }
+  },
+  "pose_table_1": {
+    "point": {
+      "x": 6.949,
+      "y": -1.187,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.34723987963226366,
+      "w": 0.9377763411352257
     }
   },
   "pose_table_2": {
@@ -178,15 +192,15 @@
   "pose_kitchen_shelf": {
     "_comment": "Designated bowl/spoon retrieval surface in the kitchen.",
     "point": {
-      "x": 2.9283249378204346,
-      "y": -4.809210300445557,
+      "x": 5.966,
+      "y": 1.407,
       "z": 0.0
     },
     "orientation": {
       "x": 0.0,
       "y": 0.0,
-      "z": 0.07511492396175273,
-      "w": 0.9971748834573704
+      "z": -1.0,
+      "w": 0.0
     }
   },
   "point_wash_staging": {

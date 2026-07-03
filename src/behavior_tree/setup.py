@@ -157,6 +157,8 @@ setup(
             "pp-test-breakfast-assembly = behavior_tree.PickAndPlace.breakfast_assembly:main",
             # PickAndPlace finalized 2026 production tree (routed real place + breakfast)
             "pick-and-place-2026 = behavior_tree.PickAndPlace.pick_and_place_v2:main",
+            # PickAndPlace manipulation-free scan probe (nav/vision/audio only)
+            "pick-and-place-tmp = behavior_tree.PickAndPlace.pick_and_place_tmp:main",
         ],
     },
 )
