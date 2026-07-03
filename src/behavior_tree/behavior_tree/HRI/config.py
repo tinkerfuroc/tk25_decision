@@ -97,11 +97,35 @@ def _arm_pose_reader(arm_pose_list):
     return [x / 180 * math.pi for x in arm_pose_list]
 
 
+def _flip_pose_180(pose_stamped):
+    """Same point as ``pose_stamped``, orientation rotated 180 deg about z.
+
+    Quaternion body-z half-turn: (x, y, z, w) -> (y, -x, w, -z); for the
+    planar (x=y=0) poses used here that is simply yaw + pi. Used by the
+    bag flow to turn the robot around in place at the sofa waypoint so the
+    host can stand in front of it before the follow starts.
+    """
+    q = pose_stamped.pose.orientation
+    p = pose_stamped.pose.position
+    return PoseStamped(
+        header=Header(
+            stamp=pose_stamped.header.stamp,
+            frame_id=pose_stamped.header.frame_id,
+        ),
+        pose=Pose(
+            position=Point(x=p.x, y=p.y, z=p.z),
+            orientation=Quaternion(x=q.y, y=-q.x, z=q.w, w=-q.z),
+        ),
+    )
+
+
 constants = _load_constants()
 
 POSE_DOOR = _pose_reader(constants["pose_door"])
 POSE_SOFA = _pose_reader(constants["pose_sofa"])
+POSE_SOFA_REVERSED = _flip_pose_180(POSE_SOFA)
 ARM_POS_NAVIGATING = _arm_pose_reader(constants["arm_pos_navigating"])
+ARM_POS_ORBBEC_LOOK = _arm_pose_reader(constants["arm_pos_orbbec_look"])
 ARM_POS_HANDOVER = _arm_pose_reader(
     constants.get("arm_pos_handover", constants["arm_pos_point_to"])
 )
@@ -122,8 +146,10 @@ SEAT_CATALOG = list(constants.get("seat_catalog", []))
 # Navigation / perception keys
 KEY_DOOR_POSE = "hri_door_pose"
 KEY_SOFA_POSE = "hri_sofa_pose"
+KEY_SOFA_POSE_REVERSED = "hri_sofa_pose_reversed"
 KEY_DOOR_STATUS = "hri_door_status"
 KEY_ARM_NAVIGATING = "hri_arm_navigating"
+KEY_ARM_ORBBEC_LOOK = "hri_arm_orbbec_look"
 KEY_ARM_HANDOVER = "hri_arm_handover"
 KEY_ARM_DROP = "hri_arm_drop"
 KEY_ARM_POINT_TO = "hri_arm_point_to"
