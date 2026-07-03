@@ -9,17 +9,17 @@
     }
   },
   "mock_mode": {
-    "enabled": true,
+    "enabled": false,
     "auto_detect": false,
     "subsystems": {
       "vision": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": false,
         "description": "Per-node mock mode for vision nodes. Allowed values: NO_MOCK, KEYPRESS, TELEOP, IMMEDIATE",
         "nodes": {
           "BtNode_ScanFor": "KEYPRESS",
           "BtNode_ScanForGeneralist": "KEYPRESS",
-          "BtNode_ObjectScan": "IMMEDIATE",
+          "BtNode_ObjectScan": "NO_MOCK",
           "BtNode_VLMQuery": "IMMEDIATE",
           "BtNode_LLMQuery": "IMMEDIATE",
           "BtNode_TrackPerson": "KEYPRESS",
@@ -31,8 +31,8 @@
           "BtNode_SeatRecommendBbox": "KEYPRESS",
           "BtNode_FeatureMatching": "KEYPRESS",
           "BtNode_GetPointCloud": "KEYPRESS",
-          "BtNode_DoorDetection": "KEYPRESS",
-          "BtNode_TurnPanTilt": "KEYPRESS",
+          "BtNode_DoorDetection": "IMMEDIATE",
+          "BtNode_TurnPanTilt": "IMMEDIATE",
           "BtNode_TurnTo": "KEYPRESS",
           "BtNode_ScanForWavingPerson": "KEYPRESS",
           "BtNode_ScanForWavingPersonNew": "IMMEDIATE",

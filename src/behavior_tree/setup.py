@@ -129,6 +129,8 @@ setup(
             "test-restaurant-barman = behavior_tree.Restaurant.test_barman_phase:main",
             # Restaurant order capture via free-form item-list action (new, 2026)
             "restaurant-test-order-items = behavior_tree.Restaurant.order_intake_items:main",
+            # Standalone audio dialogue smoke test: prompt -> extract -> repeat -> confirm
+            "restaurant-test-order-confirm = behavior_tree.Restaurant.test_order_confirm:main",
             # Restaurant finalized 2026 production tree (captured bar pose + item-list intake)
             "restaurant-2026 = behavior_tree.Restaurant.restaurant_v2:main",
             "grasp_once = behavior_tree.grasp_intel_demo.grasp:main",

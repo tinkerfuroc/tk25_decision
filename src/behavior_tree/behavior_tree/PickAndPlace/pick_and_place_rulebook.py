@@ -876,6 +876,7 @@ def phaseTableScan():
     # Object class at once). FailureIsSuccess-wrapped so a total scan failure
     # still lets the phase continue (WriteFoundItems then announces
     # "could not find any objects").
+    
     seq.add_child(
         py_trees.decorators.FailureIsSuccess(
             name="scan may fail",

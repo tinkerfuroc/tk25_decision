@@ -43,7 +43,14 @@ from behavior_tree.PickAndPlace.config import (
 
 
 class BtNode_WriteFoundItems(py_trees.behaviour.Behaviour):
-    """Writes found items from the generalist detection result to the blackboard for TTS announcement."""
+    """Writes found items from the generalist detection result to the blackboard for TTS announcement.
+
+    Always SUCCESS: a missing vision-result key (upstream scan never ran /
+    was skipped), an empty `.objects`, or a malformed result (unexpected
+    shape, missing `.cls`) all degrade to the same "found nothing" outcome
+    rather than failing the tree. This node only formats an announcement —
+    it must never be the thing that aborts a mission.
+    """
 
     def __init__(
         self,
@@ -66,27 +73,43 @@ class BtNode_WriteFoundItems(py_trees.behaviour.Behaviour):
         )
         self.place_seen = place_seen
 
+    def _found_nothing(self, reason):
+        self.blackboard.announcement_msg = "I could not find any objects"
+        self.feedback_message = reason
+        return py_trees.common.Status.SUCCESS
+
     def update(self):
         try:
             vision_result = self.blackboard.vision_result
-            if vision_result.objects:
-                object_names = ["one " + obj.cls for obj in vision_result.objects]
-                announcement_msg = f"I see {', '.join(object_names)}"
-                if self.place_seen is not None:
-                    announcement_msg += f"  {self.place_seen}."
-                else:
-                    announcement_msg += "."
-                self.blackboard.announcement_msg = announcement_msg
-                self.feedback_message = f"Wrote {announcement_msg} to blackboard"
-                return py_trees.common.Status.SUCCESS
-            else:
-                self.blackboard.announcement_msg = "I could not find any objects"
-                self.feedback_message = "No objects found in vision result"
-                return py_trees.common.Status.SUCCESS
         except Exception as e:
-            self.blackboard.announcement_msg = "Error processing vision result"
-            self.feedback_message = f"Error processing vision result: {e}"
-            return py_trees.common.Status.FAILURE
+            return self._found_nothing(
+                f"No vision result on blackboard, treating as none found: {e}"
+            )
+
+        objects = getattr(vision_result, "objects", None)
+        if not objects:
+            return self._found_nothing("No objects found in vision result")
+
+        try:
+            object_names = [
+                "one " + obj.cls for obj in objects if getattr(obj, "cls", None)
+            ]
+        except Exception as e:
+            return self._found_nothing(
+                f"Malformed vision result, treating as none found: {e}"
+            )
+
+        if not object_names:
+            return self._found_nothing("No valid object labels in vision result")
+
+        announcement_msg = f"I see {', '.join(object_names)}"
+        if self.place_seen is not None:
+            announcement_msg += f"  {self.place_seen}."
+        else:
+            announcement_msg += "."
+        self.blackboard.announcement_msg = announcement_msg
+        self.feedback_message = f"Wrote {announcement_msg} to blackboard"
+        return py_trees.common.Status.SUCCESS
 
 
 class BtNode_GetImage(ServiceHandler):

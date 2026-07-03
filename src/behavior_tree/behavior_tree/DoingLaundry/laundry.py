@@ -390,7 +390,7 @@ def foldClothingOnce():
         BtNode_Announce(
             name="Announce look at screen",
             bb_source=None,
-            message="Start folding, dear referee, please look at the image on my screen for how to lay out the garment.",
+            message="Dear referee, please look at the image on my screen for how to lay out the garment.",
         )
     )
     root.add_child(
@@ -404,7 +404,7 @@ def foldClothingOnce():
         BtNode_Announce(
             name="Announce lay flat",
             bb_source=None,
-            message="I will wait for ten seconds.",
+            message="I will wait for 10 seconds.",
         )
     )
     root.add_child(
@@ -607,7 +607,7 @@ def createDoingLaundry():
         BtNode_Announce(
             name="Announce referee help request",
             bb_source=None,
-            message=("Dear Referee, I need help."),
+            message=("Dear Referee, I will fold the clothes one by one"),
         )
     )
     root.add_child(
@@ -615,8 +615,7 @@ def createDoingLaundry():
             name="Announce referee help request",
             bb_source=None,
             message=(
-                "Please help me take out every single piece of clothes "
-                "from the laundry basket and washing machine"
+                "Please help me to pick up a piece of clothing from the washing machine or basket when I requested"
             ),
         )
     )
@@ -624,45 +623,7 @@ def createDoingLaundry():
         BtNode_Announce(
             name="Announce referee help request",
             bb_source=None,
-            message=("and put it on top of the washing machine."),
-        )
-    )
-    root.add_child(
-        BtNode_Announce(
-            name="Announce referee help request",
-            bb_source=None,
-            message=("I will fold the clothes one by one."),
-        )
-    )
-    root.add_child(
-        BtNode_Announce(
-            name="Announce referee help request",
-            bb_source=None,
-            message=("Please help me to flatten on the table when I request. "),
-        )
-    )
-    root.add_child(
-        BtNode_Announce(
-            name="Announce referee help request",
-            bb_source=None,
             message=("Thank you"),
-        )
-    )
-    root.add_child(
-        BtNode_Announce(
-            name="Announce referee help request",
-            bb_source=None,
-            message=("I will wait for 15 seconds."),
-        )
-    )
-    root.add_child(
-        py_trees.timers.Timer(name="Wait 15 s for referee help", duration=15.0)
-    )
-    root.add_child(
-        BtNode_Announce(
-            name="Announce thank you after referee help",
-            bb_source=None,
-            message="Thank you.",
         )
     )
 
