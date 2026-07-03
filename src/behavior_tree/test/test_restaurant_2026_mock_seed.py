@@ -23,7 +23,6 @@ import os
 os.environ.setdefault("BT_MOCK_MODE", "true")
 
 import py_trees  # noqa: E402
-import pytest  # noqa: E402
 
 import behavior_tree.Restaurant.order_intake_items as oii  # noqa: E402
 

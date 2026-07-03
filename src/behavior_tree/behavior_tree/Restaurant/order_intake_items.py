@@ -105,10 +105,14 @@ def _createSeedCustomerSubtree(customer_id: int) -> py_trees.composites.Sequence
     """Seed the post-SelectNextQueuedCustomer blackboard state for one synthetic
     active customer, replacing the Phase-1 scan under MOCK_SEED_CUSTOMER.
 
-    Writes exactly what a real scan + BtNode_SelectNextQueuedCustomer leaves
-    behind: a queue entry marked "active", the active id, the customer location
-    (a placeholder PoseStamped -- mocked BtNode_Approach is immediate and never
-    navigates to it), and an empty picture path.
+    Reproduces the fields BtNode_SelectNextQueuedCustomer writes for a single
+    active customer (active id, location, picture, and a single-entry queue
+    marked "active"). Note: the real scan *appends* to the queue across
+    customers; this seed overwrites it with one entry per order, which is
+    inconsequential since nothing downstream reads multi-entry queue history.
+    The customer location is a placeholder PoseStamped -- mocked
+    BtNode_Approach is immediate and never navigates to it -- and the picture
+    path is left empty.
     """
     pose = PoseStamped(
         header=Header(stamp=rclpy.time.Time().to_msg(), frame_id="map"),
@@ -229,6 +233,10 @@ def createCollectOneOrderItems(seed_customer_id: int = 1) -> py_trees.composites
     Mirrors ``restaurants.createCollectOneOrder`` exactly, swapping only the
     take-and-confirm leaf for the item-list variant. Detect, approach, checklist
     init, active-customer guard, record, and close are the canonical nodes.
+
+    Args:
+        seed_customer_id: id for the seeded synthetic customer when
+            MOCK_SEED_CUSTOMER is enabled; ignored on the normal scan path.
     """
     root = py_trees.composites.Sequence(name="Collect one order (items)", memory=True)
     root.add_child(
