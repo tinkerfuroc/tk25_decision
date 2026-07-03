@@ -123,6 +123,13 @@ def createTakeAndConfirmOrderItems() -> py_trees.composites.Parallel:
     ``BtNode_TakeOrder``.
     """
     root = py_trees.composites.Sequence(name="Take and confirm order (items)", memory=True)
+    root.add_child(
+        BtNode_Announce(
+            name="Order engagement prompt",
+            bb_source=None,
+            message="Hi. What would you like to order?",
+        )
+    )
 
     order_loop = py_trees.composites.Sequence(name="Order taking loop", memory=True)
     order_loop.add_child(createTakeOrderViaItems())
@@ -172,7 +179,14 @@ def createCollectOneOrderItems() -> py_trees.composites.Sequence:
         )
     )
     scan_for_customers = py_trees.composites.Selector(name="Scan for customers", memory=True)
-    for scan_pos in [(0.0, 35.0), (30.0, 35.0), (-30.0, 35.0)]:
+    for scan_pos in [
+        (0.0, 40.0),
+        (30.0, 40.0),
+        (-30.0, 40.0),
+        (0.0, 40.0),
+        (45.0, 40.0),
+        (-45.0, 40.0),
+    ]:
         scan_for_customers.add_child(
             createDetectAndArbitrateCustomers(x=scan_pos[0], y=scan_pos[1])
         )
