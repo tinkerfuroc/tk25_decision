@@ -45,16 +45,15 @@ Fully offline (no servers, auto-advance)::
 """
 
 import py_trees
-import py_trees_ros
 import rclpy
 from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from std_msgs.msg import Header
 
+from behavior_tree.runtime import run_tree
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
 from behavior_tree.TemplateNodes.Navigation import BtNode_CaptureCurrentPose
-from behavior_tree.visualization import create_post_tick_visualizer
 
 # Reuse the canonical Restaurant phase factories unchanged.
 from .restaurants import (
@@ -165,7 +164,7 @@ def createRestaurantTask2026() -> py_trees.behaviour.Behaviour:
             name="retry arm setup",
             child=BtNode_MoveArmSingle(
                 name="Move arm to navigation pose",
-                service_name="arm_joint_service",
+                action_name="joint_move_action",
                 arm_pose_bb_key=KEY_ARM_NAVIGATING,
                 add_octomap=False,
             ),
@@ -208,19 +207,12 @@ def create_tree() -> py_trees.behaviour.Behaviour:
 
 
 def main():
-    rclpy.init()
-    tree = py_trees_ros.trees.BehaviourTree(root=createRestaurantTask2026())
-    tree.setup(timeout=15, node_name="restaurant_2026")
-    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(title="restaurant-2026")
-    tree.tick_tock(period_ms=250.0, post_tick_handler=print_tree)
-    try:
-        rclpy.spin(tree.node)
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
-        pass
-    finally:
-        shutdown_visualizer()
-        tree.shutdown()
-        rclpy.try_shutdown()
+    run_tree(
+        createRestaurantTask2026,
+        period_ms=500.0,
+        title="Restaurant 2026",
+        node_name="restaurant_2026",
+    )
 
 
 if __name__ == "__main__":
