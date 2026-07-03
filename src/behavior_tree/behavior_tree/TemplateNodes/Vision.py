@@ -2006,11 +2006,19 @@ class BtNode_MaintainEyeContact(ActionHandler):
 
 class BtNode_ShowImage(pytree.behaviour.Behaviour):
     """
-    Display an image to the referee/audience. Currently a **stub**:
-    reads the file path from the blackboard, logs it, and returns SUCCESS.
+    Display a captured customer photo in an on-screen window so a referee can
+    see who was detected (rulebook partial-credit clause: "clearly identify
+    the person, e.g. show a picture").
 
-    TODO: Replace body with a publisher to the on-robot display topic once identified.
+    Holds the window open for DISPLAY_DURATION_SEC across multiple ticks
+    (RUNNING), then closes it and returns SUCCESS. Falls back to logging only
+    if no display is attached (e.g. headless test/mock runs) or the image
+    can't be loaded — never introduces a new FAILURE path versus the old stub.
     """
+
+    DISPLAY_DURATION_SEC = 4.0
+    WINDOW_NAME = "Tinker - Detected Customer"
+
     def __init__(self,
                  name: str,
                  bb_image_path_key: str,
@@ -2024,6 +2032,12 @@ class BtNode_ShowImage(pytree.behaviour.Behaviour):
             access=pytree.common.Access.READ,
             remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_image_path_key)
         )
+        self._display_start = None
+        self._display_active = False
+
+    def initialise(self) -> None:
+        self._display_start = None
+        self._display_active = False
 
     def update(self) -> Status:
         try:
@@ -2034,12 +2048,50 @@ class BtNode_ShowImage(pytree.behaviour.Behaviour):
         if not path:
             self.feedback_message = "ShowImage: empty image path"
             return pytree.common.Status.FAILURE
-        exists = os.path.exists(path)
-        prefix = "MOCK" if self.mock_mode else "STUB"
-        if exists:
+
+        prefix = "MOCK" if self.mock_mode else "LIVE"
+
+        if self._display_start is None:
+            if not os.path.exists(path):
+                self.feedback_message = f"{prefix}: image path {path} not on disk"
+                print(f"🖼️  {prefix} SHOW IMAGE (missing file): {path}")
+                return pytree.common.Status.SUCCESS
+            try:
+                import cv2
+                image = cv2.imread(path)
+                if image is None:
+                    raise ValueError(f"cv2.imread returned None for {path}")
+                cv2.namedWindow(self.WINDOW_NAME, cv2.WINDOW_NORMAL)
+                cv2.imshow(self.WINDOW_NAME, image)
+                cv2.waitKey(1)
+            except Exception as e:
+                self.logger.warning(f"ShowImage: no display available ({e}); logging only")
+                print(f"🖼️  {prefix} SHOW IMAGE (no display): {path}")
+                return pytree.common.Status.SUCCESS
+            self._display_active = True
+            self._display_start = time.time()
             self.feedback_message = f"{prefix}: displaying {path}"
             print(f"🖼️  {prefix} SHOW IMAGE: {path}")
-        else:
-            self.feedback_message = f"{prefix}: image path {path} not on disk (displaying anyway)"
-            print(f"🖼️  {prefix} SHOW IMAGE (missing file): {path}")
+            return pytree.common.Status.RUNNING
+
+        if time.time() - self._display_start < self.DISPLAY_DURATION_SEC:
+            import cv2
+            cv2.waitKey(1)
+            return pytree.common.Status.RUNNING
+
+        self._close_window()
         return pytree.common.Status.SUCCESS
+
+    def _close_window(self) -> None:
+        if not self._display_active:
+            return
+        self._display_active = False
+        try:
+            import cv2
+            cv2.destroyWindow(self.WINDOW_NAME)
+        except Exception:
+            pass
+
+    def terminate(self, new_status) -> None:
+        self._close_window()
+        super().terminate(new_status)
