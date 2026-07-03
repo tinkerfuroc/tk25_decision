@@ -140,6 +140,12 @@ class bb_keys:
                                            #   threshold; latched so the door step
                                            #   runs exactly once per mission.
 
+    # Batch command intake: collect N commands + their plans UP FRONT (at the
+    # command point), then execute them one by one. Each task's plan/command is
+    # stashed under an indexed slot key (prefix + <i>).
+    SAVED_PLAN_PREFIX = "gpsr/saved_plan_"        # + <i> -> list[dict] plan for task i
+    SAVED_COMMAND_PREFIX = "gpsr/saved_command_"  # + <i> -> str command for task i
+
 
 ARM_ACTION_NAME = "joint_move_action"
 GRASP_SERVICE_NAME = "start_grasp"
@@ -184,6 +190,40 @@ class BtNode_BlackboardSet(Behaviour):
 
     def update(self):
         self._client.set(self._key, self._value, overwrite=True)
+        return Status.SUCCESS
+
+
+class BtNode_BlackboardCopy(Behaviour):
+    """Copy ``src`` -> ``dst`` on the blackboard each tick.
+
+    SUCCESS after copying; FAILURE if ``src`` is unset/None. Unlike
+    ``BtNode_WriteToBlackboard(bb_source=...)`` it re-reads ``src`` on EVERY
+    tick (no cached value), so it is safe inside loops / re-entrant trees — used
+    by the batch-command flow to stash each task's plan/command into a slot and
+    restore it before execution.
+    """
+
+    def __init__(self, name: str, src: str, dst: str):
+        super().__init__(name)
+        self._src = src
+        self._dst = dst
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._src, access=Access.READ)
+        self._client.register_key(self._dst, access=Access.WRITE)
+
+    def update(self):
+        try:
+            value = self._client.get(self._src)
+        except Exception:
+            self.feedback_message = f"{self._src} not set"
+            return Status.FAILURE
+        if value is None:
+            self.feedback_message = f"{self._src} is None"
+            return Status.FAILURE
+        self._client.set(self._dst, value, overwrite=True)
         return Status.SUCCESS
 
 
@@ -604,25 +644,27 @@ class BtNode_CountDetections(Behaviour):
 # Small-tree factories
 # ---------------------------------------------------------------------------
 
-def _tuck_arm_for_nav(label: str = "tuck arm for nav"):
-    """Move the arm to the stow pose before driving.
+def _tuck_arm_for_nav(label: str = "tuck arm for nav",
+                      pose_key: str = None):
+    """Move the arm to a stow pose before driving.
 
     The arm must be folded back so it does not block the lidar / occupy the
     robot's footprint during base motion. Every small tree that issues a base
-    move (goto / follow / guide / approach / deliver / place) tucks first. The
-    pose is read from ``bb_keys.ARM_ORBBEC_LOOK`` — per the "use
-    arm_pos_orbbec_look instead of arm_pos_navigating from now on" decision, the
-    orbbec-look pose is the single stow pose used for both navigation and orbbec
-    scanning — seeded once at startup (``_arm_constants_to_bb``). Retry-wrapped
-    and propagates failure: if the arm cannot tuck, we do NOT drive with the arm
-    sticking out — the orchestrator self-correction handles it.
+    move (goto / follow / guide / approach / deliver / place) tucks first.
+
+    ``pose_key`` selects which pose to stow to (defaults to
+    ``bb_keys.ARM_ORBBEC_LOOK``, the general stow/orbbec-look pose). The
+    ``goto`` tree passes ``bb_keys.ARM_NAVIGATING`` so a pure navigation always
+    parks the arm in the dedicated lidar-clearing navigating pose before moving.
+    Retry-wrapped and propagates failure: if the arm cannot tuck, we do NOT
+    drive with the arm sticking out — the orchestrator self-correction handles it.
     """
     return py_trees.decorators.Retry(
         f"retry {label}",
         BtNode_MoveArmSingle(
             label,
             action_name=ARM_ACTION_NAME,
-            arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
+            arm_pose_bb_key=pose_key or bb_keys.ARM_ORBBEC_LOOK,
             add_octomap=False,
         ),
         num_failures=3,
@@ -733,7 +775,11 @@ def create_goto():
     seq.add_child(BtNode_AnnounceFromBB(
         "announce going", bb_keys.TARGET_LOCATION, prefix="Going to "
     ))
-    seq.add_child(_tuck_arm_for_nav("tuck arm before goto"))
+    # goto is pure navigation: always park the arm in the dedicated navigating
+    # (lidar-clearing) pose before driving, not the orbbec-look stow pose.
+    seq.add_child(_tuck_arm_for_nav(
+        "tuck arm before goto", pose_key=bb_keys.ARM_NAVIGATING,
+    ))
     seq.add_child(py_trees.decorators.Retry(
         "retry goto",
         BtNode_GotoAction("goto target", key=bb_keys.TARGET_POSE),

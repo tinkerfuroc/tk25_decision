@@ -50,6 +50,7 @@ from .small_trees import (
     bb_keys,
     BtNode_AnnounceFromBB,
     BtNode_BlackboardSet,
+    BtNode_BlackboardCopy,
     SEARCH_POSE_KEYS,
     create_goto,
 )
@@ -1307,6 +1308,40 @@ def create_execute_one_step(max_corrections: int = 3) -> py_trees.composites.Seq
     return step
 
 
+def _reset_task_state(seq: py_trees.composites.Sequence) -> None:
+    """Hard per-task reset of EXECUTION state (not the plan, not the start pose).
+
+    Runs before planning a task and before executing a task, so a previous
+    task's STATE_LOG / correction count / failure / nav-location / grasp-referee
+    flag can never bleed into this task's plan or self-correction. PLAN_INDEX is
+    reset to 0 so a restored plan starts from its first step.
+    """
+    seq.add_child(BtNode_BlackboardSet("reset state_log", bb_keys.STATE_LOG, []))
+    seq.add_child(BtNode_BlackboardSet("reset correction", bb_keys.CORRECTION_COUNT, 0))
+    seq.add_child(BtNode_BlackboardSet("reset last_failure", bb_keys.LAST_FAILURE, ""))
+    seq.add_child(BtNode_BlackboardSet("reset nav location", bb_keys.LAST_NAV_LOCATION, ""))
+    seq.add_child(BtNode_BlackboardSet("reset grasp-referee", bb_keys.GRASP_ASK_REFEREE, False))
+    seq.add_child(BtNode_BlackboardSet("reset plan_index", bb_keys.PLAN_INDEX, 0))
+
+
+def create_execute_loop(
+    max_steps: int = 25, max_corrections: int = 3,
+) -> py_trees.behaviour.Behaviour:
+    """The dispatch + self-correction loop over a pre-set ``PLAN``.
+
+    Runs each step until ``BtNode_PopNextAction`` returns FAILURE (plan
+    exhausted). That failure bubbles up through ``Repeat`` (aborts on any child
+    failure), and the outer ``FailureIsSuccess`` converts it back to SUCCESS so
+    the parent treats command completion as normal success. Assumes ``PLAN`` /
+    ``PLAN_INDEX`` are already set (by planning, or by restoring a saved plan).
+    """
+    loop_body = create_execute_one_step(max_corrections=max_corrections)
+    loop = py_trees.decorators.Repeat(
+        name="step loop", child=loop_body, num_success=max_steps,
+    )
+    return py_trees.decorators.FailureIsSuccess("plan-exhausted = done", loop)
+
+
 def create_execute_command(
     max_steps: int = 25,
     max_corrections: int = 3,
@@ -1315,48 +1350,154 @@ def create_execute_command(
 ) -> py_trees.behaviour.Behaviour:
     """Plan once, then run the step loop until the plan is exhausted.
 
-    The plan-loop relies on ``BtNode_PopNextAction`` returning FAILURE when
-    nothing is left to do. That failure bubbles up through ``Repeat`` (which
-    aborts on any child failure), and the outer ``FailureIsSuccess`` decorator
-    converts it back to SUCCESS so the parent tree treats command completion as
-    normal success.
+    Kept for single-command callers (dry-run, tests). The batch flow uses the
+    split ``_reset_task_state`` / ``create_execute_loop`` pieces instead so it can
+    plan up front and execute later.
 
     If ``emit_plan_dir`` is given, a standalone re-runnable ``.py`` of the
-    planned tree is written there right after planning (check-after-run).
-
-    If ``announce_plan`` (default), the robot speaks the full planned step
-    sequence aloud right after planning, before executing it.
+    planned tree is written there right after planning (check-after-run). If
+    ``announce_plan`` (default), the robot speaks the full planned step sequence
+    aloud right after planning, before executing it.
     """
-    plan = BtNode_PlanActions(name="plan initial")
-
-    loop_body = create_execute_one_step(max_corrections=max_corrections)
-    loop = py_trees.decorators.Repeat(
-        name="step loop",
-        child=loop_body,
-        num_success=max_steps,
-    )
-    loop_done_ok = py_trees.decorators.FailureIsSuccess(
-        "plan-exhausted = done", loop,
-    )
-
     root = py_trees.composites.Sequence("execute_command", memory=True)
-    # Hard per-command reset of execution state, right before planning. This runs
-    # every time a command is executed (independent of create_orchestrator_init),
-    # so a previous command's STATE_LOG / correction count / failure can never
-    # bleed into this command's plan or self-correction.
-    root.add_child(BtNode_BlackboardSet("reset state_log", bb_keys.STATE_LOG, []))
-    root.add_child(BtNode_BlackboardSet("reset correction", bb_keys.CORRECTION_COUNT, 0))
-    root.add_child(BtNode_BlackboardSet("reset last_failure", bb_keys.LAST_FAILURE, ""))
-    root.add_child(BtNode_BlackboardSet("reset nav location", bb_keys.LAST_NAV_LOCATION, ""))
-    root.add_child(BtNode_BlackboardSet("reset grasp-referee", bb_keys.GRASP_ASK_REFEREE, False))
-    root.add_child(plan)
+    _reset_task_state(root)
+    root.add_child(BtNode_PlanActions(name="plan initial"))
     if emit_plan_dir is not None:
         root.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
     if announce_plan:
         # Speak the full plan ("Here is my plan. First... Then... Finally...")
         # right after planning so the operator hears it before execution starts.
         root.add_child(create_announce_plan())
-    root.add_child(loop_done_ok)
+    root.add_child(create_execute_loop(max_steps, max_corrections))
+    return root
+
+
+# --------------------------------------------------------------------------- #
+# Batch command flow: collect N commands + plans UP FRONT (at the command
+# point), then execute them one by one. Replaces the old collect-execute-repeat
+# loop so the robot hears/plans/announces all tasks before acting.
+# --------------------------------------------------------------------------- #
+
+def make_listen_intake(listen_timeout: float = 30.0):
+    """Intake factory: for each slot, prompt the operator and listen for the
+    command into ``bb_keys.COMMAND`` (real audio; typed in mock)."""
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
+
+    def factory(slot: int) -> py_trees.behaviour.Behaviour:
+        seq = py_trees.composites.Sequence(f"get command {slot + 1}", memory=True)
+        seq.add_child(BtNode_Announce(
+            f"prompt task {slot + 1}", bb_source=None,
+            message=f"Please tell me task number {slot + 1} after the beep.",
+        ))
+        seq.add_child(BtNode_ListenAction(
+            f"listen task {slot + 1}", bb_dest_key=bb_keys.COMMAND,
+            timeout=listen_timeout,
+        ))
+        seq.add_child(BtNode_AnnounceFromBB(
+            f"echo task {slot + 1}", bb_keys.COMMAND, prefix="I heard: ",
+        ))
+        return seq
+
+    return factory
+
+
+def make_inject_intake(commands):
+    """Intake factory that injects ``commands[slot]`` into ``bb_keys.COMMAND``
+    (for desktop / mock e2e tests, no audio)."""
+    def factory(slot: int) -> py_trees.behaviour.Behaviour:
+        return BtNode_BlackboardSet(
+            f"inject command {slot + 1}", bb_keys.COMMAND, commands[slot],
+        )
+
+    return factory
+
+
+def _create_plan_and_save(slot: int, emit_plan_dir: Optional[str] = None,
+                          announce_plan: bool = True) -> py_trees.composites.Sequence:
+    """Plan the command currently in ``COMMAND``, announce it, and stash the plan
+    + command into slot ``slot`` for later execution. The intake step must have
+    written ``COMMAND`` first."""
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    seq = py_trees.composites.Sequence(f"plan+save task {slot + 1}", memory=True)
+    _reset_task_state(seq)
+    seq.add_child(BtNode_PlanActions(name=f"plan task {slot + 1}"))
+    if emit_plan_dir is not None:
+        seq.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
+    if announce_plan:
+        seq.add_child(BtNode_Announce(
+            f"announce task {slot + 1} plan intro", bb_source=None,
+            message=f"For task {slot + 1}, here is my plan.",
+        ))
+        seq.add_child(create_announce_plan())
+    seq.add_child(BtNode_BlackboardCopy(
+        f"save plan {slot}", bb_keys.PLAN, f"{bb_keys.SAVED_PLAN_PREFIX}{slot}"))
+    seq.add_child(BtNode_BlackboardCopy(
+        f"save command {slot}", bb_keys.COMMAND, f"{bb_keys.SAVED_COMMAND_PREFIX}{slot}"))
+    return seq
+
+
+def _create_execute_slot(slot: int, max_steps: int = 25,
+                         max_corrections: int = 3) -> py_trees.composites.Sequence:
+    """Announce the start of task ``slot``, restore its saved command + plan, then
+    run the dispatch/self-correction loop over it."""
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    seq = py_trees.composites.Sequence(f"execute task {slot + 1}", memory=True)
+    seq.add_child(BtNode_Announce(
+        f"announce start task {slot + 1}", bb_source=None,
+        message=f"Starting task {slot + 1} now.",
+    ))
+    # Restore this task's command (so a mid-task self-correction re-plans the
+    # right command) and its pre-made plan.
+    seq.add_child(BtNode_BlackboardCopy(
+        f"restore command {slot}", f"{bb_keys.SAVED_COMMAND_PREFIX}{slot}", bb_keys.COMMAND))
+    seq.add_child(BtNode_BlackboardCopy(
+        f"restore plan {slot}", f"{bb_keys.SAVED_PLAN_PREFIX}{slot}", bb_keys.PLAN))
+    _reset_task_state(seq)
+    seq.add_child(create_execute_loop(max_steps, max_corrections))
+    return seq
+
+
+def create_batch_command_flow(
+    num_commands: int = 3,
+    make_intake=None,
+    max_steps: int = 25,
+    max_corrections: int = 3,
+    emit_plan_dir: Optional[str] = None,
+    announce_plan: bool = True,
+) -> py_trees.composites.Sequence:
+    """Collect ``num_commands`` commands + plans up front, then execute them.
+
+    ``make_intake(slot)`` returns a behaviour that writes the slot's command
+    into ``bb_keys.COMMAND`` (a prompt+listen sub-tree from
+    :func:`make_listen_intake`, or an injection node from
+    :func:`make_inject_intake` for tests). The intake phase plans + announces +
+    stashes each command; the execute phase restores each and runs the loop,
+    announcing before each task. The robot should already be standing at the
+    command point (all tasks share that start pose).
+    """
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    if make_intake is None:
+        make_intake = make_listen_intake()
+
+    root = py_trees.composites.Sequence("batch_command_flow", memory=True)
+
+    intake = py_trees.composites.Sequence("intake phase (collect+plan)", memory=True)
+    for i in range(num_commands):
+        slot = py_trees.composites.Sequence(f"intake task {i + 1}", memory=True)
+        slot.add_child(make_intake(i))
+        slot.add_child(_create_plan_and_save(i, emit_plan_dir, announce_plan))
+        intake.add_child(slot)
+    root.add_child(intake)
+
+    root.add_child(BtNode_Announce(
+        "announce start execution", bb_source=None,
+        message=f"I have {num_commands} tasks. I will start executing them now.",
+    ))
+
+    execute = py_trees.composites.Sequence("execute phase", memory=True)
+    for i in range(num_commands):
+        execute.add_child(_create_execute_slot(i, max_steps, max_corrections))
+    root.add_child(execute)
     return root
 
 

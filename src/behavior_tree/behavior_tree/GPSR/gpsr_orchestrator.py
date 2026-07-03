@@ -29,7 +29,9 @@ from behavior_tree.visualization import create_post_tick_visualizer
 
 from .gpsr_full import CONSTANTS_PATH, _load_arm_constants, _load_arm_orbbec_look
 from .orchestrator import (
-    create_execute_command,
+    create_batch_command_flow,
+    make_inject_intake,
+    make_listen_intake,
     create_orchestrator_init,
     create_goto_command_point,
     has_command_point,
@@ -37,8 +39,9 @@ from .orchestrator import (
 )
 from .small_trees import bb_keys, create_enter_arena
 
-DEFAULT_COMMAND = "Go to the kitchen and bring me a coke."
 DEFAULT_PLAN_DIR = Path(os.environ.get("BT_GPSR_PLAN_DIR", "gpsr_runs")).resolve()
+# How many commands to collect up front before executing (RoboCup GPSR = 3).
+NUM_COMMANDS = int(os.environ.get("BT_GPSR_NUM_COMMANDS", "3"))
 
 
 def _arm_constants_to_bb(seq: py_trees.composites.Sequence) -> None:
@@ -59,34 +62,47 @@ def _arm_constants_to_bb(seq: py_trees.composites.Sequence) -> None:
 
 
 def createGPSROrchestrator(
-    command: str = None,
+    commands=None,
     plan_dir: Path = DEFAULT_PLAN_DIR,
     max_steps: int = 25,
     max_corrections: int = 3,
+    num_commands: int = NUM_COMMANDS,
 ) -> py_trees.behaviour.Behaviour:
     """Build the live orchestrator root.
 
-    Command source: explicit ``command`` arg > ``BT_GPSR_CMD`` env > default.
-    (Swap the BtNode_WriteToBlackboard below for an audio ``BtNode_ListenAction``
-    + confirm sub-tree to take the command by voice in competition.)
+    New flow: enter arena → go to the command point ONCE → collect all
+    ``num_commands`` commands, planning + announcing each up front → then execute
+    them one by one (announcing before each).
+
+    Command source: an explicit ``commands`` list (or ``BT_GPSR_CMD`` as a
+    ``|``-separated list) is injected — used for desktop / mock e2e tests. With
+    neither, the robot prompts + listens for each command by voice (competition).
     """
     load_knowledge_from_constants(CONSTANTS_PATH)
-    cmd = command or os.environ.get("BT_GPSR_CMD", DEFAULT_COMMAND)
+    if commands is None:
+        cmd_env = os.environ.get("BT_GPSR_CMD", "").strip()
+        if cmd_env:
+            commands = [c.strip() for c in cmd_env.split("|") if c.strip()]
+    if commands:
+        make_intake = make_inject_intake(commands)
+        n = len(commands)
+    else:
+        make_intake = make_listen_intake()
+        n = num_commands
 
     root = py_trees.composites.Sequence("GPSR orchestrator", memory=True)
     # The robot starts OUTSIDE the arena in front of the door: wait for it to
     # open and enter — once, before anything else.
     root.add_child(create_enter_arena())
     _arm_constants_to_bb(root)
-    # GPSR: go to the command point to receive the command first.
+    # GPSR: go to the command point ONCE to receive all commands there.
     if has_command_point():
         root.add_child(create_goto_command_point())
-    root.add_child(BtNode_WriteToBlackboard(
-        "write command", bb_namespace="", bb_source=None,
-        bb_key=bb_keys.COMMAND, object=cmd,
-    ))
+    # Capture the command-point start pose once (operator spot for deliveries).
     root.add_child(create_orchestrator_init())
-    root.add_child(create_execute_command(
+    root.add_child(create_batch_command_flow(
+        num_commands=n,
+        make_intake=make_intake,
         max_steps=max_steps,
         max_corrections=max_corrections,
         emit_plan_dir=str(plan_dir),
