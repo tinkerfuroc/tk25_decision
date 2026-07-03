@@ -184,12 +184,17 @@ def createCollectOneOrderItems() -> py_trees.composites.Sequence:
     )
     root.add_child(
         createScanForUpToNCustomers(
+            # BtNode_TurnPanTilt takes (x=pan, y=tilt) in degrees -- tilt
+            # fixed at 35 deg for every position (a consistent
+            # look-for-a-person angle), pan sweeps the room.
             scan_positions=[
-                (30.0, 0.0),
-                (30.0, 60.0),
-                (30.0, 120.0),
-                (30.0, -60.0),
-                (30.0, -120.0),
+                (0.0, 35.0),
+                (30.0, 35.0),
+                (60.0, 35.0),
+                (-30.0, 35.0),
+                (-60.0, 35.0),
+                (-120.0, 35.0),
+                (120.0, 35.0),
             ],
             n_gate=2,
         )
