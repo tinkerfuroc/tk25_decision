@@ -127,10 +127,14 @@ def createTakeAndConfirmOrderItems() -> py_trees.composites.Parallel:
         BtNode_Announce(
             name="Order engagement prompt",
             bb_source=None,
-            message="Hi. What would you like to order?",
+            message="Hi.",
         )
     )
 
+    # Note: createTakeOrderViaItems() speaks its own "What would you like to
+    # order?" prompt on every (re-)attempt, so the greeting above stays a bare
+    # "Hi." rather than v1's combined "Hi. What would you like to order?" --
+    # otherwise the question would be asked twice back-to-back on the first try.
     order_loop = py_trees.composites.Sequence(name="Order taking loop", memory=True)
     order_loop.add_child(createTakeOrderViaItems())
     order_loop.add_child(
