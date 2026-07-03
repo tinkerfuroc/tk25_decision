@@ -6,12 +6,19 @@ import py_trees
 import py_trees_ros
 import rclpy
 
-from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
+from behavior_tree.TemplateNodes.Vision import (
+    BtNode_TurnPanTilt,
+    BtNode_ScanForWavingPerson,
+)
 from geometry_msgs.msg import PointStamped, Point
 
-from .custumNodes import BtNode_DetectCallingCustomer
-
+# Bench tool: assumes `waving_person_server` (tk_vision_specialized) and the
+# pan_tilt controller are already running. show_window (default true on the
+# server) pops up an rqt_image_view window with per-person bounding boxes on
+# /detect_waving_debug_image -- nothing to launch here for that, it's
+# automatic whenever the server is up.
 KEY_DETECT_WAVING_RESULT = "detect_waving_result"
+KEY_WAVING_CLOSEST_PERSON = "test_scan_waving_closest_person"
 KEY_CUSTOMER_CENTROIDS = "customer_centroids"
 PAN_ANGLES = (-180.0, -120.0, -60.0, 0.0, 60.0, 120.0)
 TILT_DEG = 30.0
@@ -116,10 +123,17 @@ def scan_once(pan: float, tilt: float = 40.0, target_frame="base_link"):
         py_trees.timers.Timer(name="wait for pan tilt to settle", duration=1.0)
     )
     root.add_child(
-        BtNode_DetectCallingCustomer(
+        BtNode_ScanForWavingPerson(
             name=f"detect calling customer vision at {pan}",
+            bb_key_all_persons=KEY_DETECT_WAVING_RESULT,
+            bb_key_closest_person=KEY_WAVING_CLOSEST_PERSON,
+            threshold_meters=7.0,
             target_frame=target_frame,
-            bb_dest_key=KEY_DETECT_WAVING_RESULT,
+            # Opt in to the concurrent VLM fallback (same value Restaurant's
+            # production tree uses) -- without this the call silently stays
+            # on the fast-only CV path and this bench script never actually
+            # exercises the VLM augmentation it exists to let you test.
+            min_waving_persons=2,
         )
     )
     root.add_child(
