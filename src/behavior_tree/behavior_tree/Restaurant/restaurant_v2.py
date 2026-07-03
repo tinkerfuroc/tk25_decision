@@ -18,14 +18,13 @@ unchanged:
     bar) when TF is available, and only falls back to the origin write if capture
     fails outright — strictly better than the canonical tree, never worse (the
     key is always set).
-  * **Order capture: free-form name+drink action, not a 12-word wordlist.** The
+  * **Order capture: free-form item-list action, not a 12-word wordlist.** The
     canonical Phase-1 uses ``BtNode_TakeOrder`` (``phrase_extraction_action`` with
     a fixed ``MENU_WORDLIST``), which drops any item off the list. Phase 1 here is
-    ``createCollectOrdersPhaseNameDrink`` — identical detect/approach/record/close,
-    but the order-capture leaf is ``BtNode_NameDrinkExtractionAction`` (the SAME
-    free-form Qwen-Omni server HRI uses for guest name+drink). The customer can
-    order anything; ``drink`` -> ``KEY_CUSTOMER_ORDER``, ``name`` captured as a
-    best-effort label. See ``order_intake_name_drink.py``.
+    ``createCollectOrdersPhaseItems`` — identical detect/approach/record/close,
+    but the order-capture leaf is ``BtNode_OrderExtractionAction`` (free-form
+    Qwen-Omni, returns ``items: string[]``, no name capture). The customer can
+    order anything; ``items`` -> ``KEY_CUSTOMER_ORDER``. See ``order_intake_items.py``.
 
 Intentionally NOT changed (deliberate trade-offs / missing infra — surfaced to
 the user, not silently swapped):
@@ -63,9 +62,9 @@ from .restaurants import (
     createDeliverAllItemsPhase,
     createOptionalTrayTransport,
 )
-# Phase-1 order capture via the free-form name+drink extraction action (NEW),
+# Phase-1 order capture via the free-form item-list extraction action (NEW),
 # replacing the canonical wordlist intake (createCollectOrdersPhase).
-from .order_intake_name_drink import createCollectOrdersPhaseNameDrink
+from .order_intake_items import createCollectOrdersPhaseItems
 from .config import (
     ARM_POS_NAVIGATING,
     ARM_POS_SERVING,
@@ -181,7 +180,7 @@ def createRestaurantTask2026() -> py_trees.behaviour.Behaviour:
         )
     )
 
-    root.add_child(createCollectOrdersPhaseNameDrink())
+    root.add_child(createCollectOrdersPhaseItems())
     root.add_child(
         BtNode_Announce(
             name="Phase 1 complete announcement",

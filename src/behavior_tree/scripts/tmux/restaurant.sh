@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 SESSION="tinker-restaurant"
-BT_ENTRY="${BT_ENTRY:-restaurant}"
+BT_ENTRY="${BT_ENTRY:-restaurant-2026}"
 DEV="$(pan_tilt_dev)"
 [ -z "$DEV" ] && warn_no_pan_tilt restaurant
 
