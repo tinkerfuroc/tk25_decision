@@ -223,7 +223,7 @@ def createTakeAndConfirmOrderItems() -> py_trees.composites.Parallel:
     )
 
 
-def createCollectOneOrderItems() -> py_trees.composites.Sequence:
+def createCollectOneOrderItems(seed_customer_id: int = 1) -> py_trees.composites.Sequence:
     """One Phase-1 pass: detect -> approach -> order-items -> record.
 
     Mirrors ``restaurants.createCollectOneOrder`` exactly, swapping only the
@@ -238,23 +238,26 @@ def createCollectOneOrderItems() -> py_trees.composites.Sequence:
             pickup_verified_key=KEY_PICKUP_VERIFIED,
         )
     )
-    root.add_child(
-        createScanForUpToNCustomers(
-            # BtNode_TurnPanTilt takes (x=pan, y=tilt) in degrees -- tilt
-            # fixed at 35 deg for every position (a consistent
-            # look-for-a-person angle), pan sweeps the room.
-            scan_positions=[
-                (0.0, 35.0),
-                (30.0, 35.0),
-                (60.0, 35.0),
-                (-30.0, 35.0),
-                (-60.0, 35.0),
-                (-120.0, 35.0),
-                (120.0, 35.0),
-            ],
-            n_gate=2,
+    if MOCK_SEED_CUSTOMER:
+        root.add_child(_createSeedCustomerSubtree(seed_customer_id))
+    else:
+        root.add_child(
+            createScanForUpToNCustomers(
+                # BtNode_TurnPanTilt takes (x=pan, y=tilt) in degrees -- tilt
+                # fixed at 35 deg for every position (a consistent
+                # look-for-a-person angle), pan sweeps the room.
+                scan_positions=[
+                    (0.0, 35.0),
+                    (30.0, 35.0),
+                    (60.0, 35.0),
+                    (-30.0, 35.0),
+                    (-60.0, 35.0),
+                    (-120.0, 35.0),
+                    (120.0, 35.0),
+                ],
+                n_gate=2,
+            )
         )
-    )
     root.add_child(createApproachCustomer())
     root.add_child(
         BtNode_RequireActiveCustomer(
@@ -294,7 +297,7 @@ def createCollectOrdersPhaseItems() -> py_trees.composites.Sequence:
         root.add_child(
             py_trees.decorators.Retry(
                 name=f"retry collect order {i + 1}",
-                child=createCollectOneOrderItems(),
+                child=createCollectOneOrderItems(seed_customer_id=i + 1),
                 num_failures=2,
             )
         )

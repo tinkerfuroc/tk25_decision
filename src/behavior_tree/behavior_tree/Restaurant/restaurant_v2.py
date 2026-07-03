@@ -42,6 +42,11 @@ Fully offline (no servers, auto-advance)::
 
     BT_MOCK_CONFIG=$(ros2 pkg prefix behavior_tree)/share/behavior_tree/config/full_mock.json \
         ros2 run behavior_tree restaurant-2026
+
+To skip Phase-1 person-scanning entirely and jump straight to the real-audio
+order extraction/confirmation (everything-but-audio mocked), set
+``order_intake_items.MOCK_SEED_CUSTOMER = True`` -- it seeds a synthetic active
+customer per order instead of sweeping for waving persons.
 """
 
 import py_trees

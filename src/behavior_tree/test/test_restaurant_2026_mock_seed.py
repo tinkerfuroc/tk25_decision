@@ -75,3 +75,29 @@ def test_seed_subtree_populates_active_customer_state():
     assert queue[0]["status"] == "active"
     loc = getattr(reader, oii.KEY_CUSTOMER_LOCATION)
     assert loc.header.frame_id == "map"
+
+
+def test_toggle_on_replaces_scan_with_two_seeds(monkeypatch):
+    monkeypatch.setattr(oii, "MOCK_SEED_CUSTOMER", True)
+    phase = oii.createCollectOrdersPhaseItems()
+    names = _node_class_names(phase)
+    assert "BtNode_ScanForWavingPerson" not in names
+    assert "BtNode_TurnPanTilt" not in names
+    seed_names = [
+        n.name for n in phase.iterate() if n.name.startswith("Seed mock customer")
+    ]
+    assert "Seed mock customer 1" in seed_names
+    assert "Seed mock customer 2" in seed_names
+
+
+def test_toggle_off_keeps_scan_and_no_seed(monkeypatch):
+    # Regression guard for the production path: passes before and after wiring.
+    monkeypatch.setattr(oii, "MOCK_SEED_CUSTOMER", False)
+    phase = oii.createCollectOrdersPhaseItems()
+    names = _node_class_names(phase)
+    assert "BtNode_ScanForWavingPerson" in names
+    assert "BtNode_TurnPanTilt" in names
+    seed_names = [
+        n.name for n in phase.iterate() if n.name.startswith("Seed mock customer")
+    ]
+    assert seed_names == []
