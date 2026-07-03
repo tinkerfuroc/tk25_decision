@@ -1,5 +1,73 @@
 # Changelog
 
+## [2.2.20] - 2026-07-03
+
+### 🐛 BtNode_CheckIfEmpty: crash on first tick (copy-pasted debug line)
+
+- `TemplateNodes/BaseBehaviors.py` `BtNode_CheckIfEmpty.initialise()` logged
+  `self.bb_namespace` / `self.bb_key` — attributes of the sibling
+  `BtNode_WriteToBlackboard` / `BtNode_ClearBlackboard` classes that
+  `BtNode_CheckIfEmpty` never sets (it only has `bb_source`). The f-string
+  evaluates eagerly regardless of log level, so the FIRST tick of the node
+  raised `AttributeError` and killed the whole BT process (py_trees doesn't
+  catch `initialise()` exceptions). Live impact: the only user is the
+  DoingLaundry `"Was fold out of range?"` recovery node, so ANY fold failure
+  crashed the `doing-laundry` task instead of triggering the
+  move-the-clothing-closer recovery. Now logs `bb_source`.
+- Same class, cosmetic: `update()` feedback messages were missing the `f`
+  prefix and emitted the literal text `{self.bb_source} not empty` /
+  `{self.bb_source} is empty`.
+
+## [2.2.19] - 2026-07-03
+
+### 🔊 Announce: comma micro-pause before every h-/H-word (TTS pause hack)
+
+- New pure helper `TemplateNodes/announce_text.py:add_pause_before_h_words`
+  (ROS-free, `pointing_math.py` convention): inserts a comma between a word
+  and a following word starting with `h`/`H` — the TTS engine rushes into
+  aspirated h sounds, and the comma forces a beat that keeps h-words
+  audible. `"who has black hair"` → `"who, has black, hair"`. No leading
+  comma at message start, no double punctuation after existing `,`/`.`,
+  idempotent, whitespace-preserving, case-insensitive.
+- `BtNode_Announce.initialise()` applies it to the final resolved
+  `announce_msg` right after the fixed/blackboard/concatenated sources
+  converge — one site covers every text source, the mock print, and the
+  real `request.text`. The raw `given_msg` and blackboard values stay
+  untouched (existing message-asserting tests unaffected).
+- Scope: `BtNode_Announce` only; `BtNode_TTSCN` (Chinese) and the
+  FollowPerson coalescer speak paths are unchanged.
+- New tests: `test_announce_h_word_pause.py` (11 — 9 pure + 2 node-level in
+  forced mock mode).
+
+## [2.2.18] - 2026-07-03
+
+### 🎒 HRI 2026: bag-handover arm pose aimed at guest 2
+
+- `hri_2026.py:createBagFlowReal2026`: the bag flow now moves the arm into
+  the bag-handover pose before opening the gripper, aimed at guest 2 with
+  the same orientation logic the two-way introduction uses to point at
+  people — `BtNode_PointTo` (joint0 = `atan2(y, x)` bearing to the
+  `KEY_PERSON_CENTROIDS[2]` centroid, `pan_bias=0.0`) with joints 1-6 from
+  `KEY_ARM_HANDOVER` (`constants.json:arm_pos_handover`, already seeded by
+  `createConstantWriter` but previously unused by hri-2026). The centroids
+  are still fresh at this point: they come from the intro's seated-guest
+  feature-matching scan and the base does not move again until the
+  turn-around AFTER the bag is grasped.
+- Fallback + best-effort wiring: `Selector(aimed PointTo Retry×3, fixed
+  MoveArmSingle Retry×3 on KEY_ARM_HANDOVER)` inside `FailureIsSuccess`,
+  run in parallel with the "I am ready to take your bag" announce
+  (mirrors canonical `hri.createBagFlow`'s handover-pose parallel). A
+  missing centroid or arm refusal degrades to the canonical fixed pose,
+  and a total arm failure cannot forfeit the gripper handover +
+  follow-to-drop scoring.
+- To physically differentiate the handover reach later, tune joints 1-6 of
+  `arm_pos_handover` — joint0 is overwritten by the aim, so the pose keeps
+  pointing at guest 2. Currently joints 1-6 of `arm_pos_handover` equal
+  `arm_pos_point_to`'s, so the commanded pose matches the intro's final
+  point-at-guest-2 pose until the constant is tuned.
+- New tests: `test_hri_bagflow_handover_point.py` (4). Design spec:
+  `docs/superpowers/specs/2026-07-03-hri-bag-handover-point-guest2-design.md`.
+
 ## [2.2.17] - 2026-07-03
 
 ### 🛋️ HRI: turn-around before follow + host/guest scripting updates

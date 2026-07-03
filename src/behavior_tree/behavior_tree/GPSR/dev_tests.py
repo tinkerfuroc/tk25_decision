@@ -27,7 +27,7 @@ from behavior_tree.visualization import create_post_tick_visualizer
 
 from .orchestrator import load_knowledge_from_constants, KNOWN_LOCATIONS, KNOWN_OBJECT_PROMPTS
 from .small_trees import ACTION_FACTORIES, bb_keys
-from .gpsr_full import CONSTANTS_PATH, _load_arm_constants
+from .gpsr_full import CONSTANTS_PATH, _load_arm_constants, _load_arm_orbbec_look
 
 
 def _identity_pose(location_key: str = "kitchen") -> PoseStamped:
@@ -67,6 +67,10 @@ def _arm_constants_to_bb(seq: py_trees.composites.Sequence) -> None:
     seq.add_child(BtNode_WriteToBlackboard(
         "arm nav", bb_namespace="", bb_source=None,
         bb_key=bb_keys.ARM_NAVIGATING, object=arm_nav,
+    ))
+    seq.add_child(BtNode_WriteToBlackboard(
+        "arm orbbec look", bb_namespace="", bb_source=None,
+        bb_key=bb_keys.ARM_ORBBEC_LOOK, object=_load_arm_orbbec_look(),
     ))
 
 
@@ -230,6 +234,8 @@ def main_grasp_diag():
                                            bb_key=bb_keys.ARM_SCAN, object=arm_scan))
     seq.add_child(BtNode_WriteToBlackboard("arm nav", bb_namespace="", bb_source=None,
                                            bb_key=bb_keys.ARM_NAVIGATING, object=arm_nav))
+    seq.add_child(BtNode_WriteToBlackboard("arm orbbec look", bb_namespace="", bb_source=None,
+                                           bb_key=bb_keys.ARM_ORBBEC_LOOK, object=_load_arm_orbbec_look()))
     seq.add_child(BtNode_WriteToBlackboard("obj", bb_namespace="", bb_source=None,
                                            bb_key=bb_keys.TARGET_OBJECT_NAME, object=obj))
     seq.add_child(BtNode_WriteToBlackboard("obj prompt", bb_namespace="", bb_source=None,
@@ -363,20 +369,25 @@ def main_say():
 # ---- orchestrator-with-fixed-command dev test ----
 
 def main_orchestrator():
-    """Type/speak a command -> plan -> execute, looping, saving each plan.
+    """Collect N commands + plans up front, then execute them one by one.
 
-    Per-module integration harness: the planner always runs (it "splits" the
+    Per-module integration harness: the planner always runs (it "splits" each
     command and generates the tree); which *executing* subsystems are real vs.
     stubbed is read from ``mock_config.json`` BEFORE the run (``mock_mode.enabled:
     true`` + per-subsystem ``enabled``: ``true`` = MOCKED, ``false`` = REAL).
     ``keyboard_control.enabled: false`` makes mocked nodes auto-succeed.
 
+    Flow: enter arena → go to the command point once → for each of
+    ``BT_GPSR_NUM_COMMANDS`` (default 3) commands: ask → plan → announce the plan;
+    then execute the collected plans one by one (announcing before each).
+
     Command source:
-      * ``BT_GPSR_DEBUG_CMD`` set -> use it verbatim once, then idle.
-      * unset -> intake LOOP. If ``audio_input`` is MOCKED and you're on an
-        interactive terminal, you TYPE each command (remote / no microphone);
-        if audio is REAL you speak it. After each command the cycle loops so you
-        can enter another.
+      * ``BT_GPSR_DEBUG_CMD`` set -> injected. One command, or several joined by
+        ``|`` (e.g. ``"go to the kitchen|count the apples|say hello"``) to drive
+        the whole batch non-interactively.
+      * unset -> for each slot the robot prompts + listens. If ``audio_input`` is
+        MOCKED on an interactive terminal you TYPE each command; if audio is REAL
+        you speak it.
 
     Every generated plan is frozen to a re-runnable ``.py`` under
     ``BT_GPSR_PLAN_DIR`` (default ``./gpsr_runs``) so a command can be replayed
@@ -384,62 +395,50 @@ def main_orchestrator():
     """
     from pathlib import Path
     from .orchestrator import (
-        create_execute_command, create_orchestrator_init,
-        create_goto_command_point, has_command_point,
+        create_batch_command_flow, make_inject_intake, make_listen_intake,
+        create_orchestrator_init, create_goto_command_point, has_command_point,
     )
-    from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
-    from .small_trees import BtNode_AnnounceFromBB, create_enter_arena
+    from .small_trees import create_enter_arena
 
     load_knowledge_from_constants(CONSTANTS_PATH)
-    command = os.environ.get("BT_GPSR_DEBUG_CMD", "").strip()
     plan_dir = Path(os.environ.get("BT_GPSR_PLAN_DIR", "gpsr_runs")).resolve()
     plan_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[gpsr-test-orchestrator] saved plans -> {plan_dir}")
+    num_commands = int(os.environ.get("BT_GPSR_NUM_COMMANDS", "3"))
+    # Command source: BT_GPSR_DEBUG_CMD (one command, or several joined by '|')
+    # is injected for desktop tests; unset -> prompt + listen for each of
+    # num_commands commands (type them when audio is mocked).
+    debug = os.environ.get("BT_GPSR_DEBUG_CMD", "").strip()
+    if debug:
+        commands = [c.strip() for c in debug.split("|") if c.strip()]
+        make_intake = make_inject_intake(commands)
+        num_commands = len(commands)
+    else:
+        listen_timeout = float(os.environ.get("BT_GPSR_LISTEN_TIMEOUT", "30.0"))
+        make_intake = make_listen_intake(listen_timeout=listen_timeout)
+    print(f"[gpsr-test-orchestrator] saved plans -> {plan_dir}  "
+          f"(collecting {num_commands} command(s) up front, then executing)")
 
     rclpy.init()
-    cycle = py_trees.composites.Sequence("Test orchestrator", memory=True)
-    # Enter the arena through the door once, before the first command. The
-    # ARENA_ENTERED latch inside makes this a no-op on later loop rounds (the
-    # memory Sequence re-enters from the top after each command).
-    cycle.add_child(create_enter_arena())
-    _arm_constants_to_bb(cycle)
-    # GPSR: go to the command point to receive the next command — runs at the
-    # top of every round (memory Sequence re-enters here after each command).
+    root = py_trees.composites.Sequence("Test orchestrator", memory=True)
+    # Seed arm poses first: the door watch stows the arm to orbbec-look.
+    _arm_constants_to_bb(root)
+    # Enter the arena through the door once, before collecting commands.
+    root.add_child(create_enter_arena())
+    # GPSR: go to the command point ONCE; all commands are collected there.
     if has_command_point():
-        cycle.add_child(create_goto_command_point())
+        root.add_child(create_goto_command_point())
     else:
         print("[gpsr-test-orchestrator] 'command_point' has no pose in "
-              "constants.json possible_poses — skipping the return-to-command-point step.")
-    if command:
-        cycle.add_child(BtNode_WriteToBlackboard(
-            "command (env)", bb_namespace="", bb_source=None,
-            bb_key=bb_keys.COMMAND, object=command,
-        ))
-    else:
-        # Intake: spoken prompt (silent when announcement is mocked); a MOCKED
-        # listen on an interactive terminal then prompts you to TYPE the command.
-        cycle.add_child(BtNode_Announce(
-            "prompt", bb_source=None,
-            message="Please give me a command.",
-        ))
-        listen_timeout = float(os.environ.get("BT_GPSR_LISTEN_TIMEOUT", "30.0"))
-        cycle.add_child(BtNode_ListenAction(
-            "listen", bb_dest_key=bb_keys.COMMAND, timeout=listen_timeout,
-        ))
-        cycle.add_child(BtNode_AnnounceFromBB(
-            "echo heard", bb_keys.COMMAND, prefix="I heard: ",
-        ))
-    cycle.add_child(create_orchestrator_init())
-    cycle.add_child(create_execute_command(
+              "constants.json possible_poses — skipping the go-to-command-point step.")
+    # Capture the command-point start pose once (operator spot for deliveries).
+    root.add_child(create_orchestrator_init())
+    root.add_child(create_batch_command_flow(
+        num_commands=num_commands, make_intake=make_intake,
         max_steps=25, max_corrections=3, emit_plan_dir=str(plan_dir),
     ))
-    if command:
-        # One-shot: run the injected command once, then idle.
-        cycle.add_child(py_trees.behaviours.Running("idle (ctrl-c to exit)"))
-    # Typed/voice path: no trailing idle -> the memory Sequence re-runs from the
-    # top after each command, so you can enter another.
+    root.add_child(py_trees.behaviours.Running("idle (ctrl-c to exit)"))
 
-    tree = py_trees_ros.trees.BehaviourTree(root=cycle)
+    tree = py_trees_ros.trees.BehaviourTree(root=root)
     tree.setup(timeout=15, node_name="gpsr_test_orchestrator")
     print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(title="orchestrator")
     # Per-command logging (plan + each step's result + the failing node's feedback)

@@ -676,6 +676,15 @@ class BtNode_NewVisionNode(ServiceHandler):
 
 _Append-only. Newest entries on top._
 
+- **2026-07-03** — DoingLaundry: referee-help stop at the washing machine.
+  After the arena-entry goto and before the folding-table approach, the tree
+  now navigates to `pose_washing_machine`, announces "Dear Referee, I need
+  help. Please help me take out clothes from the laundry basket or washing
+  machine, and put it on the table. I will wait for 15 seconds.", waits 15 s
+  (`py_trees.timers.Timer`), then announces "Thank you." Door-open
+  announcement updated to "Heading to the washing machine."
+  `constants.json:pose_washing_machine` re-captured from live amcl
+  (x=3.662, y=4.158, yaw≈88.5° — was a stale 5.51/−3.30 setup-days value).
 - **2026-07-02** — feat(GPSR): `approach_person` now drives real navigation.
   `create_approach_person()` replaces a same-day no-op mock with
   `BtNode_Approach` against `approach_planner`'s `go_to_approach` action,

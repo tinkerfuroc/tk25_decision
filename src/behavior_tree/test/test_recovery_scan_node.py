@@ -176,7 +176,7 @@ def test_sweep_publishes_absolute_pan_with_fixed_tilt():
     clock.advance(7.0)
     writer.set(bb, NEEDS_HELP, overwrite=True)
     node.tick_once()                       # -> -60deg
-    assert pan == [(math.radians(-60.0), math.radians(37.0))]
+    assert pan == [(math.radians(-60.0), math.radians(35.0))]
 
 
 def test_pass1_never_calls_wave_bridge():
@@ -265,7 +265,7 @@ def test_pass2_holds_while_detect_in_flight_then_advances():
             break
         assert len(pan) == n_at_entry                # still held at the angle
     assert advanced
-    assert pan[-1] == (math.radians(-60.0), math.radians(37.0))
+    assert pan[-1] == (math.radians(-60.0), math.radians(35.0))
 
 
 def test_pass2_stuck_detect_advances_on_timeout():
@@ -289,4 +289,4 @@ def test_pass2_stuck_detect_advances_on_timeout():
     clock.now = 35.1                                 # > 5s after detect at 30.0
     writer.set(bb, NEEDS_HELP, overwrite=True)
     node.tick_once()
-    assert pan[-1] == (math.radians(-60.0), math.radians(37.0))
+    assert pan[-1] == (math.radians(-60.0), math.radians(35.0))

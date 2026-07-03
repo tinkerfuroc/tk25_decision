@@ -173,7 +173,8 @@ def createFollowHostUntilStop(
         children=[
             follow_until_arrived,
             BtNode_Announce(name="ask if arrived", bb_source=None, message=confirm_question),
-            BtNode_GetConfirmationAction(name="confirm drop here"),
+            # BtNode_GetConfirmationAction(name="confirm drop here"),
+            py_trees.timers.Timer(name="Wait for bag placement", duration=3.0)
         ],
     )
     return py_trees.decorators.Retry(

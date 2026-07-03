@@ -50,6 +50,7 @@ from .small_trees import (
     bb_keys,
     BtNode_AnnounceFromBB,
     BtNode_BlackboardSet,
+    BtNode_BlackboardCopy,
     SEARCH_POSE_KEYS,
     create_goto,
 )
@@ -71,11 +72,17 @@ DEFAULT_OBJECT_LOCATIONS: Dict[str, str] = {}
 # spot is unknown (the override case). Populated from constants.json
 # "search_spots"; a location with no entry falls back to [itself].
 ROOM_SEARCH_SPOTS: Dict[str, List[str]] = {}
+# Appliances/containers with doors the robot CANNOT open or reach into itself: a
+# grasp there is ALWAYS bypassed to the ask-referee branch (the referee opens the
+# door and hands the item over). Forced into NO_GRASP_LOCATIONS on every load so a
+# constants.json "no_grasp_locations" override can never drop them.
+ALWAYS_NO_GRASP: set = {"refrigerator", "fridge", "washing_machine", "dishwasher"}
 # Furniture the robot must NOT grasp from — a grasp there is bypassed straight to
 # the ask-referee branch. Populated from constants.json "no_grasp_locations"
-# (default shelf / cabinet / coat_rack). Matched case-insensitively, and both the
-# underscore and space spellings ("coat_rack" / "coat rack") are recognised.
-NO_GRASP_LOCATIONS: set = {"shelf", "cabinet", "coat_rack"}
+# (default shelf / cabinet / coat_rack) UNION the always-bypass appliances above.
+# Matched case-insensitively, and both the underscore and space spellings
+# ("coat_rack" / "coat rack", "washing_machine" / "washing machine") are recognised.
+NO_GRASP_LOCATIONS: set = {"shelf", "cabinet", "coat_rack"} | ALWAYS_NO_GRASP
 
 # Names the planner may use for "where the robot stood when it received the
 # command". Resolved from the blackboard (bb_keys.START_POSE, captured by
@@ -150,6 +157,10 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     if isinstance(ng, list) and ng:
         NO_GRASP_LOCATIONS.clear()
         NO_GRASP_LOCATIONS.update(str(x).lower() for x in ng if not str(x).startswith("_"))
+    # Appliances the robot can never open/reach into are ALWAYS bypassed, whatever
+    # the config said (a partial override must not silently re-enable grasping from
+    # a fridge / washing machine / dishwasher).
+    NO_GRASP_LOCATIONS.update(ALWAYS_NO_GRASP)
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +235,14 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         those (the command says so, or the object's Default location is one of
         them). It then skips the grasp and asks a human referee to hand the
         object over instead.
+    - open(location: str)
+        Ask a human referee to OPEN a closed container/appliance the robot
+        cannot open itself — a REFRIGERATOR / FRIDGE, a WASHING MACHINE, or a
+        DISHWASHER (and closed CABINETS). Emit ``goto(location)`` FIRST (the robot
+        must already be standing at it), then ``open(location=<same>)`` before any
+        find/scan/grasp of what is inside. The robot does NOT drive during
+        ``open``. Whatever is inside must still be retrieved with ``grasp`` — which
+        is itself an ask-referee handover for these locations (see below).
     - place(location: str)
         Place the currently-held object at ``location``. The robot navigates
         to ``location`` itself — do not add a separate ``goto`` before it.
@@ -295,6 +314,14 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
           {"action": "goto", "params": {"location": "kitchen"}},
           {"action": "grasp", "params": {"object": "coke"}},
           {"action": "deliver", "params": {"object": "coke", "recipient": "me", "recipient_location": "start_position"}}
+        ]
+    Example: "get the plate from the dishwasher and bring it to me" (closed
+    appliance -> open + ask-referee grasp) =>
+        [
+          {"action": "goto", "params": {"location": "dishwasher"}},
+          {"action": "open", "params": {"location": "dishwasher"}},
+          {"action": "grasp", "params": {"object": "plate", "ask_referee": true}},
+          {"action": "deliver", "params": {"object": "plate", "recipient": "me", "recipient_location": "start_position"}}
         ]
 """).strip()
 
@@ -417,6 +444,15 @@ SYSTEM_PROMPT = textwrap.dedent("""
        matching flag on the ``grasp`` step: ``from_shelf`` / ``from_cabinet`` /
        ``from_coat_rack`` = true. The robot will then ask a referee to hand the
        object over instead of attempting the grasp.
+    18. The robot ALSO cannot open or reach into a REFRIGERATOR / FRIDGE, a
+       WASHING MACHINE, or a DISHWASHER. When an object to fetch/find/count is
+       inside one of these, the plan MUST be:
+       ``goto(location)`` → ``open(location)`` → (optional find/count) →
+       ``grasp(object, ask_referee=true)``. The ``open`` step asks a referee to
+       open the door, and the ``grasp`` step (with ``ask_referee=true``) asks the
+       referee to hand the object over — the robot never opens the door or reaches
+       inside itself. Only add ``open`` for these closed containers (and closed
+       cabinets), never for open surfaces like a table or shelf.
 """).strip()
 
 
@@ -762,6 +798,7 @@ class BtNode_PopNextAction(Behaviour):
         self._bb.register_key(bb_keys.GRASP_ASK_REFEREE, access=Access.WRITE)
         self._bb.register_key(bb_keys.GRASP_REFEREE_LOCATION, access=Access.WRITE)
         self._bb.register_key(bb_keys.GRASP_REFEREE_POSE, access=Access.WRITE)
+        self._bb.register_key(bb_keys.GRASP_REFEREE_IS_APPLIANCE, access=Access.WRITE)
         for search_pose_key in SEARCH_POSE_KEYS:
             self._bb.register_key(search_pose_key, access=Access.WRITE)
 
@@ -904,6 +941,12 @@ class BtNode_PopNextAction(Behaviour):
             self._bb.set(bb_keys.GRASP_REFEREE_LOCATION,
                          referee_loc.replace("_", " "), overwrite=True)
             self._bb.set(bb_keys.GRASP_REFEREE_POSE, referee_pose, overwrite=True)
+            # Closed appliances (fridge / washing machine / dishwasher) can't be
+            # opened by the robot: flag it so the grasp ask-referee branch always
+            # asks the referee to open it first, even if the planner omitted a
+            # separate open() step.
+            self._bb.set(bb_keys.GRASP_REFEREE_IS_APPLIANCE,
+                         referee_loc in ALWAYS_NO_GRASP, overwrite=True)
 
         # record_position: stash the label so the small tree registers the
         # captured pose under it.
@@ -1126,6 +1169,7 @@ def describe_step(action: str, params: Optional[Dict[str, Any]]) -> str:
         "follow": f"follow {person}" if person else "follow the person",
         "guide": f"guide them to the {loc}" if loc else "guide them to the destination",
         "grasp": f"pick up the {obj}" if obj else "pick up the object",
+        "open": f"ask a referee to open the {loc}" if loc else "ask a referee to open it",
         "place": f"place it at the {loc}" if loc else "place the object down",
         "deliver": (
             f"deliver the {obj} to {person}" if obj and person
@@ -1307,6 +1351,41 @@ def create_execute_one_step(max_corrections: int = 3) -> py_trees.composites.Seq
     return step
 
 
+def _reset_task_state(seq: py_trees.composites.Sequence) -> None:
+    """Hard per-task reset of EXECUTION state (not the plan, not the start pose).
+
+    Runs before planning a task and before executing a task, so a previous
+    task's STATE_LOG / correction count / failure / nav-location / grasp-referee
+    flag can never bleed into this task's plan or self-correction. PLAN_INDEX is
+    reset to 0 so a restored plan starts from its first step.
+    """
+    seq.add_child(BtNode_BlackboardSet("reset state_log", bb_keys.STATE_LOG, []))
+    seq.add_child(BtNode_BlackboardSet("reset correction", bb_keys.CORRECTION_COUNT, 0))
+    seq.add_child(BtNode_BlackboardSet("reset last_failure", bb_keys.LAST_FAILURE, ""))
+    seq.add_child(BtNode_BlackboardSet("reset nav location", bb_keys.LAST_NAV_LOCATION, ""))
+    seq.add_child(BtNode_BlackboardSet("reset grasp-referee", bb_keys.GRASP_ASK_REFEREE, False))
+    seq.add_child(BtNode_BlackboardSet("reset appliance-opened", bb_keys.APPLIANCE_OPENED, False))
+    seq.add_child(BtNode_BlackboardSet("reset plan_index", bb_keys.PLAN_INDEX, 0))
+
+
+def create_execute_loop(
+    max_steps: int = 25, max_corrections: int = 3,
+) -> py_trees.behaviour.Behaviour:
+    """The dispatch + self-correction loop over a pre-set ``PLAN``.
+
+    Runs each step until ``BtNode_PopNextAction`` returns FAILURE (plan
+    exhausted). That failure bubbles up through ``Repeat`` (aborts on any child
+    failure), and the outer ``FailureIsSuccess`` converts it back to SUCCESS so
+    the parent treats command completion as normal success. Assumes ``PLAN`` /
+    ``PLAN_INDEX`` are already set (by planning, or by restoring a saved plan).
+    """
+    loop_body = create_execute_one_step(max_corrections=max_corrections)
+    loop = py_trees.decorators.Repeat(
+        name="step loop", child=loop_body, num_success=max_steps,
+    )
+    return py_trees.decorators.FailureIsSuccess("plan-exhausted = done", loop)
+
+
 def create_execute_command(
     max_steps: int = 25,
     max_corrections: int = 3,
@@ -1315,48 +1394,160 @@ def create_execute_command(
 ) -> py_trees.behaviour.Behaviour:
     """Plan once, then run the step loop until the plan is exhausted.
 
-    The plan-loop relies on ``BtNode_PopNextAction`` returning FAILURE when
-    nothing is left to do. That failure bubbles up through ``Repeat`` (which
-    aborts on any child failure), and the outer ``FailureIsSuccess`` decorator
-    converts it back to SUCCESS so the parent tree treats command completion as
-    normal success.
+    Kept for single-command callers (dry-run, tests). The batch flow uses the
+    split ``_reset_task_state`` / ``create_execute_loop`` pieces instead so it can
+    plan up front and execute later.
 
     If ``emit_plan_dir`` is given, a standalone re-runnable ``.py`` of the
-    planned tree is written there right after planning (check-after-run).
-
-    If ``announce_plan`` (default), the robot speaks the full planned step
-    sequence aloud right after planning, before executing it.
+    planned tree is written there right after planning (check-after-run). If
+    ``announce_plan`` (default), the robot speaks the full planned step sequence
+    aloud right after planning, before executing it.
     """
-    plan = BtNode_PlanActions(name="plan initial")
-
-    loop_body = create_execute_one_step(max_corrections=max_corrections)
-    loop = py_trees.decorators.Repeat(
-        name="step loop",
-        child=loop_body,
-        num_success=max_steps,
-    )
-    loop_done_ok = py_trees.decorators.FailureIsSuccess(
-        "plan-exhausted = done", loop,
-    )
-
     root = py_trees.composites.Sequence("execute_command", memory=True)
-    # Hard per-command reset of execution state, right before planning. This runs
-    # every time a command is executed (independent of create_orchestrator_init),
-    # so a previous command's STATE_LOG / correction count / failure can never
-    # bleed into this command's plan or self-correction.
-    root.add_child(BtNode_BlackboardSet("reset state_log", bb_keys.STATE_LOG, []))
-    root.add_child(BtNode_BlackboardSet("reset correction", bb_keys.CORRECTION_COUNT, 0))
-    root.add_child(BtNode_BlackboardSet("reset last_failure", bb_keys.LAST_FAILURE, ""))
-    root.add_child(BtNode_BlackboardSet("reset nav location", bb_keys.LAST_NAV_LOCATION, ""))
-    root.add_child(BtNode_BlackboardSet("reset grasp-referee", bb_keys.GRASP_ASK_REFEREE, False))
-    root.add_child(plan)
+    _reset_task_state(root)
+    root.add_child(BtNode_PlanActions(name="plan initial"))
     if emit_plan_dir is not None:
         root.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
     if announce_plan:
         # Speak the full plan ("Here is my plan. First... Then... Finally...")
         # right after planning so the operator hears it before execution starts.
         root.add_child(create_announce_plan())
-    root.add_child(loop_done_ok)
+    root.add_child(create_execute_loop(max_steps, max_corrections))
+    return root
+
+
+# --------------------------------------------------------------------------- #
+# Batch command flow: collect N commands + plans UP FRONT (at the command
+# point), then execute them one by one. Replaces the old collect-execute-repeat
+# loop so the robot hears/plans/announces all tasks before acting.
+# --------------------------------------------------------------------------- #
+
+def make_listen_intake(listen_timeout: float = 30.0):
+    """Intake factory: for each slot, prompt the operator and listen for the
+    command into ``bb_keys.COMMAND`` (real audio; typed in mock)."""
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
+
+    def factory(slot: int) -> py_trees.behaviour.Behaviour:
+        seq = py_trees.composites.Sequence(f"get command {slot + 1}", memory=True)
+        seq.add_child(BtNode_Announce(
+            f"prompt task {slot + 1}", bb_source=None,
+            message=f"Speak loudly near to the microphone. Please tell me task number {slot + 1} after the beep.",
+        ))
+        seq.add_child(BtNode_ListenAction(
+            f"listen task {slot + 1}", bb_dest_key=bb_keys.COMMAND,
+            timeout=listen_timeout,
+        ))
+        seq.add_child(BtNode_AnnounceFromBB(
+            f"echo task {slot + 1}", bb_keys.COMMAND, prefix="I heard: ",
+        ))
+        return seq
+
+    return factory
+
+
+def make_inject_intake(commands):
+    """Intake factory that injects ``commands[slot]`` into ``bb_keys.COMMAND``
+    (for desktop / mock e2e tests, no audio)."""
+    def factory(slot: int) -> py_trees.behaviour.Behaviour:
+        return BtNode_BlackboardSet(
+            f"inject command {slot + 1}", bb_keys.COMMAND, commands[slot],
+        )
+
+    return factory
+
+
+def _create_plan_and_save(slot: int, emit_plan_dir: Optional[str] = None,
+                          announce_plan: bool = True) -> py_trees.composites.Sequence:
+    """Plan the command currently in ``COMMAND``, announce it, and stash the plan
+    + command into slot ``slot`` for later execution. The intake step must have
+    written ``COMMAND`` first."""
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    seq = py_trees.composites.Sequence(f"plan+save task {slot + 1}", memory=True)
+    _reset_task_state(seq)
+    # Bridge the dead air between hearing the command and speaking the plan: the
+    # LLM planning call below takes a few seconds, so acknowledge first.
+    seq.add_child(BtNode_Announce(
+        f"announce planning task {slot + 1}", bb_source=None,
+        message="I am planning, please wait.",
+    ))
+    seq.add_child(BtNode_PlanActions(name=f"plan task {slot + 1}"))
+    if emit_plan_dir is not None:
+        seq.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
+    if announce_plan:
+        seq.add_child(BtNode_Announce(
+            f"announce task {slot + 1} plan intro", bb_source=None,
+            message=f"For task {slot + 1}, here is my plan.",
+        ))
+        seq.add_child(create_announce_plan())
+    seq.add_child(BtNode_BlackboardCopy(
+        f"save plan {slot}", bb_keys.PLAN, f"{bb_keys.SAVED_PLAN_PREFIX}{slot}"))
+    seq.add_child(BtNode_BlackboardCopy(
+        f"save command {slot}", bb_keys.COMMAND, f"{bb_keys.SAVED_COMMAND_PREFIX}{slot}"))
+    return seq
+
+
+def _create_execute_slot(slot: int, max_steps: int = 25,
+                         max_corrections: int = 3) -> py_trees.composites.Sequence:
+    """Announce the start of task ``slot``, restore its saved command + plan, then
+    run the dispatch/self-correction loop over it."""
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    seq = py_trees.composites.Sequence(f"execute task {slot + 1}", memory=True)
+    seq.add_child(BtNode_Announce(
+        f"announce start task {slot + 1}", bb_source=None,
+        message=f"Starting task {slot + 1} now.",
+    ))
+    # Restore this task's command (so a mid-task self-correction re-plans the
+    # right command) and its pre-made plan.
+    seq.add_child(BtNode_BlackboardCopy(
+        f"restore command {slot}", f"{bb_keys.SAVED_COMMAND_PREFIX}{slot}", bb_keys.COMMAND))
+    seq.add_child(BtNode_BlackboardCopy(
+        f"restore plan {slot}", f"{bb_keys.SAVED_PLAN_PREFIX}{slot}", bb_keys.PLAN))
+    _reset_task_state(seq)
+    seq.add_child(create_execute_loop(max_steps, max_corrections))
+    return seq
+
+
+def create_batch_command_flow(
+    num_commands: int = 3,
+    make_intake=None,
+    max_steps: int = 25,
+    max_corrections: int = 3,
+    emit_plan_dir: Optional[str] = None,
+    announce_plan: bool = True,
+) -> py_trees.composites.Sequence:
+    """Collect ``num_commands`` commands + plans up front, then execute them.
+
+    ``make_intake(slot)`` returns a behaviour that writes the slot's command
+    into ``bb_keys.COMMAND`` (a prompt+listen sub-tree from
+    :func:`make_listen_intake`, or an injection node from
+    :func:`make_inject_intake` for tests). The intake phase plans + announces +
+    stashes each command; the execute phase restores each and runs the loop,
+    announcing before each task. The robot should already be standing at the
+    command point (all tasks share that start pose).
+    """
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    if make_intake is None:
+        make_intake = make_listen_intake()
+
+    root = py_trees.composites.Sequence("batch_command_flow", memory=True)
+
+    intake = py_trees.composites.Sequence("intake phase (collect+plan)", memory=True)
+    for i in range(num_commands):
+        slot = py_trees.composites.Sequence(f"intake task {i + 1}", memory=True)
+        slot.add_child(make_intake(i))
+        slot.add_child(_create_plan_and_save(i, emit_plan_dir, announce_plan))
+        intake.add_child(slot)
+    root.add_child(intake)
+
+    root.add_child(BtNode_Announce(
+        "announce start execution", bb_source=None,
+        message=f"I have {num_commands} tasks. I will start executing them now.",
+    ))
+
+    execute = py_trees.composites.Sequence("execute phase", memory=True)
+    for i in range(num_commands):
+        execute.add_child(_create_execute_slot(i, max_steps, max_corrections))
+    root.add_child(execute)
     return root
 
 

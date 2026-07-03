@@ -109,6 +109,12 @@ class bb_keys:
     GRASP_ANNOUNCEMENT = "gpsr/grasp_announcement"
     ARM_NAVIGATING = "gpsr/arm_navigating"
     ARM_SCAN = "gpsr/arm_scan"
+    ARM_ORBBEC_LOOK = "gpsr/arm_orbbec_look"  # arm pose that clears the orbbec
+                                           #   head camera's view; moved to
+                                           #   before any orbbec scan (find_object
+                                           #   / count / vlm / find_person /
+                                           #   describe_person). NOT the arm
+                                           #   RealSense grasp scan (uses ARM_SCAN).
     LAST_NAV_LOCATION = "gpsr/last_nav_location"  # str — location the robot most
                                            #   recently navigated to (goto /
                                            #   search_object); lets a later grasp
@@ -125,12 +131,31 @@ class bb_keys:
     GRASP_REFEREE_POSE = "gpsr/grasp_referee_pose"  # PoseStamped — its resolved
                                            #   pose (None if unresolvable; the
                                            #   goto is then a best-effort no-op).
+    GRASP_REFEREE_IS_APPLIANCE = "gpsr/grasp_referee_is_appliance"  # bool — the
+                                           #   no-grasp furniture is a closed
+                                           #   appliance (refrigerator / fridge /
+                                           #   washing machine / dishwasher) the
+                                           #   robot cannot open: the ask-referee
+                                           #   branch MUST first ask the referee to
+                                           #   open it, deterministically.
+    APPLIANCE_OPENED = "gpsr/appliance_opened"  # bool — the referee has already
+                                           #   been asked to open the appliance
+                                           #   (by an explicit open() step or the
+                                           #   grasp branch's own open-ask), so the
+                                           #   grasp branch does not ask twice.
+                                           #   Reset False per task.
 
     # Arena entry (GPSR starts OUTSIDE the arena, in front of the door)
     DOOR_STATUS = "gpsr/door_status"       # int — 1 open / 0 closed (BtNode_DoorDetection)
     ARENA_ENTERED = "gpsr/arena_entered"   # truthy once the robot has crossed the
                                            #   threshold; latched so the door step
                                            #   runs exactly once per mission.
+
+    # Batch command intake: collect N commands + their plans UP FRONT (at the
+    # command point), then execute them one by one. Each task's plan/command is
+    # stashed under an indexed slot key (prefix + <i>).
+    SAVED_PLAN_PREFIX = "gpsr/saved_plan_"        # + <i> -> list[dict] plan for task i
+    SAVED_COMMAND_PREFIX = "gpsr/saved_command_"  # + <i> -> str command for task i
 
 
 ARM_ACTION_NAME = "joint_move_action"
@@ -195,6 +220,40 @@ class BtNode_BlackboardSet(Behaviour):
 
     def update(self):
         self._client.set(self._key, self._value, overwrite=True)
+        return Status.SUCCESS
+
+
+class BtNode_BlackboardCopy(Behaviour):
+    """Copy ``src`` -> ``dst`` on the blackboard each tick.
+
+    SUCCESS after copying; FAILURE if ``src`` is unset/None. Unlike
+    ``BtNode_WriteToBlackboard(bb_source=...)`` it re-reads ``src`` on EVERY
+    tick (no cached value), so it is safe inside loops / re-entrant trees — used
+    by the batch-command flow to stash each task's plan/command into a slot and
+    restore it before execution.
+    """
+
+    def __init__(self, name: str, src: str, dst: str):
+        super().__init__(name)
+        self._src = src
+        self._dst = dst
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._src, access=Access.READ)
+        self._client.register_key(self._dst, access=Access.WRITE)
+
+    def update(self):
+        try:
+            value = self._client.get(self._src)
+        except Exception:
+            self.feedback_message = f"{self._src} not set"
+            return Status.FAILURE
+        if value is None:
+            self.feedback_message = f"{self._src} is None"
+            return Status.FAILURE
+        self._client.set(self._dst, value, overwrite=True)
         return Status.SUCCESS
 
 
@@ -404,6 +463,34 @@ class BtNode_CheckBBKeySet(Behaviour):
         return Status.SUCCESS
 
 
+class BtNode_CheckBBTrue(Behaviour):
+    """SUCCESS iff the value at ``key`` is truthy (FAILURE if falsy/unset).
+
+    A generic boolean guard — used to gate the ask-referee-to-open step on
+    ``GRASP_REFEREE_IS_APPLIANCE`` (only closed appliances) and, via an
+    ``Inverter``, to skip it when ``APPLIANCE_OPENED`` is already set.
+    """
+
+    def __init__(self, name: str, key: str):
+        super().__init__(name)
+        self._key = key
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._key, access=Access.READ)
+
+    def update(self):
+        try:
+            value = self._client.get(self._key)
+        except Exception:
+            value = None
+        if bool(value):
+            return Status.SUCCESS
+        self.feedback_message = f"{self._key} is not truthy"
+        return Status.FAILURE
+
+
 class BtNode_CheckGraspAllowed(Behaviour):
     """SUCCESS unless ``GRASP_ASK_REFEREE`` is truthy.
 
@@ -571,14 +658,18 @@ class BtNode_CountDetections(Behaviour):
 # Small-tree factories
 # ---------------------------------------------------------------------------
 
-def _tuck_arm_for_nav(label: str = "tuck arm for nav"):
-    """Move the arm to the ``base_moving`` (navigating) pose before driving.
+def _tuck_arm_for_nav(label: str = "tuck arm for nav",
+                      pose_key: str = None):
+    """Move the arm to a stow pose before driving.
 
-    The arm must be folded back to ``arm_pos_navigating`` so it does not block
-    the lidar / occupy the robot's footprint during base motion. Every small
-    tree that issues a base move (goto / follow / guide / approach / deliver /
-    place) tucks first. The pose is read from ``bb_keys.ARM_NAVIGATING``, seeded
-    once at startup by the orchestrator entry point (``_arm_constants_to_bb``).
+    The arm must be folded back so it does not block the lidar / occupy the
+    robot's footprint during base motion. Every small tree that issues a base
+    move (goto / follow / guide / approach / deliver / place) tucks first.
+
+    ``pose_key`` selects which pose to stow to (defaults to
+    ``bb_keys.ARM_ORBBEC_LOOK``, the general stow/orbbec-look pose). The
+    ``goto`` tree passes ``bb_keys.ARM_NAVIGATING`` so a pure navigation always
+    parks the arm in the dedicated lidar-clearing navigating pose before moving.
     Retry-wrapped and propagates failure: if the arm cannot tuck, we do NOT
     drive with the arm sticking out — the orchestrator self-correction handles it.
     """
@@ -587,10 +678,36 @@ def _tuck_arm_for_nav(label: str = "tuck arm for nav"):
         BtNode_MoveArmSingle(
             label,
             action_name=ARM_ACTION_NAME,
-            arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
+            arm_pose_bb_key=pose_key or bb_keys.ARM_ORBBEC_LOOK,
             add_octomap=False,
         ),
         num_failures=3,
+    )
+
+
+def _arm_to_orbbec_look(label: str = "arm to orbbec look"):
+    """Move the arm to ``arm_pos_orbbec_look`` so it clears the ORBBEC head
+    camera's field of view before an orbbec scan (find_object / count / vlm /
+    find_person / describe_person). This is NOT the arm-mounted RealSense grasp
+    scan, which needs the arm at ``ARM_SCAN`` — that path is left untouched.
+
+    Best-effort: Retry-wrapped and FailureIsSuccess so a MoveIt hiccup (or an
+    un-seeded ARM_ORBBEC_LOOK key) never fails the scan. The pose is read from
+    ``bb_keys.ARM_ORBBEC_LOOK``, seeded once at startup alongside the nav/scan
+    poses; if it is unset the move simply no-ops and the scan proceeds.
+    """
+    return py_trees.decorators.FailureIsSuccess(
+        f"{label} (best effort)",
+        py_trees.decorators.Retry(
+            f"retry {label}",
+            BtNode_MoveArmSingle(
+                label,
+                action_name=ARM_ACTION_NAME,
+                arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
+                add_octomap=False,
+            ),
+            num_failures=3,
+        ),
     )
 
 
@@ -626,7 +743,10 @@ def create_enter_arena():
     """Enter the arena ONCE, at mission start.
 
     GPSR starts the robot OUTSIDE the arena, standing in front of the (usually
-    closed) entrance door. This KEEPS SENSING the door until it opens:
+    closed) entrance door. After announcing readiness the arm stows to the
+    orbbec-look pose (NOT the navigating pose — no base motion happens here,
+    and the orbbec needs a clear view of the door). This KEEPS SENSING the
+    door until it opens:
     ``BtNode_DoorDetection`` returns FAILURE while the door is closed, and the
     ``FailureIsRunning`` decorator maps that to RUNNING, so the node is re-ticked
     (re-sensed) every tick and the tree simply waits — it never gives up and
@@ -638,6 +758,19 @@ def create_enter_arena():
     In mock mode the detection auto-succeeds immediately.
     """
     detect = py_trees.composites.Sequence("detect door + enter", memory=True)
+    # Greet + request the door ONCE, before sensing. The memory Sequence runs
+    # this to SUCCESS then advances to the door watch and stays there while the
+    # door is closed, so the announcement plays exactly once (not every tick).
+    detect.add_child(_arm_to_orbbec_look("stow arm before door watch"))
+    detect.add_child(BtNode_TurnPanTilt(name="Aim pan-tilt at door", x=0.0, y=45.0))
+    detect.add_child(BtNode_Announce(
+        "announce ready for gpsr", bb_source=None,
+        message="Hi, I am Tinker. I am ready for GPSR. Please open the door.",
+    ))
+    # Stow the arm to the orbbec-look pose before watching the door, so the
+    # arm is out of the orbbec head camera's view while the robot senses.
+    # Requires ARM_ORBBEC_LOOK to be seeded on the blackboard BEFORE this
+    # subtree runs (callers seed arm constants first).
     detect.add_child(py_trees.decorators.FailureIsRunning(
         "keep sensing until door opens",
         BtNode_DoorDetection(
@@ -659,17 +792,80 @@ def create_enter_arena():
     return once
 
 
+# Reassurance lines the robot cycles through WHILE navigating. A slow route plan
+# would otherwise leave the robot silent, and a referee may shut the task down if
+# it looks like it hung — so it keeps talking until the drive lands.
+GOTO_KEEPALIVE_LINES = [
+    "I am trying to go to the destination.",
+    "I am planning, please wait for a while.",
+    "Please give me a moment to arrive at the destination.",
+]
+# Silence between keep-alive lines. The loop MUST NOT announce back to back: a long
+# or abnormal navigation (recovery, replanning, blocked path) drags on far longer
+# than a normal trip, and un-paced announces flood the TTS service until it stops
+# producing audio — going silent EXACTLY when the heartbeat matters most (the robot
+# looks hung and a referee may stop the task). A fixed wall-clock gap paces it so it
+# keeps talking for the whole drive, however long recovery takes.
+GOTO_KEEPALIVE_INTERVAL_SEC = 5.0
+
+
+def _goto_keepalive_announcer() -> py_trees.behaviour.Behaviour:
+    """A never-terminating announcer that loops ``GOTO_KEEPALIVE_LINES`` with a
+    fixed ~``GOTO_KEEPALIVE_INTERVAL_SEC`` gap between lines.
+
+    Each line is spoken (blocking), then a wall-clock ``Timer`` waits so the next
+    line comes ~5 s later, never back to back — this is what keeps a long/abnormal
+    navigation from flooding TTS into silence. Each announce is wrapped in
+    ``FailureIsSuccess`` so a TTS hiccup neither skips its pacing gap nor aborts the
+    parallel; the ``Timer`` therefore ALWAYS runs. The memory Sequence never returns
+    FAILURE (announces are best-effort, timers only SUCCEED), and ``SuccessIsRunning``
+    turns its completion back into RUNNING so it re-enters from the first line — an
+    endless, paced loop that is always RUNNING. The parallel is thus driven purely by
+    the goto child; this just fills the silence for the ENTIRE drive, recovery
+    included (the drive stays RUNNING through Nav2 recovery, so the parallel — and
+    this announcer — keep ticking).
+    """
+    lines = py_trees.composites.Sequence("keep-alive lines", memory=True)
+    for i, msg in enumerate(GOTO_KEEPALIVE_LINES):
+        lines.add_child(py_trees.decorators.FailureIsSuccess(
+            f"say keepalive {i} (best-effort)",
+            BtNode_Announce(f"nav keepalive {i}", bb_source=None, message=msg),
+        ))
+        lines.add_child(py_trees.timers.Timer(
+            f"keepalive gap {i}", duration=GOTO_KEEPALIVE_INTERVAL_SEC,
+        ))
+    return py_trees.decorators.SuccessIsRunning("loop nav keepalive", lines)
+
+
 def create_goto():
-    """Navigate to ``bb_keys.TARGET_POSE`` (filled by orchestrator)."""
+    """Navigate to ``bb_keys.TARGET_POSE`` (filled by orchestrator).
+
+    While the drive is in progress the robot loops ``GOTO_KEEPALIVE_LINES`` in
+    parallel with the nav, so a slow route plan never leaves it silent.
+    """
     seq = py_trees.composites.Sequence("small/goto", memory=True)
     seq.add_child(BtNode_AnnounceFromBB(
         "announce going", bb_keys.TARGET_LOCATION, prefix="Going to "
     ))
-    seq.add_child(_tuck_arm_for_nav("tuck arm before goto"))
-    seq.add_child(py_trees.decorators.Retry(
+    # goto is pure navigation: always park the arm in the dedicated navigating
+    # (lidar-clearing) pose before driving, not the orbbec-look stow pose.
+    seq.add_child(_tuck_arm_for_nav(
+        "tuck arm before goto", pose_key=bb_keys.ARM_NAVIGATING,
+    ))
+    drive = py_trees.decorators.Retry(
         "retry goto",
         BtNode_GotoAction("goto target", key=bb_keys.TARGET_POSE),
         num_failures=5,
+    )
+    # Drive + keep-alive chatter run together; the parallel finishes EXACTLY when
+    # the drive does (SuccessOnSelected targets the drive child). The announcer
+    # never succeeds or fails, so it neither ends the parallel early nor aborts it.
+    seq.add_child(py_trees.composites.Parallel(
+        "goto + keep talking",
+        policy=py_trees.common.ParallelPolicy.SuccessOnSelected(
+            children=[drive], synchronise=False,
+        ),
+        children=[drive, _goto_keepalive_announcer()],
     ))
     return seq
 
@@ -710,6 +906,7 @@ def create_find_object():
     the base. Locate-only: it does NOT pick a single instance.
     """
     seq = py_trees.composites.Sequence("small/find_object", memory=True)
+    seq.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
     seq.add_child(_pantilt_sweep("find_object", OBJECT_TILT_DEG, _object_scan_and_verify))
     seq.add_child(BtNode_AnnounceFromBB(
         "announce found", bb_keys.TARGET_OBJECT_NAME, prefix="I can see the "
@@ -853,6 +1050,7 @@ def create_find_person():
         "announce searching", bb_source=None,
         message="Looking for a person, please stay still.",
     ))
+    seq.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
     seq.add_child(_pantilt_sweep("find_person", HUMAN_TILT_DEG, _person_scan_strategies))
     seq.add_child(BtNode_Announce(
         "announce found person", bb_source=None,
@@ -876,6 +1074,7 @@ def create_describe_person():
         "announce describing", bb_source=None,
         message="Let me take a look at this person.",
     ))
+    seq.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
     # Sweep pan 0/+45/-45 across HUMAN_TILT_DEG (up at a standing person, then
     # lower); extract the description at each angle and stop at the first that
     # succeeds, so a person not squarely in front / a different height is framed.
@@ -939,21 +1138,26 @@ def create_ask_person():
 def create_follow():
     """Follow the person currently being tracked.
 
-    Uses the action-based BtNode_TrackPersonAction since the production
-    HelpMeCarry tree already proves this path. Caller is responsible for
-    cancelling/terminating the action when navigation should stop.
+    Delegates to the canonical follow-person tree
+    (FollowPerson/follow_person.py), which runs the vision tracker
+    (BtNode_TrackPersonAction -> /track_person, head/pan-tilt lock) AND the
+    navigation follower (BtNode_FollowAction -> follow_server, base motion)
+    side by side under a Parallel, plus the reacq/recovery reactions. Building
+    only the tracker here (the prior implementation) left the base stationary:
+    the head tracked the person but no Follow goal was ever dispatched. Caller
+    is responsible for cancelling/terminating the subtree when navigation should
+    stop (the orchestrator does this via terminate() when the plan advances).
     """
-    from behavior_tree.TemplateNodes.TrackPersonAction import BtNode_TrackPersonAction
+    from behavior_tree.FollowPerson.follow_person import create_follow_person_tree
     seq = py_trees.composites.Sequence("small/follow", memory=True)
     seq.add_child(BtNode_Announce(
         "announce follow", bb_source=None,
         message="I will follow you. Please walk slowly.",
     ))
     seq.add_child(_tuck_arm_for_nav("tuck arm before follow"))
-    seq.add_child(BtNode_TrackPersonAction(
-        name="track person",
-        target_frame="map",
-    ))
+    # enable_navigation=True -> tracker + follow_server both live; target_frame
+    # defaults to "map" (nav-on default), correct for GPSR under Nav2/localization.
+    seq.add_child(create_follow_person_tree(enable_navigation=True))
     return seq
 
 
@@ -988,7 +1192,7 @@ def create_grasp():
     primary.add_child(BtNode_MoveArmSingle(
         "arm to navigating",
         service_name=ARM_ACTION_NAME,
-        arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
+        arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
         add_octomap=False,
     ))
     par_scan = py_trees.composites.Parallel(
@@ -1058,13 +1262,17 @@ def create_grasp():
         BtNode_MoveArmSingle(
             "arm back to navigating",
             service_name=ARM_ACTION_NAME,
-            arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
+            arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
         ),
         num_failures=5,
     ))
 
+    # Grasp is EXPENSIVE (full arm scan → detect → pick → arm-back cycle), so cap
+    # the whole-cycle retry at a single re-attempt (num_failures=2 = one try + one
+    # retry). On the second failure the Selector drops straight to the ask-referee
+    # ex_machina branch rather than burning more time on a third heavy cycle.
     primary_with_retry = py_trees.decorators.Retry(
-        "retry primary 3x", primary, num_failures=3,
+        "retry primary once", primary, num_failures=2,
     )
 
     # Only attempt the real grasp when the object is NOT on no-grasp furniture
@@ -1083,7 +1291,7 @@ def create_grasp():
         BtNode_MoveArmSingle(
             "arm to navigating",
             service_name=ARM_ACTION_NAME,
-            arm_pose_bb_key=bb_keys.ARM_NAVIGATING,
+            arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
         ),
         num_failures=5,
     ))
@@ -1108,6 +1316,31 @@ def create_grasp():
     ex_machina.add_child(py_trees.decorators.FailureIsSuccess(
         "goto no-grasp furniture (best effort)", goto_referee,
     ))
+    # MUST-DO for closed appliances (refrigerator / fridge / washing machine /
+    # dishwasher): before the handover, ask the referee to OPEN it — the robot
+    # cannot. This is deterministic (gated on GRASP_REFEREE_IS_APPLIANCE, set by
+    # the orchestrator), so it fires even when the planner did not emit a separate
+    # open() step. Skipped (via APPLIANCE_OPENED) when an explicit open() step
+    # already asked, so we never double-ask. Best-effort: a non-appliance or an
+    # already-opened appliance just falls through to the handover.
+    open_appliance = py_trees.composites.Sequence("ask referee to open appliance", memory=True)
+    open_appliance.add_child(BtNode_CheckBBTrue(
+        "furniture is a closed appliance?", bb_keys.GRASP_REFEREE_IS_APPLIANCE))
+    open_appliance.add_child(py_trees.decorators.Inverter(
+        "not already opened?",
+        BtNode_CheckBBTrue("already opened?", bb_keys.APPLIANCE_OPENED)))
+    open_appliance.add_child(BtNode_AnnounceFromBB(
+        "ask referee to open", bb_keys.GRASP_REFEREE_LOCATION,
+        prefix="Dear referee, I cannot open it myself. Please open the "))
+    open_appliance.add_child(BtNode_Announce(
+        "announce leave open", bb_source=None,
+        message="Thank you. Please leave it open for me."))
+    open_appliance.add_child(BtNode_WaitTicks("wait for referee to open", 8))
+    open_appliance.add_child(BtNode_BlackboardSet(
+        "mark appliance opened", bb_keys.APPLIANCE_OPENED, True))
+    ex_machina.add_child(py_trees.decorators.FailureIsSuccess(
+        "open appliance if needed (best effort)", open_appliance,
+    ))
     ex_machina.add_child(BtNode_GripperAction("open gripper", True))
     ex_machina.add_child(BtNode_AnnounceFromBB(
         "ask referee", bb_keys.TARGET_OBJECT_NAME, prefix="Dear referee, please help me grasp the "
@@ -1124,6 +1357,33 @@ def create_grasp():
         memory=True,
         children=[guarded_primary, ex_machina],
     )
+
+
+def create_open():
+    """Ask a human referee to open a container/appliance the robot cannot open
+    itself — a refrigerator/fridge, washing machine, or dishwasher (and cabinets).
+
+    The robot has already driven to it via the preceding ``goto``; here it just
+    requests help and waits, then leaves the door open for the following scan /
+    ask-referee grasp. Always SUCCESS-ish (announce + wait) so it never blocks the
+    rest of the plan — the object retrieval itself is handled by the ex-machina
+    grasp, which asks the referee to hand the item over.
+    """
+    seq = py_trees.composites.Sequence("small/open", memory=True)
+    seq.add_child(BtNode_AnnounceFromBB(
+        "ask referee to open", bb_keys.TARGET_LOCATION,
+        prefix="Dear referee, I cannot open it myself. Please open the ",
+    ))
+    seq.add_child(BtNode_Announce(
+        "announce leave open", bb_source=None,
+        message="Thank you. Please leave it open for me.",
+    ))
+    seq.add_child(BtNode_WaitTicks("wait for referee to open", 8))
+    # Mark it opened so a following grasp's ask-referee branch does not repeat the
+    # open request (the grasp branch opens deterministically when this step was
+    # skipped, e.g. the planner omitted open() for a dishwasher).
+    seq.add_child(BtNode_BlackboardSet("mark appliance opened", bb_keys.APPLIANCE_OPENED, True))
+    return seq
 
 
 def create_place():
@@ -1196,6 +1456,7 @@ def create_count():
     """
     primary = py_trees.composites.Sequence("count/by_detector", memory=True)
     primary.add_child(BtNode_TurnPanTilt("turn pantilt", x=0.0, y=10.0))
+    primary.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
     primary.add_child(BtNode_Announce(
         "announce scanning", bb_source=None, message="I am counting now."
     ))
@@ -1334,6 +1595,7 @@ def create_vlm_fallback():
     """
     seq = py_trees.composites.Sequence("small/vlm_fallback", memory=True)
     seq.add_child(BtNode_TurnPanTilt("turn pantilt forward", x=0.0, y=15.0))
+    seq.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
     seq.add_child(BtNode_Announce(
         "announce looking", bb_source=None, message="Let me take a look.",
     ))
@@ -1389,6 +1651,7 @@ ACTION_FACTORIES = {
     "follow": create_follow,
     "guide": create_guide,
     "grasp": create_grasp,
+    "open": create_open,
     "place": create_place,
     "deliver": create_deliver,
     "count": create_count,

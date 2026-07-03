@@ -60,9 +60,21 @@ def _load_arm_constants():
     return nav, scan
 
 
+def _load_arm_orbbec_look():
+    """Arm pose (radians) that clears the orbbec head camera's view for scanning.
+    Falls back to the navigating pose when ``arm_pos_orbbec_look`` is absent, so
+    an older constants.json still works (the move is then a harmless no-op)."""
+    import json
+    with open(CONSTANTS_PATH, "r") as fh:
+        constants = json.load(fh)
+    key = "arm_pos_orbbec_look" if "arm_pos_orbbec_look" in constants else "arm_pos_navigating"
+    return [x / 180 * math.pi for x in constants[key]]
+
+
 def create_constant_writer():
     """Push arm poses + instruction-point pose to the blackboard."""
     arm_nav, arm_scan = _load_arm_constants()
+    arm_orbbec = _load_arm_orbbec_look()
     instruction_pose = KNOWN_LOCATIONS.get("instruction_point") \
         or KNOWN_LOCATIONS.get("QA_point") \
         or next(iter(KNOWN_LOCATIONS.values()), None)
@@ -75,6 +87,10 @@ def create_constant_writer():
     seq.add_child(BtNode_WriteToBlackboard(
         "arm nav", bb_namespace="", bb_source=None,
         bb_key=bb_keys.ARM_NAVIGATING, object=arm_nav,
+    ))
+    seq.add_child(BtNode_WriteToBlackboard(
+        "arm orbbec look", bb_namespace="", bb_source=None,
+        bb_key=bb_keys.ARM_ORBBEC_LOOK, object=arm_orbbec,
     ))
     if instruction_pose is not None:
         seq.add_child(BtNode_WriteToBlackboard(

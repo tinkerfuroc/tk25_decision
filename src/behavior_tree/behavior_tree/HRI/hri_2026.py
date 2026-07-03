@@ -39,7 +39,10 @@ import rclpy
 import behavior_tree.HRI.hri as hri
 from behavior_tree.HRI.config import (
     KEY_ARM_DROP,
+    KEY_ARM_HANDOVER,
     KEY_ARM_NAVIGATING,
+    KEY_PERSONS,
+    KEY_PERSON_CENTROIDS,
     KEY_SOFA_POSE_REVERSED,
 )
 from behavior_tree.HRI.follow_real import createBagDropReal, createFollowHostUntilStop
@@ -47,6 +50,7 @@ from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.Manipulation import (
     BtNode_GripperAction,
     BtNode_MoveArmSingle,
+    BtNode_PointTo,
 )
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.visualization import create_post_tick_visualizer
@@ -56,23 +60,72 @@ def createBagFlowReal2026():
     """Real bag flow: handover -> real follow-host (termination-gated) -> real drop.
 
     Drop-in replacement for ``hri.createBagFlow``. Mirrors the canonical
-    handover (gripper open -> ask -> wait -> close -> arm to nav pose with bag),
-    then runs the REAL follow process until it is termination-gated by the nav
-    person-stationary verdict + spoken confirmation, then the real arm drop on
-    HRI's configured drop pose.
+    handover (arm to handover pose aimed at guest 2 -> gripper open -> ask ->
+    wait -> close -> arm to nav pose with bag), then runs the REAL follow
+    process until it is termination-gated by the nav person-stationary verdict
+    + spoken confirmation, then the real arm drop on HRI's configured drop pose.
     """
     root = py_trees.composites.Sequence(
         name="HRI bag flow (real follow, 2026)", memory=True
     )
 
-    # --- handover (mirrors hri.createBagFlow) ---
-    root.add_child(
+    # --- handover (mirrors hri.createBagFlow, handover pose aimed at guest 2) ---
+    # Joints 1-6 come from KEY_ARM_HANDOVER; joint0 is recomputed to point at
+    # guest 2 (KEY_PERSONS layout [host, guest1, guest2]) with the same bearing
+    # math the two-way introduction uses to point at people (pan_bias=0.0 —
+    # centroids are correct in base_link). The centroids are still fresh here:
+    # they were scanned by the intro's feature matching and the base does not
+    # move again until the turn-around AFTER the bag is grasped. If the aim is
+    # impossible (centroid missing, arm refuses), fall back to the canonical
+    # fixed handover pose; if that fails too, continue — an arm refusal must
+    # not forfeit the gripper handover + follow-to-drop scoring.
+    arm_to_handover = py_trees.composites.Selector(
+        name="Arm to bag-handover pose", memory=True
+    )
+    arm_to_handover.add_child(
+        py_trees.decorators.Retry(
+            name="Retry handover pose at guest2",
+            child=BtNode_PointTo(
+                name="Handover pose pointing at guest2",
+                bb_key_persons=KEY_PERSONS,
+                bb_key_points=KEY_PERSON_CENTROIDS,
+                bb_key_init_pose=KEY_ARM_HANDOVER,
+                target_id=2,
+                pan_bias=0.0,
+            ),
+            num_failures=3,
+        )
+    )
+    arm_to_handover.add_child(
+        py_trees.decorators.Retry(
+            name="Retry fixed handover pose",
+            child=BtNode_MoveArmSingle(
+                name="Move arm to handover pose (fixed)",
+                service_name="arm_joint_service",
+                arm_pose_bb_key=KEY_ARM_HANDOVER,
+                add_octomap=False,
+            ),
+            num_failures=3,
+        )
+    )
+    parallel_handover_pose_announce = py_trees.composites.Parallel(
+        name="Arm to handover pose + announce ready",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
+    )
+    parallel_handover_pose_announce.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name="Arm to bag-handover pose (best effort)",
+            child=arm_to_handover,
+        )
+    )
+    parallel_handover_pose_announce.add_child(
         BtNode_Announce(
             name="Announce ready for bag",
             bb_source=None,
             message="I am ready to take your bag.",
         )
     )
+    root.add_child(parallel_handover_pose_announce)
     root.add_child(
         BtNode_GripperAction(name="Open gripper for bag", open_gripper=True)
     )

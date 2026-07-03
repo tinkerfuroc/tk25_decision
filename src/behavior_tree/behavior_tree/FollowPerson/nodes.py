@@ -222,7 +222,7 @@ class BtNode_RecoveryScan(py_trees.behaviour.Behaviour):
         settle_sec: float = 2.0,
         detect_timeout_sec: float = 5.0,
         scan_angles_deg=(-60.0, 0.0, 60.0),
-        tilt_deg: float = 37.0,
+        tilt_deg: float = 35.0,
         include_current_first: bool = True,
         bb_key: str = "track/reacquisition_state",
         announce_service: str = "announce",

@@ -152,6 +152,7 @@ POINT_BASKET_TOP       = _point_reader(constants["point_basket_top"])
 POINT_WASHER_DRUM      = _point_reader(constants["point_washer_drum"])
 
 ARM_POS_NAVIGATING  = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
+ARM_POS_ORBBEC_LOOK  = [x / 180 * math.pi for x in constants["arm_pos_orbbec_look"]]
 ARM_POS_SCAN        = [x / 180 * math.pi for x in constants["arm_pos_scan"]]
 ARM_POS_PICK_BASKET = [x / 180 * math.pi for x in constants["arm_pos_pick_basket"]]
 ARM_POS_PRE_PICK_BASKET = [x / 180 * math.pi for x in constants["arm_pos_pre_pick_basket"]]
@@ -202,6 +203,7 @@ KEY_POINT_BASKET_TOP       = "dl_point_basket_top"
 KEY_POINT_WASHER_DRUM      = "dl_point_washer_drum"
 
 KEY_ARM_NAVIGATING  = "dl_arm_navigating"
+KEY_ARM_ORBBEC_LOOK = "dl_arm_orbbec_look"
 KEY_ARM_SCAN        = "dl_arm_scan"
 KEY_ARM_PICK_BASKET = "dl_arm_pick_basket"
 KEY_ARM_PICK_WASHER = "dl_arm_pick_washer"
@@ -220,6 +222,7 @@ KEY_PHASE_DEADLINE  = "dl_phase_deadline"
 KEY_SUMMARY_MESSAGE = "dl_summary_message"
 KEY_FOLD_COUNT      = "dl_fold_count"
 KEY_STACK_COUNT     = "dl_stack_count"
+KEY_FOLD_OUT_OF_RANGE = "dl_fold_out_of_range"
 
 # Vision + grasp scratch (used by scan-then-grasp clothing branch).
 KEY_VISION_RESULT      = "dl_vision_result"
