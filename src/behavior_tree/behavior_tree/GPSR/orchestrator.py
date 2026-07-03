@@ -72,11 +72,17 @@ DEFAULT_OBJECT_LOCATIONS: Dict[str, str] = {}
 # spot is unknown (the override case). Populated from constants.json
 # "search_spots"; a location with no entry falls back to [itself].
 ROOM_SEARCH_SPOTS: Dict[str, List[str]] = {}
+# Appliances/containers with doors the robot CANNOT open or reach into itself: a
+# grasp there is ALWAYS bypassed to the ask-referee branch (the referee opens the
+# door and hands the item over). Forced into NO_GRASP_LOCATIONS on every load so a
+# constants.json "no_grasp_locations" override can never drop them.
+ALWAYS_NO_GRASP: set = {"refrigerator", "fridge", "washing_machine", "dishwasher"}
 # Furniture the robot must NOT grasp from — a grasp there is bypassed straight to
 # the ask-referee branch. Populated from constants.json "no_grasp_locations"
-# (default shelf / cabinet / coat_rack). Matched case-insensitively, and both the
-# underscore and space spellings ("coat_rack" / "coat rack") are recognised.
-NO_GRASP_LOCATIONS: set = {"shelf", "cabinet", "coat_rack"}
+# (default shelf / cabinet / coat_rack) UNION the always-bypass appliances above.
+# Matched case-insensitively, and both the underscore and space spellings
+# ("coat_rack" / "coat rack", "washing_machine" / "washing machine") are recognised.
+NO_GRASP_LOCATIONS: set = {"shelf", "cabinet", "coat_rack"} | ALWAYS_NO_GRASP
 
 # Names the planner may use for "where the robot stood when it received the
 # command". Resolved from the blackboard (bb_keys.START_POSE, captured by
@@ -151,6 +157,10 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     if isinstance(ng, list) and ng:
         NO_GRASP_LOCATIONS.clear()
         NO_GRASP_LOCATIONS.update(str(x).lower() for x in ng if not str(x).startswith("_"))
+    # Appliances the robot can never open/reach into are ALWAYS bypassed, whatever
+    # the config said (a partial override must not silently re-enable grasping from
+    # a fridge / washing machine / dishwasher).
+    NO_GRASP_LOCATIONS.update(ALWAYS_NO_GRASP)
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +235,14 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         those (the command says so, or the object's Default location is one of
         them). It then skips the grasp and asks a human referee to hand the
         object over instead.
+    - open(location: str)
+        Ask a human referee to OPEN a closed container/appliance the robot
+        cannot open itself — a REFRIGERATOR / FRIDGE, a WASHING MACHINE, or a
+        DISHWASHER (and closed CABINETS). Emit ``goto(location)`` FIRST (the robot
+        must already be standing at it), then ``open(location=<same>)`` before any
+        find/scan/grasp of what is inside. The robot does NOT drive during
+        ``open``. Whatever is inside must still be retrieved with ``grasp`` — which
+        is itself an ask-referee handover for these locations (see below).
     - place(location: str)
         Place the currently-held object at ``location``. The robot navigates
         to ``location`` itself — do not add a separate ``goto`` before it.
@@ -296,6 +314,14 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
           {"action": "goto", "params": {"location": "kitchen"}},
           {"action": "grasp", "params": {"object": "coke"}},
           {"action": "deliver", "params": {"object": "coke", "recipient": "me", "recipient_location": "start_position"}}
+        ]
+    Example: "get the plate from the dishwasher and bring it to me" (closed
+    appliance -> open + ask-referee grasp) =>
+        [
+          {"action": "goto", "params": {"location": "dishwasher"}},
+          {"action": "open", "params": {"location": "dishwasher"}},
+          {"action": "grasp", "params": {"object": "plate", "ask_referee": true}},
+          {"action": "deliver", "params": {"object": "plate", "recipient": "me", "recipient_location": "start_position"}}
         ]
 """).strip()
 
@@ -418,6 +444,15 @@ SYSTEM_PROMPT = textwrap.dedent("""
        matching flag on the ``grasp`` step: ``from_shelf`` / ``from_cabinet`` /
        ``from_coat_rack`` = true. The robot will then ask a referee to hand the
        object over instead of attempting the grasp.
+    18. The robot ALSO cannot open or reach into a REFRIGERATOR / FRIDGE, a
+       WASHING MACHINE, or a DISHWASHER. When an object to fetch/find/count is
+       inside one of these, the plan MUST be:
+       ``goto(location)`` → ``open(location)`` → (optional find/count) →
+       ``grasp(object, ask_referee=true)``. The ``open`` step asks a referee to
+       open the door, and the ``grasp`` step (with ``ask_referee=true``) asks the
+       referee to hand the object over — the robot never opens the door or reaches
+       inside itself. Only add ``open`` for these closed containers (and closed
+       cabinets), never for open surfaces like a table or shelf.
 """).strip()
 
 
@@ -763,6 +798,7 @@ class BtNode_PopNextAction(Behaviour):
         self._bb.register_key(bb_keys.GRASP_ASK_REFEREE, access=Access.WRITE)
         self._bb.register_key(bb_keys.GRASP_REFEREE_LOCATION, access=Access.WRITE)
         self._bb.register_key(bb_keys.GRASP_REFEREE_POSE, access=Access.WRITE)
+        self._bb.register_key(bb_keys.GRASP_REFEREE_IS_APPLIANCE, access=Access.WRITE)
         for search_pose_key in SEARCH_POSE_KEYS:
             self._bb.register_key(search_pose_key, access=Access.WRITE)
 
@@ -905,6 +941,12 @@ class BtNode_PopNextAction(Behaviour):
             self._bb.set(bb_keys.GRASP_REFEREE_LOCATION,
                          referee_loc.replace("_", " "), overwrite=True)
             self._bb.set(bb_keys.GRASP_REFEREE_POSE, referee_pose, overwrite=True)
+            # Closed appliances (fridge / washing machine / dishwasher) can't be
+            # opened by the robot: flag it so the grasp ask-referee branch always
+            # asks the referee to open it first, even if the planner omitted a
+            # separate open() step.
+            self._bb.set(bb_keys.GRASP_REFEREE_IS_APPLIANCE,
+                         referee_loc in ALWAYS_NO_GRASP, overwrite=True)
 
         # record_position: stash the label so the small tree registers the
         # captured pose under it.
@@ -1127,6 +1169,7 @@ def describe_step(action: str, params: Optional[Dict[str, Any]]) -> str:
         "follow": f"follow {person}" if person else "follow the person",
         "guide": f"guide them to the {loc}" if loc else "guide them to the destination",
         "grasp": f"pick up the {obj}" if obj else "pick up the object",
+        "open": f"ask a referee to open the {loc}" if loc else "ask a referee to open it",
         "place": f"place it at the {loc}" if loc else "place the object down",
         "deliver": (
             f"deliver the {obj} to {person}" if obj and person
@@ -1321,6 +1364,7 @@ def _reset_task_state(seq: py_trees.composites.Sequence) -> None:
     seq.add_child(BtNode_BlackboardSet("reset last_failure", bb_keys.LAST_FAILURE, ""))
     seq.add_child(BtNode_BlackboardSet("reset nav location", bb_keys.LAST_NAV_LOCATION, ""))
     seq.add_child(BtNode_BlackboardSet("reset grasp-referee", bb_keys.GRASP_ASK_REFEREE, False))
+    seq.add_child(BtNode_BlackboardSet("reset appliance-opened", bb_keys.APPLIANCE_OPENED, False))
     seq.add_child(BtNode_BlackboardSet("reset plan_index", bb_keys.PLAN_INDEX, 0))
 
 
@@ -1420,6 +1464,12 @@ def _create_plan_and_save(slot: int, emit_plan_dir: Optional[str] = None,
     from behavior_tree.TemplateNodes.Audio import BtNode_Announce
     seq = py_trees.composites.Sequence(f"plan+save task {slot + 1}", memory=True)
     _reset_task_state(seq)
+    # Bridge the dead air between hearing the command and speaking the plan: the
+    # LLM planning call below takes a few seconds, so acknowledge first.
+    seq.add_child(BtNode_Announce(
+        f"announce planning task {slot + 1}", bb_source=None,
+        message="I am planning, please wait.",
+    ))
     seq.add_child(BtNode_PlanActions(name=f"plan task {slot + 1}"))
     if emit_plan_dir is not None:
         seq.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
