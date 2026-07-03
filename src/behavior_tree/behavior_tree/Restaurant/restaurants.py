@@ -56,7 +56,6 @@ from .custumNodes import (
     BtNode_MarkItemDelivered,
     BtNode_RecordOrder,
     BtNode_ScanForCallingCustomer,
-    BtNode_ServeOrder,
     BtNode_TakeOrder,
 )
 from .config import (
@@ -673,10 +672,14 @@ def createDeliverOrder():
             add_octomap=False,
         )
     )
+    # Closing line only — the item was already announced from
+    # KEY_CURRENT_ITEM_SUMMARY above; KEY_CUSTOMER_ORDER still holds the LAST
+    # Phase-1 customer's order here, so it must not be spoken per delivery.
     normal.add_child(
-        BtNode_ServeOrder(
+        BtNode_Announce(
             name="Serve announcement",
-            bb_order_key=KEY_CUSTOMER_ORDER,
+            bb_source=None,
+            message="Enjoy your meal!",
         )
     )
 
@@ -774,7 +777,13 @@ def createCollectOrdersPhase():
 
 
 def createBarmanPhase():
-    """Phase 2: one bar trip for all collected orders. Gated on non-empty order list."""
+    """Phase 2: one bar trip for all collected orders. Gated on non-empty order list.
+
+    The skip announcement fires only when the order list is truly empty. Any
+    other failure of the actual trip (nav, barman confirmation) falls through
+    to a truthful announcement instead of claiming "no customers served", and
+    the phase still returns SUCCESS so Phase 3 delivers the collected orders.
+    """
     root = py_trees.composites.Selector(name="Barman trip (gated)", memory=True)
 
     actual = py_trees.composites.Sequence(name="Actual barman trip", memory=True)
@@ -811,14 +820,33 @@ def createBarmanPhase():
         )
     )
 
-    skip = BtNode_Announce(
-        name="Skip barman (no orders)",
+    skip = py_trees.composites.Sequence(name="Skip barman (no orders)", memory=True)
+    skip.add_child(
+        py_trees.decorators.Inverter(
+            name="No orders collected?",
+            child=BtNode_OrderListNotEmpty(
+                name="Order list not empty? (skip gate)",
+                order_list_key=KEY_ORDER_LIST,
+            ),
+        )
+    )
+    skip.add_child(
+        BtNode_Announce(
+            name="Announce skip (no orders)",
+            bb_source=None,
+            message="No customers served. Skipping barman.",
+        )
+    )
+
+    proceed_anyway = BtNode_Announce(
+        name="Barman not confirmed (continuing)",
         bb_source=None,
-        message="No customers served. Skipping barman.",
+        message="I could not get the barman's confirmation. I will proceed with delivery anyway.",
     )
 
     root.add_child(actual)
     root.add_child(skip)
+    root.add_child(proceed_anyway)
     return root
 
 

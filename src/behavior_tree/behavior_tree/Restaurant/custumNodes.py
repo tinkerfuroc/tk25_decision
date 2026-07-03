@@ -97,6 +97,23 @@ class BtNode_TakeOrder(BtNode_PhraseExtractionAction):
             action_name=action_name,
         )
 
+def format_order_items(order) -> str:
+    """Render an order for TTS: joins item lists ("burger, fries and coke")
+    instead of speaking the Python list repr; plain strings pass through.
+    Phase 1 stores `items: string[]` since the order-extraction action landed,
+    but older intakes (wordlist / listen) still write a single string."""
+    if isinstance(order, (list, tuple)):
+        items = [str(item) for item in order if str(item).strip()]
+        if not items:
+            return "nothing"
+        if len(items) == 1:
+            return items[0]
+        return ", ".join(items[:-1]) + " and " + items[-1]
+    if order is None or not str(order).strip():
+        return "nothing"
+    return str(order)
+
+
 class BtNode_ConfirmOrder(BtNode_Announce):
     def __init__(self, 
                  name: str,
@@ -115,7 +132,7 @@ class BtNode_ConfirmOrder(BtNode_Announce):
         )
     
     def initialise(self):
-        order = self.blackboard.order
+        order = format_order_items(self.blackboard.order)
         self.given_msg = f"I understand your order is {order}. Is this correct?"
         return super().initialise()
 
@@ -214,7 +231,7 @@ class BtNode_ServeOrder(BtNode_Announce):
         )
     
     def initialise(self):
-        order = self.blackboard.order
+        order = format_order_items(self.blackboard.order)
         self.given_msg = f"Here is your order: {order}. Enjoy your meal!"
         return super().initialise()
 
