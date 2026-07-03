@@ -10,7 +10,7 @@ from behavior_tree.HRI.hri_2026 import createBagFlowReal2026  # noqa: E402
 def test_root_starts_with_operator_gate():
     root = createHRITask2026()
     assert isinstance(root, py_trees.composites.Sequence)
-    assert len(root.children) == 15
+    assert len(root.children) == 16
     assert root.children[0].__class__.__name__ == "BtNode_PressEnterToSucceed"
 
 
@@ -35,3 +35,13 @@ def test_look_at_host_tilt_is_35_degrees():
     # 45 degrees up put the camera on the ceiling/crowd at follow start
     # (2026-07-02 phantom-point incident); 35 matches hri.py's "look up".
     assert look.y == 35.0
+
+
+def test_host_seating_instruction_is_fourth():
+    root = createHRITask2026()
+    announce = root.children[3]
+    assert announce.__class__.__name__ == "BtNode_Announce"
+    assert announce.given_msg == (
+        "Dear host, please sit down on the sofa and remain seated. "
+        "Please do not walk around the room during the task."
+    )

@@ -180,6 +180,16 @@ def createHRITask2026() -> py_trees.behaviour.Behaviour:
         )
     )
     root.add_child(
+        BtNode_Announce(
+            name="Host seating instruction",
+            bb_source=None,
+            message=(
+                "Dear host, please sit down on the sofa and remain seated. "
+                "Please do not walk around the room during the task."
+            ),
+        )
+    )
+    root.add_child(
         py_trees.decorators.Retry(
             name="Retry arm nav pose at start",
             child=BtNode_MoveArmSingle(
