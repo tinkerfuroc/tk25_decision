@@ -398,6 +398,9 @@ def createScanForUpToNCustomers(scan_positions, n_gate: int = 2):
             name=f"Detect at ({x}, {y})", memory=True
         )
         detect_at_pos.add_child(BtNode_TurnPanTilt("turn pan tilt forwards", x=x, y=y))
+        detect_at_pos.add_child(
+            py_trees.timers.Timer(name="wait for pan tilt to settle", duration=2.5)
+        )
         detect_at_pos.add_child(BtNode_Announce(
             name="Announce scanning",
             bb_source=None,

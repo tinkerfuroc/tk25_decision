@@ -120,7 +120,7 @@ def scan_once(pan: float, tilt: float = 40.0, target_frame="base_link"):
         BtNode_TurnPanTilt(name=f"turn pan tilt towards pan {pan}", x=pan, y=tilt)
     )
     root.add_child(
-        py_trees.timers.Timer(name="wait for pan tilt to settle", duration=1.0)
+        py_trees.timers.Timer(name="wait for pan tilt to settle", duration=2.5)
     )
     root.add_child(
         BtNode_ScanForWavingPerson(
