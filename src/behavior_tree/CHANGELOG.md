@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.2.17] - 2026-07-03
+
+### 🛋️ HRI: turn-around before follow + host/guest scripting updates
+
+- `HRI/config.py`: new `POSE_SOFA_REVERSED` / `KEY_SOFA_POSE_REVERSED` —
+  same map point as `pose_sofa`, yaw rotated exactly 180°. Computed from
+  `POSE_SOFA` at load time (not stored in `constants.json`), so re-teaching
+  the sofa waypoint keeps the pair consistent. Seeded onto the blackboard
+  by `createConstantWriter`. A follow-up fix commit (b8af330) committed the
+  `arm_pos_orbbec_look` constants key required by a concurrent-session
+  `config.py` hunk that rode along in the feature commit.
+- `hri_2026.py:createBagFlowReal2026`: after the bag handover (arm back at
+  nav pose) and right before the follow announcements, the robot now drives
+  to the reversed sofa pose — an in-place 180° turn so it faces away from
+  the sofa and the host can step in front of it for the follow.
+  Best-effort (`FailureIsSuccess(Retry×3)`): a nav refusal must not forfeit
+  the follow-to-drop scoring.
+- `hri_2026.py:createHRITask2026`: new start-of-task announcement asking
+  the host to sit on the sofa and not walk around the room (root children
+  15→16; start-gate test updated).
+- `hri.py:createTwoWayIntroduction`: the "make yourself comfortable" prompt
+  to both seated guests now also asks them to look at the head camera —
+  spoken immediately before the seated-guest `BtNode_FeatureMatching` scan
+  it helps.
+- New tests: `test_hri_sofa_reversed_pose.py` (5),
+  `test_hri_turnaround_goto.py` (3), `test_hri_intro_camera_prompt.py` (1);
+  `test_hri_2026_start_gate.py` updated (16 children + host instruction).
+
 ## [2.2.16] - 2026-07-02
 
 ### 🧭 GPSR: approach_person wired to real go_to_approach navigation, 1.3 m standoff
@@ -54,7 +82,8 @@ token in the existing `FoldClothing.Result.message` field (no interface change);
 `BtNode_FoldClothingDn.process_result()` detects the token, writes `True` to the
 flag, and returns FAILURE. The Selector's second branch then runs
 `BtNode_CheckIfEmpty(dl_fold_out_of_range)` — SUCCESS iff the flag is truthy —
-followed by the announce "The clothing is too far, please put it closer.", so
+followed by the announce "The clothing is too far, please help me put the
+clothing closer.", so
 the Selector succeeds and the enclosing `Repeat(num_success=999)` retries (the
 operator repositions the garment and the next iteration re-prompts + folds). Any
 NON-out-of-range fold failure leaves the reset flag `False` → `CheckIfEmpty`
