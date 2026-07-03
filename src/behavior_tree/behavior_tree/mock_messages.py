@@ -116,6 +116,20 @@ class ObjectDetectionGeneralist(MockService):
             self.detection_source = "none"
 
 
+class ObjectScan(MockService):
+    """Mock for tk26 labels-only ObjectScan — camera + vocabulary -> found_labels."""
+    class Request(MockService.Request):
+        def __init__(self):
+            super().__init__()
+            self.camera = ""
+            self.vocabulary = []
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.found_labels = []
+
+
 class FeatureExtraction(MockService):
     """Mock FeatureExtraction service."""
     class Response(MockService.Response):

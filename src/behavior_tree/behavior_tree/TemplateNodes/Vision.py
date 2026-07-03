@@ -70,7 +70,7 @@ from typing import Any, Optional
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, PanTiltCommand, PanTiltState, FollowHeadAction, SeatRecommendBbox, DetectWaving, PlacingLocation
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, PanTiltCommand, PanTiltState, FollowHeadAction, SeatRecommendBbox, DetectWaving, PlacingLocation, ObjectScan
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import Point, PointStamped
 from std_msgs.msg import Header
@@ -339,6 +339,97 @@ class BtNode_ScanForGeneralist(ServiceHandler):
             )
             return pytree.common.Status.FAILURE
         self.feedback_message = "Still scanning (generalist)..."
+        return pytree.common.Status.RUNNING
+
+
+class BtNode_ObjectScan(ServiceHandler):
+    """Labels-only batched-VLM scene scan via ``/object_scan``.
+
+    Calls ``tinker_vision_msgs_26/srv/ObjectScan``: the server splits
+    ``vocabulary`` into batches, runs one vision-LLM call per batch (all in
+    parallel, Gemini -> Qwen fallback), and returns the subset of the
+    vocabulary visible in the scene. Labels only -- no bboxes/masks/centroids.
+
+    Replaces ``BtNode_ScanForGeneralist`` for the whole-table "what's present"
+    scans (recognises every vocabulary class at once, where the single-call
+    generalist misses objects). Grasp-oriented single-item re-detects stay on
+    the generalist -- they need 3D centroids this node does not provide.
+
+    The found labels are repacked into a duck-typed result
+    (``objects[].cls``) so the existing ``BtNode_WriteFoundItems`` and
+    ``BtNode_BuildInventory`` consume it unchanged.
+    """
+
+    def __init__(self,
+                 name: str,
+                 bb_key: str,
+                 vocabulary,
+                 service_name: str = "object_scan",
+                 use_orbbec: bool = True,
+                 ):
+        super(BtNode_ObjectScan, self).__init__(name, service_name, ObjectScan)
+        self.bb_key = bb_key
+        self.vocabulary = [str(v).strip() for v in (vocabulary or []) if str(v).strip()]
+        self.use_orbbec = use_orbbec
+
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+        self.bb_write_client = self.attach_blackboard_client(name="ObjectScan")
+        self.bb_write_client.register_key(self.bb_key, access=pytree.common.Access.WRITE)
+        self.logger.debug(f"Setup ObjectScan for {len(self.vocabulary)} classes")
+
+    def _pack(self, labels):
+        """Repack a label list into a duck-typed vision result the existing
+        consumers (WriteFoundItems / BuildInventory) read via ``objects[].cls``."""
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            status=0,
+            objects=[SimpleNamespace(cls=lbl, segment=None) for lbl in labels],
+        )
+
+    def initialise(self) -> None:
+        super().initialise()
+
+        if self.mock_mode:
+            print(f"🔍 MOCK: ObjectScan for {len(self.vocabulary)} classes")
+            # Empty result under mock; BuildInventory seeds a canned queue.
+            self.bb_write_client.set(self.bb_key, self._pack([]), overwrite=True)
+            self.feedback_message = f"MOCK: ObjectScan ({len(self.vocabulary)} classes)"
+            return
+
+        request = ObjectScan.Request()
+        request.camera = "orbbec" if self.use_orbbec else "realsense"
+        request.vocabulary = list(self.vocabulary)
+        self.response = self.call_service_async(request)
+        self.feedback_message = f"Initialized ObjectScan ({len(self.vocabulary)} classes)"
+
+    def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+
+        if self.response.done():
+            result = self.response.result()
+            cam = "orbbec" if self.use_orbbec else "realsense"
+            if result.status == 0:
+                labels = list(result.found_labels or [])
+                self.bb_write_client.set(self.bb_key, self._pack(labels), overwrite=True)
+                print(f"[VISION/{cam}/object_scan] FOUND {len(labels)} of "
+                      f"{len(self.vocabulary)}: {labels}", flush=True)
+                self.feedback_message = (
+                    f"ObjectScan found {len(labels)}, stored to {self.bb_key}"
+                )
+                return pytree.common.Status.SUCCESS
+            print(f"[VISION/{cam}/object_scan] scan FAILED "
+                  f"(status={result.status}, err={result.error_msg!r})", flush=True)
+            self.feedback_message = (
+                f"ObjectScan failed status={result.status}: {result.error_msg}"
+            )
+            return pytree.common.Status.FAILURE
+        self.feedback_message = "Still scanning (object_scan)..."
         return pytree.common.Status.RUNNING
 
 
