@@ -49,6 +49,9 @@ from behavior_tree.TemplateNodes.Audio import (
     BtNode_OrderExtractionAction,
 )
 from behavior_tree.TemplateNodes.Vision import BtNode_MaintainEyeContact
+from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
+from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from std_msgs.msg import Header
 from behavior_tree.visualization import create_post_tick_visualizer
 
 # Reuse the canonical Phase-1 factories + helper nodes unchanged.
@@ -77,6 +80,59 @@ from .config import (
 # Recording window handed to the order-extraction server. Matches the
 # name+drink action's 7 s default.
 ORDER_ITEMS_TIMEOUT_S = 7.0
+
+
+# Offline audio-test affordance (restaurant-2026 only). When True, Phase 1
+# skips the person-scan sweep and seeds a synthetic active customer so the tree
+# jumps straight to the real-audio order extraction + confirmation. Leave False
+# for production. Mirrors GPSR/EGPSR's construction-time USE_NEW_SCAN_WAVING
+# toggle -- a compile-time subtree swap, NOT a runtime `if MOCK_MODE` branch.
+MOCK_SEED_CUSTOMER = False
+
+
+def _seed_write(key: str, obj):
+    """One root-namespace blackboard write for the mock-customer seed."""
+    return BtNode_WriteToBlackboard(
+        name=f"Seed {key}",
+        bb_namespace="",
+        bb_source=None,
+        bb_key=key,
+        object=obj,
+    )
+
+
+def _createSeedCustomerSubtree(customer_id: int) -> py_trees.composites.Sequence:
+    """Seed the post-SelectNextQueuedCustomer blackboard state for one synthetic
+    active customer, replacing the Phase-1 scan under MOCK_SEED_CUSTOMER.
+
+    Writes exactly what a real scan + BtNode_SelectNextQueuedCustomer leaves
+    behind: a queue entry marked "active", the active id, the customer location
+    (a placeholder PoseStamped -- mocked BtNode_Approach is immediate and never
+    navigates to it), and an empty picture path.
+    """
+    pose = PoseStamped(
+        header=Header(stamp=rclpy.time.Time().to_msg(), frame_id="map"),
+        pose=Pose(
+            position=Point(x=1.0, y=0.0, z=0.0),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+    )
+    entry = {
+        "id": customer_id,
+        "pose": pose,
+        "picture_path": "",
+        "timestamp": 0.0,
+        "confidence": 1.0,
+        "status": "active",
+    }
+    seq = py_trees.composites.Sequence(
+        name=f"Seed mock customer {customer_id}", memory=True
+    )
+    seq.add_child(_seed_write(KEY_CUSTOMER_QUEUE, [entry]))
+    seq.add_child(_seed_write(KEY_ACTIVE_CUSTOMER_ID, customer_id))
+    seq.add_child(_seed_write(KEY_CUSTOMER_LOCATION, pose))
+    seq.add_child(_seed_write(KEY_ACTIVE_CUSTOMER_PICTURE, ""))
+    return seq
 
 
 def createTakeOrderViaItems(
