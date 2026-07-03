@@ -73,6 +73,7 @@ from behavior_tree.messages import (
     NavigateToPose,
     OrientationAngle,
     SetLuggagePose,
+    Backward
 )
 
 from .ActionBase import ActionHandler
@@ -749,31 +750,26 @@ class BtNode_NavBack(ActionHandler):
         distance: float,
         max_speed: float = 0.4,
         timeout_sec: float = 0.0,
-        action_name: str = "go_to_approach",
-        wait_for_server_timeout_sec: float = -3.0,
+        action_name: str = "backward",
+        wait_for_server_timeout_sec: float = 3.0,
         action_timeout_ticks: int = 0,
     ):
         super().__init__(
             name,
-            GoToApproach,
+            Backward,
             action_name,
             bb_target_key,
             wait_for_server_timeout_sec,
             action_timeout_ticks,
         )
-        self.desired_distance = float(desired_distance)
-        self.min_distance = float(min_distance)
-        self.max_distance = float(max_distance)
-        self.num_angles = int(num_angles)
-        self.preferred_yaw_rad = float(preferred_yaw_rad)
-        self.facing_yaw_offset_rad = float(facing_yaw_offset_rad)
+        self.distance = float(distance)
+        self.max_speed = float(max_speed)
         self.timeout_sec = float(timeout_sec)
-        self.debug = bool(debug)
 
     def send_goal(self):
         # Mock policy: skip the navigation process entirely.
         if self.mock_mode:
-            self.feedback_message = "MOCK: GoToApproach skipped (mock mode)"
+            self.feedback_message = "MOCK: NavBack skipped (mock mode)"
 
             class MockFuture:
                 def done(self):
@@ -782,42 +778,32 @@ class BtNode_NavBack(ActionHandler):
             self.send_goal_future = MockFuture()
             return
 
-        if not self.blackboard.exists("goal"):
-            self.feedback_message = "No target found in blackboard"
-            self.node.get_logger().warn(f"{self.name}: blackboard target key not set")
-            return
+        # target = self._coerce_to_point_stamped(self.blackboard.nav_back_goal)
+        # if target is None:
+        #     self.feedback_message = (
+        #         f"{self.name}: blackboard nav back target unsupported type "
+        #         f"{type(self.blackboard.nav_back_goal).__name__}"
+        #     )
+        #     self.node.get_logger().warn(self.feedback_message)
+        #     return
+        # if target.header.frame_id == "":
+        #     self.feedback_message = (
+        #         f"{self.name}: target frame_id empty, cannot send Backward"
+        #     )
+        #     self.node.get_logger().warn(self.feedback_message)
+        #     return
 
-        target = self._coerce_to_point_stamped(self.blackboard.goal)
-        if target is None:
-            self.feedback_message = (
-                f"{self.name}: blackboard target unsupported type "
-                f"{type(self.blackboard.goal).__name__}"
-            )
-            self.node.get_logger().warn(self.feedback_message)
-            return
-        if target.header.frame_id == "":
-            self.feedback_message = (
-                f"{self.name}: target frame_id empty, cannot send GoToApproach"
-            )
-            self.node.get_logger().warn(self.feedback_message)
-            return
-
-        goal = GoToApproach.Goal()
-        goal.target = target
-        goal.desired_distance = self.desired_distance
-        goal.min_distance = self.min_distance
-        goal.max_distance = self.max_distance
-        goal.num_angles = self.num_angles
-        goal.preferred_yaw_rad = self.preferred_yaw_rad
-        goal.facing_yaw_offset_rad = self.facing_yaw_offset_rad
+        goal = Backward.Goal()
+        goal.distance = self.distance
+        goal.max_speed = self.max_speed
         goal.timeout_sec = self.timeout_sec
-        goal.debug = self.debug
 
         self.send_goal_request(goal)
         self.goal = goal
         self.feedback_message = (
-            f"sent GoToApproach target=({target.point.x:.2f}, "
-            f"{target.point.y:.2f}) frame='{target.header.frame_id}'"
+            # f"sent Backward target=({target.point.x:.2f}, "
+            # f"{target.point.y:.2f}) frame='{target.header.frame_id}'"
+            f"backward for distance: {self.distance} at max_speed: {self.max_speed}."
         )
 
     def process_result(self):
@@ -835,22 +821,20 @@ class BtNode_NavBack(ActionHandler):
         status = int(getattr(res, "status", -1))
         if status == 0:
             self.feedback_message = (
-                f"approached: phase={res.phase_at_exit}, "
-                f"nav_attempts={res.nav_attempts}, d={res.chosen_distance:.2f}"
+                f"Moved backward successfully. "
+                f"Moved {res.distance_traveled}."
             )
             return py_trees.common.Status.SUCCESS
         self.feedback_message = (
-            f"GoToApproach FAILED status={status} "
-            f"phase={getattr(res, 'phase_at_exit', '')} "
+            f"NavBack FAILED with status={status} "
             f"msg='{getattr(res, 'errormsg', '')}'"
         )
         return py_trees.common.Status.FAILURE
 
     def process_feedback(self, feedback):
         try:
-            phase = getattr(feedback, "phase", "")
             d = getattr(feedback, "distance_remaining", float("nan"))
-            self.feedback_message = f"GoToApproach phase={phase} d={d:.2f}"
+            self.feedback_message = f"remained distance: {d:.2f}"
         except Exception:
             pass
 
@@ -866,19 +850,6 @@ class BtNode_NavBack(ActionHandler):
         self.action_status = 0
         self.process_feedback(feedback)
 
-    @staticmethod
-    def _coerce_to_point_stamped(source):
-        """Accept PointStamped or PoseStamped; return PointStamped or None."""
-        if isinstance(source, PointStamped):
-            return source
-        if isinstance(source, PoseStamped):
-            ps = PointStamped()
-            ps.header = source.header
-            ps.point.x = float(source.pose.position.x)
-            ps.point.y = float(source.pose.position.y)
-            ps.point.z = float(source.pose.position.z)
-            return ps
-        return None
 
 class BtNode_CaptureCurrentPose(py_trees.behaviour.Behaviour):
     """Look up the robot's current pose via TF and write it to a blackboard key.

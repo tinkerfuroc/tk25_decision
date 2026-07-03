@@ -127,9 +127,9 @@ setup(
             "test-restaurant-deliver-loop = behavior_tree.Restaurant.test_deliver_loop:main",
             "test-restaurant-collect-order = behavior_tree.Restaurant.test_collect_one_order:main",
             "test-restaurant-barman = behavior_tree.Restaurant.test_barman_phase:main",
-            # Restaurant order capture via free-form name+drink action (new, 2026)
-            "restaurant-test-name-drink-order = behavior_tree.Restaurant.order_intake_name_drink:main",
-            # Restaurant finalized 2026 production tree (captured bar pose + name+drink intake)
+            # Restaurant order capture via free-form item-list action (new, 2026)
+            "restaurant-test-order-items = behavior_tree.Restaurant.order_intake_items:main",
+            # Restaurant finalized 2026 production tree (captured bar pose + item-list intake)
             "restaurant-2026 = behavior_tree.Restaurant.restaurant_v2:main",
             "grasp_once = behavior_tree.grasp_intel_demo.grasp:main",
             # Mock mode test scripts

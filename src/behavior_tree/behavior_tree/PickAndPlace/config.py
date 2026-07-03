@@ -116,6 +116,10 @@ POSE_TRASH_BIN = _pose_reader(constants["pose_trash_bin"])
 POSE_CABINET = _pose_reader(constants["pose_cabinet"])
 POSE_KITCHEN_SHELF = _pose_reader(constants["pose_kitchen_shelf"])
 POSE_DISH_WASHER = _pose_reader(constants["pose_dish_washer"])
+# Washing-machine variant: goto pose in front of the kitchen door (clear-chair
+# request) and the pose facing the washing machine (door-pull).
+POSE_KITCHEN_DOOR = _pose_reader(constants["pose_kitchen_door"])
+POSE_FACING_WASHING_MACHINE = _pose_reader(constants["pose_facing_washing_machine"])
 
 POINT_WASH_STAGING = _point_reader(constants["point_wash_staging"])
 POINT_CABINET_DEFAULT = _point_reader(constants["point_cabinet_default"])
@@ -141,6 +145,14 @@ ARM_POS_WASH = [x / 180 * math.pi for x in constants["arm_pos_wash"]]
 ARM_POS_TRASH = [x / 180 * math.pi for x in constants["arm_pos_trash"]]
 ARM_POS_WASH_DROP = [x / 180 * math.pi for x in constants['arm_pos_wash_drop']]
 ARM_POS_CLEANING_STATION = [x / 180 * math.pi for x in constants['arm_pos_cleaning_station']]
+# Washing-machine variant arm poses:
+#   arm_pos_pull        — reach + grip the washing-machine door
+#   arm_pos_pull_mid    — transit waypoint between navigating and pull
+#   arm_pos_orbbec_scan — clears the arm from the head-camera FOV for the Orbbec
+#                         table scan (copied from DoingLaundry arm_pos_orbbec_look)
+ARM_POS_PULL = [x / 180 * math.pi for x in constants["arm_pos_pull"]]
+ARM_POS_PULL_MID = [x / 180 * math.pi for x in constants["arm_pos_pull_mid"]]
+ARM_POS_ORBBEC_SCAN = [x / 180 * math.pi for x in constants["arm_pos_orbbec_scan"]]
 
 # --- Label sets ---
 DESIGNATED_TRASH_LABELS = list(constants["designated_trash_labels"])
@@ -176,6 +188,8 @@ KEY_POSE_TRASH_BIN = "pp_pose_trash_bin"
 KEY_POSE_CABINET = "pp_pose_cabinet"
 KEY_POSE_KITCHEN_SHELF = "pp_pose_kitchen_shelf"
 KEY_POSE_DISH_WASHER = "pp_pose_dish_washer"
+KEY_POSE_KITCHEN_DOOR = "pp_pose_kitchen_door"
+KEY_POSE_FACING_WASHING_MACHINE = "pp_pose_facing_washing_machine"
 
 # Points
 KEY_POINT_WASH_STAGING = "pp_point_wash_staging"
@@ -198,6 +212,9 @@ KEY_ARM_CLEANING_STATION = "pp_arm_cleaning_station"
 KEY_ARM_WASH = "pp_arm_wash"
 KEY_ARM_TRASH = "pp_arm_trash"
 KEY_ARM_WASH_DROP = "pp_arm_wash_drop"
+KEY_ARM_PULL = "pp_arm_pull"
+KEY_ARM_PULL_MID = "pp_arm_pull_mid"
+KEY_ARM_ORBBEC_SCAN = "pp_arm_orbbec_scan"
 
 # Misc constants
 KEY_TARGET_FRAME = "pp_target_frame"

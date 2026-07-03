@@ -13,7 +13,7 @@
     "auto_detect": false,
     "subsystems": {
       "vision": {
-        "enabled": false,
+        "enabled": true,
         "announce_movement": false,
         "description": "Per-node mock mode for vision nodes. Allowed values: NO_MOCK, KEYPRESS, TELEOP, IMMEDIATE",
         "nodes": {
@@ -45,7 +45,7 @@
         }
       },
       "manipulation": {
-        "enabled": false,
+        "enabled": true,
         "announce_movement": false,
         "description": "Per-node mock mode for manipulation nodes. Set TELEOP for interactive arm control.",
         "nodes": {
@@ -105,7 +105,7 @@
         "description": "Per-node mock mode for TTS nodes",
         "nodes": {
           "BtNode_Announce": "KEYPRESS",
-          "BtNode_TTSCN": "KEYPRESS",
+          "BtNode_TTSCN": "KEYPREfSS",
           "BtNode_Introduce": "KEYPRESS",
           "BtNode_Confirm": "KEYPRESS"
         }

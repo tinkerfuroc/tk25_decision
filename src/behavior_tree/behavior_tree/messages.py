@@ -71,6 +71,10 @@ if _config.has_dependency('tinker_nav_msgs'):
         from tinker_nav_msgs.action import GoToApproach
     except (ImportError, ModuleNotFoundError):
         from behavior_tree.mock_messages import GoToApproach
+    try:
+        from tinker_nav_msgs.action import Backward
+    except (ImportError, ModuleNotFoundError):
+        from behavior_tree.mock_messages import Backward
 else:
     from behavior_tree.mock_messages import SetLuggagePose, ComputeGrasp, FindApproachPose, OrientationAngle, GoToApproach
 

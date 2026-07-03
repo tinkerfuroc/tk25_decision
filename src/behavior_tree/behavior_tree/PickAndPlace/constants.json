@@ -31,6 +31,20 @@
       "w": 0.6688307217986664
     }
   },
+  "pose_kitchen_door": {
+    "_comment": "Goto pose in front of the kitchen door (clear-chair request).",
+    "point": {
+      "x": 4.265,
+      "y": -0.7196,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0008112006111398036,
+      "w": 0.9999996709767301
+    }
+  },
   "pose_dish_washer": {
     "point": {
       "x": 1.808,
@@ -42,6 +56,20 @@
       "y": 0.0,
       "z": -0.6675132952964665,
       "w": 0.744597878456857
+    }
+  },
+  "pose_facing_washing_machine": {
+    "_comment": "Goto pose facing the washing machine (door-pull).",
+    "point": {
+      "x": 8.738,
+      "y": -1.267,
+      "z": 0.0
+    },
+    "orientation": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": -0.7162390387291678,
+      "w": 0.6978550274951938
     }
   },
   "pose_stove": {
@@ -72,16 +100,17 @@
     }
   },
   "pose_table_1": {
+    "_comment": "Dining table goto pose.",
     "point": {
-      "x": 0.6757674217224121,
-      "y": -2.3088715076446533,
+      "x": 8.0226,
+      "y": -0.8268,
       "z": 0.0
     },
     "orientation": {
       "x": 0.0,
       "y": 0.0,
-      "z": 0.2951263067082714,
-      "w": 0.9554582476951755
+      "z": -0.9998664820407719,
+      "w": 0.01634068821717252
     }
   },
   "pose_table_2": {
@@ -257,14 +286,15 @@
   "category_map": {
     "_comment": "Optional label -> cabinet group for +20 grouping. Empty v1 => default-to-label. Populate at Setup Days. TODO(setup-days)."
   },
+  "_comment_arm_pos_navigating": "Stow-for-base-motion pose. Copied from DoingLaundry arm_pos_navigating.",
   "arm_pos_navigating": [
-    -87.0,
-    -58.8,
-    -2.4,
-    8.0,
-    12.3,
-    -68.5,
-    -8.2
+    -15.0,
+    -44.0,
+    12.0,
+    65.0,
+    5.0,
+    -55.0,
+    8.0
   ],
   "arm_pos_table": [
     0.0,
@@ -302,6 +332,36 @@
     -58.0,
     0.0
   ],
+  "_comment_arm_pos_pull": "Pull pose (reach + grip washing-machine door), joints in degrees.",
+  "arm_pos_pull": [
+    1.0,
+    94.0,
+    1.0,
+    139.0,
+    2.0,
+    -45.0,
+    88.0
+  ],
+  "_comment_arm_pos_pull_mid": "Transit waypoint between navigating and pull, joints in degrees.",
+  "arm_pos_pull_mid": [
+    0.0,
+    -24.0,
+    0.0,
+    98.0,
+    0.0,
+    77.0,
+    0.0
+  ],
+  "_comment_arm_pos_orbbec_scan": "Arm pose that clears the head-camera FOV for the Orbbec table scan. Copied from DoingLaundry arm_pos_orbbec_look.",
+  "arm_pos_orbbec_scan": [
+    -86.0,
+    -52.0,
+    18.0,
+    2.0,
+    34.0,
+    -73.0,
+    -9.0
+  ],
   "designated_trash_labels": [
     "paper cup"
   ],
@@ -316,7 +376,8 @@
     "cup",
     "bowl"
   ],
-  "table_scan_prompt": "fork . knife . spoon . plate . mug . cup . bowl . paper cup . napkin . bottle . can . wrapper . snack bag . pringles . chocolate . ketchup . oats . tuna",
+  "_comment_table_scan_prompt": "RoboCup@Home Incheon 2026 official Known Objects list (objects/objects.md), by category: fabric, toy, snack, fruit, food, drink, cleaning_supply, dish. Bare 'shirt' / 'bell pepper' catch-alls are appended after their color-qualified siblings so a qualifier-less VLM label (e.g. generalist_node.py _normalize_vlm_label given just \"shirt\") still resolves to a real class instead of falling back to the whole prompt string; a color-qualified label still wins (more matched tokens).",
+  "table_scan_prompt": "white shirt . grey shirt . blue shirt . black shirt . shirt . hand towel . rubiks cube . pringles . seaweed . apple . peach . mangostane . lemon . yellow bell pepper . red bell pepper . bell pepper . instant noodles . cornflakes . coke . red bull . milk . soju . pepsi . dishwasher tab . sponge . toothpaste . cup . spoon . plate . knife . fork . bowl",
   "n_layers": 2,
   "max_runtime_sec": 390.0,
   "nav_retry_limit": 3,

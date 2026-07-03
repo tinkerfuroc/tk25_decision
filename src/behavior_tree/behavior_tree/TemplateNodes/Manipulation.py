@@ -429,6 +429,7 @@ class BtNode_FoldClothingDn(BtNode_FoldClothingAction):
         return_to_scan: bool = True,
         action_name: str = "fold_dn_action",
         wait_for_server_timeout_sec: float = -3.0,
+        bb_key_out_of_range: Optional[str] = None,
     ):
         super().__init__(
             name=name,
@@ -439,6 +440,41 @@ class BtNode_FoldClothingDn(BtNode_FoldClothingAction):
             action_name=action_name,
             wait_for_server_timeout_sec=wait_for_server_timeout_sec,
         )
+        # Optional (root-scoped) blackboard key to WRITE True to when the server
+        # aborts because the grasp target is out of range (result.message carries
+        # an "OUT_OF_RANGE" token). Lets the tree branch on the reach failure.
+        self.bb_key_out_of_range = bb_key_out_of_range
+        self._bb_oor_writer = None
+
+    def setup(self, **kwargs):
+        """Set up the base client/blackboard, then (real mode only) attach a
+        WRITE client for the out-of-range flag key."""
+        super().setup(**kwargs)
+        if self.bb_key_out_of_range is not None and not self.mock_mode:
+            self._bb_oor_writer = self.attach_blackboard_client(
+                name=f"{self.name}_oor"
+            )
+            self._bb_oor_writer.register_key(
+                key="out_of_range",
+                access=pytree.common.Access.WRITE,
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", self.bb_key_out_of_range
+                ),
+            )
+
+    def process_result(self):
+        """Detect the server's OUT_OF_RANGE abort token, publish it to the
+        blackboard, then defer to the base success/abort -> SUCCESS/FAILURE map.
+
+        Reads the result defensively so mock mode (self.result_message may be a
+        MockFuture/MockResultMessage with no ``.result.message``) never crashes.
+        """
+        result = getattr(self.result_message, "result", None)
+        message = (getattr(result, "message", "") or "")
+        is_oor = "OUT_OF_RANGE" in message.upper()
+        if self._bb_oor_writer is not None and is_oor:
+            self._bb_oor_writer.out_of_range = True
+        return super().process_result()
 
 
 class BtNode_Place(ActionHandler):
@@ -770,9 +806,9 @@ class BtNode_GripperAction(ActionHandler):
             name, GripperCommand, action_name, None, wait_for_server_timeout_sec
         )
         if open_gripper:
-            self.goal = 0.0
+            self.goal = 0.10
         else:
-            self.goal = 0.78
+            self.goal = 0.85
 
     def send_goal(self):
         try:

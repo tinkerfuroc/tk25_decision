@@ -581,6 +581,28 @@ class GoToApproach(MockAction):
             self.candidates_checked = 0
             self.probes = []
 
+class Backward(MockAction):
+    """Mock Backward action (tk26 tinker_nav_msgs).
+    """
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.distance= 0.0
+            self.max_speed=0.0
+            self.timeout_sec = 0.0
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.errormsg = ""
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.distance_remaining = 0.0
+            self.distance_traveled = 0.0
+            self.current_speed = 0.0
 
 # Mock Vision Messages
 class Object(MockMessage):

@@ -75,6 +75,7 @@ from behavior_tree.messages import (
 
 from .BaseBehaviors import ServiceHandler
 from .ActionBase import ActionHandler
+from .announce_text import add_pause_before_h_words
 from behavior_tree.messages import action_msgs
 
 
@@ -281,6 +282,14 @@ class BtNode_Announce(ServiceHandler):
                 )
                 if self.announce_msg is None:
                     self.announce_msg = ""
+
+        # TTS pause hack: force a micro-pause before every h-/H-word (the
+        # engine rushes into aspirated h sounds). Applied to the final
+        # resolved text so fixed, blackboard-sourced, and concatenated
+        # messages all get it; the raw given_msg / blackboard value stay
+        # untouched.
+        if self.announce_msg:
+            self.announce_msg = add_pause_before_h_words(self.announce_msg)
 
         # Handle mock mode
         if self.mock_mode:
@@ -1175,15 +1184,16 @@ class BtNode_NameDrinkExtractionAction(ActionHandler):
     and returns a parsed `{name, drink}` pair — no wordlist required. Server
     contract (`audio_pakage/name_drink_extraction_ac.py`):
 
-    - status=0 → goal_handle.succeed(); name/drink may be both populated
-      ("Success") or only one ("Partial extraction").
-    - status=1 (recording fail) / 2 (LLM error) / 3 (no name nor drink parsed)
-      → goal_handle.abort().
+    - status=0 → goal_handle.succeed(); both name and drink were heard.
+    - status=1 (recording fail) / 2 (LLM error) / 3 (name and/or drink not
+      heard) → goal_handle.abort().
 
-    So `STATUS_SUCCEEDED` ⇔ at least one of name/drink was recovered. We write
-    both fields to the blackboard (empty string for whichever is missing) and
-    return SUCCESS — let the caller decide whether to re-prompt for the missing
-    field via a confirmation subtree.
+    So `STATUS_SUCCEEDED` ⇔ both name and drink were recovered — a partial
+    miss now aborts (status=3) instead of silently succeeding with an empty
+    field, so the `Retry` wrapper around this node (see `hri.py`'s
+    `_create_get_name_drink`) re-prompts. This node is HRI-only now — Restaurant
+    order intake uses `BtNode_OrderExtractionAction` (`order_intake_items.py`)
+    instead, since it doesn't need the customer's name.
 
     Feedback schema mirrors PhraseExtraction's
     `{progress, status_message, partial_transcription}` — non-canonical, so we

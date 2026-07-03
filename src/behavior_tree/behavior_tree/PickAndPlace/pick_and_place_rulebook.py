@@ -21,11 +21,19 @@ from behavior_tree.TemplateNodes.Manipulation import (
     BtNode_GripperAction,
     BtNode_ScanAndPlace,
 )
-from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
+from behavior_tree.TemplateNodes.Navigation import BtNode_NavBack
+from behavior_tree.TemplateNodes.Vision import BtNode_DoorDetection, BtNode_TurnPanTilt
 
 from .config import (
+    ARM_POS_ORBBEC_SCAN,
+    ARM_POS_PULL,
+    ARM_POS_PULL_MID,
     GRASP_RETRY_LIMIT,
     KEY_ARM_CABINET,
+    KEY_ARM_NAVIGATING,
+    KEY_ARM_ORBBEC_SCAN,
+    KEY_ARM_PULL,
+    KEY_ARM_PULL_MID,
     KEY_ARM_TABLE,
     KEY_ARM_TRASH,
     KEY_ARM_WASH,
@@ -33,6 +41,7 @@ from .config import (
     KEY_ACTIVE_SOURCE_POSE,
     KEY_ACTIVE_TARGET_POSE,
     KEY_ANNOUNCEMENT_MSG,
+    KEY_DOOR_STATUS,
     KEY_INVENTORY_TABLE,
     KEY_OBJECT_LABEL,
     KEY_POINT_BREAKFAST_BOWL,
@@ -42,6 +51,8 @@ from .config import (
     KEY_POINT_EXTRA_SURFACE,
     KEY_POSE_CABINET,
     KEY_POSE_EXTRA_SURFACE,
+    KEY_POSE_FACING_WASHING_MACHINE,
+    KEY_POSE_KITCHEN_DOOR,
     KEY_POSE_KITCHEN_SHELF,
     KEY_POSE_TABLE,
     KEY_SCAN_RESULTS_TABLE,
@@ -53,9 +64,8 @@ from .config import (
     PLACEMENT_MODE_FIXED_POINT,
     POINT_EXTRA_SURFACE,
     POSE_EXTRA_SURFACE,
-    TABLE_BUDGET_SEC,
-    BREAKFAST_BUDGET_SEC,
-    EXTRA_BUDGET_SEC,
+    POSE_FACING_WASHING_MACHINE,
+    POSE_KITCHEN_DOOR,
     TABLE_SCAN_PROMPT,
 )
 from .custom_nodes import (
@@ -88,10 +98,14 @@ _KEY_ACTIVE_SKIP_SCAN = "pp_active_skip_scan"
 _KEY_ITEM_ANNOUNCE_MSG = "pp_item_announce_msg"
 
 # Frozen breakfast table: (item, source_pose_key, arm_pose_key, point_key).
+# Item names match the official RoboCup@Home Incheon 2026 Known Objects list
+# (objects/objects.md); "cornflakes" is the rulebook's Food-category name for
+# the old generic "cereal" placeholder. KEY_POINT_BREAKFAST_CEREAL (config.py)
+# keeps its name — it's an internal blackboard key, not a detection label.
 BREAKFAST = [
     ("bowl", KEY_POSE_KITCHEN_SHELF, KEY_ARM_TABLE, KEY_POINT_BREAKFAST_BOWL),
     ("spoon", KEY_POSE_KITCHEN_SHELF, KEY_ARM_TABLE, KEY_POINT_BREAKFAST_SPOON),
-    ("cereal", KEY_POSE_CABINET, KEY_ARM_CABINET, KEY_POINT_BREAKFAST_CEREAL),
+    ("cornflakes", KEY_POSE_CABINET, KEY_ARM_CABINET, KEY_POINT_BREAKFAST_CEREAL),
     ("milk", KEY_POSE_CABINET, KEY_ARM_CABINET, KEY_POINT_BREAKFAST_MILK),
 ]
 
@@ -246,6 +260,24 @@ def _headTilt(label, tilt_deg):
     )
 
 
+# Base speed cap (m/s) for every washing-machine door nav_back nudge.
+NAV_BACK_SPEED = 0.1
+
+
+def _navBack(label, distance):
+    """One base nudge via the fixed backward_action_server. Sign convention:
+    distance < 0 = FORWARD (toward the target), > 0 = BACKWARD. Speed is capped
+    at NAV_BACK_SPEED (0.1 m/s); at that speed a 0.66 m move takes ~6.6 s, so
+    timeout_sec is generous (15 s) to avoid a mid-move timeout."""
+    return BtNode_NavBack(
+        name=f"nav_back {distance:+.2f}m ({label})",
+        bb_target_key=None,
+        distance=float(distance),
+        max_speed=NAV_BACK_SPEED,
+        timeout_sec=15.0,
+    )
+
+
 def _reDetectActive():
     # NOTE(hardware): narrow the prompt to KEY_ACTIVE_PROMPT once the generalist
     # node exposes a bb-sourced prompt; the literal is mock-inert.
@@ -290,6 +322,53 @@ def createConstantWriter(place_policy="vlm"):
             object=POINT_EXTRA_SURFACE,
         )
     )
+    # Washing-machine variant constants (kitchen door pose, washing-machine pose,
+    # pull arm pose). Placeholder values live in constants.json.
+    seq.add_child(
+        BtNode_WriteToBlackboard(
+            name="write kitchen-door pose",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_POSE_KITCHEN_DOOR,
+            object=POSE_KITCHEN_DOOR,
+        )
+    )
+    seq.add_child(
+        BtNode_WriteToBlackboard(
+            name="write facing-washing-machine pose",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_POSE_FACING_WASHING_MACHINE,
+            object=POSE_FACING_WASHING_MACHINE,
+        )
+    )
+    seq.add_child(
+        BtNode_WriteToBlackboard(
+            name="write arm pull pose",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_ARM_PULL,
+            object=ARM_POS_PULL,
+        )
+    )
+    seq.add_child(
+        BtNode_WriteToBlackboard(
+            name="write arm pull-mid pose",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_ARM_PULL_MID,
+            object=ARM_POS_PULL_MID,
+        )
+    )
+    seq.add_child(
+        BtNode_WriteToBlackboard(
+            name="write arm orbbec-scan pose",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_ARM_ORBBEC_SCAN,
+            object=ARM_POS_ORBBEC_SCAN,
+        )
+    )
     seq.add_child(
         BtNode_WriteToBlackboard(
             name="init score-trace",
@@ -319,22 +398,106 @@ def phaseSummary():
 
 
 def phaseEnterArena():
-    # Door detection is DEPRECATED (no door_detection_srv server; under a real
-    # run its setup() blocks tree.setup() on wait_for_service -> timeout). Skip
-    # the wait-for-open-door step entirely and just announce entry; the first
-    # phase's nav (_goto "dining table") drives the robot into the arena. To
-    # restore a real door-wait, re-add a gated detection node here.
+    """Wait at the arena door until it opens — first thing the mission does.
+
+    Mirrors DoingLaundry's entry gate (createDoingLaundry): announce ready +
+    aim the head at the door, STOW the arm clear of the Orbbec FOV before
+    checking (an un-stowed arm can occlude the door in-frame), poll
+    door_detection_srv until it reports open, then MOVE the arm to the
+    navigating pose only afterward, right before the mission starts driving.
+
+    NOTE(ops): BtNode_DoorDetection is a ServiceHandler against
+    door_detection_srv — under BT_MOCK_MODE it auto-succeeds (registered
+    under `vision` in mock_config.json); on the real robot the server must be
+    up at launch or tree.setup() blocks/times out (same requirement already
+    documented for DoingLaundry).
+    """
     seq = py_trees.composites.Sequence("phase: enter arena", memory=True)
-    seq.add_child(
+
+    ready = py_trees.composites.Parallel(
+        name="announce ready + aim pan-tilt at door",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll(synchronise=False),
+    )
+    ready.add_child(
         BtNode_Announce(
-            name="announce enter arena",
+            name="announce ready for pick and place",
             bb_source=None,
-            message="Entering the arena.",
+            message="I am ready for the pick and place task, please open the door.",
         )
     )
+    ready.add_child(BtNode_TurnPanTilt(name="aim pan-tilt at door", x=0.0, y=45.0))
+    seq.add_child(ready)
+
+    # Stow the arm clear of the Orbbec head-camera's frame BEFORE checking the
+    # door, so the arm cannot occlude the door in the camera view.
+    seq.add_child(
+        _arm("move arm to orbbec-look (clear door cam)", KEY_ARM_ORBBEC_SCAN)
+    )
+
+    seq.add_child(
+        py_trees.decorators.Retry(
+            name="retry door detection",
+            child=BtNode_DoorDetection(
+                name="door detection", bb_door_state_key=KEY_DOOR_STATUS
+            ),
+            num_failures=999,
+        )
+    )
+
+    seq.add_child(
+        BtNode_Announce(
+            name="announce door open",
+            bb_source=None,
+            message="The door is open. Entering the arena.",
+        )
+    )
+
+    # Move the arm to the navigating/stow pose only AFTER the door is
+    # confirmed open, right before the mission starts driving off.
+    seq.add_child(
+        _moveArmRetry(
+            name="move arm to base moving",
+            arm_pose_key=KEY_ARM_NAVIGATING,
+            add_octomap=False,
+        )
+    )
+
     return py_trees.decorators.FailureIsSuccess(
         name="enter arena (always success)", child=seq
     )
+
+
+def phaseKitchenDoor():
+    """After entering the arena, drive to a pose in front of the kitchen door,
+    greet the judges, ask them to move the chair out of the way, wait 10 s,
+    then thank them."""
+    seq = py_trees.composites.Sequence("phase: kitchen door", memory=True)
+    seq.add_child(_goto("kitchen door", KEY_POSE_KITCHEN_DOOR))
+    seq.add_child(
+        BtNode_Announce(
+            name="announce greet judges",
+            bb_source=None,
+            message="hello judges, i need help for the following task.",
+        )
+    )
+    seq.add_child(
+        BtNode_Announce(
+            name="announce move chair",
+            bb_source=None,
+            message="please help me move the chair that is the most away from me, near the wall as shown on the diagram on me, i will wait for 10 seconds.",
+        )
+    )
+    seq.add_child(
+        py_trees.timers.Timer(name="wait 10s for chair removal", duration=10.0)
+    )
+    seq.add_child(
+        BtNode_Announce(
+            name="announce thank judges",
+            bb_source=None,
+            message="thank you.",
+        )
+    )
+    return seq
 
 
 # --------------------------------------------------------------------------- #
@@ -468,17 +631,20 @@ def handleOneItem(place_policy="vlm", phase="cleanup"):
     )
 
     happy = py_trees.composites.Sequence("grasp then route", memory=True)
-    happy.add_child(
-        py_trees.decorators.Retry(
-            name="Retry grasp active item",
-            child=BtNode_Grasp(
-                name="grasp active item",
-                bb_key_vision_res=KEY_VISION_RESULT,
-                bb_key_object_label=KEY_OBJECT_LABEL,
-            ),
-            num_failures=GRASP_RETRY_LIMIT,
-        )
-    )
+    # Grasp step commented out per task spec (washing-machine variant does not
+    # grasp table items). handleOneItem is also no longer wired into the mission
+    # (missionPhases drops the cleanup loop); left here for easy restore.
+    # happy.add_child(
+    #     py_trees.decorators.Retry(
+    #         name="Retry grasp active item",
+    #         child=BtNode_Grasp(
+    #             name="grasp active item",
+    #             bb_key_vision_res=KEY_VISION_RESULT,
+    #             bb_key_object_label=KEY_OBJECT_LABEL,
+    #         ),
+    #         num_failures=GRASP_RETRY_LIMIT,
+    #     )
+    # )
     happy.add_child(_routeByDestination(place_policy, phase))
 
     grasp_or_skip = py_trees.composites.Selector("grasp+route or skip", memory=True)
@@ -642,42 +808,96 @@ def phaseServeBreakfast(place_policy="vlm"):
     return seq
 
 
-def phaseExtraSurfaceCleanup(place_policy="vlm"):
-    seq = py_trees.composites.Sequence("phase: extra-surface cleanup", memory=True)
-    seq.add_child(BtNode_MarkPhase(name="mark extra", phase="extra"))
-    seq.add_child(_goto("extra surface", KEY_POSE_EXTRA_SURFACE))
-    seq.add_child(_arm("arm to extra-surface scan", KEY_ARM_TABLE))
+# --------------------------------------------------------------------------- #
+# Washing-machine variant phases                                              #
+# --------------------------------------------------------------------------- #
+
+
+def phaseTableScan():
+    """Trimmed table phase: navigate to the table, scan, and announce the found
+    items. The former cleanup loop (build inventory + per-item grasp/place) is
+    intentionally dropped — the washing-machine door phase runs after this."""
+    seq = py_trees.composites.Sequence("phase: table scan", memory=True)
+    seq.add_child(BtNode_MarkPhase(name="mark table", phase="table"))
+    seq.add_child(_goto("dining table", KEY_POSE_TABLE))
+    # Orbbec (head) scan needs the arm clear of the camera FOV: move to the
+    # orbbec scan pose before scanning.
+    seq.add_child(_arm("arm to orbbec scan pose", KEY_ARM_ORBBEC_SCAN))
     seq.add_child(
         _scanForGeneralistRetry(
-            name="scan extra surface",
+            name="scan table",
             bb_source=None,
             bb_key=KEY_SCAN_RESULTS_TABLE,
             object=TABLE_SCAN_PROMPT,
             use_orbbec=True,
         )
     )
-    # Perception summary (spec §8.3): announce found items before BuildInventory.
     seq.add_child(
         BtNode_WriteFoundItems(
-            name="write found extra items",
+            name="write found table items",
             bb_key_vision_res=KEY_SCAN_RESULTS_TABLE,
             bb_key_announcement=KEY_ANNOUNCEMENT_MSG,
         )
     )
     seq.add_child(
-        BtNode_Announce(name="announce found extra items", bb_source=KEY_ANNOUNCEMENT_MSG)
-    )
-    seq.add_child(
-        BtNode_BuildInventory(
-            name="build extra inventory",
-            in_key=KEY_SCAN_RESULTS_TABLE,
-            out_inventory=KEY_INVENTORY_TABLE,
-            out_queue=KEY_WORK_QUEUE,
-            source_pose_key=KEY_POSE_EXTRA_SURFACE,
-            mock_seed=None,
+        BtNode_Announce(
+            name="announce found table items", bb_source=KEY_ANNOUNCEMENT_MSG
         )
     )
-    seq.add_child(_cleanupLoop(place_policy, "extra"))
+    return seq
+
+
+def phaseWashingMachine():
+    """Operator-assisted washing-machine door open/pull sequence (spec §3.1-3.10).
+
+    Arm moves use add_octomap=False: the pull reaches toward the machine on
+    purpose, so a collision octomap would wrongly block it.
+    """
+    seq = py_trees.composites.Sequence("phase: washing machine door", memory=True)
+    # 3.1 drive to the pose facing the washing machine
+    seq.add_child(_goto("facing washing machine", KEY_POSE_FACING_WASHING_MACHINE))
+    # 3.2 ask the operator to open the door, wait 10 s
+    seq.add_child(
+        BtNode_Announce(
+            name="announce open washer door",
+            bb_source=None,
+            message="please help me fully open the door of the washing machine. i will wait for 10 seconds",
+        )
+    )
+    seq.add_child(
+        py_trees.timers.Timer(name="wait 10s for washer door open", duration=10.0)
+    )
+    # 3.3 transit via a mid waypoint (avoids a bad direct navigating->pull path),
+    # then move to the pull pose, and open the gripper fully
+    seq.add_child(
+        _moveArmRetry("arm to pull-mid (transit)", KEY_ARM_PULL_MID, add_octomap=False)
+    )
+    seq.add_child(_moveArmRetry("arm to pull", KEY_ARM_PULL, add_octomap=False))
+    seq.add_child(
+        BtNode_GripperAction(name="open gripper fully (pull)", open_gripper=True)
+    )
+    # 3.4 creep forward 0.66 m toward the door (nav_back distance < 0 = forward)
+    seq.add_child(_navBack("forward to door", -0.66))
+    # 3.5 close the gripper fully to grip the door
+    seq.add_child(
+        BtNode_GripperAction(name="close gripper on door", open_gripper=False)
+    )
+    # 3.6 pull back 0.66 m (opens the door)
+    seq.add_child(_navBack("pull door open", 0.66))
+    # 3.7 nudge forward 0.6 m
+    seq.add_child(_navBack("nudge forward", -0.6))
+    # 3.8 nudge back 0.6 m
+    seq.add_child(_navBack("nudge back", 0.6))
+    # 3.9 stow the arm to the navigating pose
+    seq.add_child(_moveArmRetry("arm to navigating", KEY_ARM_NAVIGATING, add_octomap=False))
+    # 3.10 ask the operator to close the door
+    seq.add_child(
+        BtNode_Announce(
+            name="announce close washer door",
+            bb_source=None,
+            message="please help me fully close the door of the washing machine",
+        )
+    )
     return seq
 
 
@@ -686,31 +906,19 @@ def phaseExtraSurfaceCleanup(place_policy="vlm"):
 # --------------------------------------------------------------------------- #
 
 
-def budgeted(body, budget_sec, label="phase"):
-    par = py_trees.composites.Parallel(
-        name=f"budgeted {label}",
-        policy=py_trees.common.ParallelPolicy.SuccessOnOne(),
-    )
-    par.add_child(BtNode_DeadlineGuard(name=f"{label} deadline", budget_sec=budget_sec))
-    par.add_child(
-        py_trees.decorators.FailureIsSuccess(
-            name=f"{label} body (never fails the budget)", child=body
-        )
-    )
-    return par
-
-
 def missionPhases(place_policy="vlm"):
+    # Washing-machine variant (linear): kitchen door (clear chair) -> table scan
+    # + announce -> washing-machine door open/pull. place_policy is unused now
+    # but kept for signature compatibility with pickAndPlaceRulebook.
+    #
+    # NOTE: phaseTableCleanup / phaseServeBreakfast / handleOneItem (+ their
+    # helpers _cleanupLoop / _routeByDestination / _breakfastItem / BREAKFAST /
+    # _RecordEventLeaf / _headTilt) are NOT used by this tree; they remain only
+    # because samplings.py imports them for the pp-test-* dev entry points.
     seq = py_trees.composites.Sequence("mission phases", memory=True)
-    seq.add_child(budgeted(phaseTableCleanup(place_policy), TABLE_BUDGET_SEC, "table cleanup"))
-    seq.add_child(
-        budgeted(phaseServeBreakfast(place_policy), BREAKFAST_BUDGET_SEC, "serve breakfast")
-    )
-    seq.add_child(
-        budgeted(phaseExtraSurfaceCleanup(place_policy), EXTRA_BUDGET_SEC, "extra cleanup")
-    )
-    # EXTENSION HOOK: a future optional-goals phase (dishwasher / pour / tablet)
-    # would attach here, after extra-surface cleanup. No code (out of scope).
+    seq.add_child(phaseKitchenDoor())
+    seq.add_child(phaseTableScan())
+    seq.add_child(phaseWashingMachine())
     return seq
 
 

@@ -581,16 +581,16 @@ class BtNode_CheckIfEmpty(py_trees.behaviour.Behaviour):
             self.feedback_message = f"Check if empty reading object failed"
             raise e
 
-        self.logger.debug(f"Checking {self.bb_namespace}, key {self.bb_key}")
+        self.logger.debug(f"Checking if {self.bb_source} is empty")
 
     def update(self) -> Status:
         self.logger.debug(f"Updating check blackboard")
 
         if self.object:
-            self.feedback_message = "{self.bb_source} not empty"
+            self.feedback_message = f"{self.bb_source} not empty"
             return py_trees.common.Status.SUCCESS
         else:
-            self.feedback_message = "{self.bb_source} is empty"
+            self.feedback_message = f"{self.bb_source} is empty"
             return py_trees.common.Status.FAILURE
 
 
