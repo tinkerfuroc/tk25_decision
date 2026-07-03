@@ -56,9 +56,9 @@ from behavior_tree.visualization import create_post_tick_visualizer
 
 # Reuse the canonical Phase-1 factories + helper nodes unchanged.
 from .restaurants import (
-    createApproachCustomer,
     createScanForUpToNCustomers,
 )
+from .approach_narrated import createApproachCustomerNarrated
 from .custumNodes import BtNode_ConfirmOrder, BtNode_RecordOrder
 from .state_nodes import (
     BtNode_CloseActiveCustomer,
@@ -266,7 +266,7 @@ def createCollectOneOrderItems(seed_customer_id: int = 1) -> py_trees.composites
                 n_gate=2,
             )
         )
-    root.add_child(createApproachCustomer())
+    root.add_child(createApproachCustomerNarrated())
     root.add_child(
         BtNode_RequireActiveCustomer(
             name="Require active customer (post-approach)",

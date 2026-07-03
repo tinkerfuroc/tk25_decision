@@ -65,3 +65,13 @@ def test_narrator_loops_all_lines_and_cannot_fail():
     fis = [n for n in _iter(root)
            if isinstance(n, py_trees.decorators.FailureIsSuccess)]
     assert len(fis) == len(APPROACH_NARRATION_LINES)
+
+
+def test_collect_one_order_uses_narrated_stable_approach():
+    from behavior_tree.Restaurant.order_intake_items import (
+        createCollectOneOrderItems,
+    )
+    root = createCollectOneOrderItems()
+    approach = _find(root, lambda n: n.__class__.__name__ == "BtNode_Approach")
+    assert approach is not None
+    assert approach.action_name == "go_to_approach_stable"
