@@ -259,6 +259,7 @@ def _create_waving_detection_pass():
             threshold_meters=DETECT_WAVING_THRESHOLD_M,
             target_frame="map",
             bb_key_pictures=KEY_WAVING_PERSON_PICTURES,
+            min_waving_persons=2,
         )
     )
     seq.add_child(

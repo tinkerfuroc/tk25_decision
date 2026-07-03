@@ -1641,6 +1641,7 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
                  target_frame: str = "map",
                  bb_key_pictures: Optional[str] = None,
                  picture_output_dir: str = "/tmp",
+                 min_waving_persons: int = 0,
                  ):
         super(BtNode_ScanForWavingPerson, self).__init__(name, service_name, DetectWaving)
         self.bb_key_all_persons = bb_key_all_persons
@@ -1649,6 +1650,7 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
         self.threshold_meters = threshold_meters
         self.target_frame = target_frame
         self.picture_output_dir = picture_output_dir
+        self.min_waving_persons = min_waving_persons
         self.bb_write_client = None
 
     def setup(self, **kwargs):
@@ -1726,6 +1728,7 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
         request = DetectWaving.Request()
         request.threshold_meters = self.threshold_meters
         request.target_frame = self.target_frame
+        request.min_waving_persons = self.min_waving_persons
         self.response = self.client.call_async(request)
         self.feedback_message = "Initialized ScanForWavingPerson"
 
