@@ -876,7 +876,13 @@ def phaseTableScan():
     # Object class at once). FailureIsSuccess-wrapped so a total scan failure
     # still lets the phase continue (WriteFoundItems then announces
     # "could not find any objects").
-    
+    seq.add_child(
+        BtNode_Announce(
+            name="announce scanning",
+            bb_source=None,
+            message="Scanning table",
+        )
+    )
     seq.add_child(
         py_trees.decorators.FailureIsSuccess(
             name="scan may fail",
@@ -1017,6 +1023,10 @@ def phasePushDishwasher():
             message="Start pushing the rack",
         )
     )
+    seq.add_child(
+        _moveArmRetry("arm to pull-mid (transit)", KEY_ARM_PULL_MID, add_octomap=False)
+    )
+    seq.add_child(_moveArmRetry("arm to pull", KEY_ARM_PULL, add_octomap=False))
     # 3.7 nudge forward 0.6 m
     seq.add_child(BtNode_GripperAction("close gripper", open_gripper=False))
     seq.add_child(_navBack("nudge forward", -0.58))
@@ -1057,9 +1067,10 @@ def missionPhases(place_policy="vlm"):
     # _RecordEventLeaf / _headTilt) are NOT used by this tree; they remain only
     # because samplings.py imports them for the pp-test-* dev entry points.
     seq = py_trees.composites.Sequence("mission phases", memory=True)
-    seq.add_child(phaseKitchenDoor())
+    #seq.add_child(phaseKitchenDoor())
     seq.add_child(phaseTableScan())
     seq.add_child(phasePullDishwasher())
+    seq.add_child(phaseGrasp())
     seq.add_child(phasePushDishwasher())
     return seq
 
