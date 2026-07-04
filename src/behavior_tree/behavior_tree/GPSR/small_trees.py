@@ -818,28 +818,41 @@ GOTO_KEEPALIVE_LINES = [
     "I am planning, please wait for a while.",
     "Please give me a moment to arrive at the destination.",
 ]
+# Silence between keep-alive lines. The loop MUST NOT announce back to back: a long
+# or abnormal navigation (recovery, replanning, blocked path) drags on far longer
+# than a normal trip, and un-paced announces flood the TTS service until it stops
+# producing audio — going silent EXACTLY when the heartbeat matters most (the robot
+# looks hung and a referee may stop the task). A fixed wall-clock gap paces it so it
+# keeps talking for the whole drive, however long recovery takes.
+GOTO_KEEPALIVE_INTERVAL_SEC = 5.0
 
 
 def _goto_keepalive_announcer() -> py_trees.behaviour.Behaviour:
-    """A never-terminating announcer that loops ``GOTO_KEEPALIVE_LINES``.
+    """A never-terminating announcer that loops ``GOTO_KEEPALIVE_LINES`` with a
+    fixed ~``GOTO_KEEPALIVE_INTERVAL_SEC`` gap between lines.
 
-    A memory Sequence of BLOCKING announces (each returns only once its phrase
-    finishes) speaks the lines in order. ``SuccessIsRunning`` turns the Sequence's
-    completion back into RUNNING so it re-enters from the first line next tick — an
-    endless loop. ``FailureIsSuccess`` makes a TTS hiccup a non-event so the
-    announcer NEVER returns FAILURE (a failing sibling would abort the parallel and
-    with it the drive). Net effect: always RUNNING — the parallel is driven purely
-    by the goto child, and this just fills the silence until it is stopped.
+    Each line is spoken (blocking), then a wall-clock ``Timer`` waits so the next
+    line comes ~5 s later, never back to back — this is what keeps a long/abnormal
+    navigation from flooding TTS into silence. Each announce is wrapped in
+    ``FailureIsSuccess`` so a TTS hiccup neither skips its pacing gap nor aborts the
+    parallel; the ``Timer`` therefore ALWAYS runs. The memory Sequence never returns
+    FAILURE (announces are best-effort, timers only SUCCEED), and ``SuccessIsRunning``
+    turns its completion back into RUNNING so it re-enters from the first line — an
+    endless, paced loop that is always RUNNING. The parallel is thus driven purely by
+    the goto child; this just fills the silence for the ENTIRE drive, recovery
+    included (the drive stays RUNNING through Nav2 recovery, so the parallel — and
+    this announcer — keep ticking).
     """
     lines = py_trees.composites.Sequence("keep-alive lines", memory=True)
     for i, msg in enumerate(GOTO_KEEPALIVE_LINES):
-        lines.add_child(BtNode_Announce(
-            f"nav keepalive {i}", bb_source=None, message=msg,
+        lines.add_child(py_trees.decorators.FailureIsSuccess(
+            f"say keepalive {i} (best-effort)",
+            BtNode_Announce(f"nav keepalive {i}", bb_source=None, message=msg),
         ))
-    return py_trees.decorators.SuccessIsRunning(
-        "loop nav keepalive",
-        py_trees.decorators.FailureIsSuccess("nav keepalive best-effort", lines),
-    )
+        lines.add_child(py_trees.timers.Timer(
+            f"keepalive gap {i}", duration=GOTO_KEEPALIVE_INTERVAL_SEC,
+        ))
+    return py_trees.decorators.SuccessIsRunning("loop nav keepalive", lines)
 
 
 def create_goto():
