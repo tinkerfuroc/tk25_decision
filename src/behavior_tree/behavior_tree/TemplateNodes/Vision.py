@@ -70,7 +70,7 @@ from typing import Any, Optional
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, FeatureExtractionAction, SeatRecommendation, SeatRecommendationAction, FeatureMatching, FeatureMatchingAction, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, PanTiltCommand, PanTiltState, FollowHeadAction, SeatRecommendBboxAction, DetectWaving, PlacingLocation, ObjectScanAction
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, FeatureExtractionAction, SeatRecommendation, SeatRecommendationAction, FeatureMatching, FeatureMatchingAction, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, PanTiltCommand, PanTiltState, FollowHeadAction, SeatRecommendBboxAction, DetectWavingAction, PlacingLocation, ObjectScanAction
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import Point, PointStamped
 from std_msgs.msg import Header
@@ -1696,9 +1696,10 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
         self._arm_settle(pan_deg, tilt_deg)
 
 
-class BtNode_ScanForWavingPerson(ServiceHandler):
+class BtNode_ScanForWavingPerson(ActionHandler):
     """
-    Call tk26's `detect_waving_persons` service (tinker_vision_msgs_26/DetectWaving),
+    Call tk26's `detect_waving_persons` action
+    (tinker_vision_msgs_26/action/DetectWaving),
     write the full list and the closest person to the blackboard.
 
     Blackboard:
@@ -1720,7 +1721,8 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
                  picture_output_dir: str = "/tmp",
                  min_waving_persons: int = 0,
                  ):
-        super(BtNode_ScanForWavingPerson, self).__init__(name, service_name, DetectWaving)
+        super(BtNode_ScanForWavingPerson, self).__init__(
+            name, DetectWavingAction, service_name, None)
         self.bb_key_all_persons = bb_key_all_persons
         self.bb_key_closest_person = bb_key_closest_person
         self.bb_key_pictures = bb_key_pictures
@@ -1731,7 +1733,7 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
         self.bb_write_client = None
 
     def setup(self, **kwargs):
-        ServiceHandler.setup(self, **kwargs)
+        ActionHandler.setup(self, **kwargs)
         self.bb_write_client = self.attach_blackboard_client(name="ScanForWavingPerson")
         self.bb_write_client.register_key(self.bb_key_all_persons, access=pytree.common.Access.WRITE)
         self.bb_write_client.register_key(self.bb_key_closest_person, access=pytree.common.Access.WRITE)
@@ -1785,9 +1787,7 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
                 paths.append("")
         return paths
 
-    def initialise(self) -> None:
-        super().initialise()
-
+    def send_goal(self):
         if self.mock_mode:
             mock_person = PointStamped()
             mock_person.header = Header(frame_id=self.target_frame or "map")
@@ -1800,54 +1800,55 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
                 self.bb_write_client.set(self.bb_key_pictures, ["/tmp/mock_customer.png"], overwrite=True)
             print(f"👋 MOCK: ScanForWavingPerson → wrote synthetic person at (1.0, 0.0, 0.0) in {self.target_frame or 'map'}")
             self.feedback_message = "MOCK: Scanned for waving person"
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
             return
 
-        request = DetectWaving.Request()
-        request.threshold_meters = self.threshold_meters
-        request.target_frame = self.target_frame
-        request.min_waving_persons = self.min_waving_persons
-        self.response = self.client.call_async(request)
+        goal = DetectWavingAction.Goal()
+        goal.threshold_meters = self.threshold_meters
+        goal.target_frame = self.target_frame
+        goal.min_waving_persons = self.min_waving_persons
+        self.send_goal_request(goal)
         self.feedback_message = "Initialized ScanForWavingPerson"
 
-    def update(self):
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
-
-        self.logger.debug("Update ScanForWavingPerson")
-        if self.response is None:
-            self.feedback_message = "No response object"
+    def process_result(self) -> Status:
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = (
+                f"Waving detection action failed with status {self.result_status}"
+            )
             return Status.FAILURE
 
-        if self.response.done():
-            result = self.response.result()
-            if result.status == 0 and result.waving_persons:
-                self.bb_write_client.set(self.bb_key_all_persons, result.waving_persons, overwrite=True)
-                self.bb_write_client.set(self.bb_key_closest_person, result.waving_persons[0], overwrite=True)
-                if self.bb_key_pictures is not None:
-                    paths = self._crop_and_save(result.rgb_image, result.segments)
-                    # pad/truncate to match waving_persons length so index alignment is safe
-                    n = len(result.waving_persons)
-                    if len(paths) < n:
-                        paths = paths + [""] * (n - len(paths))
-                    else:
-                        paths = paths[:n]
-                    self.bb_write_client.set(self.bb_key_pictures, paths, overwrite=True)
-                closest = result.waving_persons[0]
-                self.feedback_message = (
-                    f"Found {len(result.waving_persons)} waving person(s). "
-                    f"Closest at ({closest.point.x:.3f}, {closest.point.y:.3f}, {closest.point.z:.3f}) "
-                    f"in {closest.header.frame_id}"
-                )
-                return Status.SUCCESS
-            elif result.status == 0:
-                self.feedback_message = "Service succeeded, but no waving person found."
-                return Status.FAILURE
-            else:
-                self.feedback_message = f"Service failed with status {result.status}: {result.error_msg}"
-                return Status.FAILURE
-        else:
-            self.feedback_message = "Still scanning for waving persons..."
-            return Status.RUNNING
+        result = self.result_message.result
+        if result.status == 0 and result.waving_persons:
+            self.bb_write_client.set(self.bb_key_all_persons, result.waving_persons, overwrite=True)
+            self.bb_write_client.set(self.bb_key_closest_person, result.waving_persons[0], overwrite=True)
+            if self.bb_key_pictures is not None:
+                paths = self._crop_and_save(result.rgb_image, result.segments)
+                # Pad/truncate to preserve person-to-picture index alignment.
+                n = len(result.waving_persons)
+                if len(paths) < n:
+                    paths = paths + [""] * (n - len(paths))
+                else:
+                    paths = paths[:n]
+                self.bb_write_client.set(self.bb_key_pictures, paths, overwrite=True)
+            closest = result.waving_persons[0]
+            self.feedback_message = (
+                f"Found {len(result.waving_persons)} waving person(s). "
+                f"Closest at ({closest.point.x:.3f}, {closest.point.y:.3f}, "
+                f"{closest.point.z:.3f}) in {closest.header.frame_id}"
+            )
+            return Status.SUCCESS
+        if result.status == 0:
+            self.feedback_message = "Action succeeded, but no waving person found."
+            return Status.FAILURE
+        self.feedback_message = (
+            f"Action failed with status {result.status}: {result.error_msg}"
+        )
+        return Status.FAILURE
 
 
 class BtNode_MaintainEyeContact(ActionHandler):

@@ -3,19 +3,20 @@ from urllib import request
 import py_trees
 import time
 from typing import List, Dict, Any, Optional
+import action_msgs.msg as action_msgs
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtractionAction
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 import math
-from behavior_tree.messages import ObjectDetectionGeneralist, TextToSpeech, Listen, PhraseExtractionAction, PanTiltCommand, DetectWaving
+from behavior_tree.messages import ObjectDetectionGeneralist, TextToSpeech, Listen, PhraseExtractionAction, PanTiltCommand, DetectWavingAction
 from geometry_msgs.msg import PointStamped, PoseStamped
 from std_msgs.msg import String
 
-class BtNode_DetectCallingCustomer(ServiceHandler):
-    """Call `/detect_waving_persons` (`DetectWaving.srv`) and append the returned
+class BtNode_DetectCallingCustomer(ActionHandler):
+    """Call `/detect_waving_persons` (`DetectWaving.action`) and append returned
     waving-person `PointStamped`s to a cumulative blackboard list.
 
-    Returns SUCCESS once the response arrives (regardless of detection count) so
+    Returns SUCCESS once the result arrives (regardless of detection count) so
     an outer scan sequence keeps advancing. FAILURE only on timeout.
     """
 
@@ -26,7 +27,7 @@ class BtNode_DetectCallingCustomer(ServiceHandler):
                  target_frame: str = "base_link",
                  service_name: str = "detect_waving_persons",
                  timeout: float = 10.0):
-        super().__init__(name, service_name, DetectWaving)
+        super().__init__(name, DetectWavingAction, service_name, None)
         self.target_frame = target_frame
         self.threshold_meters = float(threshold_meters)
         self.bb_dest_key = bb_dest_key
@@ -40,33 +41,31 @@ class BtNode_DetectCallingCustomer(ServiceHandler):
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_dest_key),
         )
 
-    def initialise(self):
-        super().initialise()
+    def send_goal(self):
         if self.mock_mode:
-            # No real /detect_waving_persons client exists in mock mode
-            # (call_service_async returns None). Publish an empty waver list so
-            # downstream packing still sees the key, and skip the service call.
             self.blackboard.results = []
             self.feedback_message = "MOCK: detect calling customer (no wavers)"
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
             return
-        request = DetectWaving.Request()
-        request.threshold_meters = self.threshold_meters
-        request.target_frame = self.target_frame
-        self.response = self.call_service_async(request)
+        goal = DetectWavingAction.Goal()
+        goal.threshold_meters = self.threshold_meters
+        goal.target_frame = self.target_frame
+        self.send_goal_request(goal)
         self.feedback_message = "Looking for calling or waving customer"
 
-    def update(self):
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
-
-        if self.response is None:
-            self.feedback_message = "No response object"
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = (
+                f"Waving detection action failed with status {self.result_status}"
+            )
             return py_trees.common.Status.FAILURE
 
-        if not self.response.done():
-            return py_trees.common.Status.RUNNING
-
-        result = self.response.result()
+        result = self.result_message.result
         self.blackboard.results = list(result.waving_persons)
         self.feedback_message = (
             f"Wrote {len(result.waving_persons)} waving persons (status={result.status})"

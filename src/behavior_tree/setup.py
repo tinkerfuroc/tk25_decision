@@ -137,7 +137,7 @@ setup(
             # Mock mode test scripts
             "test-mock-mode = behavior_tree.test_mock_mode:main",
             "test-mockable-wrapper = scripts.test_mockable_wrapper:main",
-            "verify-task-endpoints = scripts.verify_task_endpoints:main",
+            "verify-task-endpoints = behavior_tree.verify_task_endpoints:main",
             "load-then-match = behavior_tree.TestTrees.load_then_match:main",
             # HelpMeCarry test scripts
             "hmc-mock-nav = behavior_tree.HelpMeCarry.test.mock_nav_server:main",

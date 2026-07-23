@@ -12,12 +12,17 @@ from behavior_tree.FollowPerson.wave_reseed_cycle import WaveReseedCycle
 class _FakeFuture:
     def __init__(self, result):
         self._result = result
+        self.cancelled = False
 
     def done(self):
         return True
 
     def result(self):
         return self._result
+
+    def cancel(self):
+        self.cancelled = True
+        return True
 
 
 class _FakeBridge:
@@ -100,8 +105,10 @@ def test_reset_clears_pending_and_phase():
     c.trigger()
     c.step()                            # WAVE_PENDING
     assert c.is_idle is False
+    pending = c._future
     c.reset()
     assert c.is_idle is True
+    assert pending.cancelled is True
     # A pending trigger that was reset before firing does not fire later.
     c.trigger()
     c.reset()

@@ -140,7 +140,7 @@ Deferred for higher score: tray bonus (+400), outstanding-performance (+200).
 
 | Rulebook clause | Implementation |
 |---|---|
-| "Detect calling or waving customer" (+100) | `BtNode_ScanForWavingPerson` calls the tk26 `detect_waving_persons` service. Output is a closest-first list of `PointStamped`, plus per-person RGB crops written to `/tmp/restaurant_customer_<id>_<ts>.png`. |
+| "Detect calling or waving customer" (+100) | `BtNode_ScanForWavingPerson` calls the tk26 `detect_waving_persons` action. Output is a closest-first list of `PointStamped`, plus per-person RGB crops written to `/tmp/restaurant_customer_<id>_<ts>.png`. |
 | "Reach a customer's table without guidance" (+100; −200 if guided) | `BtNode_GotoAction` on the `PointStamped` promoted to a `PoseStamped` (identity orientation — nav2 handles approach yaw). No pointing/guidance node is ever ticked. |
 | "Understand and confirm the order" (+200) | `BtNode_ListenAction` → `BtNode_PhraseExtraction` (wordlist from `constants.json["standard_objects"]`) → spoken echo via `BtNode_Announce` → `BtNode_GetConfirmationAction`. On FAILURE the outer `Retry(n=2)` re-ticks the whole collect-one-order sequence. |
 | "Not making eye-contact when taking an order" (−80) | `BtNode_MaintainEyeContact` wraps HRI's `follow_head_action`. Ticked once before the listen/confirm pair, and once before each delivery place. |
