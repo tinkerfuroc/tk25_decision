@@ -661,6 +661,153 @@ class PanTiltState(MockMessage):
 
 
 # Mock Vision Actions
+class DetectWavingAction(MockAction):
+    """Mock DetectWaving action."""
+
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            self.threshold_meters = 0.0
+            self.target_frame = ""
+            self.min_waving_persons = 0
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            self.status = 0
+            self.error_msg = ""
+            self.waving_persons = []
+            self.waving_boxes = []
+            self.rgb_image = None
+            self.depth_image = None
+            self.segments = []
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            self.status = 0
+            self.delay_limit = 0.0
+            self.stage = ""
+            self.message = ""
+
+
+class FeatureExtractionAction(MockAction):
+    """Mock FeatureExtraction action."""
+
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            self.camera = ""
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            self.status = 0
+            self.error_msg = ""
+            self.feature = ""
+            self.comparison_image = None
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            self.status = 0
+            self.delay_limit = 0.0
+            self.stage = ""
+            self.message = ""
+
+
+class SeatRecommendationAction(MockAction):
+    """Mock SeatRecommendation action."""
+
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            self.camera = ""
+            self.names = []
+            self.features = []
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            self.status = 0
+            self.error_msg = ""
+            self.recommendation = ""
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            self.status = 0
+            self.delay_limit = 0.0
+            self.stage = ""
+            self.message = ""
+
+
+class FeatureMatchingAction(MockAction):
+    """Mock FeatureMatching action."""
+
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            self.camera = ""
+            self.features = []
+            self.comparison_images = []
+            self.max_distance = 0.0
+            self.target_frame = ""
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            self.status = 0
+            self.error_msg = ""
+            self.centroids = []
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            self.status = 0
+            self.delay_limit = 0.0
+            self.stage = ""
+            self.message = ""
+
+
+class SeatRecommendBboxAction(MockAction):
+    """Mock SeatRecommendBbox action."""
+
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            self.camera = ""
+            self.names = []
+            self.features = []
+            self.target_frame = ""
+            self.known_seats = []
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            self.status = 0
+            self.error_msg = ""
+            self.recommendation = ""
+            self.bbox = BoundingBox()
+            self.centroid = None
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            self.status = 0
+            self.delay_limit = 0.0
+            self.stage = ""
+            self.message = ""
+
+
+class ObjectScanAction(MockAction):
+    """Mock ObjectScan action."""
+
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            self.camera = ""
+            self.vocabulary = []
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            self.header = None
+            self.status = 0
+            self.error_msg = ""
+            self.found_labels = []
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            self.status = 0
+            self.delay_limit = 0.0
+            self.stage = ""
+            self.message = ""
+
+
 class Categorize(MockAction):
     """Mock Categorize action."""
     pass

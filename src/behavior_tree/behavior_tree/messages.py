@@ -12,12 +12,34 @@ if _config.has_dependency('tinker_vision_msgs_26'):
     from tinker_vision_msgs_26.srv import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
     from tinker_vision_msgs_26.srv import ObjectDetectionGeneralist, SeatRecommendBbox, PlacingLocation, GetImage, ReseedTarget, ObjectScan
     from tinker_vision_msgs_26.msg import Object, PanTiltCtrl, PanTiltCommand, PanTiltState, BoundingBox
-    from tinker_vision_msgs_26.action import Categorize, FollowHeadAction, HumanFollowing, TrackPerson
+    from tinker_vision_msgs_26.action import (
+        Categorize,
+        DetectWaving as DetectWavingAction,
+        FeatureExtraction as FeatureExtractionAction,
+        FeatureMatching as FeatureMatchingAction,
+        FollowHeadAction,
+        HumanFollowing,
+        ObjectScan as ObjectScanAction,
+        SeatRecommendBbox as SeatRecommendBboxAction,
+        SeatRecommendation as SeatRecommendationAction,
+        TrackPerson,
+    )
 else:
     from behavior_tree.mock_messages import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
     from behavior_tree.mock_messages import ObjectDetectionGeneralist, SeatRecommendBbox, PlacingLocation, ReseedTarget, ObjectScan
     from behavior_tree.mock_messages import Object, PanTiltCtrl, PanTiltCommand, PanTiltState, BoundingBox
-    from behavior_tree.mock_messages import Categorize, FollowHeadAction, HumanFollowing, TrackPerson
+    from behavior_tree.mock_messages import (
+        Categorize,
+        DetectWavingAction,
+        FeatureExtractionAction,
+        FeatureMatchingAction,
+        FollowHeadAction,
+        HumanFollowing,
+        ObjectScanAction,
+        SeatRecommendBboxAction,
+        SeatRecommendationAction,
+        TrackPerson,
+    )
 
 if _config.has_dependency('tinker_arm_msgs'):
     from tinker_arm_msgs.srv import Drop, ArmJointService, PointTo

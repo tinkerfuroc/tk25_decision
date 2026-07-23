@@ -187,6 +187,8 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             }
 
         self.action_timeout_ticks = action_timeout_ticks
+        self._cancel_requested = False
+        self._cancel_pending = False
 
     def setup(self, **kwargs):
         """
@@ -206,6 +208,20 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         except KeyError as e:
             error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.qualified_name)
             raise KeyError(error_message) from e  # 'direct cause' traceability
+
+        # A mock action type is not a valid rosidl action type. Keep action
+        # handling aligned with ServiceHandler when only the fallback message
+        # class is available.
+        if not self.mock_mode:
+            action_mod = getattr(self.action_type, "__module__", "")
+            if isinstance(action_mod, str) and action_mod.startswith(
+                "behavior_tree.mock_messages"
+            ):
+                print(
+                    f"WARNING: Action type for {self.action_name} comes from "
+                    "mock_messages; forcing mock mode to avoid creating client."
+                )
+                self.mock_mode = True
 
         # Skip creating action client in mock mode
         if self.mock_mode:
@@ -328,6 +344,7 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         called when the action has not provided feedback for longer than the time specified in its last message
         return: status of the node after this happens
         """
+        self.send_cancel_request()
         self.feedback_message = "goal timeout"
         return py_trees.common.Status.FAILURE
      
@@ -379,6 +396,8 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self.goal_handle = None
         self.send_goal_future = None
         self.get_result_future = None
+        self._cancel_requested = False
+        self._cancel_pending = False
 
         self.result_message = None
         self.result_status = None
@@ -521,7 +540,7 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         if self.action_timeout_ticks != 0:
             self.counter += 1
             if self.counter > self.action_timeout_ticks:
-                # TODO: abort the action here
+                self.send_cancel_request()
                 self.feedback_message = "action timeout"
                 return py_trees.common.Status.FAILURE
 
@@ -558,7 +577,7 @@ class ActionHandler(py_trees.behaviour.Behaviour):
 
     def terminate(self, new_status: py_trees.common.Status):
         """
-        If running and the current goal has not already succeeded, cancel it.
+        Cancel a running goal when the behaviour fails or is invalidated.
 
         Args:
             new_status: the behaviour is transitioning to this new status
@@ -584,7 +603,10 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         )
         if (
             self.status == py_trees.common.Status.RUNNING and
-            new_status == py_trees.common.Status.INVALID
+            new_status in (
+                py_trees.common.Status.FAILURE,
+                py_trees.common.Status.INVALID,
+            )
         ):
             self.send_cancel_request()
 
@@ -642,11 +664,13 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             future: incoming goal request result delivered from the action server
         """
         if future.result() is None:
+            self._cancel_pending = False
             self.feedback_message = "goal request failed :[ [{}]\n{!r}".format(self.qualified_name, future.exception())
             self.node.get_logger().debug('... {}'.format(self.feedback_message))
             return
         self.goal_handle = future.result()
         if not self.goal_handle.accepted:
+            self._cancel_pending = False
             self.feedback_message = "goal rejected :( [{}]".format(self.qualified_name)
             self.node.get_logger().debug('... {}'.format(self.feedback_message))
             return
@@ -657,20 +681,34 @@ class ActionHandler(py_trees.behaviour.Behaviour):
 
         self.get_result_future = self.goal_handle.get_result_async()
         self.get_result_future.add_done_callback(self.get_result_callback)
+        if self._cancel_pending:
+            self._dispatch_cancel_request()
 
     def send_cancel_request(self):
         """
-        Send a cancel request to the server. This is triggered when the
-        behaviour's status switches from :attr:`~py_trees.common.Status.RUNNING` to
-        :attr:`~py_trees.common.Status.INVALID` (typically a result of a priority
-        interrupt).
+        Request cancellation once for the current goal.
+
+        If goal acceptance is still in flight, defer dispatch until the goal
+        response callback provides a handle.
         """
+        if self._cancel_requested:
+            return
+
+        self._cancel_requested = True
         self.feedback_message = "cancelling goal ... [{}]".format(self.qualified_name)
         self.node.get_logger().debug(self.feedback_message)
 
-        if self.goal_handle is not None:
-            future = self.goal_handle.cancel_goal_async()
-            future.add_done_callback(self.cancel_response_callback)
+        if self.goal_handle is None:
+            self._cancel_pending = True
+            return
+
+        self._dispatch_cancel_request()
+
+    def _dispatch_cancel_request(self):
+        """Send the single cancel request for the current accepted goal."""
+        self._cancel_pending = False
+        future = self.goal_handle.cancel_goal_async()
+        future.add_done_callback(self.cancel_response_callback)
 
     def cancel_response_callback(self, future: rclpy.task.Future):
         """
