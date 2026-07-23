@@ -70,7 +70,7 @@ from typing import Any, Optional
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, PanTiltCommand, PanTiltState, FollowHeadAction, SeatRecommendBbox, DetectWaving, PlacingLocation, ObjectScan
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, FeatureExtractionAction, SeatRecommendation, SeatRecommendationAction, FeatureMatching, FeatureMatchingAction, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, PanTiltCommand, PanTiltState, FollowHeadAction, SeatRecommendBboxAction, DetectWaving, PlacingLocation, ObjectScanAction
 from behavior_tree.config import is_node_mocked
 from geometry_msgs.msg import Point, PointStamped
 from std_msgs.msg import Header
@@ -342,10 +342,10 @@ class BtNode_ScanForGeneralist(ServiceHandler):
         return pytree.common.Status.RUNNING
 
 
-class BtNode_ObjectScan(ServiceHandler):
+class BtNode_ObjectScan(ActionHandler):
     """Labels-only batched-VLM scene scan via ``/object_scan``.
 
-    Calls ``tinker_vision_msgs_26/srv/ObjectScan``: the server splits
+    Calls ``tinker_vision_msgs_26/action/ObjectScan``: the server splits
     ``vocabulary`` into batches, runs one vision-LLM call per batch (all in
     parallel, Gemini -> Qwen fallback), and returns the subset of the
     vocabulary visible in the scene. Labels only -- no bboxes/masks/centroids.
@@ -367,13 +367,15 @@ class BtNode_ObjectScan(ServiceHandler):
                  service_name: str = "object_scan",
                  use_orbbec: bool = True,
                  ):
-        super(BtNode_ObjectScan, self).__init__(name, service_name, ObjectScan)
+        super(BtNode_ObjectScan, self).__init__(
+            name, ObjectScanAction, service_name, None
+        )
         self.bb_key = bb_key
         self.vocabulary = [str(v).strip() for v in (vocabulary or []) if str(v).strip()]
         self.use_orbbec = use_orbbec
 
     def setup(self, **kwargs):
-        ServiceHandler.setup(self, **kwargs)
+        ActionHandler.setup(self, **kwargs)
         self.bb_write_client = self.attach_blackboard_client(name="ObjectScan")
         self.bb_write_client.register_key(self.bb_key, access=pytree.common.Access.WRITE)
         self.logger.debug(f"Setup ObjectScan for {len(self.vocabulary)} classes")
@@ -387,50 +389,51 @@ class BtNode_ObjectScan(ServiceHandler):
             objects=[SimpleNamespace(cls=lbl, segment=None) for lbl in labels],
         )
 
-    def initialise(self) -> None:
-        super().initialise()
-
+    def send_goal(self):
         if self.mock_mode:
             print(f"🔍 MOCK: ObjectScan for {len(self.vocabulary)} classes")
             # Empty result under mock; BuildInventory seeds a canned queue.
             self.bb_write_client.set(self.bb_key, self._pack([]), overwrite=True)
             self.feedback_message = f"MOCK: ObjectScan ({len(self.vocabulary)} classes)"
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
             return
 
-        request = ObjectScan.Request()
-        request.camera = "orbbec" if self.use_orbbec else "realsense"
-        request.vocabulary = list(self.vocabulary)
-        self.response = self.call_service_async(request)
+        goal = ObjectScanAction.Goal()
+        goal.camera = "orbbec" if self.use_orbbec else "realsense"
+        goal.vocabulary = list(self.vocabulary)
+        self.send_goal_request(goal)
         self.feedback_message = f"Initialized ObjectScan ({len(self.vocabulary)} classes)"
 
-    def update(self):
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
-
-        if self.response is None:
-            self.feedback_message = "No response object"
-            return pytree.common.Status.FAILURE
-
-        if self.response.done():
-            result = self.response.result()
-            cam = "orbbec" if self.use_orbbec else "realsense"
-            if result.status == 0:
-                labels = list(result.found_labels or [])
-                self.bb_write_client.set(self.bb_key, self._pack(labels), overwrite=True)
-                print(f"[VISION/{cam}/object_scan] FOUND {len(labels)} of "
-                      f"{len(self.vocabulary)}: {labels}", flush=True)
-                self.feedback_message = (
-                    f"ObjectScan found {len(labels)}, stored to {self.bb_key}"
-                )
-                return pytree.common.Status.SUCCESS
-            print(f"[VISION/{cam}/object_scan] scan FAILED "
-                  f"(status={result.status}, err={result.error_msg!r})", flush=True)
+    def process_result(self) -> Status:
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = (
-                f"ObjectScan failed status={result.status}: {result.error_msg}"
+                f"ObjectScan action failed with status {self.result_status}"
             )
-            return pytree.common.Status.FAILURE
-        self.feedback_message = "Still scanning (object_scan)..."
-        return pytree.common.Status.RUNNING
+            return Status.FAILURE
+
+        result = self.result_message.result
+        cam = "orbbec" if self.use_orbbec else "realsense"
+        if result.status == 0:
+            labels = list(result.found_labels or [])
+            self.bb_write_client.set(self.bb_key, self._pack(labels), overwrite=True)
+            print(f"[VISION/{cam}/object_scan] FOUND {len(labels)} of "
+                  f"{len(self.vocabulary)}: {labels}", flush=True)
+            self.feedback_message = (
+                f"ObjectScan found {len(labels)}, stored to {self.bb_key}"
+            )
+            return Status.SUCCESS
+
+        print(f"[VISION/{cam}/object_scan] scan FAILED "
+              f"(status={result.status}, err={result.error_msg!r})", flush=True)
+        self.feedback_message = (
+            f"ObjectScan failed status={result.status}: {result.error_msg}"
+        )
+        return Status.FAILURE
 
 
 class BtNode_TrackPerson(ServiceHandler):
@@ -696,7 +699,7 @@ class BtNode_FindObj(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 
-class BtNode_FeatureExtraction(ServiceHandler):
+class BtNode_FeatureExtraction(ActionHandler):
     """
     Extracts visual features for person recognition.
 
@@ -711,7 +714,7 @@ class BtNode_FeatureExtraction(ServiceHandler):
                  service_name : str = "feature_extraction_service",
                  use_orbbec = True,
                  ):
-        super(BtNode_FeatureExtraction, self).__init__(name, service_name, FeatureExtraction)
+        super(BtNode_FeatureExtraction, self).__init__(name, FeatureExtractionAction, service_name, None)
 
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.key = bb_dest_key
@@ -732,51 +735,46 @@ class BtNode_FeatureExtraction(ServiceHandler):
 
         self.node = None
 
-    def initialise(self):
-        super().initialise()
-
-        # Handle mock mode
+    def send_goal(self):
         if self.mock_mode:
             from sensor_msgs.msg import Image
             print(f"👁️  MOCK: Feature extraction from {self.camera}")
             self.feedback_message = f"MOCK: Feature extraction completed"
             self.blackboard.features = "[mock features]"
             self.blackboard.comparison_image = Image()
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
             return
 
-        request = FeatureExtraction.Request()
-        request.camera = self.camera
-        self.response = self.call_service_async(request)
+        goal = FeatureExtractionAction.Goal()
+        goal.camera = self.camera
+        self.send_goal_request(goal)
 
         self.feedback_message = f"Initialized Feature Extraction"
 
-    def update(self) -> Status:
-        # Handle mock mode
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
+    def process_result(self) -> Status:
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = (
+                f"Feature Extraction action failed with status {self.result_status}"
+            )
+            return Status.FAILURE
 
-        # Check if response exists
-        if self.response is None:
-            self.feedback_message = "No response object"
-            return pytree.common.Status.FAILURE
+        result = self.result_message.result
+        if result.status != 0:
+            self.feedback_message = f"Feature extration failed with error code {result.status}: {result.error_msg}"
+            return Status.FAILURE
 
-        self.logger.debug(f"Updated FeatureExtraction")
-        if self.response.done():
-            result : FeatureExtraction.Response = self.response.result()
-            if result.status == 0:
-                self.blackboard.features = result.feature
-                self.blackboard.comparison_image = result.comparison_image
-                img = result.comparison_image
-                self.feedback_message = (
-                    f"Features: {result.feature} | image: {img.width}x{img.height}"
-                )
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Feature extration failed with error code {result.status}: {result.error_msg}"
-                return pytree.common.Status.FAILURE
-        else:
-            self.feedback_message = "Still extracting feature..."
-            return pytree.common.Status.RUNNING
+        self.blackboard.features = result.feature
+        self.blackboard.comparison_image = result.comparison_image
+        img = result.comparison_image
+        self.feedback_message = (
+            f"Features: {result.feature} | image: {img.width}x{img.height}"
+        )
+        return Status.SUCCESS
 
 
 class BtNode_LoadPersonReference(pytree.behaviour.Behaviour):
@@ -865,7 +863,7 @@ class BtNode_LoadPersonReference(pytree.behaviour.Behaviour):
         return pytree.common.Status.SUCCESS
 
 
-class BtNode_SeatRecommend(ServiceHandler):
+class BtNode_SeatRecommend(ActionHandler):
     """
     Recommends a seat based on the current scene.
 
@@ -880,7 +878,7 @@ class BtNode_SeatRecommend(ServiceHandler):
                  service_name : str = "seat_recommend_service",
                  use_orbbec = True,
                  ):
-        super(BtNode_SeatRecommend, self).__init__(name, service_name, SeatRecommendation)
+        super(BtNode_SeatRecommend, self).__init__(name, SeatRecommendationAction, service_name, None)
 
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.key = bb_dest_key
@@ -902,60 +900,54 @@ class BtNode_SeatRecommend(ServiceHandler):
 
         self.node = None
 
-    def initialise(self):
-        super().initialise()
-
-        # Handle mock mode
+    def send_goal(self):
         if self.mock_mode:
             print(f"💺 MOCK: Seat recommendation from {self.camera}")
             mock_recommendation = "I recommend the seat on the left side of the table."
             self.blackboard.recommendation = "Dear guest, " + mock_recommendation
             self.feedback_message = f"MOCK: Recommendation completed"
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
             return
             
-        request = SeatRecommendation.Request()
-        request.camera = self.camera
-        request.names = []
-        request.features = []
+        goal = SeatRecommendationAction.Goal()
+        goal.camera = self.camera
+        goal.names = []
+        goal.features = []
         if self.blackboard.persons is not None:
             # minus one because the newest registered person is not yet seated and thus will not be in the picture
             for i in range(len(self.blackboard.persons) - 1):
-                request.names.append(self.blackboard.persons[i].name)
-                request.features.append(self.blackboard.persons[i].features)
-        self.response = self.call_service_async(request)
+                goal.names.append(self.blackboard.persons[i].name)
+                goal.features.append(self.blackboard.persons[i].features)
+        self.send_goal_request(goal)
         self.feedback_message = f"Initialized seat recommendation"
-    
-    def update(self) -> Status:
-        # Handle mock mode
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
-            
-        self.logger.debug(f"Updated SeatRecommendation")
-        
-        # Check if response exists
-        if self.response is None:
-            self.feedback_message = "No response object"
-            return pytree.common.Status.FAILURE
-            
-        if self.response.done():
-            result : SeatRecommendation.Response = self.response.result()
-            if result.status == 0:
-                self.blackboard.recommendation = "Dear guest, " + result.recommendation
-                self.feedback_message = f"Recommendation: {result.recommendation}"
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Seat recommendation failed with error code {result.status}: {result.error_msg}"
-                return pytree.common.Status.FAILURE
-        else:
-            self.feedback_message = "Still getting seat recommendation..."
-            return pytree.common.Status.RUNNING
+
+    def process_result(self) -> Status:
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = (
+                f"Seat recommendation action failed with status {self.result_status}"
+            )
+            return Status.FAILURE
+
+        result = self.result_message.result
+        if result.status != 0:
+            self.feedback_message = f"Seat recommendation failed with error code {result.status}: {result.error_msg}"
+            return Status.FAILURE
+
+        self.blackboard.recommendation = "Dear guest, " + result.recommendation
+        self.feedback_message = f"Recommendation: {result.recommendation}"
+        return Status.SUCCESS
 
 
-class BtNode_SeatRecommendBbox(ServiceHandler):
+class BtNode_SeatRecommendBbox(ActionHandler):
     """
     Seat recommendation that also returns the bbox and 3D centroid of the seat.
 
-    Wraps `seat_recommend_bbox_service` (kimi_api/seat_recommend_bbox.py).
+    Calls `seat_recommend_bbox_service` (kimi_api/seat_recommend_bbox.py).
     Writes three blackboard keys on success:
       - recommendation : str   (prefixed with "Dear guest, ")
       - bbox           : tinker_vision_msgs_26/BoundingBox
@@ -972,7 +964,7 @@ class BtNode_SeatRecommendBbox(ServiceHandler):
                  target_frame: str = "base_link",
                  known_seats: list[str] | None = None,
                  ):
-        super(BtNode_SeatRecommendBbox, self).__init__(name, service_name, SeatRecommendBbox)
+        super(BtNode_SeatRecommendBbox, self).__init__(name, SeatRecommendBboxAction, service_name, None)
 
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
@@ -1000,9 +992,7 @@ class BtNode_SeatRecommendBbox(ServiceHandler):
         self.target_frame = target_frame
         self.known_seats = list(known_seats) if known_seats else []
 
-    def initialise(self):
-        super().initialise()
-
+    def send_goal(self):
         if self.mock_mode:
             print(f"💺 MOCK: Seat recommendation (bbox) from {self.camera}")
             self.blackboard.recommendation = "Dear guest, I recommend the seat on the left side of the table."
@@ -1014,49 +1004,49 @@ class BtNode_SeatRecommendBbox(ServiceHandler):
             mock_point.point.z = 0.6
             self.blackboard.point = mock_point
             self.feedback_message = "MOCK: Seat-bbox recommendation completed"
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
             return
 
-        request = SeatRecommendBbox.Request()
-        request.camera = self.camera
-        request.names = []
-        request.features = []
-        request.target_frame = self.target_frame
-        request.known_seats = list(self.known_seats)
+        goal = SeatRecommendBboxAction.Goal()
+        goal.camera = self.camera
+        goal.names = []
+        goal.features = []
+        goal.target_frame = self.target_frame
+        goal.known_seats = list(self.known_seats)
         if self.blackboard.persons is not None:
             # minus one because the newest registered person is not yet seated
             for i in range(len(self.blackboard.persons) - 1):
-                request.names.append(self.blackboard.persons[i].name)
-                request.features.append(self.blackboard.persons[i].features)
-        self.response = self.call_service_async(request)
+                goal.names.append(self.blackboard.persons[i].name)
+                goal.features.append(self.blackboard.persons[i].features)
+        self.send_goal_request(goal)
         self.feedback_message = "Initialized seat-bbox recommendation"
 
-    def update(self) -> Status:
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
+    def process_result(self) -> Status:
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = (
+                f"Seat-bbox recommendation action failed with status "
+                f"{self.result_status}"
+            )
+            return Status.FAILURE
 
-        self.logger.debug("Updated SeatRecommendBbox")
+        result = self.result_message.result
+        if result.status != 0:
+            self.feedback_message = f"Seat-bbox recommendation failed with error code {result.status}: {result.error_msg}"
+            return Status.FAILURE
 
-        if self.response is None:
-            self.feedback_message = "No response object"
-            return pytree.common.Status.FAILURE
-
-        if self.response.done():
-            result: SeatRecommendBbox.Response = self.response.result()
-            if result.status == 0:
-                self.blackboard.recommendation = "Dear guest, " + result.recommendation
-                self.blackboard.bbox = result.bbox
-                self.blackboard.point = result.centroid
-                self.feedback_message = f"Recommendation: {result.recommendation}"
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Seat-bbox recommendation failed with error code {result.status}: {result.error_msg}"
-                return pytree.common.Status.FAILURE
-        else:
-            self.feedback_message = "Still getting seat-bbox recommendation..."
-            return pytree.common.Status.RUNNING
+        self.blackboard.recommendation = "Dear guest, " + result.recommendation
+        self.blackboard.bbox = result.bbox
+        self.blackboard.point = result.centroid
+        self.feedback_message = f"Recommendation: {result.recommendation}"
+        return Status.SUCCESS
 
 
-class BtNode_FeatureMatching(ServiceHandler):
+class BtNode_FeatureMatching(ActionHandler):
     """
     Matches extracted features to known persons.
 
@@ -1092,7 +1082,7 @@ class BtNode_FeatureMatching(ServiceHandler):
                 reads index 0, and a future reader fails loudly on None
                 rather than aiming at a bogus point.
         """
-        super().__init__(name, service_name, FeatureMatching)
+        super().__init__(name, FeatureMatchingAction, service_name, None)
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.key = bb_dest_key
         self.blackboard.register_key(
@@ -1136,13 +1126,9 @@ class BtNode_FeatureMatching(ServiceHandler):
         out = list(centroids)
         return ([None] + out) if trim_first else out
 
-    def initialise(self):
-        super().initialise()
-
-        # Handle mock mode
+    def send_goal(self):
         if self.mock_mode:
             print(f"🔍 MOCK: Feature matching from {self.camera}")
-            from geometry_msgs.msg import PointStamped
             persons = self.blackboard.persons or []
             n = len(persons)
             if self.trim_last_person and n > 0:
@@ -1162,68 +1148,68 @@ class BtNode_FeatureMatching(ServiceHandler):
                 centroids, self.trim_first_person
             )
             self.feedback_message = f"MOCK: Feature matching → {n} centroid(s)"
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
             return
 
         from sensor_msgs.msg import Image
-        request = FeatureMatching.Request()
-        request.camera = self.camera
+        goal = FeatureMatchingAction.Goal()
+        goal.camera = self.camera
         persons = self.blackboard.persons
-        request.features = [p.features for p in persons]
-        request.comparison_images = [
+        goal.features = [p.features for p in persons]
+        goal.comparison_images = [
             p.comparison_image if p.comparison_image is not None else Image()
             for p in persons
         ]
         # trim_last: Receptionist flow — the newest registered guest has not
         # sat down yet and won't match anything at the sofa scan.
         # trim_first: HRI flow — the host at index 0 has no known features
-        # and is never recognized; centroids are re-padded in update().
-        request.features, request.comparison_images = self._apply_trims(
-            request.features, request.comparison_images,
+        # and is never recognized; centroids are re-padded in process_result().
+        goal.features, goal.comparison_images = self._apply_trims(
+            goal.features, goal.comparison_images,
             self.trim_first_person, self.trim_last_person,
         )
-        request.max_distance = self.max_distance
-        request.target_frame = self.target_frame
-        self.response = self.call_service_async(request)
+        goal.max_distance = self.max_distance
+        goal.target_frame = self.target_frame
+        self.send_goal_request(goal)
         self.feedback_message = (
-            f"Initialized feature matching (|features|={len(request.features)}, "
-            f"|images|={len(request.comparison_images)}, "
+            f"Initialized feature matching (|features|={len(goal.features)}, "
+            f"|images|={len(goal.comparison_images)}, "
             f"trim_last={self.trim_last_person}, trim_first={self.trim_first_person})"
         )
 
     def update(self) -> Status:
-        # Handle mock mode
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
-            
-        self.logger.debug(f"Updated Feature Matching")
-        
-        # Check if response exists
-        if self.response is None:
-            self.feedback_message = "No response object"
-            self.blackboard.centroids = []  # Clear centroids on failure
-            return pytree.common.Status.FAILURE
-            
-        if self.response.done():
-            result : FeatureMatching.Response = self.response.result()
-            if result.status == 0:
-                self.blackboard.centroids = self._pad_centroids(
-                    result.centroids, self.trim_first_person
-                )
-                # for p in self.blackboard.centroids:
-                #     # p.point.z = 1.30
-                #     fac = p.point.x / 0.6
-                #     p.point.x /= (fac + 1e-6)
-                #     p.point.y /= (fac + 1e-6)
-                #     p.point.z = 1.3
-                self.feedback_message = f"Centroids: {result.centroids}"
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Feature Matching failed with error code {result.status}: {result.error_msg}"
-                self.blackboard.centroids = []  # Clear centroids on failure
-                return pytree.common.Status.FAILURE
-        else:
-            self.feedback_message = "Still matching features..."
-            return pytree.common.Status.RUNNING
+        status = super().update()
+        if status == Status.FAILURE:
+            self.blackboard.centroids = []
+        return status
+
+    def process_result(self) -> Status:
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = (
+                f"Feature Matching action failed with status {self.result_status}"
+            )
+            self.blackboard.centroids = []
+            return Status.FAILURE
+
+        result = self.result_message.result
+        if result.status != 0:
+            self.feedback_message = (
+                f"Feature Matching failed with error code "
+                f"{result.status}: {result.error_msg}"
+            )
+            self.blackboard.centroids = []
+            return Status.FAILURE
+
+        self.blackboard.centroids = self._pad_centroids(
+            result.centroids, self.trim_first_person
+        )
+        self.feedback_message = f"Centroids: {result.centroids}"
+        return Status.SUCCESS
 
 
 class BtNode_GetPointCloud(ServiceHandler):
