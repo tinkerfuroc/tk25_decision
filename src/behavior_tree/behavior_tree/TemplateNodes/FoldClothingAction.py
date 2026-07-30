@@ -198,8 +198,14 @@ class BtNode_FoldClothingAction(ActionHandler):
     def process_result(self) -> Status:
         """Map the FoldClothing result using stable status with getattr fallbacks."""
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            result = getattr(self.result_message, "result", None)
+            leg_s = bool(getattr(result, "success", True))
+            st = int(getattr(result, "status", 0 if leg_s else 9))
+            sg = int(getattr(result, "stage", 0))
+            err = str(getattr(result, "error_msg", "missing error detail"))
             self.feedback_message = (
-                f"FoldClothing failed (action status {self.result_status})"
+                f"FoldClothing failed (action status {self.result_status}): "
+                f"result(status={st}, stage={sg}, error={err})"
             )
             return py_trees.common.Status.FAILURE
 

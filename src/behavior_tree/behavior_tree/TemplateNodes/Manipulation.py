@@ -123,11 +123,18 @@ class BtNode_CartesianMove(ActionHandler):
 
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            result = getattr(self.result_message, "result", None)
+            leg_s = bool(getattr(result, "success", True))
+            st = int(getattr(result, "status", 0 if leg_s else 9))
+            sg = int(getattr(result, "stage", 0))
+            err = str(getattr(result, "error_msg", "missing error detail"))
             self.feedback_message = (
-                f"CartesianMove feedback received with status: {self.result_status}"
+                f"CartesianMove action_status={self.result_status}: "
+                f"result(status={st}, stage={sg}, error={err})"
             )
             self.logger.debug(
-                f"CartesianMove feedback received with status: {self.result_status}"
+                f"CartesianMove action_status={self.result_status}: "
+                f"result(status={st}, stage={sg}, error={err})"
             )
             return pytree.common.Status.FAILURE
         else:
@@ -570,9 +577,26 @@ class BtNode_Place(ActionHandler):
             )
             return pytree.common.Status.FAILURE
         else:
-            self.feedback_message = "Place succeeded"
-            self.logger.debug("Place succeeded")
-            return pytree.common.Status.SUCCESS
+            result = self.result_message.result
+            legacy_success = bool(getattr(result, "success", True))
+            status = int(getattr(result, "status", 0 if legacy_success else 9))
+            stage = int(getattr(result, "stage", 0))
+            error = str(getattr(result, "error_msg", "missing error detail"))
+            succeeded = legacy_success and status == 0
+            if succeeded:
+                self.feedback_message = "Place succeeded"
+                self.logger.debug("Place succeeded")
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = (
+                    f"Place failed with status: {self.result_status}, "
+                    f"action_status={status}, stage={stage}, error={error}"
+                )
+                self.logger.debug(
+                    f"Place failed with status: {self.result_status}, "
+                    f"action_status={status}, stage={stage}, error={error}"
+                )
+                return pytree.common.Status.FAILURE
 
     def feedback_callback(self, msg: Any):
         feedback = msg.feedback
@@ -1242,8 +1266,16 @@ class BtNode_JointMoveAction(ActionHandler):
 
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            self.feedback_message = f"JointMoveAction failed"
-            self.logger.debug(f"MoveArmJointPC failed")
+            result = getattr(self.result_message, "result", None)
+            leg_s = bool(getattr(result, "success", True))
+            st = int(getattr(result, "status", 0 if leg_s else 9))
+            sg = int(getattr(result, "stage", 0))
+            err = str(getattr(result, "error_msg", "missing error detail"))
+            self.feedback_message = (
+                f"JointMoveAction action_status={self.result_status}: "
+                f"result(status={st}, stage={sg}, error={err})"
+            )
+            self.logger.debug(f"MoveArmJointPC failed: status={st}, stage={sg}, error={err}")
             return pytree.common.Status.FAILURE
         else:
             result = self.result_message.result

@@ -75,10 +75,16 @@ class StableStatusResult:
 
 
 class MotionResult(StableStatusResult):
-    """Result with legacy success plus status/stage/error_msg."""
+    """Result with legacy success plus status/stage/error_msg.
+
+    Enforces ``success == (status == 0)`` so explicit construction with
+    ``success=False`` yields a non-zero status (consistent with the
+    ``succeeded = legacy_success and status == 0`` gating pattern).
+    """
     def __init__(self, *, success=True):
         super().__init__()
         self.success = success
+        self.status = 0 if success else 9
 
 
 class MockMessage:
