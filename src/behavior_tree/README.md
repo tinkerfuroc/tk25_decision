@@ -830,6 +830,8 @@ Apache 2.0
 
 ## Changelog
 
+- 2026-07-29 — Aligned manipulation mocks and failure formatting with the append-only arm action result contract; retained `getattr` compatibility for stale overlays.
+
 - 2026-07-02 — HRI: host (KEY_PERSONS[0]) excluded from feature matching
   (`BtNode_FeatureMatching(trim_first_person=True)` in the two-way intro;
   centroids None-padded at index 0 to preserve persons↔centroids index

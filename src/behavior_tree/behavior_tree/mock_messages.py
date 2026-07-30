@@ -66,6 +66,21 @@ class MockAction:
             pass
 
 
+class StableStatusResult:
+    """Result base with status/stage/error_msg (match real actions after Task 1)."""
+    def __init__(self):
+        self.status = 0
+        self.stage = 0
+        self.error_msg = ""
+
+
+class MotionResult(StableStatusResult):
+    """Result with legacy success plus status/stage/error_msg."""
+    def __init__(self, *, success=True):
+        super().__init__()
+        self.success = success
+
+
 class MockMessage:
     """Base class for mock message types."""
     def __init__(self):
@@ -253,8 +268,13 @@ class PointTo(MockService):
 
 # Mock Arm Actions
 class Place(MockAction):
-    """Mock Place action."""
-    pass
+    """Mock Place action.
+
+    Result excludes the legacy ``success`` field — matches the real
+    ``tinker_arm_msgs/action/Place.Result`` which carries status/stage/error_msg.
+    """
+    class Result(StableStatusResult):
+        pass
 
 
 class Grasp(MockAction):
@@ -266,9 +286,9 @@ class JointMove(MockAction):
     """Mock JointMove action.
 
     Mirrors tinker_arm_msgs/action/JointMove: Goal has joint0..joint6 +
-    add_octomap, Result has only `success`, Feedback is empty. The legacy
-    `env_points` field was dropped to match the real action (it was only ever
-    set by the now-deleted BtNode_MoveArmJointPC).
+    add_octomap, Result carries status/stage/error_msg plus legacy success.
+    The legacy ``env_points`` field was dropped to match the real action (it
+    was only ever set by the now-deleted BtNode_MoveArmJointPC).
     """
     class Goal(MockAction.Goal):
         def __init__(self):
@@ -282,6 +302,9 @@ class JointMove(MockAction):
             self.joint6 = 0.0
             self.add_octomap = False
 
+    class Result(MotionResult):
+        pass
+
 
 class Fold(MockAction):
     """Mock Fold action (matches tinker_arm_msgs/action/Fold.action)."""
@@ -293,11 +316,9 @@ class Fold(MockAction):
             self.fold_cycles = 0
             self.env_points = []
 
-    class Result(MockAction.Result):
-        def __init__(self):
-            super().__init__()
-            self.success = False
-            self.error_msg = ""
+    class Result(MotionResult):
+        def __init__(self, *, success=True):
+            super().__init__(success=success)
 
 
 class CartesianMove(MockAction):
@@ -307,6 +328,9 @@ class CartesianMove(MockAction):
             super().__init__()
             self.env_points = []
             self.target_pose = None
+
+    class Result(MotionResult):
+        pass
 
 
 class ScanAndPlace(MockAction):

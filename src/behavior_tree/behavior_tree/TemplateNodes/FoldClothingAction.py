@@ -196,7 +196,7 @@ class BtNode_FoldClothingAction(ActionHandler):
         )
 
     def process_result(self) -> Status:
-        """Map the FoldClothing result {success, folds_completed, message}."""
+        """Map the FoldClothing result using stable status with getattr fallbacks."""
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = (
                 f"FoldClothing failed (action status {self.result_status})"
@@ -204,15 +204,20 @@ class BtNode_FoldClothingAction(ActionHandler):
             return py_trees.common.Status.FAILURE
 
         result = getattr(self.result_message, "result", None)
-        success = bool(getattr(result, "success", True))
+        legacy_success = bool(getattr(result, "success", True))
+        status = int(getattr(result, "status", 0 if legacy_success else 9))
+        stage = int(getattr(result, "stage", 0))
+        error = str(getattr(result, "error_msg", "missing error detail"))
         folds = int(getattr(result, "folds_completed", 0))
         message = getattr(result, "message", "") or ""
+        succeeded = legacy_success and status == 0
         self.feedback_message = (
-            f"FoldClothing {'succeeded' if success else 'reported failure'}: "
+            f"FoldClothing {'succeeded' if succeeded else 'reported failure'}: "
+            f"status={status}, stage={stage}, error={error}, "
             f"folds_completed={folds} {message}"
         ).rstrip()
         return (
             py_trees.common.Status.SUCCESS
-            if success
+            if succeeded
             else py_trees.common.Status.FAILURE
         )
