@@ -2,10 +2,15 @@
 Focused contract tests for manipulation action result handling.
 
 Tests both mock shape (no-dependency static checks) and the real
-``process_result()`` methods (via ``object.__new__`` + mocked heavy deps).
+``process_result()`` methods (via ``object.__new__`` + mocked heavy deps
+in a scoped fixture with deterministic sys.modules teardown).
 
-Must be at the top to install sys.modules mocks before any
-behavior_tree module triggers real ROS2/py_trees imports.
+The static shape tests run at module level with no stubs.  The real-consumer
+behavioural tests use the ``stub_env`` fixture which installs lightweight
+sys.modules stubs for py_trees/rclpy/action_msgs/geometry_msgs/std_msgs/
+nav_msgs/tf2 and reimports the consumer classes fresh.  After the last
+consumer test the fixture tears down, restoring every sys.modules entry
+to its pre-fixture state and deleting any synthetic entries.
 """
 import sys
 from pathlib import Path
@@ -13,118 +18,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# ---- module-level mock setup -----------------------------------------------
-# These mocks are installed in sys.modules BEFORE importing Manipulation.py
-# and FoldClothingAction.py so that the module-level py_trees / rclpy /
-# action_msgs / geometry_msgs / std_msgs imports resolve to lightweight
-# stubs rather than hitting the real (unavailable-in-PYTHONPATH) packages.
+# ---- Module-level snapshot (taken before any fixture runs) -----------------
+_MODULE_SNAPSHOT = dict(sys.modules)
 
-_PYT_SUCCESS = object()
-_PYT_FAILURE = object()
+# ---- Module-level imports (no stubs needed) --------------------------------
 
-_pyt = MagicMock()
-_pyt_common = MagicMock()
-_pyt_common.Status = type("Status", (), {"SUCCESS": _PYT_SUCCESS, "FAILURE": _PYT_FAILURE})
-_pyt.common = _pyt_common
-_pyt_behaviour = MagicMock()
-_pyt_behaviour.Behaviour = object
-_pyt.behaviour = _pyt_behaviour
-_pyt_blackboard = MagicMock()
-_pyt.blackboard = _pyt_blackboard
-_pyt_blackboard.Blackboard.absolute_name = staticmethod(lambda s, k: k)
-
-sys.modules["py_trees"] = _pyt
-sys.modules["py_trees.common"] = _pyt_common
-sys.modules["py_trees.behaviour"] = _pyt_behaviour
-sys.modules["py_trees.blackboard"] = _pyt_blackboard
-
-# rclpy tree
-_rclpy = MagicMock()
-_rclpy.__path__ = []
-sys.modules["rclpy"] = _rclpy
-sys.modules["rclpy.node"] = MagicMock()
-sys.modules["rclpy.action"] = MagicMock()
-sys.modules["rclpy.impl"] = MagicMock()
-sys.modules["rclpy.impl.implementation_singleton"] = MagicMock()
-
-# py_trees_ros
-_pyt_ros = MagicMock()
-sys.modules["py_trees_ros"] = _pyt_ros
-sys.modules["py_trees_ros.exceptions"] = MagicMock()
-
-# action_msgs — must have GoalStatus.STATUS_SUCCEEDED = 4 for the
-# action-level status comparison in every process_result().  Use real
-# ModuleType objects (not MagicMock) so that ``import X.Y as ...``
-# resolves the sub-module as a proper package.
-import types as _types
-
-_act_gs = MagicMock()
-_act_gs.STATUS_SUCCEEDED = 4
-_act_gs.STATUS_ABORTED = 6
-_act_msg_pkg = _types.ModuleType("action_msgs")
-_act_msg_pkg.__path__ = []
-_act_msg_pkg.__package__ = "action_msgs"
-_act_sub = _types.ModuleType("action_msgs.msg")
-_act_sub.__package__ = "action_msgs.msg"
-_act_sub.GoalStatus = _act_gs
-sys.modules["action_msgs"] = _act_msg_pkg
-sys.modules["action_msgs.msg"] = _act_sub
-
-# geometry_msgs.msg
-_geo_msg = MagicMock()
-_geo_msg.PointStamped = type("PointStamped", (), {})
-_geo_msg.Pose = type("Pose", (), {})
-_geo_msg.Point = type("Point", (), {})
-_geo_msg.PoseStamped = type("PoseStamped", (), {})
-_geo_msg.Quaternion = type("Quaternion", (), {})
-sys.modules["geometry_msgs"] = MagicMock()
-sys.modules["geometry_msgs.msg"] = _geo_msg
-
-# std_msgs.msg
-_std_msg = MagicMock()
-_std_msg.Header = type("Header", (), {})
-sys.modules["std_msgs"] = MagicMock()
-sys.modules["std_msgs.msg"] = _std_msg
-
-# nav_msgs.msg
-sys.modules["nav_msgs"] = MagicMock()
-_nav_msg = MagicMock()
-_nav_msg.Odometry = type("Odometry", (), {})
-sys.modules["nav_msgs.msg"] = _nav_msg
-
-# tf2_geometry_msgs
-sys.modules["tf2_geometry_msgs"] = MagicMock()
-
-# tf2_ros
-sys.modules["tf2_ros"] = MagicMock()
-sys.modules["tf2_ros.buffer"] = MagicMock()
-sys.modules["tf2_ros.transform_listener"] = MagicMock()
-
-# Mock PickAndPlace to prevent Navigation import chain at
-# Manipulation.py line 1070, which triggers Navigation -> tf2 etc.
-sys.modules["behavior_tree.PickAndPlace"] = MagicMock()
-sys.modules["behavior_tree.PickAndPlace.config"] = MagicMock()
-
-
-# ---- real imports (safe after mocks are installed) -------------------------
-
-from behavior_tree import mock_messages
-from behavior_tree.TemplateNodes.Manipulation import (  # noqa: E402
-    BtNode_CartesianMove,
-    BtNode_JointMoveAction,
-    BtNode_MoveArm,
-    BtNode_MoveArmSingle,
-    BtNode_Place,
-    BtNode_PointTo,
-)
-from behavior_tree.TemplateNodes.FoldClothingAction import (  # noqa: E402
-    BtNode_FoldClothingAction,
-)
+from behavior_tree import mock_messages  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1] / "behavior_tree/TemplateNodes"
 
 
-# ---- helper ----------------------------------------------------------------
+# ---- Helper utilities (no stubs needed) -------------------------------------
 
 class FakeResultMessage:
     """Minimal stand-in for the action-framework result message wrapper."""
@@ -146,7 +50,7 @@ def _node_bypass(cls):
 
 
 # ============================================================================
-#  Contract tests: mock shape
+#  Contract tests: mock shape (no stubs needed)
 # ============================================================================
 
 def test_place_mock_matches_real_result_contract():
@@ -180,151 +84,332 @@ def test_changed_consumers_have_no_stale_success_only_contract():
         for name in ("Manipulation.py", "FoldClothingAction.py")
     )
     assert "Result has ONLY `success`" not in source
-    assert "getattr(result, \"status\"" in source
+    assert 'getattr(result, "status"' in source
+
+
+# ============================================================================
+#  Fixture: scoped sys.modules stubs with deterministic restore
+# ============================================================================
+
+@pytest.fixture(scope="module")
+def stub_env():
+    """Install lightweight sys.modules stubs, (re)import consumer classes,
+    yield an ``env`` dict with sentinel values + class references, then
+    restore sys.modules to the exact pre-fixture state.
+
+    The fixture takes a snapshot before any changes.  On teardown it
+    deletes every key in sys.modules that was not in the snapshot and
+    restores every key that was, guaranteeing zero cross-test
+    contamination.
+    """
+    # -- phase 1: snapshot ---------------------------------------------------
+    snapshot = dict(sys.modules)
+
+    # -- phase 2: clear stale behavior_tree sub-modules ----------------------
+    # Modules cached from previous runs (e.g. a neighbouring test) have real
+    # py_trees/rclpy references that would conflict with our stubs.
+    for key in list(sys.modules):
+        if key.startswith("behavior_tree."):
+            del sys.modules[key]
+
+    # -- phase 3: install stubs ----------------------------------------------
+    sentinels = _install_stubs()
+
+    # -- phase 4: (re)import consumer classes --------------------------------
+    # At this point any imported behavior_tree sub-module resolves through
+    # our stubs.  The PickAndPlace package is mocked at sys.modules level
+    # to short-circuit the Navigation -> tf2_ros import chain.
+    sys.modules["behavior_tree.PickAndPlace"] = MagicMock()
+    sys.modules["behavior_tree.PickAndPlace.config"] = MagicMock()
+
+    from behavior_tree.TemplateNodes.Manipulation import (  # noqa: F811
+        BtNode_CartesianMove,
+        BtNode_JointMoveAction,
+        BtNode_MoveArm,
+        BtNode_MoveArmSingle,
+        BtNode_Place,
+        BtNode_PointTo,
+    )
+    from behavior_tree.TemplateNodes.FoldClothingAction import (  # noqa: F811
+        BtNode_FoldClothingAction,
+    )
+
+    # -- phase 5: build env dict for tests -----------------------------------
+    act_gs = sentinels["act_gs"]
+    env = {
+        "SUCCESS": sentinels["SUCCESS"],
+        "FAILURE": sentinels["FAILURE"],
+        "SUCCEEDED_VALUE": act_gs.STATUS_SUCCEEDED,
+        "ABORTED_VALUE": act_gs.STATUS_ABORTED,
+        "BtNode_Place": BtNode_Place,
+        "BtNode_CartesianMove": BtNode_CartesianMove,
+        "BtNode_JointMoveAction": BtNode_JointMoveAction,
+        "BtNode_FoldClothingAction": BtNode_FoldClothingAction,
+        "BtNode_MoveArm": BtNode_MoveArm,
+        "BtNode_MoveArmSingle": BtNode_MoveArmSingle,
+        "BtNode_PointTo": BtNode_PointTo,
+    }
+
+    yield env
+
+    # -- phase 6: restore sys.modules ----------------------------------------
+    _restore_sys_modules(snapshot)
+
+
+def _install_stubs():
+    """Insert sys.modules stubs for all heavyweight ROS2 / py_trees deps.
+
+    Returns a dict of sentinel objects that consumer imports resolve to.
+    Uses real ``types.ModuleType`` for packages (so ``import X.Y as Z``
+    resolves sub-modules correctly) and pinned ``MagicMock`` instances for
+    attribute-having singletons (``GoalStatus``, ``py_trees.common.Status``).
+
+    Sentinels are plain ``object()`` instances so ``is`` comparisons work
+    in tests.
+    """
+    import types as _types
+
+    SUCCESS = object()
+    FAILURE = object()
+
+    # -- py_trees tree -------------------------------------------------------
+    _pyt = MagicMock()
+    _pyt_common = MagicMock()
+    _pyt_common.Status = type("Status", (), {"SUCCESS": SUCCESS, "FAILURE": FAILURE})
+    _pyt.common = _pyt_common
+    _pyt_behaviour = MagicMock()
+    _pyt_behaviour.Behaviour = object
+    _pyt.behaviour = _pyt_behaviour
+    _pyt_blackboard = MagicMock()
+    _pyt.blackboard = _pyt_blackboard
+    _pyt_blackboard.Blackboard.absolute_name = staticmethod(lambda s, k: k)
+
+    sys.modules["py_trees"] = _pyt
+    sys.modules["py_trees.common"] = _pyt_common
+    sys.modules["py_trees.behaviour"] = _pyt_behaviour
+    sys.modules["py_trees.blackboard"] = _pyt_blackboard
+
+    # -- rclpy tree ----------------------------------------------------------
+    _rclpy = MagicMock()
+    _rclpy.__path__ = []
+    sys.modules["rclpy"] = _rclpy
+    sys.modules["rclpy.node"] = MagicMock()
+    sys.modules["rclpy.action"] = MagicMock()
+    sys.modules["rclpy.impl"] = MagicMock()
+    sys.modules["rclpy.impl.implementation_singleton"] = MagicMock()
+
+    # -- py_trees_ros --------------------------------------------------------
+    _pyt_ros = MagicMock()
+    sys.modules["py_trees_ros"] = _pyt_ros
+    sys.modules["py_trees_ros.exceptions"] = MagicMock()
+
+    # -- action_msgs ---------------------------------------------------------
+    _act_gs = MagicMock()
+    _act_gs.STATUS_SUCCEEDED = 4
+    _act_gs.STATUS_ABORTED = 6
+    _act_msg_pkg = _types.ModuleType("action_msgs")
+    _act_msg_pkg.__path__ = []
+    _act_msg_pkg.__package__ = "action_msgs"
+    _act_sub = _types.ModuleType("action_msgs.msg")
+    _act_sub.__package__ = "action_msgs.msg"
+    _act_sub.GoalStatus = _act_gs
+    sys.modules["action_msgs"] = _act_msg_pkg
+    sys.modules["action_msgs.msg"] = _act_sub
+
+    # -- geometry_msgs -------------------------------------------------------
+    _geo_msg = MagicMock()
+    _geo_msg.PointStamped = type("PointStamped", (), {})
+    _geo_msg.Pose = type("Pose", (), {})
+    _geo_msg.Point = type("Point", (), {})
+    _geo_msg.PoseStamped = type("PoseStamped", (), {})
+    _geo_msg.Quaternion = type("Quaternion", (), {})
+    sys.modules["geometry_msgs"] = MagicMock()
+    sys.modules["geometry_msgs.msg"] = _geo_msg
+
+    # -- std_msgs ------------------------------------------------------------
+    _std_msg = MagicMock()
+    _std_msg.Header = type("Header", (), {})
+    sys.modules["std_msgs"] = MagicMock()
+    sys.modules["std_msgs.msg"] = _std_msg
+
+    # -- nav_msgs ------------------------------------------------------------
+    sys.modules["nav_msgs"] = MagicMock()
+    _nav_msg = MagicMock()
+    _nav_msg.Odometry = type("Odometry", (), {})
+    sys.modules["nav_msgs.msg"] = _nav_msg
+
+    # -- tf2 -----------------------------------------------------------------
+    sys.modules["tf2_geometry_msgs"] = MagicMock()
+    sys.modules["tf2_ros"] = MagicMock()
+    sys.modules["tf2_ros.buffer"] = MagicMock()
+    sys.modules["tf2_ros.transform_listener"] = MagicMock()
+
+    return {"SUCCESS": SUCCESS, "FAILURE": FAILURE, "act_gs": _act_gs}
+
+
+def _restore_sys_modules(snapshot):
+    """Restore sys.modules to *snapshot*: delete every current key not in
+    snapshot, then overlay snapshot entries.
+    """
+    for key in list(sys.modules):
+        if key not in snapshot:
+            del sys.modules[key]
+    for key, mod in snapshot.items():
+        sys.modules[key] = mod
 
 
 # ============================================================================
 #  Behavioural tests: real process_result() on real consumer classes
 # ============================================================================
 
-def _SUCCEEDED():
-    """Return the action-level success value (4)."""
-    return _act_gs.STATUS_SUCCEEDED
+def _run_node_process_result(env, cls, *, result, action_status):
+    """Construct a raw consumer instance, wire in *action_status* and
+    *result*, and return (return_value, feedback_message)."""
+    node = _node_bypass(cls)
+    node.result_status = action_status
+    node.result_message = FakeResultMessage(result)
+    status = node.process_result()
+    return status, node.feedback_message
 
 
 # -- Place -------------------------------------------------------------------
 
-def test_place_action_success_zero_status_returns_success():
+def test_place_action_success_zero_status_returns_success(stub_env):
     """Place: action STATUS_SUCCEEDED + result.status == 0 → SUCCESS."""
-    node = _node_bypass(BtNode_Place)
-    node.result_status = _SUCCEEDED()
     r = mock_messages.Place.Result()
     r.status = 0
-    node.result_message = FakeResultMessage(r)
-    assert node.process_result() is _PYT_SUCCESS
+    ret, _ = _run_node_process_result(
+        stub_env, stub_env["BtNode_Place"],
+        result=r, action_status=stub_env["SUCCEEDED_VALUE"],
+    )
+    assert ret is stub_env["SUCCESS"]
 
 
-def test_place_action_success_nonzero_status_returns_failure():
+def test_place_action_success_nonzero_status_returns_failure(stub_env):
     """Place: action STATUS_SUCCEEDED + result.status != 0 → FAILURE."""
-    node = _node_bypass(BtNode_Place)
-    node.result_status = _SUCCEEDED()
     r = mock_messages.Place.Result()
     r.status = 8
     r.stage = 2
     r.error_msg = "placement collision"
-    node.result_message = FakeResultMessage(r)
-    assert node.process_result() is _PYT_FAILURE
-    assert "status=8" in node.feedback_message
-    assert "stage=2" in node.feedback_message
-    assert "placement collision" in node.feedback_message
+    ret, fb = _run_node_process_result(
+        stub_env, stub_env["BtNode_Place"],
+        result=r, action_status=stub_env["SUCCEEDED_VALUE"],
+    )
+    assert ret is stub_env["FAILURE"]
+    assert "status=8" in fb
+    assert "stage=2" in fb
+    assert "placement collision" in fb
 
 
 # -- CartesianMove -----------------------------------------------------------
 
-def test_cartesian_action_success_zero_status_returns_success():
+def test_cartesian_action_success_zero_status_returns_success(stub_env):
     """CartesianMove: action STATUS_SUCCEEDED + result.status == 0 → SUCCESS."""
-    node = _node_bypass(BtNode_CartesianMove)
-    node.result_status = _SUCCEEDED()
     r = mock_messages.CartesianMove.Result()
     r.status = 0
-    node.result_message = FakeResultMessage(r)
-    assert node.process_result() is _PYT_SUCCESS
+    ret, _ = _run_node_process_result(
+        stub_env, stub_env["BtNode_CartesianMove"],
+        result=r, action_status=stub_env["SUCCEEDED_VALUE"],
+    )
+    assert ret is stub_env["SUCCESS"]
 
 
-def test_cartesian_action_success_nonzero_status_returns_failure():
+def test_cartesian_action_success_nonzero_status_returns_failure(stub_env):
     """CartesianMove: action SUCCEEDED + result.status != 0 (even with
     legacy ``success=True``) → FAILURE, with diagnostics."""
-    node = _node_bypass(BtNode_CartesianMove)
-    node.result_status = _SUCCEEDED()
     r = mock_messages.CartesianMove.Result()
     r.success = True
     r.status = 4
     r.stage = 1
     r.error_msg = "IK failure"
-    node.result_message = FakeResultMessage(r)
-    assert node.process_result() is _PYT_FAILURE
-    assert "status=4" in node.feedback_message
-    assert "stage=1" in node.feedback_message
-    assert "IK failure" in node.feedback_message
+    ret, fb = _run_node_process_result(
+        stub_env, stub_env["BtNode_CartesianMove"],
+        result=r, action_status=stub_env["SUCCEEDED_VALUE"],
+    )
+    assert ret is stub_env["FAILURE"]
+    assert "status=4" in fb
+    assert "stage=1" in fb
+    assert "IK failure" in fb
 
 
-def test_cartesian_action_level_failure_diagnostics():
+def test_cartesian_action_level_failure_diagnostics(stub_env):
     """CartesianMove: action-level failure branch includes result
     status/stage/error_msg in feedback_message."""
-    node = _node_bypass(BtNode_CartesianMove)
-    node.result_status = _act_gs.STATUS_ABORTED  # 6
     r = mock_messages.CartesianMove.Result()
     r.status = 5
     r.stage = 2
     r.error_msg = "timeout"
-    node.result_message = FakeResultMessage(r)
-    node.process_result()
-    assert "status=5" in node.feedback_message
-    assert "stage=2" in node.feedback_message
-    assert "timeout" in node.feedback_message
+    _, fb = _run_node_process_result(
+        stub_env, stub_env["BtNode_CartesianMove"],
+        result=r, action_status=stub_env["ABORTED_VALUE"],
+    )
+    assert "status=5" in fb
+    assert "stage=2" in fb
+    assert "timeout" in fb
 
 
 # -- JointMoveAction ---------------------------------------------------------
 
-def test_jointmove_action_success_zero_status_returns_success():
+def test_jointmove_action_success_zero_status_returns_success(stub_env):
     """BtNode_JointMoveAction: STATUS_SUCCEEDED + result.status == 0 → SUCCESS."""
-    node = _node_bypass(BtNode_JointMoveAction)
-    node.result_status = _SUCCEEDED()
     r = mock_messages.JointMove.Result()
     r.status = 0
-    node.result_message = FakeResultMessage(r)
-    assert node.process_result() is _PYT_SUCCESS
+    ret, _ = _run_node_process_result(
+        stub_env, stub_env["BtNode_JointMoveAction"],
+        result=r, action_status=stub_env["SUCCEEDED_VALUE"],
+    )
+    assert ret is stub_env["SUCCESS"]
 
 
-def test_jointmove_action_success_nonzero_status_returns_failure():
+def test_jointmove_action_success_nonzero_status_returns_failure(stub_env):
     """BtNode_JointMoveAction: SUCCEEDED + result.status != 0 → FAILURE."""
-    node = _node_bypass(BtNode_JointMoveAction)
-    node.result_status = _SUCCEEDED()
     r = mock_messages.JointMove.Result()
     r.success = True
     r.status = 7
     r.stage = 2
     r.error_msg = "joint limit"
-    node.result_message = FakeResultMessage(r)
-    assert node.process_result() is _PYT_FAILURE
-    assert "status=7" in node.feedback_message
-    assert "stage=2" in node.feedback_message
-    assert "joint limit" in node.feedback_message
+    ret, fb = _run_node_process_result(
+        stub_env, stub_env["BtNode_JointMoveAction"],
+        result=r, action_status=stub_env["SUCCEEDED_VALUE"],
+    )
+    assert ret is stub_env["FAILURE"]
+    assert "status=7" in fb
+    assert "stage=2" in fb
+    assert "joint limit" in fb
 
 
-def test_jointmove_action_level_failure_diagnostics():
+def test_jointmove_action_level_failure_diagnostics(stub_env):
     """BtNode_JointMoveAction: action-level failure branch includes
     result status/stage/error_msg in feedback_message."""
-    node = _node_bypass(BtNode_JointMoveAction)
-    node.result_status = _act_gs.STATUS_ABORTED
     r = mock_messages.JointMove.Result()
     r.status = 3
     r.stage = 1
     r.error_msg = "cancelled by server"
-    node.result_message = FakeResultMessage(r)
-    node.process_result()
-    assert "status=3" in node.feedback_message
-    assert "stage=1" in node.feedback_message
-    assert "cancelled by server" in node.feedback_message
+    _, fb = _run_node_process_result(
+        stub_env, stub_env["BtNode_JointMoveAction"],
+        result=r, action_status=stub_env["ABORTED_VALUE"],
+    )
+    assert "status=3" in fb
+    assert "stage=1" in fb
+    assert "cancelled by server" in fb
 
 
 # -- FoldClothingAction ------------------------------------------------------
 
-def test_fold_action_success_zero_status_returns_success():
+def test_fold_action_success_zero_status_returns_success(stub_env):
     """FoldClothingAction: STATUS_SUCCEEDED + result.status == 0 → SUCCESS."""
-    node = _node_bypass(BtNode_FoldClothingAction)
-    node.result_status = _SUCCEEDED()
     r = mock_messages.Fold.Result()
     r.status = 0
-    node.result_message = FakeResultMessage(r)
-    assert node.process_result() is _PYT_SUCCESS
+    ret, _ = _run_node_process_result(
+        stub_env, stub_env["BtNode_FoldClothingAction"],
+        result=r, action_status=stub_env["SUCCEEDED_VALUE"],
+    )
+    assert ret is stub_env["SUCCESS"]
 
 
-def test_fold_action_success_nonzero_status_returns_failure():
+def test_fold_action_success_nonzero_status_returns_failure(stub_env):
     """FoldClothingAction: SUCCEEDED + result.status != 0 → FAILURE,
     with diagnostics."""
-    node = _node_bypass(BtNode_FoldClothingAction)
-    node.result_status = _SUCCEEDED()
     r = mock_messages.Fold.Result()
     r.success = True
     r.status = 7
@@ -332,61 +417,166 @@ def test_fold_action_success_nonzero_status_returns_failure():
     r.error_msg = "grasp lost"
     r.folds_completed = 1
     r.message = "partial"
-    node.result_message = FakeResultMessage(r)
-    assert node.process_result() is _PYT_FAILURE
-    assert "status=7" in node.feedback_message
-    assert "stage=3" in node.feedback_message
-    assert "grasp lost" in node.feedback_message
-    assert "folds_completed=1" in node.feedback_message
+    ret, fb = _run_node_process_result(
+        stub_env, stub_env["BtNode_FoldClothingAction"],
+        result=r, action_status=stub_env["SUCCEEDED_VALUE"],
+    )
+    assert ret is stub_env["FAILURE"]
+    assert "status=7" in fb
+    assert "stage=3" in fb
+    assert "grasp lost" in fb
+    assert "folds_completed=1" in fb
 
 
-def test_fold_action_level_failure_diagnostics():
+def test_fold_action_level_failure_diagnostics(stub_env):
     """FoldClothingAction: action-level failure branch includes result
     status/stage/error_msg in feedback_message."""
-    node = _node_bypass(BtNode_FoldClothingAction)
-    node.result_status = _act_gs.STATUS_ABORTED
     r = mock_messages.Fold.Result()
     r.status = 2
     r.stage = 1
     r.error_msg = "server timeout"
-    node.result_message = FakeResultMessage(r)
-    node.process_result()
-    assert "status=2" in node.feedback_message
-    assert "stage=1" in node.feedback_message
-    assert "server timeout" in node.feedback_message
+    _, fb = _run_node_process_result(
+        stub_env, stub_env["BtNode_FoldClothingAction"],
+        result=r, action_status=stub_env["ABORTED_VALUE"],
+    )
+    assert "status=2" in fb
+    assert "stage=1" in fb
+    assert "server timeout" in fb
 
 
-def test_fold_success_consistent_with_mock_default():
+def test_fold_success_consistent_with_mock_default(stub_env):
     """Fold.Result() default (success=True, status=0) is accepted as
-    success; Fold.Result(success=False) (status=9) is rejected.  This
-    proves the mock's invariant is consistent with the consumer gate."""
-    node = _node_bypass(BtNode_FoldClothingAction)
-    node.result_status = _SUCCEEDED()
+    success; Fold.Result(success=False) (status=9) is rejected."""
+    node = _node_bypass(stub_env["BtNode_FoldClothingAction"])
+    node.result_status = stub_env["SUCCEEDED_VALUE"]
 
-    # default → success
     r1 = mock_messages.Fold.Result()
     node.result_message = FakeResultMessage(r1)
-    assert node.process_result() is _PYT_SUCCESS
+    assert node.process_result() is stub_env["SUCCESS"]
 
-    # explicit fail → failure
     r2 = mock_messages.Fold.Result(success=False)
     node.result_message = FakeResultMessage(r2)
-    assert node.process_result() is _PYT_FAILURE
+    assert node.process_result() is stub_env["FAILURE"]
 
 
 # -- MoveArm / MoveArmSingle / PointTo (all use JointMove.Result) ------------
 
-@pytest.mark.parametrize("cls", [BtNode_MoveArm, BtNode_MoveArmSingle, BtNode_PointTo])
-def test_jointmove_based_node_gates_on_status(cls):
+@pytest.mark.parametrize("cls_key", ["BtNode_MoveArm", "BtNode_MoveArmSingle",
+                                      "BtNode_PointTo"])
+def test_jointmove_based_node_gates_on_status(stub_env, cls_key):
     """Every consumer that uses ``JointMove.Result`` must reject nonzero
     result status even when action-level STATUS_SUCCEEDED."""
-    node = _node_bypass(cls)
-    node.result_status = _SUCCEEDED()
+    cls = stub_env[cls_key]
     r = mock_messages.JointMove.Result()
     r.success = True
     r.status = 6
     r.stage = 2
     r.error_msg = "motor stall"
+    ret, fb = _run_node_process_result(
+        stub_env, cls,
+        result=r, action_status=stub_env["SUCCEEDED_VALUE"],
+    )
+    assert ret is stub_env["FAILURE"]
+    assert "status=6" in fb
+
+
+# ============================================================================
+#  Regression: sys.modules roundtrip proves zero contamination
+# ============================================================================
+
+def test_sys_modules_roundtrip_restoration():
+    """Run a self-contained stub fixture setup/teardown cycle and prove
+    every sys.modules entry is restored to its pre-cycle identity.
+
+    This test runs *after* the module-scoped ``stub_env`` fixture has
+    already torn down, so it starts from a clean state.  It then does
+    its own roundtrip to verify the pattern is correct.
+    """
+    snapshot = dict(sys.modules)
+
+    # -- setup: same sequence as stub_env ------------------------------------
+    for key in list(sys.modules):
+        if key.startswith("behavior_tree."):
+            del sys.modules[key]
+
+    sentinels = _install_stubs()
+
+    sys.modules["behavior_tree.PickAndPlace"] = MagicMock()
+    sys.modules["behavior_tree.PickAndPlace.config"] = MagicMock()
+
+    # Verify stubs are active
+    import py_trees
+    import action_msgs
+    assert "py_trees" in sys.modules
+    assert "action_msgs" in sys.modules
+    assert "action_msgs.msg" in sys.modules
+    assert "rclpy" in sys.modules
+    assert "rclpy.node" in sys.modules
+    assert "behavior_tree.PickAndPlace" in sys.modules
+    # Ensure the mock chain resolves
+    assert sys.modules["py_trees"] is py_trees
+    assert sys.modules["action_msgs"] is action_msgs
+
+    from behavior_tree.TemplateNodes.Manipulation import (
+        BtNode_CartesianMove,
+        BtNode_Place,
+        BtNode_JointMoveAction,
+    )
+    from behavior_tree.TemplateNodes.FoldClothingAction import (
+        BtNode_FoldClothingAction,
+    )
+
+    # Run a quick consumer-level assertion to prove the imports work
+    r = mock_messages.Place.Result()
+    r.status = 8
+    r.error_msg = "roundtrip check"
+    node = _node_bypass(BtNode_Place)
+    node.result_status = sentinels["act_gs"].STATUS_SUCCEEDED
     node.result_message = FakeResultMessage(r)
-    assert node.process_result() is _PYT_FAILURE
-    assert "status=6" in node.feedback_message
+    ret = node.process_result()
+    assert ret is sentinels["FAILURE"]
+    assert "roundtrip check" in node.feedback_message
+
+    # -- teardown ------------------------------------------------------------
+    _restore_sys_modules(snapshot)
+
+    # -- verification --------------------------------------------------------
+    # Every key from the original snapshot is back with the same identity
+    mismatched = []
+    for key, orig_mod in snapshot.items():
+        current = sys.modules.get(key)
+        if current is not orig_mod:
+            mismatched.append((key, type(orig_mod).__name__, type(current).__name__))
+    assert not mismatched, (
+        f"{len(mismatched)} sys.modules entries not restored to original identity: "
+        + "; ".join(f"{k}: was {a} now {b}" for k, a, b in mismatched[:10])
+    )
+
+    # No synthetic modules leaked
+    leaked = [k for k in sys.modules if k not in snapshot]
+    assert not leaked, (
+        f"{len(leaked)} synthetic modules leaked: {sorted(leaked)[:20]}"
+    )
+
+    # -- order-independence: run consumer tests again with same env ----------
+    # Re-run the fixture setup and verify it still works
+    for key in list(sys.modules):
+        if key.startswith("behavior_tree."):
+            del sys.modules[key]
+
+    sentinels2 = _install_stubs()
+    sys.modules["behavior_tree.PickAndPlace"] = MagicMock()
+    sys.modules["behavior_tree.PickAndPlace.config"] = MagicMock()
+
+    from behavior_tree.TemplateNodes.Manipulation import BtNode_Place as BNP2
+    r2 = mock_messages.Place.Result()
+    r2.status = 8
+    r2.error_msg = "order-independence check"
+    node2 = _node_bypass(BNP2)
+    node2.result_status = sentinels2["act_gs"].STATUS_SUCCEEDED
+    node2.result_message = FakeResultMessage(r2)
+    assert node2.process_result() is sentinels2["FAILURE"]
+    assert "order-independence check" in node2.feedback_message
+
+    # Final teardown
+    _restore_sys_modules(snapshot)
