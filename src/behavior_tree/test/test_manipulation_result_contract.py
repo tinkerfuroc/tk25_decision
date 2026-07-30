@@ -13,6 +13,7 @@ consumer test the fixture tears down, restoring every sys.modules entry
 to its pre-fixture state and deleting any synthetic entries.
 """
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -91,69 +92,64 @@ def test_changed_consumers_have_no_stale_success_only_contract():
 #  Fixture: scoped sys.modules stubs with deterministic restore
 # ============================================================================
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def stub_env():
-    """Install lightweight sys.modules stubs, (re)import consumer classes,
-    yield an ``env`` dict with sentinel values + class references, then
-    restore sys.modules to the exact pre-fixture state.
+    """Provide real consumer classes with cleanup around every test."""
+    with _stubbed_consumer_env() as env:
+        yield env
 
-    The fixture takes a snapshot before any changes.  On teardown it
-    deletes every key in sys.modules that was not in the snapshot and
-    restores every key that was, guaranteeing zero cross-test
-    contamination.
+
+@contextmanager
+def _stubbed_consumer_env():
+    """Install consumer import stubs and always restore ``sys.modules``.
+
+    The snapshot is restored if setup, import, test use, or teardown raises.
+    Function-scoped fixture users and standalone regression cycles therefore
+    share exactly one cleanup path and cannot leak synthetic modules.
     """
-    # -- phase 1: snapshot ---------------------------------------------------
     snapshot = dict(sys.modules)
+    try:
+        # Modules cached from a neighbouring test may hold real dependencies
+        # that conflict with this cycle's stubs.
+        for key in list(sys.modules):
+            if key.startswith("behavior_tree."):
+                del sys.modules[key]
 
-    # -- phase 2: clear stale behavior_tree sub-modules ----------------------
-    # Modules cached from previous runs (e.g. a neighbouring test) have real
-    # py_trees/rclpy references that would conflict with our stubs.
-    for key in list(sys.modules):
-        if key.startswith("behavior_tree."):
-            del sys.modules[key]
+        sentinels = _install_stubs()
 
-    # -- phase 3: install stubs ----------------------------------------------
-    sentinels = _install_stubs()
+        # Short-circuit the Navigation -> tf2_ros import chain.
+        sys.modules["behavior_tree.PickAndPlace"] = MagicMock()
+        sys.modules["behavior_tree.PickAndPlace.config"] = MagicMock()
 
-    # -- phase 4: (re)import consumer classes --------------------------------
-    # At this point any imported behavior_tree sub-module resolves through
-    # our stubs.  The PickAndPlace package is mocked at sys.modules level
-    # to short-circuit the Navigation -> tf2_ros import chain.
-    sys.modules["behavior_tree.PickAndPlace"] = MagicMock()
-    sys.modules["behavior_tree.PickAndPlace.config"] = MagicMock()
+        from behavior_tree.TemplateNodes.Manipulation import (
+            BtNode_CartesianMove,
+            BtNode_JointMoveAction,
+            BtNode_MoveArm,
+            BtNode_MoveArmSingle,
+            BtNode_Place,
+            BtNode_PointTo,
+        )
+        from behavior_tree.TemplateNodes.FoldClothingAction import (
+            BtNode_FoldClothingAction,
+        )
 
-    from behavior_tree.TemplateNodes.Manipulation import (  # noqa: F811
-        BtNode_CartesianMove,
-        BtNode_JointMoveAction,
-        BtNode_MoveArm,
-        BtNode_MoveArmSingle,
-        BtNode_Place,
-        BtNode_PointTo,
-    )
-    from behavior_tree.TemplateNodes.FoldClothingAction import (  # noqa: F811
-        BtNode_FoldClothingAction,
-    )
-
-    # -- phase 5: build env dict for tests -----------------------------------
-    act_gs = sentinels["act_gs"]
-    env = {
-        "SUCCESS": sentinels["SUCCESS"],
-        "FAILURE": sentinels["FAILURE"],
-        "SUCCEEDED_VALUE": act_gs.STATUS_SUCCEEDED,
-        "ABORTED_VALUE": act_gs.STATUS_ABORTED,
-        "BtNode_Place": BtNode_Place,
-        "BtNode_CartesianMove": BtNode_CartesianMove,
-        "BtNode_JointMoveAction": BtNode_JointMoveAction,
-        "BtNode_FoldClothingAction": BtNode_FoldClothingAction,
-        "BtNode_MoveArm": BtNode_MoveArm,
-        "BtNode_MoveArmSingle": BtNode_MoveArmSingle,
-        "BtNode_PointTo": BtNode_PointTo,
-    }
-
-    yield env
-
-    # -- phase 6: restore sys.modules ----------------------------------------
-    _restore_sys_modules(snapshot)
+        act_gs = sentinels["act_gs"]
+        env = {
+            "SUCCESS": sentinels["SUCCESS"],
+            "FAILURE": sentinels["FAILURE"],
+            "SUCCEEDED_VALUE": act_gs.STATUS_SUCCEEDED,
+            "ABORTED_VALUE": act_gs.STATUS_ABORTED,
+            "BtNode_Place": BtNode_Place,
+            "BtNode_CartesianMove": BtNode_CartesianMove,
+            "BtNode_JointMoveAction": BtNode_JointMoveAction,
+            "BtNode_FoldClothingAction": BtNode_FoldClothingAction,
+            "BtNode_MoveArm": BtNode_MoveArm,
+            "BtNode_MoveArmSingle": BtNode_MoveArmSingle,
+            "BtNode_PointTo": BtNode_PointTo,
+        }
+        yield env
+    finally:
+        _restore_sys_modules(snapshot)
 
 
 def _install_stubs():
@@ -484,99 +480,101 @@ def test_jointmove_based_node_gates_on_status(stub_env, cls_key):
 #  Regression: sys.modules roundtrip proves zero contamination
 # ============================================================================
 
-def test_sys_modules_roundtrip_restoration():
-    """Run a self-contained stub fixture setup/teardown cycle and prove
-    every sys.modules entry is restored to its pre-cycle identity.
-
-    This test runs *after* the module-scoped ``stub_env`` fixture has
-    already torn down, so it starts from a clean state.  It then does
-    its own roundtrip to verify the pattern is correct.
-    """
-    snapshot = dict(sys.modules)
-
-    # -- setup: same sequence as stub_env ------------------------------------
-    for key in list(sys.modules):
-        if key.startswith("behavior_tree."):
-            del sys.modules[key]
-
-    sentinels = _install_stubs()
-
-    sys.modules["behavior_tree.PickAndPlace"] = MagicMock()
-    sys.modules["behavior_tree.PickAndPlace.config"] = MagicMock()
-
-    # Verify stubs are active
-    import py_trees
-    import action_msgs
-    assert "py_trees" in sys.modules
-    assert "action_msgs" in sys.modules
-    assert "action_msgs.msg" in sys.modules
-    assert "rclpy" in sys.modules
-    assert "rclpy.node" in sys.modules
-    assert "behavior_tree.PickAndPlace" in sys.modules
-    # Ensure the mock chain resolves
-    assert sys.modules["py_trees"] is py_trees
-    assert sys.modules["action_msgs"] is action_msgs
-
-    from behavior_tree.TemplateNodes.Manipulation import (
-        BtNode_CartesianMove,
-        BtNode_Place,
-        BtNode_JointMoveAction,
-    )
-    from behavior_tree.TemplateNodes.FoldClothingAction import (
-        BtNode_FoldClothingAction,
-    )
-
-    # Run a quick consumer-level assertion to prove the imports work
-    r = mock_messages.Place.Result()
-    r.status = 8
-    r.error_msg = "roundtrip check"
-    node = _node_bypass(BtNode_Place)
-    node.result_status = sentinels["act_gs"].STATUS_SUCCEEDED
-    node.result_message = FakeResultMessage(r)
-    ret = node.process_result()
-    assert ret is sentinels["FAILURE"]
-    assert "roundtrip check" in node.feedback_message
-
-    # -- teardown ------------------------------------------------------------
-    _restore_sys_modules(snapshot)
-
-    # -- verification --------------------------------------------------------
-    # Every key from the original snapshot is back with the same identity
-    mismatched = []
-    for key, orig_mod in snapshot.items():
-        current = sys.modules.get(key)
-        if current is not orig_mod:
-            mismatched.append((key, type(orig_mod).__name__, type(current).__name__))
+def _assert_sys_modules_restored(snapshot):
+    """Assert exact identity restoration and no synthetic-module leaks."""
+    mismatched = [
+        (key, type(original).__name__, type(sys.modules.get(key)).__name__)
+        for key, original in snapshot.items()
+        if sys.modules.get(key) is not original
+    ]
     assert not mismatched, (
         f"{len(mismatched)} sys.modules entries not restored to original identity: "
-        + "; ".join(f"{k}: was {a} now {b}" for k, a, b in mismatched[:10])
+        + "; ".join(f"{key}: was {old} now {new}" for key, old, new in mismatched[:10])
     )
-
-    # No synthetic modules leaked
-    leaked = [k for k in sys.modules if k not in snapshot]
+    leaked = [key for key in sys.modules if key not in snapshot]
     assert not leaked, (
         f"{len(leaked)} synthetic modules leaked: {sorted(leaked)[:20]}"
     )
 
-    # -- order-independence: run consumer tests again with same env ----------
-    # Re-run the fixture setup and verify it still works
-    for key in list(sys.modules):
-        if key.startswith("behavior_tree."):
-            del sys.modules[key]
 
-    sentinels2 = _install_stubs()
-    sys.modules["behavior_tree.PickAndPlace"] = MagicMock()
-    sys.modules["behavior_tree.PickAndPlace.config"] = MagicMock()
+def test_sys_modules_roundtrip_restoration():
+    """Observe a clean state after each context has exited."""
+    snapshot = dict(sys.modules)
 
-    from behavior_tree.TemplateNodes.Manipulation import BtNode_Place as BNP2
-    r2 = mock_messages.Place.Result()
-    r2.status = 8
-    r2.error_msg = "order-independence check"
-    node2 = _node_bypass(BNP2)
-    node2.result_status = sentinels2["act_gs"].STATUS_SUCCEEDED
-    node2.result_message = FakeResultMessage(r2)
-    assert node2.process_result() is sentinels2["FAILURE"]
-    assert "order-independence check" in node2.feedback_message
+    with _stubbed_consumer_env() as env:
+        # Verify stubs are active while the context owns them.
+        import action_msgs
+        import py_trees
+        assert sys.modules["py_trees"] is py_trees
+        assert sys.modules["action_msgs"] is action_msgs
+        assert "action_msgs.msg" in sys.modules
+        assert "rclpy.node" in sys.modules
+        assert "behavior_tree.PickAndPlace" in sys.modules
 
-    # Final teardown
-    _restore_sys_modules(snapshot)
+        # Exercise a real consumer process_result() under the stubs.
+        result = mock_messages.Place.Result()
+        result.status = 8
+        result.error_msg = "roundtrip check"
+        node = _node_bypass(env["BtNode_Place"])
+        node.result_status = env["SUCCEEDED_VALUE"]
+        node.result_message = FakeResultMessage(result)
+        assert node.process_result() is env["FAILURE"]
+        assert "roundtrip check" in node.feedback_message
+
+    # This assertion is intentionally outside the context manager.
+    _assert_sys_modules_restored(snapshot)
+
+    # A second independent cycle proves the setup is repeatable after cleanup.
+    second_snapshot = dict(sys.modules)
+    with _stubbed_consumer_env() as env:
+        result = mock_messages.Place.Result()
+        result.status = 8
+        result.error_msg = "order-independence check"
+        node = _node_bypass(env["BtNode_Place"])
+        node.result_status = env["SUCCEEDED_VALUE"]
+        node.result_message = FakeResultMessage(result)
+        assert node.process_result() is env["FAILURE"]
+        assert "order-independence check" in node.feedback_message
+    _assert_sys_modules_restored(second_snapshot)
+
+
+def test_stub_context_restores_modules_when_use_raises():
+    """A failure while using the scoped stubs must still restore sys.modules."""
+    snapshot = dict(sys.modules)
+
+    with pytest.raises(RuntimeError, match="intentional consumer failure"):
+        with _stubbed_consumer_env():
+            raise RuntimeError("intentional consumer failure")
+
+    mismatched = [
+        key for key, original in snapshot.items()
+        if sys.modules.get(key) is not original
+    ]
+    leaked = [key for key in sys.modules if key not in snapshot]
+    assert not mismatched
+    assert not leaked
+
+
+def test_stub_context_restores_modules_when_setup_raises(monkeypatch):
+    """Setup failures after mutation must also restore sys.modules."""
+    snapshot = dict(sys.modules)
+    original_install = _install_stubs
+
+    def install_then_raise():
+        original_install()
+        raise RuntimeError("intentional setup failure")
+
+    monkeypatch.setattr(
+        sys.modules[__name__], "_install_stubs", install_then_raise,
+    )
+    with pytest.raises(RuntimeError, match="intentional setup failure"):
+        with _stubbed_consumer_env():
+            pass
+
+    mismatched = [
+        key for key, original in snapshot.items()
+        if sys.modules.get(key) is not original
+    ]
+    leaked = [key for key in sys.modules if key not in snapshot]
+    assert not mismatched
+    assert not leaked
