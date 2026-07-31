@@ -8,7 +8,7 @@ orchestrator or driven standalone from a dev test script that pre-fills the
 blackboard.
 
 The factories deliberately stay shallow: they compose primitives from
-``TemplateNodes`` (vision / nav / audio / manipulation) and rely on the
+shared nodes (vision / nav / audio / manipulation) and rely on the
 orchestrator for retries and re-planning.
 """
 
@@ -21,31 +21,30 @@ from geometry_msgs.msg import PointStamped, Point
 from std_msgs.msg import Header
 import rclpy
 
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
-from behavior_tree.TemplateNodes.Navigation import (
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
+from behavior_tree.nodes.Navigation import (
     BtNode_GotoAction,
     BtNode_ConvertGraspPose,
     BtNode_CaptureCurrentPose,
     BtNode_Approach,
 )
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
-from behavior_tree.TemplateNodes.Vision import (
+from behavior_tree.nodes.Audio import BtNode_Announce, BtNode_ListenAction
+from behavior_tree.nodes.Vision import (
+    BtNode_GetImage,
     BtNode_ScanForGeneralist,
     BtNode_TurnPanTilt,
     BtNode_FeatureExtraction,
     BtNode_DoorDetection,
 )
-from behavior_tree.TemplateNodes.Manipulation import (
+from behavior_tree.nodes.Manipulation import (
     BtNode_MoveArmSingle,
     BtNode_GripperAction,
 )
 
-from behavior_tree.StoringGroceries.customNodes import (
+from behavior_tree.components.grocery_nodes import (
     BtNode_FindObjTable,
     BtNode_GraspWithPose,
 )
-from behavior_tree.PickAndPlace.custom_nodes import BtNode_GetImage
-
 from .custom_nodes import (
     BtNode_ScanForWavingPersonNew,
     BtNode_VLMQuery,
@@ -361,7 +360,7 @@ class BtNode_ExtractDetection(Behaviour):
         self._client.register_key(self._point_dst, access=Access.WRITE)
 
     def update(self):
-        from behavior_tree.config import is_subsystem_mocked
+        from behavior_tree.core.config import is_subsystem_mocked
         if is_subsystem_mocked("vision"):
             # Mocked scan -> no real object. Write a placeholder point at the
             # origin so the (also-mocked) grasp can proceed; the real object pose
@@ -631,7 +630,7 @@ class BtNode_CountDetections(Behaviour):
         self._client.register_key(self._dst, access=Access.WRITE)
 
     def update(self):
-        from behavior_tree.config import is_subsystem_mocked
+        from behavior_tree.core.config import is_subsystem_mocked
         if is_subsystem_mocked("vision"):
             # The detector was mocked (auto-completed without writing a real
             # result), so a zero count is a mock artifact, not a true miss.
@@ -1148,7 +1147,7 @@ def create_follow():
     is responsible for cancelling/terminating the subtree when navigation should
     stop (the orchestrator does this via terminate() when the plan advances).
     """
-    from behavior_tree.FollowPerson.follow_person import create_follow_person_tree
+    from behavior_tree.components.following.follow_person import create_follow_person_tree
     seq = py_trees.composites.Sequence("small/follow", memory=True)
     seq.add_child(BtNode_Announce(
         "announce follow", bb_source=None,

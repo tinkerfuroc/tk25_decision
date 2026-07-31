@@ -72,35 +72,35 @@ def _install_stubs(monkeypatch):
     std.Header = type("Header", (), {"__init__": lambda self, stamp=None, frame_id="": None})
     monkeypatch.setitem(sys.modules, "std_msgs.msg", std)
 
-    audio = types.ModuleType("behavior_tree.TemplateNodes.Audio")
+    audio = types.ModuleType("behavior_tree.nodes.Audio")
     audio.BtNode_Announce = _SuccessNode
     audio.BtNode_GetConfirmationAction = _SuccessNode
-    monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Audio", audio)
+    monkeypatch.setitem(sys.modules, "behavior_tree.nodes.Audio", audio)
 
-    base = types.ModuleType("behavior_tree.TemplateNodes.BaseBehaviors")
+    base = types.ModuleType("behavior_tree.nodes.BaseBehaviors")
     base.BtNode_WriteToBlackboard = _SuccessNode
     base.BtNode_CheckIfEmpty = _SuccessNode
-    monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.BaseBehaviors", base)
+    monkeypatch.setitem(sys.modules, "behavior_tree.nodes.BaseBehaviors", base)
 
-    manip = types.ModuleType("behavior_tree.TemplateNodes.Manipulation")
+    manip = types.ModuleType("behavior_tree.nodes.Manipulation")
     manip.BtNode_MoveArmSingle = _SuccessNode
     manip.BtNode_GripperAction = _SuccessNode
-    monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Manipulation", manip)
+    monkeypatch.setitem(sys.modules, "behavior_tree.nodes.Manipulation", manip)
 
-    nav = types.ModuleType("behavior_tree.TemplateNodes.Navigation")
+    nav = types.ModuleType("behavior_tree.nodes.Navigation")
     nav.BtNode_GotoAction = _SuccessNode
     # restaurants.py also imports these from Navigation (added 5a433bc).
     nav.BtNode_Approach = _SuccessNode
     nav.BtNode_CaptureCurrentPose = _SuccessNode
-    monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Navigation", nav)
+    monkeypatch.setitem(sys.modules, "behavior_tree.nodes.Navigation", nav)
 
-    vision = types.ModuleType("behavior_tree.TemplateNodes.Vision")
+    vision = types.ModuleType("behavior_tree.nodes.Vision")
     vision.BtNode_ScanForWavingPerson = _SuccessNode
     vision.BtNode_MaintainEyeContact = _SuccessNode
     vision.BtNode_ShowImage = _SuccessNode
     # restaurants.py also imports BtNode_TurnPanTilt from Vision (added 5a433bc).
     vision.BtNode_TurnPanTilt = _SuccessNode
-    monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Vision", vision)
+    monkeypatch.setitem(sys.modules, "behavior_tree.nodes.Vision", vision)
 
     # restaurants.py line 30 imports message types from PickAndPlace.config; that
     # import drags in the whole PickAndPlace package via its __init__ (pick_and_place

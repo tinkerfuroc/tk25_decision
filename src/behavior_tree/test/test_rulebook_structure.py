@@ -4,21 +4,21 @@ import py_trees  # noqa: E402
 from behavior_tree.PickAndPlace import pick_and_place_rulebook as R  # noqa: E402
 
 
-def test_root_is_memory_sequence_with_four_children():
+def test_root_is_memory_sequence_with_three_children():
     root = R.pickAndPlaceRulebook(place_policy="vlm")
     assert isinstance(root, py_trees.composites.Sequence)
     assert root.memory is True
-    assert len(root.children) == 4  # constants, enter-arena, mission-parallel, summary
+    assert len(root.children) == 3  # constants, enter-arena, mission-parallel
 
 
-def test_mission_is_success_on_one_parallel_with_deadline_and_failureissuccess():
+def test_mission_is_success_on_one_parallel_with_deadline_and_sequence():
     root = R.pickAndPlaceRulebook()
     par = root.children[2]
     assert isinstance(par, py_trees.composites.Parallel)
     assert isinstance(par.policy, py_trees.common.ParallelPolicy.SuccessOnOne)
     guard, mission = par.children
     assert guard.__class__.__name__ == "BtNode_DeadlineGuard"
-    assert isinstance(mission, py_trees.decorators.FailureIsSuccess)
+    assert isinstance(mission, py_trees.composites.Sequence)
 
 
 def test_cleanup_loop_is_repeat_minus_one_over_unwrapped_pop():
@@ -32,4 +32,9 @@ def test_cleanup_loop_is_repeat_minus_one_over_unwrapped_pop():
 
 
 def test_breakfast_table_is_the_frozen_four():
-    assert [row[0] for row in R.BREAKFAST] == ["bowl", "spoon", "cereal", "milk"]
+    assert [row[0] for row in R.BREAKFAST] == [
+        "bowl",
+        "spoon",
+        "cornflakes",
+        "milk",
+    ]

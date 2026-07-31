@@ -1,22 +1,30 @@
 import os
+import copy
 
 os.environ["BT_MOCK_MODE"] = "true"  # noqa: E402 — force mock before config loads
 
 import py_trees  # noqa: E402
 import pytest  # noqa: E402
 
-from behavior_tree.TemplateNodes.Manipulation import BtNode_ScanAndPlace  # noqa: E402
+from behavior_tree.core import config as bt_config  # noqa: E402
+from behavior_tree.nodes.Manipulation import BtNode_ScanAndPlace  # noqa: E402
 from behavior_tree.PickAndPlace.config import (  # noqa: E402
     SCAN_AND_PLACE_ACTION_NAME, KEY_OBJECT_LABEL, KEY_ACTIVE_TARGET_POINT,
 )
 
 
 @pytest.fixture(autouse=True)
-def _clear_blackboard():
+def _clear_blackboard(monkeypatch):
+    monkeypatch.setenv("BT_MOCK_MODE", "true")
+    saved_config = copy.deepcopy(bt_config._config._mock_config)
+    bt_config._config._mock_config.setdefault("force_mock_nodes", {})[
+        "BtNode_ScanAndPlace"
+    ] = {"subsystem": "manipulation", "mode": "IMMEDIATE"}
     clear_fn = getattr(py_trees.blackboard.Blackboard, "clear", None)
     if callable(clear_fn):
         clear_fn()
     yield
+    bt_config._config._mock_config = saved_config
     if callable(clear_fn):
         clear_fn()
 

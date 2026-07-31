@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""POSE_SOFA_REVERSED: same map point as POSE_SOFA, yaw rotated exactly 180 deg.
-
-The reversed pose is computed from POSE_SOFA at module load (not stored in
-constants.json), so re-teaching pose_sofa keeps the pair consistent. Used by
-the hri-2026 bag flow to turn the robot around in place before the follow.
-"""
+"""The calibrated reverse-sofa pose is loaded from task constants."""
 
 import math
 import os
@@ -29,6 +24,7 @@ from behavior_tree.HRI.config import (  # noqa: E402
     KEY_SOFA_POSE_REVERSED,
     POSE_SOFA,
     POSE_SOFA_REVERSED,
+    constants,
 )
 
 
@@ -42,23 +38,29 @@ def test_reversed_key_is_distinct():
     assert KEY_SOFA_POSE_REVERSED != KEY_SOFA_POSE
 
 
-def test_point_unchanged():
-    original = POSE_SOFA.pose.position
-    flipped = POSE_SOFA_REVERSED.pose.position
-    assert (flipped.x, flipped.y, flipped.z) == (original.x, original.y, original.z)
+def test_point_matches_calibrated_constants():
+    expected = constants["pose_sofa_reversed"]["point"]
+    point = POSE_SOFA_REVERSED.pose.position
+    assert (point.x, point.y, point.z) == (
+        expected["x"],
+        expected["y"],
+        expected["z"],
+    )
 
 
 def test_frame_unchanged():
     assert POSE_SOFA_REVERSED.header.frame_id == POSE_SOFA.header.frame_id == "map"
 
 
-def test_yaw_flipped_exactly_180_degrees():
-    delta = math.remainder(
-        _yaw(POSE_SOFA_REVERSED.pose.orientation)
-        - _yaw(POSE_SOFA.pose.orientation),
-        2.0 * math.pi,
+def test_orientation_matches_calibrated_constants():
+    expected = constants["pose_sofa_reversed"]["orientation"]
+    q = POSE_SOFA_REVERSED.pose.orientation
+    assert (q.x, q.y, q.z, q.w) == (
+        expected["x"],
+        expected["y"],
+        expected["z"],
+        expected["w"],
     )
-    assert abs(abs(delta) - math.pi) < 1e-9
 
 
 def test_orientation_stays_unit_quaternion():

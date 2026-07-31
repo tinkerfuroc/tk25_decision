@@ -23,28 +23,28 @@ import py_trees
 import py_trees_ros
 import rclpy
 
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.BaseBehaviors import (
+from behavior_tree.nodes.Audio import BtNode_Announce
+from behavior_tree.nodes.BaseBehaviors import (
     BtNode_CheckIfEmpty,
     BtNode_WriteToBlackboard,
 )
-from behavior_tree.TemplateNodes.Manipulation import (
+from behavior_tree.nodes.Manipulation import (
     BtNode_FoldClothingDn,
     BtNode_Grasp,
     BtNode_GripperAction,
     BtNode_MoveArmSingle,
 )
-from behavior_tree.TemplateNodes.manipulation_new import BtNode_JointMoveAction
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_NavBack
-from behavior_tree.TemplateNodes.OperatorGate import BtNode_PressEnterToSucceed
-from behavior_tree.TemplateNodes.Vision import (
+from behavior_tree.nodes.Manipulation import BtNode_JointMoveAction
+from behavior_tree.nodes.Navigation import BtNode_GotoAction, BtNode_NavBack
+from behavior_tree.nodes.OperatorGate import BtNode_PressEnterToSucceed
+from behavior_tree.nodes.Vision import (
     BtNode_DoorDetection,
     BtNode_GetPointCloud,
     BtNode_ScanFor,
     BtNode_TurnPanTilt,
 )
-from behavior_tree.TemplateNodes.WaitKeyPress import BtNode_WaitKeyboardPress
-from behavior_tree.visualization import create_post_tick_visualizer
+from behavior_tree.nodes.WaitKeyPress import BtNode_WaitKeyboardPress
+from behavior_tree.core.visualization import create_post_tick_visualizer
 
 from .config import (
     # ARM_POS_PICK_WASHER,

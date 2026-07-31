@@ -16,7 +16,7 @@
 
 from types import SimpleNamespace
 
-from behavior_tree.TemplateNodes.TrackPersonAction import FeedbackBuffer
+from behavior_tree.nodes.TrackPersonAction import FeedbackBuffer
 
 
 def _make_feedback(reacquisition_state):

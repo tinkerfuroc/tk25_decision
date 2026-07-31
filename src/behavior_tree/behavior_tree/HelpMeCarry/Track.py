@@ -1,8 +1,8 @@
 import py_trees
 
-from behavior_tree.TemplateNodes.Vision import BtNode_TrackPerson
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+from behavior_tree.nodes.Vision import BtNode_TrackPerson
+from behavior_tree.nodes.Navigation import BtNode_GotoAction
+from behavior_tree.nodes.Audio import BtNode_Announce
 from .nodes import BtNode_ProcessTrack
 
 TRACKING_NAMESPACE = "track"

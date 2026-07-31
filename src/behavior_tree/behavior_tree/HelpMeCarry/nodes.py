@@ -5,7 +5,7 @@ from rclpy.node import Node
 import math
 
 import time
-from behavior_tree.messages import PointStamped
+from behavior_tree.interfaces.messages import PointStamped
 
 class BtNode_ProcessTrack(py_trees.behaviour.Behaviour):
     """

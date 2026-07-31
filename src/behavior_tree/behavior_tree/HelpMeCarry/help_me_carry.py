@@ -1,13 +1,13 @@
 import py_trees
-import json
 import math
+from behavior_tree.core.resources import read_json
 
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_GoToLuggage
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
-from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_TurnPanTilt
-from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_GripperAction
-from behavior_tree.StoringGroceries.customNodes import BtNode_GraspWithPose
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
+from behavior_tree.nodes.Navigation import BtNode_GotoAction, BtNode_GoToLuggage
+from behavior_tree.nodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
+from behavior_tree.nodes.Vision import BtNode_FindObj, BtNode_TurnPanTilt
+from behavior_tree.nodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_GripperAction
+from behavior_tree.components.grocery_nodes import BtNode_GraspWithPose
 from behavior_tree.HelpMeCarry.customNodes import BtNode_HumanFollowingAction
 from .customNodes import BtNode_FindPointedLuggage
 from .Track import createFollowPerson
@@ -27,13 +27,7 @@ from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import rclpy
 
-try:
-    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/HelpMeCarry/constants.json", "r")
-    constants = json.load(file)
-    file.close()
-except FileNotFoundError:
-    print("ERROR: constants.json not found!")
-    raise FileNotFoundError
+constants = read_json("behavior_tree.HelpMeCarry")
 
 POS_START = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                         pose=Pose(position=Point(x=0.0, y=0.0, z=0.0),

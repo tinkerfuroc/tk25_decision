@@ -1,20 +1,23 @@
 import asyncio
 import threading
-from behavior_tree.config import is_node_mocked
-from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.messages import (
+from behavior_tree.core.config import is_node_mocked
+from behavior_tree.nodes.BaseBehaviors import ServiceHandler
+from behavior_tree.nodes.ActionBase import ActionHandler
+from behavior_tree.interfaces.messages import (
     DetectWavingAction,
     ObjectDetection,
     ObjectDetectionGeneralist,
 )
-import action_msgs.msg as action_msgs
+from behavior_tree.interfaces.common import action_msgs
 import py_trees
 from py_trees.common import Status, Access
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status, Access
 from py_trees.blackboard import Blackboard
-import openai
+try:
+    import openai
+except ModuleNotFoundError:  # Optional until an LLM-backed node is instantiated.
+    openai = None
 import json
 import time
 import textwrap
@@ -27,16 +30,31 @@ from .config import (
     OPENAI_MAX_TOKENS,
 )
 
-from behavior_tree.messages import QuestionAnswer, Listen
+from behavior_tree.interfaces.messages import QuestionAnswer, Listen
 
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
+from behavior_tree.nodes.Navigation import BtNode_GotoAction
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import rclpy
 
-# Initialize OpenAI API
-openai.api_key = OPENAI_API_KEY
+if openai is not None:
+    openai.api_key = OPENAI_API_KEY
+
+
+def _openai_client():
+    if openai is None:
+        raise RuntimeError(
+            "GPSR LLM nodes require the optional 'openai' Python package"
+        )
+    if not OPENAI_API_KEY:
+        raise RuntimeError(
+            "Set OPENROUTER_API_KEY (or OPENAI_API_KEY) before using GPSR LLM nodes"
+        )
+    return openai.OpenAI(
+        api_key=OPENAI_API_KEY,
+        base_url="https://openrouter.ai/api/v1",
+    )
 
 pose_bed = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'), 
                         pose=Pose(position=Point(x=-1.8183577060699463, y=-0.5918460488319397, z=0.0), 
@@ -127,7 +145,7 @@ class BtNode_DecideNextAction(Behaviour):
         self.bb_client = None
         self.llm_future = None
         # Initialize OpenAI client
-        self.client = openai.OpenAI(api_key=OPENAI_API_KEY, base_url="https://openrouter.ai/api/v1")
+        self.client = _openai_client()
 
     def setup(self, **kwargs):
         # ServiceHandler.setup(self, **kwargs)
@@ -464,10 +482,7 @@ class BtNode_VLMQuery(Behaviour):
         self.mock_mode = is_node_mocked(self.__class__.__name__)
         self._client_oai = None
         if not self.mock_mode:
-            self._client_oai = openai.OpenAI(
-                api_key=OPENAI_API_KEY,
-                base_url="https://openrouter.ai/api/v1",
-            )
+            self._client_oai = _openai_client()
 
     def setup(self, **kwargs):
         self._bb = self.attach_blackboard_client(name=self.name)
@@ -595,10 +610,7 @@ class BtNode_LLMQuery(Behaviour):
         self.mock_mode = is_node_mocked(self.__class__.__name__)
         self._client_oai = None
         if not self.mock_mode:
-            self._client_oai = openai.OpenAI(
-                api_key=OPENAI_API_KEY,
-                base_url="https://openrouter.ai/api/v1",
-            )
+            self._client_oai = _openai_client()
 
     def setup(self, **kwargs):
         self._bb = self.attach_blackboard_client(name=self.name)
@@ -803,7 +815,7 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
     """
     DEPRECATED: calls `object_detection` with `flags="find_waving_person"`, a
     contract no server implements in tk26. Use
-    `behavior_tree.TemplateNodes.Vision.BtNode_ScanForWavingPerson`, which calls
+    `behavior_tree.nodes.Vision.BtNode_ScanForWavingPerson`, which calls
     the tk26 `detect_waving_persons` action and supports mock mode.
     """
 

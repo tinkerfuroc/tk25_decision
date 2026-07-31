@@ -3,12 +3,12 @@ from urllib import request
 import py_trees
 import time
 from typing import List, Dict, Any, Optional
-import action_msgs.msg as action_msgs
-from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtractionAction
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
+from behavior_tree.interfaces.common import action_msgs
+from behavior_tree.nodes.BaseBehaviors import ServiceHandler
+from behavior_tree.nodes.Audio import BtNode_Announce, BtNode_PhraseExtractionAction
+from behavior_tree.nodes.ActionBase import ActionHandler
 import math
-from behavior_tree.messages import ObjectDetectionGeneralist, TextToSpeech, Listen, PhraseExtractionAction, PanTiltCommand, DetectWavingAction
+from behavior_tree.interfaces.messages import ObjectDetectionGeneralist, TextToSpeech, Listen, PhraseExtractionAction, PanTiltCommand, DetectWavingAction
 from geometry_msgs.msg import PointStamped, PoseStamped
 from std_msgs.msg import String
 

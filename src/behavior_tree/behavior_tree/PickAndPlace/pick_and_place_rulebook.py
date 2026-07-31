@@ -14,15 +14,15 @@ in pick_and_place.pickAndPlaceShortened (entry `pick-and-place-demo`).
 
 import py_trees
 
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Manipulation import (
+from behavior_tree.nodes.Audio import BtNode_Announce
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.nodes.Manipulation import (
     BtNode_Grasp,
     BtNode_GripperAction,
     BtNode_ScanAndPlace,
 )
-from behavior_tree.TemplateNodes.Navigation import BtNode_NavBack
-from behavior_tree.TemplateNodes.Vision import (
+from behavior_tree.nodes.Navigation import BtNode_NavBack
+from behavior_tree.nodes.Vision import (
     BtNode_DoorDetection,
     BtNode_ObjectScan,
     BtNode_TurnPanTilt,

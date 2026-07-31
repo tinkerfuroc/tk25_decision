@@ -12,8 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ament_pep257.main import main
 import pytest
+
+pydocstyle = pytest.importorskip(
+    "pydocstyle",
+    reason="ament_pep257 requires the optional pydocstyle package",
+)
+from ament_pep257.main import main  # noqa: E402
 
 
 @pytest.mark.linter

@@ -19,9 +19,9 @@ import py_trees
 import pytest
 from geometry_msgs.msg import PointStamped
 
-from behavior_tree import messages
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.TemplateNodes.Vision import BtNode_SeatRecommendBbox
+from behavior_tree.interfaces import messages
+from behavior_tree.nodes.ActionBase import ActionHandler
+from behavior_tree.nodes.Vision import BtNode_SeatRecommendBbox
 
 
 @pytest.fixture(autouse=True)

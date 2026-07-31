@@ -19,9 +19,9 @@ import py_trees
 import pytest
 from sensor_msgs.msg import Image
 
-from behavior_tree import messages
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.TemplateNodes.Vision import (
+from behavior_tree.interfaces import messages
+from behavior_tree.nodes.ActionBase import ActionHandler
+from behavior_tree.nodes.Vision import (
     BtNode_FeatureExtraction,
     BtNode_SeatRecommend,
 )

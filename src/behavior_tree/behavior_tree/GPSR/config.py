@@ -3,8 +3,7 @@ Configuration settings for the GPSR behavior tree.
 
 OPENAI_API_KEY resolution order:
     1. Process env var OPENROUTER_API_KEY (or OPENAI_API_KEY) if set
-    2. OPENROUTER_API_KEY line in /home/tinker/tk25_ws/.env
-    3. Hardcoded fallback (kept only so config import never crashes)
+    2. OPENROUTER_API_KEY in ``BT_ENV_FILE`` or ``$TK25_WS/.env``
 
 Model resolution:
     OPENAI_MODEL (the planner / text model) is read from GPSR_LLM_MODEL, then
@@ -23,7 +22,8 @@ provider-prefixed slug (``deepseek/...``, ``openai/...``) is all that changes.
 import os
 from pathlib import Path
 
-_ENV_PATH = Path("/home/tinker/tk25_ws/.env")
+_WORKSPACE = Path(os.environ.get("TK25_WS", Path.home() / "tk25_ws"))
+_ENV_PATH = Path(os.environ.get("BT_ENV_FILE", _WORKSPACE / ".env"))
 
 
 def _read_env_file(path: Path, key: str):
@@ -47,7 +47,7 @@ def _resolve_api_key() -> str:
     v = _read_env_file(_ENV_PATH, "OPENROUTER_API_KEY")
     if v:
         return v
-    return "sk-or-v1-DEAD-KEY-set-OPENROUTER_API_KEY-or-edit-workspace-.env"
+    return ""
 
 
 def _resolve_model(env_keys, default: str) -> str:

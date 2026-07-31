@@ -26,9 +26,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# constants.json lives next to this module.
-_CONSTANTS_PATH = Path(__file__).resolve().parent / "constants.json"
-
 _SAFE_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -104,8 +101,9 @@ from behavior_tree.GPSR.orchestrator import (
     create_orchestrator_init,
     load_knowledge_from_constants,
 )
+from behavior_tree.core.resources import resource
 
-CONSTANTS_PATH = {str(_CONSTANTS_PATH)!r}
+CONSTANTS_PATH = resource("behavior_tree.GPSR", "constants.json")
 
 COMMAND = {command!r}
 

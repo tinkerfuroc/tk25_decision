@@ -24,8 +24,8 @@ import py_trees_ros
 import rclpy
 from rclpy.executors import ExternalShutdownException
 
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.visualization import create_post_tick_visualizer
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.core.visualization import create_post_tick_visualizer
 
 from .gpsr_full import CONSTANTS_PATH, _load_arm_constants, _load_arm_orbbec_look
 from .orchestrator import (

@@ -6,7 +6,7 @@ the response centroids are re-padded with None at index 0 so
 KEY_PERSON_CENTROIDS stays index-aligned with KEY_PERSONS (TurnTo/PointTo
 target_id=1/2 need no re-indexing and never dereference index 0).
 """
-from behavior_tree.TemplateNodes.Vision import BtNode_FeatureMatching
+from behavior_tree.nodes.Vision import BtNode_FeatureMatching
 
 
 F = ['host-features', 'guest1-features', 'guest2-features']

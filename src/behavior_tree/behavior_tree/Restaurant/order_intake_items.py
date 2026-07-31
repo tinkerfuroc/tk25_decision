@@ -43,16 +43,16 @@ import py_trees
 import py_trees_ros
 import rclpy
 
-from behavior_tree.TemplateNodes.Audio import (
+from behavior_tree.nodes.Audio import (
     BtNode_Announce,
     BtNode_GetConfirmationAction,
     BtNode_OrderExtractionAction,
 )
-from behavior_tree.TemplateNodes.Vision import BtNode_MaintainEyeContact
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.nodes.Vision import BtNode_MaintainEyeContact
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard
 from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from std_msgs.msg import Header
-from behavior_tree.visualization import create_post_tick_visualizer
+from behavior_tree.core.visualization import create_post_tick_visualizer
 
 # Reuse the canonical Phase-1 factories + helper nodes unchanged.
 from .restaurants import (

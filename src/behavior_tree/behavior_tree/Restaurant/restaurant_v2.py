@@ -54,11 +54,11 @@ import rclpy
 from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from std_msgs.msg import Header
 
-from behavior_tree.runtime import run_tree
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
-from behavior_tree.TemplateNodes.Navigation import BtNode_CaptureCurrentPose
+from behavior_tree.core.runtime import run_tree
+from behavior_tree.nodes.Audio import BtNode_Announce
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.nodes.Manipulation import BtNode_MoveArmSingle
+from behavior_tree.nodes.Navigation import BtNode_CaptureCurrentPose
 
 # Reuse the canonical Restaurant phase factories unchanged.
 from .restaurants import (

@@ -14,7 +14,7 @@
 
 """TTS pause hack: a comma is inserted before every h-/H-word at speak time.
 
-``add_pause_before_h_words`` is a pure helper (``TemplateNodes/announce_text``)
+``add_pause_before_h_words`` is a pure helper (``nodes/announce_text``)
 applied by ``BtNode_Announce.initialise()`` to the final resolved
 ``announce_msg`` — the exact string handed to ``request.text`` (real) or the
 mock print. The raw constructor ``given_msg`` and blackboard values must stay
@@ -27,10 +27,10 @@ os.environ.setdefault("BT_MOCK_MODE", "true")
 
 import py_trees  # noqa: E402
 
-from behavior_tree.TemplateNodes.announce_text import (  # noqa: E402
+from behavior_tree.nodes.announce_text import (  # noqa: E402
     add_pause_before_h_words,
 )
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce  # noqa: E402
+from behavior_tree.nodes.Audio import BtNode_Announce  # noqa: E402
 
 
 # --- pure helper ---

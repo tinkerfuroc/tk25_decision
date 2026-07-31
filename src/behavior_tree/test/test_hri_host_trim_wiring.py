@@ -7,7 +7,7 @@ loader (host features are unknown beforehand) but must still seed the
 blackboard keys BtNode_CombinePerson hard-reads.
 """
 import behavior_tree.HRI.hri as hri
-from behavior_tree.TemplateNodes.Vision import (
+from behavior_tree.nodes.Vision import (
     BtNode_FeatureMatching,
     BtNode_LoadPersonReference,
 )

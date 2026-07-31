@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import py_trees
 
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.Navigation import BtNode_Approach
-from behavior_tree.TemplateNodes.Vision import BtNode_ShowImage
+from behavior_tree.nodes.Audio import BtNode_Announce
+from behavior_tree.nodes.Navigation import BtNode_Approach
+from behavior_tree.nodes.Vision import BtNode_ShowImage
 
 from .config import (
     KEY_ACTIVE_CUSTOMER_ID,

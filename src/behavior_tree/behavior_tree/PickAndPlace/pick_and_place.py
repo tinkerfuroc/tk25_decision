@@ -17,15 +17,15 @@ Vision: every detection call uses the tk26 generalist service
 
 import py_trees
 
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Manipulation import (
+from behavior_tree.nodes.Audio import BtNode_Announce
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.nodes.Manipulation import (
     BtNode_GripperAction,
     BtNode_MoveArmSingle,
     BtNode_Grasp,
 )
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Vision import (
+from behavior_tree.nodes.Navigation import BtNode_GotoAction
+from behavior_tree.nodes.Vision import (
     BtNode_DoorDetection,
     BtNode_ScanForGeneralist,
     BtNode_TurnPanTilt,
@@ -95,8 +95,8 @@ from .config import (
 )
 from .custom_nodes import (
     BtNode_WriteFoundItems,
-    BtNode_GetImage,
 )
+from behavior_tree.nodes.Vision import BtNode_GetImage
 
 MAX_CLEANUP_ITERATIONS = 12  # rulebook caps Pick at 12x and Place at 12x
 BREAKFAST_ITEM_COUNT = 4

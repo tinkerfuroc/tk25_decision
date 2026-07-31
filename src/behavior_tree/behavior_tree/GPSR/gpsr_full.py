@@ -18,20 +18,21 @@ import py_trees
 import py_trees_ros
 import rclpy
 
-from behavior_tree.TemplateNodes.BaseBehaviors import (
+from behavior_tree.nodes.BaseBehaviors import (
     BtNode_WriteToBlackboard,
     BtNode_WaitTicks,
 )
-from behavior_tree.TemplateNodes.Audio import (
+from behavior_tree.nodes.Audio import (
     BtNode_Announce,
     BtNode_GetConfirmationAction,
     BtNode_ListenAction,
 )
-from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Vision import BtNode_DoorDetection, BtNode_TurnPanTilt
+from behavior_tree.nodes.Manipulation import BtNode_MoveArmSingle
+from behavior_tree.nodes.Navigation import BtNode_GotoAction
+from behavior_tree.nodes.Vision import BtNode_DoorDetection, BtNode_TurnPanTilt
+from behavior_tree.core.resources import read_json, resource
 
-from behavior_tree.visualization import create_post_tick_visualizer
+from behavior_tree.core.visualization import create_post_tick_visualizer
 
 from .orchestrator import (
     create_execute_command,
@@ -42,19 +43,14 @@ from .orchestrator import (
 from .small_trees import bb_keys
 
 
-CONSTANTS_PATH = (
-    "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/"
-    "behavior_tree/GPSR/constants.json"
-)
+CONSTANTS_PATH = resource("behavior_tree.GPSR", "constants.json")
 ARM_ACTION_NAME = "joint_move_action"
 NUM_COMMANDS = 3
 DEBUG_COMMAND = os.environ.get("BT_GPSR_DEBUG_CMD", "").strip()
 
 
 def _load_arm_constants():
-    import json
-    with open(CONSTANTS_PATH, "r") as fh:
-        constants = json.load(fh)
+    constants = read_json("behavior_tree.GPSR")
     nav = [x / 180 * math.pi for x in constants["arm_pos_navigating"]]
     scan = [x / 180 * math.pi for x in constants["arm_pos_scan"]]
     return nav, scan
@@ -64,9 +60,7 @@ def _load_arm_orbbec_look():
     """Arm pose (radians) that clears the orbbec head camera's view for scanning.
     Falls back to the navigating pose when ``arm_pos_orbbec_look`` is absent, so
     an older constants.json still works (the move is then a harmless no-op)."""
-    import json
-    with open(CONSTANTS_PATH, "r") as fh:
-        constants = json.load(fh)
+    constants = read_json("behavior_tree.GPSR")
     key = "arm_pos_orbbec_look" if "arm_pos_orbbec_look" in constants else "arm_pos_navigating"
     return [x / 180 * math.pi for x in constants[key]]
 

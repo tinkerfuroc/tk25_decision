@@ -1,0 +1,232 @@
+from typing import Any
+import warnings
+import py_trees
+import time
+from behavior_tree.interfaces.common import action_msgs
+from behavior_tree.nodes.structs import Person
+from behavior_tree.nodes.Audio import BtNode_Announce
+from behavior_tree.nodes.ActionBase import ActionHandler
+from behavior_tree.nodes.BaseBehaviors import ServiceHandler
+from behavior_tree.nodes.Vision import BtNode_MaintainEyeContact
+from behavior_tree.interfaces.messages import TextToSpeech, FollowHead, FollowHeadAction
+
+class BtNode_CombinePerson(py_trees.behaviour.Behaviour):
+    """
+    Set the specified variable on the blackboard.
+
+    Args:
+        variable_name: name of the variable to set, may be nested, e.g. battery.percentage
+        variable_value: value of the variable to set
+        overwrite: when False, do not set the variable if it already exists
+        name: name of the behaviour
+    """
+
+    def __init__(
+        self,
+        name: str,
+        key_dest: str,
+        key_name: str,
+        key_drink: str,
+        key_features: str,
+        key_image: str,
+        key_intest: str = None
+    ):
+        super().__init__(name=name)
+
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.has_interest = False
+
+        self.blackboard.register_key(
+            key="person_name",
+            access=py_trees.common.Access.READ,
+            # make sure to namespace it if not already
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_name)
+        )
+        self.blackboard.register_key(
+            key="drink",
+            access=py_trees.common.Access.READ,
+            # make sure to namespace it if not already
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_drink)
+        )
+        self.blackboard.register_key(
+            key="features",
+            access=py_trees.common.Access.READ,
+            # make sure to namespace it if not already
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_features)
+        )
+        self.blackboard.register_key(
+            key="comparison_image",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_image)
+        )
+        self.blackboard.register_key(
+            key="person",
+            access=py_trees.common.Access.WRITE,
+            # make sure to namespace it if not already
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_dest)
+        )
+        if key_intest:
+            self.blackboard.register_key(
+                key="interest",
+                access=py_trees.common.Access.WRITE,
+                # make sure to namespace it if not already
+                remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_intest)
+            )
+            self.has_interest = True
+        
+    def update(self):
+        """
+        Attempt to set the stored value in the requested blackboard variable.
+
+        Returns:
+             :data:`~py_trees.common.Status.FAILURE` if no overwrite requested
+                 and the variable exists,  :data:`~py_trees.common.Status.SUCCESS` otherwise
+        """
+        new_person = Person()
+        new_person.name = self.blackboard.person_name
+        new_person.fav_drink = self.blackboard.drink
+        new_person.features = self.blackboard.features
+        new_person.comparison_image = self.blackboard.comparison_image
+        img = new_person.comparison_image
+        img_summary = (
+            f"{img.width}x{img.height}" if img is not None and getattr(img, "width", 0) else "empty"
+        )
+        print(new_person.name, new_person.fav_drink, new_person.features, f"image={img_summary}")
+        self.feedback_message = (
+            f"name: {new_person.name}, drink: {new_person.fav_drink}, "
+            f"features: {new_person.features}, image: {img_summary}"
+        )
+        if self.has_interest:
+            new_person.interests = self.blackboard.interest
+            self.feedback_message = (
+                f"name: {new_person.name}, drink: {new_person.fav_drink}, "
+                f"features: {new_person.features}, image: {img_summary}, "
+                f"interest: {new_person.interests}"
+            )
+            
+        persons = []
+        if self.blackboard.person is not None:
+            persons = self.blackboard.person
+        
+        persons.append(new_person)
+        self.blackboard.person = persons
+
+        return py_trees.common.Status.SUCCESS
+        
+
+class BtNode_Introduce(BtNode_Announce):
+    def __init__(self,
+                 name: str,
+                 key_person: str,
+                 target_id: int,
+                 introduced_id: int,
+                 service_name: str = "announce",
+                 describe_introduced=False,
+                 walking=False
+                 ):
+        super(BtNode_Announce, self).__init__(name, service_name, TextToSpeech)
+        self.bb_source = None #new
+        self.given_msg = None #new
+        self.introduced_id = introduced_id
+        self.target_id = target_id
+        self.describe_introduced = describe_introduced
+        self.walking = walking
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="persons",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_person)
+        )
+    
+    def setup(self, **kwargs):
+        self.given_msg = "foo"
+        return super().setup(**kwargs)
+    
+    def initialise(self):
+        introduced_person : Person = self.blackboard.persons[self.introduced_id]
+        if self.walking:
+            self.given_msg = "You will meet guest " + introduced_person.name + ". " + introduced_person.features
+        else:
+            self.given_msg = "Hello " + self.blackboard.persons[self.target_id].name + ", "
+            self.given_msg += "Here is " + introduced_person.name + \
+                " whose favorite drink is " + introduced_person.fav_drink + "."
+            if self.describe_introduced:
+                self.given_msg += " " + introduced_person.features
+            if introduced_person.interests:
+                self.given_msg += "Their interest is " + introduced_person.interests
+
+        return super().initialise()
+
+class BtNode_Confirm(BtNode_Announce):
+    def __init__(self,
+                 name: str,
+                 key_confirmed: str,
+                 type: str,
+                 service_name: str = "announce"
+                 ):
+        super(BtNode_Announce, self).__init__(name=name, service_name=service_name, service_type=TextToSpeech)
+        self.type = type
+        self.bb_source = None #new
+        self.given_msg = None #new
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="confirm_target",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", key_confirmed)
+        )
+    
+    def setup(self, **kwargs):
+        self.given_msg = self.given_msg
+        return super().setup(**kwargs)
+    
+    def initialise(self):
+        # self.given_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ". Am I correct?"
+        self.given_msg = "Your " + self.type + " is " + self.blackboard.confirm_target + ", correct?"
+
+        return super().initialise()
+    
+class BtNode_HeadTracking(ServiceHandler):
+    def __init__(self, 
+                 name: str,
+                 service_name: str = "follow_head_service",
+                 repeat : bool = True
+                ):
+        super().__init__(name, service_name, FollowHead)
+        self.repeat = repeat
+    
+    def initialise(self):
+        request = FollowHead.Request()
+        request.closest = True
+        self.response = self.client.call_async(request)
+        self.feedback_message = f"Starting head tracking service"
+    
+    def update(self):
+        self.logger.debug(f"Updating Head Tracking...")
+        self.feedback_message = f"Waiting for head tracking service response..."
+        if self.response.done():
+            response : FollowHead.Response = self.response.result()
+            if response.status == 0:
+                if self.repeat:
+                    self.initialise()
+                    self.feedback_message = f"Head tracking service is running again, waiting for next response..."
+                    return py_trees.common.Status.RUNNING
+                return py_trees.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Head tracking service failed with status {response.status}: {response.error_msg}"
+                return py_trees.common.Status.FAILURE
+        else:
+            return py_trees.common.Status.RUNNING
+
+class BtNode_HeadTrackingAction(BtNode_MaintainEyeContact):
+    """Deprecated: use `behavior_tree.nodes.Vision.BtNode_MaintainEyeContact`."""
+    def __init__(self,
+                 name: str,
+                 actionName: str = "follow_head_action"
+                 ):
+        warnings.warn(
+            "BtNode_HeadTrackingAction is deprecated; use "
+            "behavior_tree.nodes.Vision.BtNode_MaintainEyeContact instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(name, action_name=actionName)

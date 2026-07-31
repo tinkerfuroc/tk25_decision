@@ -33,9 +33,9 @@ def test_door_detection_is_retried():
 def test_fold_announce_references_screen():
     fold = foldClothingOnce()
     announce = next(
-        b for b in fold.iterate() if b.name == "Announce folding start"
+        b for b in fold.iterate() if b.name == "Announce look at screen"
     )
-    assert "lay the shirt out in the manner as shown on my screen" in announce.given_msg
+    assert "look at the image on my screen" in announce.given_msg
 
 
 def test_fold_wait_extended_to_ten_seconds():

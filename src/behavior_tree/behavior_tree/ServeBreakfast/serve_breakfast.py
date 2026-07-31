@@ -1,11 +1,11 @@
 import py_trees
 
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_GetPointCloud, BtNode_TurnPanTilt
-from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Drop, BtNode_Place, BtNode_GripperAction
-from behavior_tree.StoringGroceries.customNodes import BtNode_GraspWithPose
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.nodes.Navigation import BtNode_GotoAction
+from behavior_tree.nodes.Audio import BtNode_Announce
+from behavior_tree.nodes.Vision import BtNode_FindObj, BtNode_GetPointCloud, BtNode_TurnPanTilt
+from behavior_tree.nodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Drop, BtNode_Place, BtNode_GripperAction
+from behavior_tree.components.grocery_nodes import BtNode_GraspWithPose
 
 import math
 

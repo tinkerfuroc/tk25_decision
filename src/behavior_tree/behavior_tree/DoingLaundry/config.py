@@ -11,9 +11,9 @@ Hardware-aware design (RoboCup@Home 2026 §5.4):
       - fold a T-shirt (try fold_action, fall back to operator-assisted fold)
 """
 
-import json
 import math
-from pathlib import Path
+
+from behavior_tree.core.resources import read_json
 
 try:
     from geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
@@ -102,10 +102,8 @@ def _default_constants():
 
 def _load_constants():
     defaults = _default_constants()
-    path = Path(__file__).with_name("constants.json")
     try:
-        with path.open("r", encoding="utf-8") as file:
-            loaded = json.load(file)
+        loaded = read_json("behavior_tree.DoingLaundry")
     except FileNotFoundError:
         return defaults
     defaults.update(loaded)

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from behavior_tree import messages
-from behavior_tree import mock_messages
+from behavior_tree.interfaces import messages
+from behavior_tree.interfaces import mock_messages
 
 
 ACTION_FIELDS = {

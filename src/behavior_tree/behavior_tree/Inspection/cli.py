@@ -1,4 +1,4 @@
-from behavior_tree.runtime import run_tree
+from behavior_tree.core.runtime import run_tree
 
 
 def main():

@@ -17,7 +17,7 @@
 import py_trees
 import pytest
 
-from behavior_tree.FollowPerson.nodes import BtNode_ReacqAnnounce
+from behavior_tree.components.following.nodes import BtNode_ReacqAnnounce
 
 PASSIVE_TEXT = "Please slow down so I can keep up."
 

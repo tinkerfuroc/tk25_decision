@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from behavior_tree.config import MOCK_SUBSYSTEMS, get_config
+from behavior_tree.core.config import MOCK_SUBSYSTEMS, get_config
 
 
 _CONFIG_ROOT = Path(__file__).parents[1]

@@ -6,7 +6,7 @@ import importlib  # noqa: E402
 
 
 def test_messages_exposes_scan_and_place():
-    messages = importlib.import_module("behavior_tree.messages")
+    messages = importlib.import_module("behavior_tree.interfaces.messages")
     assert hasattr(messages, "ScanAndPlace")
     goal = messages.ScanAndPlace.Goal()
     for field in (
@@ -23,7 +23,7 @@ def test_messages_exposes_scan_and_place():
 
 
 def test_mock_messages_stub_present():
-    mock = importlib.import_module("behavior_tree.mock_messages")
+    mock = importlib.import_module("behavior_tree.interfaces.mock_messages")
     assert hasattr(mock, "ScanAndPlace")
     g = mock.ScanAndPlace.Goal()
     assert g.placement_mode == 0

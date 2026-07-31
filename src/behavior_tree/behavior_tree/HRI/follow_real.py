@@ -58,20 +58,20 @@ import py_trees
 import py_trees_ros
 import rclpy
 
-from behavior_tree.FollowPerson.follow_person import create_follow_person_tree
-from behavior_tree.TemplateNodes.Audio import (
+from behavior_tree.components.following.follow_person import create_follow_person_tree
+from behavior_tree.nodes.Audio import (
     BtNode_Announce,
     BtNode_GetConfirmationAction,
 )
-from behavior_tree.TemplateNodes.BaseBehaviors import (
+from behavior_tree.nodes.BaseBehaviors import (
     BtNode_WriteToBlackboard,
     BtNode_WaitKeyboardPress,
 )
-from behavior_tree.TemplateNodes.Manipulation import (
+from behavior_tree.nodes.Manipulation import (
     BtNode_GripperAction,
     BtNode_MoveArmSingle,
 )
-from behavior_tree.visualization import create_post_tick_visualizer
+from behavior_tree.core.visualization import create_post_tick_visualizer
 
 # Module-local blackboard keys for the arm poses this stage uses. Kept local
 # (not imported from HRI/config.py, whose constants.json path is hardcoded and

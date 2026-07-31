@@ -8,9 +8,9 @@ Hardware-aware design (see RULEBOOK_PLAN.md):
     cutlery + tableware go to a wash-staging surface instead.
 """
 
-import json
 import math
-from pathlib import Path
+
+from behavior_tree.core.resources import read_json
 
 try:
     from geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
@@ -87,21 +87,8 @@ def _point_reader(point_dict):
 
 
 def _load_constants():
-    """Load HRI constants.
-
-    Priority:
-    1. local `HRI/constants.json` (if provided later)
-    2. fallback to `PickAndPlace/constants.json` (current source of truth)
-    """
-    candidates = [
-        Path(__file__).with_name("constants.json"),
-        Path(__file__).resolve().parents[1] / "PickAndPlace" / "constants.json",
-    ]
-    for path in candidates:
-        if path.exists():
-            with path.open("r", encoding="utf-8") as file:
-                return json.load(file)
-    raise FileNotFoundError("Unable to find PickAndPlace constants.json")
+    """Load the task-owned packaged constants."""
+    return read_json("behavior_tree.PickAndPlace")
 
 
 constants = _load_constants()
@@ -263,12 +250,14 @@ KEY_GRASP_VISION_RES = "grasp_vision_result"
 # Rulebook integration (net-new — REUSE existing KEY_* above)
 # ============================================================
 
-# ScanAndPlace action + placement modes (mirror arm_api/placement_logic.py).
-SCAN_AND_PLACE_ACTION_NAME = "scan_and_place_action"
-PLACEMENT_MODE_FREE_SPACE = 0
-PLACEMENT_MODE_NEAR_SIMILAR = 1
-PLACEMENT_MODE_FIXED_POINT = 2
-PLACEMENT_MODE_NONE = 255  # sentinel: the trash branch never calls ScanAndPlace
+# ScanAndPlace is a shared arm protocol, not a PickAndPlace-owned contract.
+from behavior_tree.core.placement import (
+    PLACEMENT_MODE_FIXED_POINT,
+    PLACEMENT_MODE_FREE_SPACE,
+    PLACEMENT_MODE_NEAR_SIMILAR,
+    PLACEMENT_MODE_NONE,
+    SCAN_AND_PLACE_ACTION_NAME,
+)
 
 # Extra surface — a distinct auxiliary surface, NOT one of the table poses.
 KEY_POSE_EXTRA_SURFACE = "pp_pose_extra_surface"

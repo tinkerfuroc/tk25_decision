@@ -14,7 +14,7 @@
 
 """Unit tests for CoalescingTTS (non-overlapping latest-wins speaker)."""
 
-from behavior_tree.FollowPerson.coalescing_tts import CoalescingTTS
+from behavior_tree.components.following.coalescing_tts import CoalescingTTS
 
 
 class _FakeSpeaker:

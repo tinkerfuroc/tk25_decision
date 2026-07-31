@@ -24,9 +24,9 @@ _MODULE_SNAPSHOT = dict(sys.modules)
 
 # ---- Module-level imports (no stubs needed) --------------------------------
 
-from behavior_tree import mock_messages  # noqa: E402
+from behavior_tree.interfaces import mock_messages  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[1] / "behavior_tree/TemplateNodes"
+ROOT = Path(__file__).resolve().parents[1] / "behavior_tree/nodes"
 
 
 # ---- Helper utilities (no stubs needed) -------------------------------------
@@ -121,7 +121,7 @@ def _stubbed_consumer_env():
         sys.modules["behavior_tree.PickAndPlace"] = MagicMock()
         sys.modules["behavior_tree.PickAndPlace.config"] = MagicMock()
 
-        from behavior_tree.TemplateNodes.Manipulation import (
+        from behavior_tree.nodes.Manipulation import (
             BtNode_CartesianMove,
             BtNode_JointMoveAction,
             BtNode_MoveArm,
@@ -129,7 +129,7 @@ def _stubbed_consumer_env():
             BtNode_Place,
             BtNode_PointTo,
         )
-        from behavior_tree.TemplateNodes.FoldClothingAction import (
+        from behavior_tree.nodes.FoldClothingAction import (
             BtNode_FoldClothingAction,
         )
 

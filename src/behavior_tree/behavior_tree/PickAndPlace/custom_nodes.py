@@ -7,18 +7,18 @@ These are functionally identical to the StoringGroceries originals.
 
 from typing import Any
 
-import action_msgs.msg as action_msgs
+from behavior_tree.interfaces.common import action_msgs
 import py_trees
 
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
-from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
-from behavior_tree.messages import Categorize, ObjectDetectionGeneralist, GetImage
+from behavior_tree.nodes.ActionBase import ActionHandler
+from behavior_tree.nodes.BaseBehaviors import ServiceHandler
+from behavior_tree.nodes.Manipulation import BtNode_Grasp
+from behavior_tree.interfaces.messages import Categorize, ObjectDetectionGeneralist
 from geometry_msgs.msg import Pose
 
 import time
 
-from behavior_tree.config import get_config
+from behavior_tree.core.config import get_config
 from behavior_tree.PickAndPlace.categorization import classify_destination
 from behavior_tree.PickAndPlace.config import (
     CUTLERY_LABELS,
@@ -112,79 +112,6 @@ class BtNode_WriteFoundItems(py_trees.behaviour.Behaviour):
         return py_trees.common.Status.SUCCESS
 
 
-class BtNode_GetImage(ServiceHandler):
-    """Gets an image and/or depth from a specified camera and writes it to the blackboard.
-
-    Uses `tinker_vision_msgs_26/srv/GetImage` on `/get_image_service`. 
-    The `camera` field specifies which camera to get the image from (e.g., "realsense" or "orbbec").
-    The `depth` field specifies whether to return the depth image in addition to the RGB image.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        camera: str,
-        bb_key_rgb_image: str,
-        get_depth_image: bool = False,
-        bb_key_depth_image: str = None,
-        service_name: str = "get_image_service",
-        service_type=GetImage,
-    ):
-        super().__init__(name=name, service_name=service_name, service_type=service_type)
-        self.blackboard = self.attach_blackboard_client(name=self.name)
-        self.blackboard.register_key(
-            key="rgb_image",
-            access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_rgb_image),
-        )
-        if bb_key_depth_image is not None:
-            self.blackboard.register_key(
-                key="depth_image",
-                access=py_trees.common.Access.WRITE,
-                remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_depth_image),
-            )
-        self.camera = camera
-        self.get_depth_image = get_depth_image
-    
-    def initialise(self):
-        super().initialise()
-        if self.mock_mode:
-            from behavior_tree.mock_messages import MockMessage
-            placeholder = MockMessage()
-            placeholder.status = 0
-            self.blackboard.rgb_image = placeholder
-            if self.get_depth_image and self.blackboard.exists("depth_image"):
-                self.blackboard.depth_image = placeholder
-            self.feedback_message = f"MOCK: GetImage from {self.camera}"
-            return
-        request = GetImage.Request()
-        request.camera = self.camera
-        request.depth = self.get_depth_image
-        self.response = self.client.call_async(request)
-
-    def update(self):
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
-        if self.response.done():
-            if self.response.result().status == 0:
-                response = self.response.result()
-                self.blackboard.rgb_image = response.rgb_image
-                if self.get_depth_image and self.blackboard.exists("depth_image"):
-                    self.blackboard.depth_image = response.depth_image
-                self.feedback_message = f"Successfully got image from {self.camera} camera"
-                return py_trees.common.Status.SUCCESS
-            else:
-                self.feedback_message = (
-                    f"Failed to get image from {self.camera} camera with status {self.response.result().status} "
-                    f"and error message {self.response.result().error_msg}"
-                )
-                return py_trees.common.Status.FAILURE
-        else:
-            self.feedback_message = f"Waiting for response from get image service for {self.camera} camera"
-            return py_trees.common.Status.RUNNING
-
-
-
 class BtNode_FindObjTable(ServiceHandler):
     """Find object on table using the generalist detection service.
 
@@ -252,7 +179,7 @@ class BtNode_FindObjTable(ServiceHandler):
     def initialise(self):
         super().initialise()
         if self.mock_mode:
-            from behavior_tree.mock_messages import MockMessage
+            from behavior_tree.interfaces.mock_messages import MockMessage
             mock_result = MockMessage()
             mock_result.status = 0
             mock_result.objects = []

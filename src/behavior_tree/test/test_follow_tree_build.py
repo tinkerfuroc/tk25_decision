@@ -16,10 +16,10 @@
 
 import py_trees
 
-from behavior_tree.FollowPerson.follow_person import create_follow_person_tree
-from behavior_tree.FollowPerson.nodes import BtNode_ReacqAnnounce, BtNode_RecoveryScan
-from behavior_tree.TemplateNodes.FollowAction import BtNode_FollowAction
-from behavior_tree.TemplateNodes.TrackPersonAction import BtNode_TrackPersonAction
+from behavior_tree.components.following.follow_person import create_follow_person_tree
+from behavior_tree.components.following.nodes import BtNode_ReacqAnnounce, BtNode_RecoveryScan
+from behavior_tree.nodes.FollowAction import BtNode_FollowAction
+from behavior_tree.nodes.TrackPersonAction import BtNode_TrackPersonAction
 
 
 def _inner(node):

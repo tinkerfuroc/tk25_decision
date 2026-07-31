@@ -1,17 +1,17 @@
 import py_trees
 import time
-from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.messages import ObjectDetection,Grasp
+from behavior_tree.nodes.BaseBehaviors import ServiceHandler
+from behavior_tree.nodes.ActionBase import ActionHandler
+from behavior_tree.interfaces.messages import ObjectDetection,Grasp
 from std_msgs.msg import Header
 from geometry_msgs.msg import PointStamped
   # Make sure pytree is imported
 from py_trees.common import Status
-import action_msgs.msg as action_msgs  # GoalStatus
+from behavior_tree.interfaces.common import action_msgs
 from typing import Any
-from nav2_msgs.action import NavigateToPose
+from behavior_tree.interfaces.navigation import NavigateToPose
 from geometry_msgs.msg import Pose, PoseStamped
-from behavior_tree.messages import HumanFollowing
+from behavior_tree.interfaces.messages import HumanFollowing
 
 class BtNode_FindPointedLuggage(ServiceHandler):
     def __init__(self, 

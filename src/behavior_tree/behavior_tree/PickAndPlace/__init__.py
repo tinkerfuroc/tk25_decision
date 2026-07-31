@@ -1,3 +1,5 @@
-from .pick_and_place import pickAndPlaceShortened
+"""Pick-and-place task package.
 
-__all__ = ["pickAndPlaceShortened"]
+Factories are imported by the CLI at runtime so importing this package has no
+ROS or behaviour-tree side effects.
+"""

@@ -18,7 +18,7 @@ import py_trees
 import pytest
 import rclpy.action
 
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
+from behavior_tree.nodes.ActionBase import ActionHandler
 
 
 class _Logger:
@@ -187,7 +187,7 @@ def test_setup_forces_mock_mode_for_mock_action_type(monkeypatch):
     mock_action_type = type(
         "VisionAction",
         (),
-        {"__module__": "behavior_tree.mock_messages"},
+        {"__module__": "behavior_tree.interfaces.mock_messages"},
     )
     handler = ActionHandler(
         name="mock action",

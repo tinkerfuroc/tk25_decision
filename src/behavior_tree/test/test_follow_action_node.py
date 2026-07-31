@@ -21,7 +21,7 @@ os.environ["BT_MOCK_MODE"] = "true"  # noqa: E402 — force mock before config l
 import py_trees  # noqa: E402
 import pytest  # noqa: E402
 
-from behavior_tree.TemplateNodes.FollowAction import BtNode_FollowAction  # noqa: E402
+from behavior_tree.nodes.FollowAction import BtNode_FollowAction  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

@@ -1,27 +1,21 @@
 import py_trees
+from behavior_tree.core.resources import read_json
 
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.Vision import BtNode_FindObj, BtNode_DoorDetection, BtNode_TurnPanTilt, BtNode_ScanFor
-from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Place, BtNode_GripperAction
-from .customNodes import BtNode_CategorizeGrocery, BtNode_FindObjTable, BtNode_GraspWithPose
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.nodes.Navigation import BtNode_GotoAction
+from behavior_tree.nodes.Audio import BtNode_Announce
+from behavior_tree.nodes.Vision import BtNode_FindObj, BtNode_DoorDetection, BtNode_TurnPanTilt, BtNode_ScanFor
+from behavior_tree.nodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle, BtNode_Place, BtNode_GripperAction
+from behavior_tree.components.grocery_nodes import BtNode_CategorizeGrocery, BtNode_FindObjTable, BtNode_GraspWithPose
 
 import math, time
-import json
 import os
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import rclpy
 
-try:
-    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/StoringGroceries/constants.json", "r")
-    constants = json.load(file)
-    file.close()
-except FileNotFoundError:
-    print("ERROR: constants.json not found!")
-    raise FileNotFoundError
+constants = read_json("behavior_tree.StoringGroceries")
 
 chosen_json = constants["chosen"]
 chosen = os.getenv('CHOSEN', chosen_json)

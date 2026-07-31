@@ -1,860 +1,187 @@
-# Behavior Tree Package
+# Tinker decision module
 
-ROS2 package for behavior tree-based robot control in the Tinker robot competition framework.
+ROS 2 behaviour-tree orchestration for Tinker's RoboCup@Home missions.
 
-## ✨ What's New (v2.0)
+The public command surface is intentionally small. Each task family has one
+unsuffixed command, and that command points at the current competition tree.
+Historical variants and development probes are tests or Git history, not
+installed executables.
 
-**Major Update:** Complete mock mode restructuring with JSON-based configuration!
+## Commands
 
-- 🎛️ **Subsystem-Level Control** - Independently mock vision, manipulation, navigation, audio, and announcements
-- ⌨️ **Keyboard Step-Through** - Press 's' to advance through each mock action
-- 📢 **Optional TTS Announcements** - Hear node names announced during execution (configurable per subsystem)
-- 🔧 **Zero Code Changes** - All existing scripts work without modification
-- 📝 **JSON Configuration** - Fine-grained control via `mock_config.json`
-- 🤖 **Unified Behavior** - Navigation nodes now follow same mock pattern as other subsystems
+Competition tasks:
 
-All 30+ template nodes updated with native mock support. No more conditional logic needed in behavior tree scripts!
+```text
+doing-laundry
+follow-person
+gpsr
+help-me-carry
+hri
+inspection
+pick-and-place
+receptionist
+restaurant
+serve-breakfast
+store-groceries
+```
 
-## 🎯 Features
+Operator tools:
 
-- **Behavior Tree Architecture** - Modular, composable robot behaviors using py_trees
-- **Competition Tasks** - Complete implementations for RoboCup@Home tasks
-- **Advanced Mock Mode** - Subsystem-level mocking with JSON configuration
-- **Keyboard Control** - Step-through execution for testing and debugging
-- **TTS Announcements** - Optional audio feedback during mock execution
-- **Zero-Dependency Testing** - Run without any Tinker packages installed
-- **Auto-Detection** - Automatically enables mock mode when dependencies are missing
+```text
+draw
+fetch-points
+verify-task-endpoints
+```
 
-## 🚀 Quick Start
-
-### Basic Usage
+Examples:
 
 ```bash
-# Source your ROS2 workspace
-source /opt/ros/humble/setup.bash
-source install/setup.bash
+source ~/tk25_ws/src/tk25_decision/.venv_decision/bin/activate
+source ~/tk25_ws/install/setup.zsh
 
-# Run a behavior tree script (auto-detects available hardware)
-ros2 run behavior_tree receptionist_secondcall
+ros2 run behavior_tree restaurant
+ros2 run behavior_tree hri
+ros2 run behavior_tree pick-and-place --place-policy vlm
+ros2 run behavior_tree gpsr
 ```
 
-### Mock Mode (No Hardware Required)
+The five competition cutovers are:
 
-The package automatically detects missing dependencies and enables mock mode. You can also force mock mode:
+| Command | Current implementation |
+|---|---|
+| `restaurant` | `Restaurant.restaurant_v2` |
+| `hri` | `HRI.hri_2026` |
+| `pick-and-place` | `PickAndPlace.pick_and_place_rulebook` |
+| `gpsr` | `GPSR.gpsr_orchestrator` |
+| `doing-laundry` | `DoingLaundry.laundry` |
 
-```bash
-# Enable mock mode explicitly
-export BT_MOCK_MODE=true
+## Package architecture
 
-# Run any script - press 's' to step through each action
-ros2 run behavior_tree receptionist_secondcall
+Dependencies flow in one direction:
 
-# Disable mock mode (use real hardware)
-export BT_MOCK_MODE=false
-ros2 run behavior_tree receptionist_secondcall
+```text
+core
+  ↓
+interfaces
+  ↓
+nodes
+  ↓
+components
+  ↓
+task packages
+  ↓
+tools / CLI adapters
 ```
 
-### Fine-Grained Control
+- `core/` owns configuration, packaged-resource loading, runtime lifecycle,
+  visualization, input routing, and shared protocol constants.
+- `interfaces/` is the only selection point for real versus mock ROS message,
+  service, and action types. Subsystem facades keep imports focused.
+- `nodes/` contains task-neutral behaviour-tree leaves.
+- `components/` contains reusable multi-node behaviours such as person
+  following, grocery perception/grasping, and person-introduction nodes.
+- Task directories compose shared pieces and own task-specific constants.
+- `tools/` contains the three retained operator utilities.
 
-Mock individual subsystems by editing `mock_config.json`:
+Task packages must not import other task packages. Shared layers must not reach
+into task packages. `test/test_architecture_boundaries.py` enforces both rules.
 
-```json
-{
-  "mock_mode": {
-    "enabled": true,
-    "subsystems": {
-      "vision": {"enabled": true},      // Mock cameras
-      "manipulation": {"enabled": false}, // Use real arm
-      "navigation": {"enabled": true},   // Mock navigation
-      "audio_input": {"enabled": true},  // Mock speech recognition
-      "announcement": {"enabled": false} // Use real TTS
-    }
-  }
-}
-```
+Task `__init__.py` files are side-effect free. Entry modules import mission
+factories lazily, so command discovery does not initialize ROS clients or load
+an unrelated mission.
 
-## � Migration Guide (v1 → v2)
+## Configuration and resources
 
-### For Existing Scripts
+Task constants are package resources and work from both the source tree and an
+installed ROS package:
 
-**Good news:** No changes required! All existing behavior tree scripts work without modification.
-
-**What changed:**
-- ❌ **Old:** Conditional logic with `MOCK_MODE` variable in each script
-- ✅ **New:** Template nodes automatically check `mock_config.json`
-
-**Example - Old Pattern (no longer needed):**
 ```python
-MOCK_MODE = is_mock_mode()
-if not MOCK_MODE:
-    nav = BtNode_GotoAction("go to sofa", KEY_SOFA_POSE)
-else:
-    nav = BtNode_WaitKeyboardPress("MOCK: go to sofa", 's')
-root.add_child(nav)
+from behavior_tree.core.resources import read_json
+
+constants = read_json("behavior_tree.Restaurant")
 ```
 
-**Example - New Pattern (automatic):**
-```python
-# Just use the node - mock mode handled automatically
-nav = BtNode_GotoAction("go to sofa", KEY_SOFA_POSE)
-root.add_child(nav)
-```
+Do not add workspace-absolute constants paths.
 
-### Configuration Changes
-
-**Old:** Single `BT_MOCK_MODE` environment variable  
-**New:** Subsystem-level control via `mock_config.json`
+Mock configuration defaults to `behavior_tree/mock_config.json`. Override it
+with:
 
 ```bash
-# Still works for backwards compatibility
-export BT_MOCK_MODE=true
-
-# But now you can also control individual subsystems
-# Edit mock_config.json to mock only what you need
+export BT_MOCK_CONFIG=/path/to/mock_config.json
+export BT_MOCK_MODE=true   # or false
 ```
 
-### For Custom Nodes
-
-If you created custom nodes, add them to `mock_config.json`:
-
-```json
-{
-  "subsystems": {
-    "your_subsystem": {
-      "enabled": true,
-      "announce_movement": false,
-      "nodes": ["BtNode_YourCustomNode"]
-    }
-  }
-}
-```
-
-## �📦 Installation
-
-### With Tinker Packages (Full Installation)
+GPSR reads credentials from the process environment. The launcher exports
+`~/tk25_ws/.env` when present. At minimum:
 
 ```bash
-cd ~/ros2_ws/src
-git clone <this-repo>
+python -m pip install -r requirements-gpsr.txt
+export OPENROUTER_API_KEY=...
+```
 
-# Install dependencies
-rosdep install --from-paths src --ignore-src -r -y
+Optional overrides include `GPSR_LLM_MODEL`, `GPSR_FALLBACK_MODEL`,
+`BT_GPSR_CMD`, `BT_GPSR_NUM_COMMANDS`, and `BT_GPSR_PLAN_DIR`.
 
-# Build
-cd ~/ros2_ws
+## Operator tools
+
+Render any canonical tree:
+
+```bash
+ros2 run behavior_tree draw restaurant
+ros2 run behavior_tree draw gpsr
+```
+
+Capture navigation poses. The writable output defaults to
+`./constants_basic.json`; set `BT_POINTS_FILE` or the ROS `points_file`
+parameter for another location:
+
+```bash
+BT_POINTS_FILE=~/tk25_ws/task_points.json \
+  ros2 run behavior_tree fetch-points
+```
+
+Check live ROS endpoints:
+
+```bash
+ros2 run behavior_tree verify-task-endpoints --task all
+ros2 run behavior_tree verify-task-endpoints --task hri --json
+```
+
+## Development
+
+Build:
+
+```bash
+cd ~/tk25_ws
 colcon build --packages-select behavior_tree
-
-# Run with real hardware
-ros2 run behavior_tree receptionist_secondcall
+source install/setup.zsh
 ```
 
-### Without Tinker Packages (Mock Mode Only)
+Run the functional and architecture suite:
 
 ```bash
-# Install only ROS2 and py_trees
-pip3 install py-trees py-trees-ros
-
-# Optional: Install pyttsx3 for TTS announcements (may cause segfaults on some systems)
-# pip3 install pyttsx3
-
-# Clone and build
-cd ~/ros2_ws
-colcon build --packages-select behavior_tree
-
-# Run - mock mode auto-enabled
-ros2 run behavior_tree receptionist_secondcall
+cd ~/tk25_ws/src/tk25_decision/src/behavior_tree
+ROS_LOG_DIR=/tmp/behavior_tree_test_logs \
+PYTHONPATH=. \
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+../../.venv_decision/bin/python -m pytest -q test
 ```
 
-## 📚 Documentation
+The broad legacy flake8 check is explicitly skipped while old task modules are
+incrementally formatted. New architectural constraints and command contracts
+remain mandatory.
 
-### Mock Mode Configuration
+When adding a mission, add one `cli.py`, one canonical entry in both
+`core/entrypoints.py` and `setup.py`, package its resources, and extend the
+architecture/entrypoint tests. Do not add versioned or test console scripts.
 
-The package uses **subsystem-level mocking** controlled by `mock_config.json`:
+## Competition launchers
 
-- **vision** - Object detection, face recognition, point clouds, door detection
-- **manipulation** - Arm control, grasping, gripper, pointing
-- **navigation** - Mobile base movement, path planning, following
-- **audio_input** - Speech recognition, phrase extraction, listening
-- **announcement** - Text-to-speech (TTS) in English and Chinese
-
-Each subsystem can be independently mocked or use real hardware.
-
-### Key Files
-
-- `mock_config.json` - Subsystem-level mock configuration
-- `config.py` - Configuration loader and helper functions
-- `messages.py` - Conditional imports for ROS messages
-- `mock_messages.py` - Mock implementations when packages unavailable
-- `TemplateNodes/` - Base classes with built-in mock support
-
-## 🎮 Available Scripts
-
-### Competition Tasks
-
-- `receptionist` / `receptionist_secondcall` - Receptionist task
-- `GPSR` / `gpsr-demo` - General Purpose Service Robot
-- `EGPSR` - Enhanced GPSR
-- `store-groceries` - Storing Groceries task
-- `help-me-carry` - Help Me Carry task
-- `serve-breakfast` - Serve Breakfast task
-- `yanglaozhucan` / `ZGC` - Custom tasks
-- `restaurant` - Restaurant task
-- `inspection` - Inspection task
-
-### Test Scripts
-
-- `test-mock-mode` - Test mock mode functionality
-- `test_follow_head` - Test head tracking
-- `test-prompt-reached` - Test navigation prompts
-
-### Development Tools
-
-- `draw` - Visualize behavior tree structure
-- `hmc-mock-nav` - Mock navigation server for testing
-- `hmc-mock-track` - Mock tracking server for testing
-
-### Follow Person
-
-- `follow-person` - Reacquisition-aware follow-person behaviour tree
-- `dummy-nav` - **DEPRECATED (2026-06-10), NOT part of the follow pipeline** —
-  standalone `/follow_target` subscriber stub (logs, no motion). Its topic has
-  no publisher since the FollowPerson rewire; retained for standalone
-  experiments only. Real navigation is driven by `follow_server` (see below).
-
-## 🚶 Follow person
-
-A behaviour tree that follows a person via the real `/track_person` action and
-reacts to the tracker's **reacquisition state** with non-overlapping voice
-announcements. Navigation is driven by the `Follow` action on `follow_server`
-(tk26_navigation `following` package), which consumes the tracker's
-`/target_points` topic directly. The legacy `dummy-nav` / `/follow_target` stub
-is **deprecated** and no longer part of this pipeline (its topic has no
-publisher since the 2026-06-10 rewire).
-
-**What it does**
-
-- `BtNode_TrackPersonAction` keeps the `/track_person` goal alive and writes the
-  tracker state to the blackboard, including a
-  `track/reacquisition_state` key (`0` TRACKING, `1` PASSIVE, `2` NEEDS_HELP).
-- `BtNode_FollowAction` keeps the navigation `Follow` action
-  (`tinker_nav_msgs/action/Follow`, server `follow_server`) alive and writes the
-  follow-executive state to the blackboard (`follow/state` uint8,
-  `follow/distance` float, `follow/reacq` uint8, `follow/goal_held` bool). The
-  `follow/state` enum:
-  - `1` TRACKING — person in view, robot trailing at the standoff distance.
-  - `2` PURSUIT_LAST_SEEN — tracker lost/reacquiring; robot heads to the last-seen point.
-  - `3` APPROACHING_FINAL — person stationary; robot parking behind them.
-  - Terminal outcomes are not `follow/state` values — they surface via the action result instead.
-  `follow/goal_held` is `True` on a tick where the executive reused its cached
-  fallback goal or skipped dispatch (no fresh reachable standoff) — a hook for the
-  tree to announce / pause while the robot is holding rather than actively closing.
-  The follow executive consumes
-  the tracker's `/target_points` topic directly, so there is **no** per-tick
-  follow-goal publisher — `BtNode_FollowAction` drives navigation entirely
-  through the long-running action.
-- `BtNode_ReacqAnnounce` speaks the **PASSIVE** nudge through a `CoalescingTTS`
-  (single active utterance, latest-wins pending — speech never overlaps and
-  never blocks the tick):
-  - PASSIVE → *"Please slow down so I can keep up."*
-  - Announces on the transition into PASSIVE and re-announces every ~5 s while
-    still PASSIVE; resets on a return to TRACKING. NEEDS_HELP speech is owned by
-    `BtNode_RecoveryScan` (below).
-- `BtNode_RecoveryScan` runs the **two-pass NEEDS_HELP head-scan recovery** (the
-  active escape from the indefinite NEEDS_HELP hold). Pass 1 asks the person to
-  stop and sweeps the head across `[current, -60°, 0°, +60°]` (ABSOLUTE pan via
-  `/pan_tilt_controller/cmd`, tilt fixed 40°, ~4 s dwell each) so the camera
-  settles and the tracker's relaxed in-NEEDS_HELP re-lock can commit — no wave
-  detection. Pass 2 asks the operator to raise a hand and runs the same sweep
-  with wave-reseed active (the `detect_waving_persons` → `reseed_target` cycle);
-  Pass 2 repeats until re-lock or cancel. Re-lock (state → TRACKING) ends the
-  scan and hands the head back to the tracker's pan-follow. Speech via the same
-  `/announce` `CoalescingTTS`; head ownership is mutually exclusive with the
-  tracker's pan-follow, enforced by the tracker's `pan_follow_suppressed` guard
-  while NEEDS_HELP is latched.
-
-**Tree shape**
-
-```
-Parallel(SuccessOnAll, synchronise=False)
-├── BtNode_TrackPersonAction        # child A — refreshes track/*
-├── BtNode_FollowAction             # child B — drives follow_server, refreshes follow/*
-└── Sequence(memory=False)          # child C — reacts to the tracker each tick
-    ├── BtNode_ReacqAnnounce        # PASSIVE "slow down" nudge
-    └── BtNode_RecoveryScan         # NEEDS_HELP two-pass head-scan recovery
-```
-
-`BtNode_FollowAction` is long-running, so it sits beside the tracker as a
-top-level Parallel child — not inside the per-tick reactions Sequence. If either
-long-running action terminates (permanent loss / abort) its child returns
-FAILURE, the Parallel returns FAILURE, and the follow process ends.
-
-**Flags** (`follow-person [--no-nav] [--breadcrumbs]`)
-
-- `--no-nav` — vision+audio-only tree: omit the `BtNode_FollowAction` child so
-  the tracker + reacq announcer run but the base never moves (no `Follow` goal).
-- `--breadcrumbs` — route through the person's own dropped trail
-  (`follow_server` NavigateThroughPoses). **Off by default**: open following uses
-  single-goal standoff pursuit (NavigateToPose re-planned to the person's live
-  position at 2 Hz), which tracks a moving person directly. On a long open route
-  the accumulated breadcrumb corridor instead pins the robot to a stale trail it
-  never advances on. Enable `--breadcrumbs` only for cluttered/doorway following,
-  where threading the person's exact trail is what gets the robot through the gap.
-
-**Run sequence** (real tracker + nav stack only — these must already be running):
+Robot-side launchers live in `tk25_basic/src/scripts`. They all call:
 
 ```bash
-# 1. Real tracker + audio TTS service (not started by the launch file)
-ros2 run vision_track person_track_server
-#    ... and the TextToSpeech ("announce") service from the audio stack
-
-# 2. The follow executive (consumes /target_points, drives Nav2)
-ros2 run following follow_server
-
-# 3. The behaviour tree
-ros2 run behavior_tree follow-person                # open following (no breadcrumbs)
-ros2 run behavior_tree follow-person --breadcrumbs  # clutter/doorway trail following
-ros2 run behavior_tree follow-person --no-nav       # vision+audio only (no base motion)
+tmux_decision.sh <canonical-task>
 ```
 
-All nodes honour the package mock-mode config, so they remain importable and
-unit-testable with no ROS graph (see `test/test_coalescing_tts.py`,
-`test/test_reacq_announce.py`, `test/test_follow_action_node.py`,
-`test/test_feedback_buffer_reacq.py`, `test/test_follow_tree_build.py`).
-
-## 🏗️ Architecture
-
-### Package Structure
-
-```
-behavior_tree/
-├── config.py                 # Configuration system with JSON loader
-├── mock_config.json          # Subsystem-level mock configuration
-├── messages.py               # Conditional message imports
-├── mock_messages.py          # Mock implementations
-├── TemplateNodes/            # Reusable node templates with mock support
-│   ├── BaseBehaviors.py      # ServiceHandler base class
-│   ├── ActionBase.py         # ActionHandler base class
-│   ├── Navigation.py         # Navigation nodes
-│   ├── Manipulation.py       # Manipulation nodes
-│   ├── Vision.py             # Vision nodes
-│   ├── Audio.py              # Audio nodes
-│   └── WaitKeyPress.py       # Keyboard press utility
-├── GPSR/                     # GPSR task implementations
-├── Receptionist/             # Receptionist task
-├── StoringGroceries/         # Storing Groceries task
-├── HelpMeCarry/              # Help Me Carry task
-└── ...                       # Other tasks
-```
-
-### Mock Mode System
-
-The package includes a sophisticated mock mode system:
-
-1. **Auto-detects** available Tinker packages at runtime
-2. **Subsystem-level control** via JSON configuration
-3. **Node-specific mocking** - each node checks its subsystem config
-4. **Keyboard control** - step through execution with key presses
-5. **Optional TTS** - announce node names during mock execution
-6. **Zero code changes** - existing scripts work without modification
-
-## 🔧 Configuration
-
-### Mock Configuration File (`mock_config.json`)
-
-```json
-{
-  "mock_mode": {
-    "enabled": true,
-    "auto_detect": true,
-    "subsystems": {
-      "vision": {
-        "enabled": true,
-        "announce_movement": false,
-        "nodes": ["BtNode_ScanFor", "BtNode_TrackPerson", ...]
-      },
-      "manipulation": {
-        "enabled": true,
-        "announce_movement": false,
-        "nodes": ["BtNode_Grasp", "BtNode_MoveArmJoint", ...]
-      },
-      "navigation": {
-        "enabled": true,
-        "announce_movement": false,
-        "nodes": ["BtNode_GotoAction", "BtNode_FollowAction", ...]
-      },
-      "audio_input": {
-        "enabled": true,
-        "announce_movement": false,
-        "nodes": ["BtNode_PhraseExtraction", "BtNode_Listen", ...]
-      },
-      "announcement": {
-        "enabled": false,
-        "announce_movement": false,
-        "nodes": ["BtNode_Announce", "BtNode_TTSCN"]
-      }
-    }
-  },
-  "keyboard_control": {
-    "enabled": true,
-    "description": "Wait for 's' key press to advance through mock actions"
-  },
-  "logging": {
-    "print_mock_operations": true,
-    "use_emoji": true
-  }
-}
-```
-
-### Environment Variables
-
-```bash
-# Override all settings - force mock mode on
-export BT_MOCK_MODE=true
-
-# Override all settings - force mock mode off
-export BT_MOCK_MODE=false
-
-# Use custom config file location
-export BT_MOCK_CONFIG=/path/to/custom/mock_config.json
-
-# Auto-detect (default behavior)
-unset BT_MOCK_MODE
-```
-
-**Priority:** `BT_MOCK_MODE` env var > `mock_config.json` settings > auto-detection
-
-### Programmatic Configuration
-
-```python
-from behavior_tree.config import (
-    get_config, 
-    is_mock_mode,
-    is_subsystem_mocked,
-    is_node_mocked
-)
-
-# Check global mock mode
-if is_mock_mode():
-    print("Running in mock mode")
-
-# Check specific subsystem
-if is_subsystem_mocked('navigation'):
-    print("Navigation is mocked")
-
-# Check specific node
-if is_node_mocked('BtNode_GotoAction'):
-    print("GotoAction node is mocked")
-
-# Print configuration status
-config = get_config()
-config.print_status()
-```
-
-## 📝 Creating New Behavior Trees
-
-### Using Template Nodes (Recommended)
-
-All template nodes automatically support mock mode. No conditional logic needed:
-
-```python
-import py_trees
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.Vision import BtNode_ScanFor
-
-def create_tree():
-    root = py_trees.composites.Sequence("My Task", memory=True)
-    
-    # These nodes automatically check mock_config.json
-    root.add_child(BtNode_Announce("Greet", "Hello!"))
-    root.add_child(BtNode_GotoAction("Go to target", "target_pose"))
-    root.add_child(BtNode_ScanFor("Find object", "cup"))
-    
-    return root
-```
-
-### Example: Mixed Real/Mock Execution
-
-Edit `mock_config.json` to use real TTS but mock everything else:
-
-```json
-{
-  "mock_mode": {
-    "subsystems": {
-      "vision": {"enabled": true},       // Mocked
-      "manipulation": {"enabled": true}, // Mocked
-      "navigation": {"enabled": true},   // Mocked
-      "audio_input": {"enabled": true},  // Mocked
-      "announcement": {"enabled": false} // REAL - uses actual TTS
-    }
-  }
-}
-```
-
-### Adding Mock Support to New Nodes
-
-For ServiceHandler nodes (in `BaseBehaviors.py`):
-
-```python
-from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
-from behavior_tree.config import is_node_mocked
-
-class BtNode_MyCustomNode(ServiceHandler):
-    def __init__(self, name: str):
-        super().__init__(
-            name=name,
-            service_type=MyServiceType,
-            service_name="/my_service",
-            key="my_key",
-            # Mock mode automatically handled
-        )
-        self.mock_mode = is_node_mocked(self.__class__.__name__)
-```
-
-Then add the node to `mock_config.json` under the appropriate subsystem.
-
-## 🧪 Testing
-
-### Quick Test
-
-```bash
-# Test with mock mode (no hardware needed)
-export BT_MOCK_MODE=true
-ros2 run behavior_tree receptionist_secondcall
-
-# Press 's' to step through each action
-# Press Ctrl+C to exit
-```
-
-### Test Specific Subsystems
-
-```bash
-# Edit mock_config.json to enable/disable subsystems
-# Example: Test with real audio but mock vision/navigation
-nano src/behavior_tree/behavior_tree/mock_config.json
-
-# Set:
-# "announcement": {"enabled": false}  // Use real TTS
-# "vision": {"enabled": true}         // Mock cameras
-# "navigation": {"enabled": true}     // Mock navigation
-
-# Rebuild and test
-colcon build --packages-select behavior_tree
-ros2 run behavior_tree receptionist_secondcall
-```
-
-### Configuration Status
-
-```bash
-# Run any script to see configuration at startup
-ros2 run behavior_tree receptionist_secondcall
-
-# Output shows:
-# - Mock mode status
-# - Subsystem states (MOCKED or REAL)
-# - Keyboard control status
-# - Available dependencies
-```
-
-## 🐛 Troubleshooting
-
-### Script waits for keyboard press
-
-**Expected behavior** - In mock mode, each action waits for 's' key press:
-
-```
-🎤 MOCK AUDIO: Announcing 'Hello'
-Press 's' to continue...
-```
-
-Press `s` and Enter to advance. To disable: set `keyboard_control.enabled` to `false` in `mock_config.json`.
-
-### "Import could not be resolved" warnings in IDE
-
-**Expected** - When Tinker packages aren't installed, IDEs show import warnings. The code still runs using mock implementations.
-
-**To fix:**
-- Install Tinker packages for full functionality
-- Or configure IDE to ignore these warnings
-- Or use `# type: ignore` comments
-
-### Segmentation fault with TTS announcements
-
-**Cause:** pyttsx3 library can segfault on some systems.
-
-**Solution:** Disable TTS in `mock_config.json`:
-
-```json
-{
-  "subsystems": {
-    "vision": {"announce_movement": false},
-    "manipulation": {"announce_movement": false},
-    ...
-  }
-}
-```
-
-The system will automatically disable TTS after first failure and use print statements instead.
-
-### Real hardware not responding
-
-```bash
-# 1. Verify mock mode is disabled
-export BT_MOCK_MODE=false
-
-# 2. Check Tinker packages are installed
-ros2 pkg list | grep tinker
-
-# 3. Verify services/actions are running
-ros2 service list
-ros2 action list
-
-# 4. Check configuration
-ros2 run behavior_tree receptionist_secondcall
-# Look for "REAL" status for subsystems
-```
-
-### Subsystem stays mocked despite config changes
-
-**Priority order:**
-1. `BT_MOCK_MODE` environment variable (highest)
-2. `mock_config.json` settings
-3. Auto-detection (lowest)
-
-**Fix:** Unset environment variable to use JSON config:
-
-```bash
-unset BT_MOCK_MODE
-ros2 run behavior_tree receptionist_secondcall
-```
-
-## 🤝 Contributing
-
-### Adding New Tasks
-
-1. Create directory: `behavior_tree/YourTask/`
-2. Implement behavior tree using template nodes
-3. **No mock logic needed** - template nodes handle it automatically
-4. Add console script entry in `setup.py`
-5. Test with: `export BT_MOCK_MODE=true && ros2 run behavior_tree your_task`
-
-### Adding New Template Nodes
-
-1. Add class to appropriate file in `TemplateNodes/`
-2. Inherit from `ServiceHandler` or `ActionHandler`
-3. Set `self.mock_mode = is_node_mocked(self.__class__.__name__)`
-4. Add node name to `mock_config.json` under correct subsystem
-5. Test mock behavior
-
-Example:
-
-```python
-# In TemplateNodes/Vision.py
-from behavior_tree.config import is_node_mocked
-
-class BtNode_NewVisionNode(ServiceHandler):
-    def __init__(self, name: str):
-        super().__init__(...)
-        self.mock_mode = is_node_mocked(self.__class__.__name__)
-```
-
-```json
-// In mock_config.json
-{
-  "subsystems": {
-    "vision": {
-      "nodes": [
-        "BtNode_ScanFor",
-        "BtNode_NewVisionNode"  // Add here
-      ]
-    }
-  }
-}
-```
-
-## 📜 Changelog
-
-_Append-only. Newest entries on top._
-
-- **2026-07-03** — DoingLaundry: referee-help stop at the washing machine.
-  After the arena-entry goto and before the folding-table approach, the tree
-  now navigates to `pose_washing_machine`, announces "Dear Referee, I need
-  help. Please help me take out clothes from the laundry basket or washing
-  machine, and put it on the table. I will wait for 15 seconds.", waits 15 s
-  (`py_trees.timers.Timer`), then announces "Thank you." Door-open
-  announcement updated to "Heading to the washing machine."
-  `constants.json:pose_washing_machine` re-captured from live amcl
-  (x=3.662, y=4.158, yaw≈88.5° — was a stale 5.51/−3.30 setup-days value).
-- **2026-07-02** — feat(GPSR): `approach_person` now drives real navigation.
-  `create_approach_person()` replaces a same-day no-op mock with
-  `BtNode_Approach` against `approach_planner`'s `go_to_approach` action,
-  goal pinned to `desired=1.3m/min=1.0m/max=1.6m/timeout=45s` (all three
-  distance bounds are required — see the `PERSON_APPROACH_*` constants-block
-  comment in `GPSR/small_trees.py` and this package's CHANGELOG `[2.2.16]`
-  entry for the `STATUS_INVALID_REQUEST` guard this avoids). Dropped
-  `BtNode_PointToPoseStamped`/`PERSON_NAV_POSE`; `BtNode_Approach` is now
-  registered in all three mock configs. New hard dependency:
-  `approach_planner` must be launched (`master_gpsr.sh` navigation-window
-  pane 3, tk25_basic) or the action server never advertises. Caution:
-  Stage B of `approach_planner`'s optional two-stage mode (default off)
-  ignores `desired_distance` and stops at its own 0.7 m `final_standoff`.
-- **2026-07-02** — DoingLaundry fold out-of-range prompt. `foldClothingOnce()`
-  is now a `Selector` (memory): the fold branch resets `dl_fold_out_of_range`
-  to `False`, runs `BtNode_FoldClothingDn(bb_key_out_of_range=...)`, and
-  announces completion; if the `fold_dn_action` server aborts with an
-  `OUT_OF_RANGE` token in `Result.message` (grasp target past its `max_range`),
-  `BtNode_FoldClothingDn` writes `True` to the flag and the fold branch fails.
-  The second branch then `BtNode_CheckIfEmpty(dl_fold_out_of_range)` SUCCEEDs,
-  announces "The clothing is too far, please put it closer.", and the enclosing
-  `Repeat` re-attempts (operator repositions). Any non-out-of-range fold failure
-  leaves the flag `False` → `CheckIfEmpty` FAILs → task ends exactly as before.
-  `BtNode_FoldClothingDn` gained a `bb_key_out_of_range` ctor arg (localized to
-  the subclass; the shared `BtNode_FoldClothingAction` base is untouched). New
-  config key `KEY_FOLD_OUT_OF_RANGE = "dl_fold_out_of_range"`.
-- **2026-07-02** — DoingLaundry: task now starts behind an operator Enter gate
-  (`BtNode_PressEnterToSucceed`), then waits for the arena door via
-  `door_detection_srv` (Inspection-style Retry) before navigating to the
-  folding table. Fold prompt now asks to "lay the shirt out in the manner as
-  shown on my screen"; lay-out wait extended 5 s → 10 s. Launch-order
-  requirement: door_detection_srv (vision_util) must be serving when the task
-  launches — tree.setup() fails fast (~15 s RuntimeError) without it.
-- **2026-06-27** — PickAndPlace rulebook tree: `pickAndPlaceRulebook()`
-  (inventory→queue→per-item loop, breakfast, extra-surface), `BtNode_ScanAndPlace`
-  + inventory/queue/guard/deadline nodes, `--place-policy {hardcoded,vlm}`
-  (default `vlm`), whole-tree mock. Old demo kept as `pick-and-place-demo`.
-- **2026-06-15** — Recovery Pass-2 wave detection is now settle-gated and
-  sequenced. At each scan angle the head must be fully stopped (≥ `settle_sec`,
-  2 s, since the turn) before ONE `DetectWaving` fires; the scan then waits for
-  the response (or `detect_timeout_sec`, 5 s) before advancing — no more firing
-  mid-slew. Wavers are gated to `wave_max_distance_m` (3.5 m) via the request's
-  `threshold_meters` (the waving server drops farther wavers). `WaveReseedCycle`
-  is now trigger-driven (throttle removed). New `BtNode_RecoveryScan` params:
-  `recovery`/`settle_sec=2.0`, `detect_timeout_sec=5.0`, `wave_max_distance_m=3.5`.
-- **2026-06-15** — Removed the dead `BtNode_WaveReseed` node + its test. It left
-  the follow tree in the recovery-scan rewire and was instantiated nowhere; the
-  wave→reseed cycle now lives only in `WaveReseedCycle`, driven by
-  `BtNode_RecoveryScan` Pass 2.
-- **2026-06-15** — NEEDS_HELP two-pass head-scan recovery. Replaced the passive
-  NEEDS_HELP reaction (`BtNode_ReacqAnnounce` "raise your hand" + `BtNode_WaveReseed`)
-  with an active recovery owned by the new `BtNode_RecoveryScan`: Pass 1 asks the
-  person to stop and sweeps the head across `[current, -60°, 0°, +60°]` (ABSOLUTE
-  pan, tilt 40°, ~4 s dwell each) for re-lock; Pass 2 asks the operator to raise a
-  hand and sweeps again with wave-reseed active; Pass 2 repeats until re-lock or
-  cancel. `BtNode_ReacqAnnounce` is now PASSIVE-only; the wave→reseed machine was
-  extracted to the shared `WaveReseedCycle` (reused by both nodes); the pure
-  `RecoveryScanFSM` core holds the pass/scan/dwell logic. Paired with a tk26_vision
-  tracker guard (`pan_follow_suppressed`) so the head hands off cleanly while
-  NEEDS_HELP is latched. `BtNode_WaveReseed` remains as a standalone node.
-  Spec: `docs/superpowers/specs/2026-06-15-needs-help-recovery-scan-design.md`.
-- f4_mock_config.json (installed to share/): navigation+vision REAL, announcement MOCKED — the BT config the F4 launch points BT_MOCK_CONFIG at.
-- follow-person BT: --no-nav flag builds the vision+audio-only tree (no follow-navigation child).
-- **2026-06-11** — refactor: disambiguate the legacy HRI follow node. Renamed the
-  `HRI/follow.py` class `BtNode_FollowAction` → `BtNode_FollowActionLegacy`
-  (it targets the removed `tracking_server` action and parses v1 `Follow`
-  feedback). It shared a short name with the live executive node
-  `behavior_tree.TemplateNodes.FollowAction.BtNode_FollowAction` (drives
-  `follow_server`) — a different class entirely; the canonical node and all of
-  its import sites are untouched. The legacy clone is retained only for the
-  `hri-follow` tuning harness and now carries a DEPRECATED docstring. Also moved
-  the mock `Follow.Feedback` to the v2 schema (`state`, `distance_to_person`,
-  `reacq_state=255`, `breadcrumbs_pending`, `goal_held`), dropping the v1
-  `status`/`point_header`/`nav_goal_header` fields; the legacy HRI node reads
-  `getattr(feedback, "status", "")`, so it degrades gracefully against the new
-  mock. (tk26_navigation follow review-fixes, Phase P7.)
-- **2026-06-11** — `BtNode_FollowAction` mirrors the new `Follow` feedback field
-  `goal_held` to the blackboard key `follow/goal_held` (bool). Set `True` on any
-  tick where the follow executive reused its cached fallback goal or skipped
-  dispatch (no fresh reachable standoff), `False` otherwise. Read from feedback via
-  `getattr(..., "goal_held", False)`, so it stays safe against an older
-  `follow_server` whose `Follow.action` lacks the field. New configurable
-  `bb_key_goal_held` ctor arg (default `follow/goal_held`); seeded `False` in
-  `initialise()` + mock `send_goal()`; `regular_update()` writes it every tick and
-  appends `HOLDING` to the feedback message while held. Mirrors the additive
-  `tinker_nav_msgs` Follow feedback field (tk26_navigation Commit B).
-- **2026-06-11** — docs: add the `follow/state` enum legend next to the
-  blackboard-key description (1=TRACKING, 2=PURSUIT_LAST_SEEN,
-  3=APPROACHING_FINAL; terminal outcomes surface via the action result, not
-  `follow/state`). Docs-only.
-- **2026-06-10** — Mark the `/follow_target` consumers deprecated after the
-  FollowPerson rewire. Since `BtNode_PublishFollowGoal` (the only publisher of
-  `/follow_target`) was removed, navigation is driven entirely by the `Follow`
-  action on `follow_server` (tk26_navigation `following` package), which consumes
-  the tracker's `/target_points` directly. Added deprecation/non-pipeline notes
-  to `dummy_nav_node.py` (module docstring), `launch/follow_process.launch.py`
-  (comment header), the `dummy-nav` entry-point and Follow-person sections of
-  this README, and corrected the stale `follow_person.py` docstring. Docs-only;
-  no code or topic behaviour changed and `dummy-nav` is retained for standalone
-  experiments.
-- **2026-06-10** — Wire `BtNode_FollowAction` into the follow-person tree
-  (P5 of the person-following plan). New `TemplateNodes/FollowAction.py`: a
-  continuous-action node for `tinker_nav_msgs/action/Follow` on `follow_server`,
-  mirroring `BtNode_TrackPersonAction` (feedback buffer under a lock,
-  RUNNING-while-following, SUCCESS on success/cancel, FAILURE on abort/reject,
-  KEYPRESS/IMMEDIATE mock mode). It writes `follow/state` (uint8),
-  `follow/distance` (float) and `follow/reacq` (uint8) to the blackboard. The
-  follow-person tree now has three top-level Parallel children
-  (tracker, follow executive, reactions); the long-running `BtNode_FollowAction`
-  sits beside the tracker, not inside the reactions Sequence. **Removed**
-  `BtNode_PublishFollowGoal` and the `/follow_target` publisher entirely —
-  navigation consumes the tracker's `/target_points` directly via `follow_server`.
-  `test_publish_follow_goal.py` deleted; `test_follow_action_node.py` added and
-  `test_follow_tree_build.py` updated for the new wiring.
-- **2026-06-10** — Add the follow-person behaviour tree. `BtNode_TrackPersonAction`
-  now exposes `track/reacquisition_state` on the blackboard. New
-  `FollowPerson/` package: `CoalescingTTS` (non-overlapping latest-wins speaker),
-  `BtNode_ReacqAnnounce` (reacq-driven announcements), `BtNode_PublishFollowGoal`
-  (publishes `/follow_target`), `create_follow_person_tree`, and a `cli`. Added
-  the standalone `dummy_nav_node`, the `follow_process.launch.py` launch file,
-  and `dummy-nav` / `follow-person` console-script entry points.
-
-## 📄 License
-
-Apache 2.0
-
-## 👥 Maintainers
-
-- Cindy (cindy.w0135@gmail.com)
-
-## 🙏 Acknowledgments
-
-- RoboCup@Home competition
-- Tinker team
-- py_trees library
-- ROS2 community
-
-## 📖 References
-
-- [py_trees Documentation](https://py-trees.readthedocs.io/)
-- [RoboCup@Home Rules](https://athome.robocup.org/)
-- [ROS2 Documentation](https://docs.ros.org/)
-
-## Changelog
-
-- 2026-07-29 — Aligned manipulation mocks and failure formatting with the append-only arm action result contract; retained `getattr` compatibility for stale overlays.
-
-- 2026-07-02 — HRI: host (KEY_PERSONS[0]) excluded from feature matching
-  (`BtNode_FeatureMatching(trim_first_person=True)` in the two-way intro;
-  centroids None-padded at index 0 to preserve persons↔centroids index
-  alignment). `createWriteHostInfo` no longer reads host reference files
-  from disk — host features/image are seeded empty; name/drink constants
-  unchanged. Spec: docs/superpowers/specs/2026-07-02-hri-trim-host-from-matching-design.md.
-
-- **2026-06-11** — feat(restaurant): both kitchen-bar returns (Phase-2 barman
-  trip and the per-item Phase-3 pickup verification) now drive through goal
-  projection. A new `BtNode_ProjectPose` ServiceHandler calls
-  `find_approach_pose` with `projection_mode=ANCHOR_NEAREST_FREE` (3) — the raw
-  operator-placed bar anchor becomes `target.point`, its yaw becomes
-  `preferred_yaw_rad`, and the server returns the anchor unchanged when free or
-  the nearest footprint-free cell (preserving yaw) when blocked. Each bar trip
-  is now `Selector( Sequence(ProjectPose(bar→projected), Goto(projected)),
-  Goto(bar) )` inside its existing `Retry`: if the projection service is
-  unavailable or fails, the Selector degrades gracefully to today's raw-anchor
-  `BtNode_GotoAction`. Mock mode is a pass-through copy (in-key→out-key, no
-  service contacted), so existing mock restaurant trees behave unchanged.
-
-- **2026-06-10** — fix(restaurant): the approach-customer `BtNode_Approach`
-  now sets `action_timeout_ticks=220` (110 s at the 500 ms restaurant tick).
-  Previously 0 (disabled) — combined with the feedback callback refreshing
-  `feedback_timeout` every frame, a hung `go_to_approach` server blocked the
-  whole tree indefinitely. Pairs with the approach_planner timeout reduction
-  to 25 s/75 s (see that package's changelog, same date).
+The helper validates the task name, activates the decision environment, loads
+the workspace environment, and reuses the tmux `decision` window.

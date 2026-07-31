@@ -18,9 +18,9 @@ import action_msgs.msg as action_msgs
 import py_trees
 import pytest
 
-from behavior_tree import messages
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.TemplateNodes.Vision import BtNode_ObjectScan
+from behavior_tree.interfaces import messages
+from behavior_tree.nodes.ActionBase import ActionHandler
+from behavior_tree.nodes.Vision import BtNode_ObjectScan
 
 
 @pytest.fixture(autouse=True)

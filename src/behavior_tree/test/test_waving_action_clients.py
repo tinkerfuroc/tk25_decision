@@ -20,16 +20,16 @@ import action_msgs.msg as action_msgs
 import py_trees
 import pytest
 
-from behavior_tree import messages
-from behavior_tree.FollowPerson.wave_reseed_cycle import _ActionPayloadFuture
+from behavior_tree.interfaces import messages
+from behavior_tree.components.following.wave_reseed_cycle import _ActionPayloadFuture
 
 # GPSR's legacy module configures the optional OpenAI SDK at import time.
 sys.modules.setdefault("openai", SimpleNamespace())
 
 from behavior_tree.GPSR.custom_nodes import BtNode_ScanForWavingPersonNew
 from behavior_tree.Restaurant.custumNodes import BtNode_DetectCallingCustomer
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.TemplateNodes.Vision import BtNode_ScanForWavingPerson
+from behavior_tree.nodes.ActionBase import ActionHandler
+from behavior_tree.nodes.Vision import BtNode_ScanForWavingPerson
 
 
 @pytest.fixture(autouse=True)

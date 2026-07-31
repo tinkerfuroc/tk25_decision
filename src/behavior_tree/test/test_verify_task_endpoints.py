@@ -13,7 +13,7 @@
 # limitations under the License.
 """Static contracts for the live task endpoint verifier."""
 
-from behavior_tree.verify_task_endpoints import TASK_SPECS
+from behavior_tree.tools.verify_task_endpoints import TASK_SPECS
 
 
 CONVERTED = {

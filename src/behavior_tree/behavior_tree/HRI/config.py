@@ -10,9 +10,9 @@ Centralizes:
 Keeping these in one module makes HRI task logic easier to read and maintain.
 """
 
-import json
 import math
-from pathlib import Path
+
+from behavior_tree.core.resources import read_json
 
 try:
     import rclpy
@@ -55,19 +55,10 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in non-ROS unit test
 def _load_constants():
     """Load HRI constants.
 
-    Priority:
-    1. local `HRI/constants.json` (if provided later)
-    2. fallback to `Receptionist/constants.json` (current source of truth)
+    The task owns this resource, so source and installed execution resolve the
+    same file.
     """
-    candidates = [
-        Path(__file__).with_name("constants.json"),
-        Path(__file__).resolve().parents[1] / "Receptionist" / "constants.json",
-    ]
-    for path in candidates:
-        if path.exists():
-            with path.open("r", encoding="utf-8") as file:
-                return json.load(file)
-    raise FileNotFoundError("Unable to find HRI/Receptionist constants.json")
+    return read_json("behavior_tree.HRI")
 
 
 def _pose_reader(pose_dict):

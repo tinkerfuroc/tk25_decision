@@ -8,15 +8,13 @@ Central place for:
 - blackboard key declarations for both standard and simplified strategies
 """
 
-import json
 import math
-from pathlib import Path
+
+from behavior_tree.core.resources import read_json
 
 def _load_constants():
     """Load Restaurant task constants from module-local JSON file."""
-    constants_path = Path(__file__).with_name("constants.json")
-    with constants_path.open("r", encoding="utf-8") as file:
-        return json.load(file)
+    return read_json("behavior_tree.Restaurant")
 
 
 constants = _load_constants()

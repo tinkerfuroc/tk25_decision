@@ -16,18 +16,18 @@ import threading
 
 from rclpy.node import Node
 from rclpy.action import ActionClient
-import action_msgs.msg as action_msgs
+from behavior_tree.interfaces.common import action_msgs
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 
 # Import the TrackPerson action
-from tinker_vision_msgs_26.action import TrackPerson
+from behavior_tree.interfaces.vision import TrackPerson
 
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WaitTicks
+from behavior_tree.nodes.ActionBase import ActionHandler
+from behavior_tree.nodes.Navigation import BtNode_GotoAction
+from behavior_tree.nodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
+from behavior_tree.nodes.BaseBehaviors import BtNode_WaitTicks
 
 
 # Blackboard keys

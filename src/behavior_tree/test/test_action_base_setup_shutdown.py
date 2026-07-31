@@ -40,7 +40,7 @@ from rclpy.impl.implementation_singleton import (  # noqa: E402
 )
 from py_trees_ros import exceptions  # noqa: E402
 
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler  # noqa: E402
+from behavior_tree.nodes.ActionBase import ActionHandler  # noqa: E402
 
 
 class _FakeContext:
@@ -110,6 +110,7 @@ def _make_handler():
 
 def test_setup_raises_timedout_not_rclerror_on_context_shutdown(monkeypatch):
     """A context shutdown mid-wait must surface as a clean TimedOutError."""
+    monkeypatch.setenv("BT_MOCK_MODE", "false")
     monkeypatch.setattr(rclpy.action, "ActionClient", _FakeActionClient)
 
     # Context survives one wait_for_server (server missing), then shuts down.

@@ -4,9 +4,9 @@ import time
 
 from py_trees.common import Status
 
-from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.TemplateNodes.Audio import _MockFuture
-from behavior_tree.messages import Doorbell, action_msgs
+from behavior_tree.nodes.ActionBase import ActionHandler
+from behavior_tree.nodes.Audio import _MockFuture
+from behavior_tree.interfaces.messages import Doorbell, action_msgs
 
 
 class BtNode_DoorbellDetection(ActionHandler):

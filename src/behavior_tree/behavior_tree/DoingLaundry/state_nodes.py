@@ -7,7 +7,7 @@ from typing import Any
 
 import py_trees
 
-from behavior_tree.config import is_node_mocked
+from behavior_tree.core.config import is_node_mocked
 
 
 def _abs_key(key: str) -> str:

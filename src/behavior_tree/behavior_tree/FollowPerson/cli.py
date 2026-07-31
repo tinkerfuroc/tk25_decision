@@ -21,7 +21,7 @@
 # ``TextToSpeech`` service must already be running.
 #
 
-from behavior_tree.runtime import run_tree
+from behavior_tree.core.runtime import run_tree
 
 
 def main():
@@ -49,7 +49,7 @@ def main():
     args, _ = parser.parse_known_args()
     enable_navigation = not args.no_nav
 
-    from behavior_tree.FollowPerson.follow_person import create_follow_person_tree
+    from behavior_tree.components.following.follow_person import create_follow_person_tree
 
     run_tree(
         lambda: create_follow_person_tree(

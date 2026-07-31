@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import py_trees
 import pytest
 
-from behavior_tree.FollowPerson.nodes import BtNode_RecoveryScan
+from behavior_tree.components.following.nodes import BtNode_RecoveryScan
 
 TRACKING, NEEDS_HELP = 0, 2
 PASS1 = "Please stop walking so I can find you."

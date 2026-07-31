@@ -1,13 +1,14 @@
 import py_trees
+from behavior_tree.core.resources import read_json
 from typing import List
 
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtractionAction, BtNode_GetConfirmationAction, BtNode_ListenAction, BtNode_CompareInterest
-from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection, BtNode_TurnTo
-from behavior_tree.TemplateNodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.nodes.Navigation import BtNode_GotoAction
+from behavior_tree.nodes.Audio import BtNode_Announce, BtNode_PhraseExtractionAction, BtNode_GetConfirmationAction, BtNode_ListenAction, BtNode_CompareInterest
+from behavior_tree.nodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TurnPanTilt, BtNode_DoorDetection, BtNode_TurnTo
+from behavior_tree.nodes.Manipulation import BtNode_PointTo, BtNode_MoveArmSingle
 
-from .customNodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm, BtNode_HeadTracking, BtNode_HeadTrackingAction
+from behavior_tree.components.people_nodes import BtNode_CombinePerson, BtNode_Introduce, BtNode_Confirm, BtNode_HeadTracking, BtNode_HeadTrackingAction
 
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
@@ -16,7 +17,6 @@ import warnings
 
 import random
 import math
-import json
 
 # POINT_TO_PERSON = False
 TURN_PAN_TILT = True
@@ -28,15 +28,7 @@ DEBUG_NO_GOTO = False
 DISABLE_FEATURE_MATCH = False
 DISABLE_FOLLOW_HEAD = False
 
-# read from `constant.json` in the same directory
-# load file
-try:
-    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/Receptionist/constants.json", "r")
-    constants = json.load(file)
-    file.close()
-except FileNotFoundError:
-    print("ERROR: constants.json not found!")
-    raise FileNotFoundError
+constants = read_json("behavior_tree.Receptionist")
 
 pose_door = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                         pose=Pose(position=Point(x=constants["pose_door"]["point"]["x"], y=constants["pose_door"]["point"]["y"], z=0.0),

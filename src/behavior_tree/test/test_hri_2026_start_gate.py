@@ -41,10 +41,7 @@ def test_host_seating_instruction_is_fourth():
     root = createHRITask2026()
     announce = root.children[3]
     assert announce.__class__.__name__ == "BtNode_Announce"
-    assert announce.given_msg == (
-        "Dear host, please sit down on the sofa and remain seated. "
-        "Please do not walk around the room during the task."
-    )
+    assert announce.given_msg == "Dear host, please sit down on the sofa."
 
 
 def test_real_bag_flow_wired_into_full_tree():

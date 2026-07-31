@@ -2,6 +2,7 @@ from __future__ import annotations
 from ast import main
 import math
 import os
+from pathlib import Path
 
 """HRI behavior tree composition.
 
@@ -14,24 +15,25 @@ import py_trees
 
 USE_NAV_ORIENTATION_ANGLE_SERVICE = False
 
-image_path = os.environ.get("HOST_IMAGE_PATH", "/home/tinker/tk25_ws/img_host.jpg")
-description_path = os.environ.get("HOST_DESC_PATH", "/home/tinker/tk25_ws/host.txt")
+_workspace = Path(os.environ.get("TK25_WS", Path.home() / "tk25_ws"))
+image_path = os.environ.get("HOST_IMAGE_PATH", str(_workspace / "img_host.jpg"))
+description_path = os.environ.get("HOST_DESC_PATH", str(_workspace / "host.txt"))
     
 
 KEY_PANTILT_ORIENTATION="pantilt_orientation"
 # if USE_NAV_ORIENTATION_ANGLE_SERVICE:
-#     from behavior_tree.TemplateNodes.Navigation import BtNode_GetOrientationAngle
+#     from behavior_tree.nodes.Navigation import BtNode_GetOrientationAngle
 
-from behavior_tree.TemplateNodes.Audio import (
+from behavior_tree.nodes.Audio import (
     BtNode_Announce,
     BtNode_GetConfirmationAction,
     BtNode_ListenAction,
     BtNode_NameDrinkExtractionAction,
 )
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
-from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle, BtNode_PointTo
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Vision import (
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
+from behavior_tree.nodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle, BtNode_PointTo
+from behavior_tree.nodes.Navigation import BtNode_GotoAction
+from behavior_tree.nodes.Vision import (
     BtNode_DoorDetection,
     BtNode_FeatureExtraction,
     BtNode_FeatureMatching,
@@ -40,7 +42,7 @@ from behavior_tree.TemplateNodes.Vision import (
     BtNode_TurnPanTilt,
     BtNode_TurnTo,
 )
-from behavior_tree.Receptionist.customNodes import (
+from behavior_tree.components.people_nodes import (
     BtNode_CombinePerson,
     BtNode_Confirm,
     BtNode_Introduce,

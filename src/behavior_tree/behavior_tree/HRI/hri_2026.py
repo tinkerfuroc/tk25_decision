@@ -30,8 +30,8 @@ Fully offline (no servers, auto-advance)::
         ros2 run behavior_tree hri-2026
 """
 
-from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
-from behavior_tree.TemplateNodes.OperatorGate import BtNode_PressEnterToSucceed
+from behavior_tree.nodes.Vision import BtNode_TurnPanTilt
+from behavior_tree.nodes.OperatorGate import BtNode_PressEnterToSucceed
 import py_trees
 import py_trees_ros
 import rclpy
@@ -46,14 +46,14 @@ from behavior_tree.HRI.config import (
     KEY_SOFA_POSE_REVERSED,
 )
 from behavior_tree.HRI.follow_real import createBagDropReal, createFollowHostUntilStop
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.Manipulation import (
+from behavior_tree.nodes.Audio import BtNode_Announce
+from behavior_tree.nodes.Manipulation import (
     BtNode_GripperAction,
     BtNode_MoveArmSingle,
     BtNode_PointTo,
 )
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.visualization import create_post_tick_visualizer
+from behavior_tree.nodes.Navigation import BtNode_GotoAction
+from behavior_tree.core.visualization import create_post_tick_visualizer
 
 
 def createBagFlowReal2026():

@@ -211,7 +211,7 @@ def test_scan_per_position_gate_uses_n_gate(scan_tree):
 def test_referee_guard_checkifempty_semantics():
     """The CheckIfEmpty guard drives first-vs-subsequent: falsy flag -> FAILURE
     (fall through to full spiel), truthy flag -> SUCCESS (reminder wins)."""
-    from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_CheckIfEmpty
+    from behavior_tree.nodes.BaseBehaviors import BtNode_CheckIfEmpty
     from behavior_tree.Restaurant.config import KEY_REFEREE_ANNOUNCED
 
     _set_bb(**{KEY_REFEREE_ANNOUNCED: False})
@@ -234,7 +234,7 @@ def test_referee_factory_has_guard_lines_and_latch():
         REFEREE_VIEW_REMINDER,
     )
     from behavior_tree.Restaurant.config import KEY_REFEREE_ANNOUNCED
-    from behavior_tree.TemplateNodes.BaseBehaviors import (
+    from behavior_tree.nodes.BaseBehaviors import (
         BtNode_CheckIfEmpty,
         BtNode_WriteToBlackboard,
     )
@@ -261,7 +261,7 @@ def test_referee_reminder_branch_is_first():
     """The guarded reminder branch must be the Selector's FIRST child; the
     unguarded full spiel SECOND. (Reversed, the spiel would fire every time.)"""
     from behavior_tree.Restaurant.restaurants import _create_referee_view_announcement
-    from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_CheckIfEmpty
+    from behavior_tree.nodes.BaseBehaviors import BtNode_CheckIfEmpty
 
     selector = _create_referee_view_announcement().children[0]
     first_branch, second_branch = selector.children[0], selector.children[1]
@@ -286,7 +286,7 @@ def test_collect_phase_inits_referee_flag_once_first():
     as the phase's first child (before the order-collect retries)."""
     from behavior_tree.Restaurant.order_intake_items import createCollectOrdersPhaseItems
     from behavior_tree.Restaurant.config import KEY_REFEREE_ANNOUNCED
-    from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
+    from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard
 
     phase = createCollectOrdersPhaseItems()
     inits = [n for n in phase.iterate()

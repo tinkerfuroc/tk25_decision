@@ -1,10 +1,11 @@
 import py_trees
+from behavior_tree.core.resources import read_json
 
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce
-from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
-from behavior_tree.TemplateNodes.Vision import  BtNode_DoorDetection, BtNode_TurnPanTilt
+from behavior_tree.nodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.nodes.Navigation import BtNode_GotoAction
+from behavior_tree.nodes.Audio import BtNode_Announce
+from behavior_tree.nodes.Manipulation import BtNode_MoveArmSingle
+from behavior_tree.nodes.Vision import  BtNode_DoorDetection, BtNode_TurnPanTilt
 
 from .customNodes import BtNode_PressEnterToSucceed
 
@@ -14,19 +15,10 @@ import rclpy
 
 import random
 import math
-import json
 import select
 import sys
 
-# read from `constant.json` in the same directory
-# load file
-try:
-    file = open("/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/Inspection/constants.json", "r")
-    constants = json.load(file)
-    file.close()
-except FileNotFoundError:
-    print("ERROR: constants.json not found!")
-    raise FileNotFoundError
+constants = read_json("behavior_tree.Inspection")
 
 pose_inspection = PoseStamped(header=Header(stamp=rclpy.time.Time().to_msg(), frame_id='map'),
                         pose=Pose(position=Point(x=constants["pose_inspection"]["point"]["x"], y=constants["pose_inspection"]["point"]["y"], z=0.0),

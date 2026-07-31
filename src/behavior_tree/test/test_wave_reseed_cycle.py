@@ -6,7 +6,7 @@
 
 from types import SimpleNamespace
 
-from behavior_tree.FollowPerson.wave_reseed_cycle import WaveReseedCycle
+from behavior_tree.components.following.wave_reseed_cycle import WaveReseedCycle
 
 
 class _FakeFuture:

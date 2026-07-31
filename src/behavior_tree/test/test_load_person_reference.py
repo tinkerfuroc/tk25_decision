@@ -1,4 +1,4 @@
-"""Unit tests for BtNode_LoadPersonReference (TemplateNodes/Vision.py)."""
+"""Unit tests for BtNode_LoadPersonReference (nodes/Vision.py)."""
 
 import os
 
@@ -7,7 +7,7 @@ import numpy as np
 import py_trees
 import pytest
 
-from behavior_tree.TemplateNodes.Vision import BtNode_LoadPersonReference
+from behavior_tree.nodes.Vision import BtNode_LoadPersonReference
 
 
 def _write_fixture(tmp_path, *, image_w=4, image_h=4, description="A tall person in a red shirt."):

@@ -6,7 +6,7 @@
 
 import math
 
-from behavior_tree.FollowPerson.recovery_scan import RecoveryScanFSM
+from behavior_tree.components.following.recovery_scan import RecoveryScanFSM
 
 TRACKING, PASSIVE, NEEDS_HELP = 0, 1, 2
 PASS1 = "Please stop walking so I can find you."

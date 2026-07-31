@@ -1,7 +1,5 @@
-from behavior_tree.runtime import run_tree
-
-
 def main():
-    from .hri import createHRITask
+    """Run the finalized HRI mission."""
+    from .hri_2026 import main as run_hri
 
-    run_tree(createHRITask, period_ms=500.0, title="HRI")
+    return run_hri()

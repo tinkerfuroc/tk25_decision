@@ -36,7 +36,10 @@ from py_trees.common import Access, Status
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 
-import openai
+try:
+    import openai
+except ModuleNotFoundError:  # Optional until the planner node is instantiated.
+    openai = None
 
 from .config import (
     OPENAI_API_KEY,
@@ -44,7 +47,7 @@ from .config import (
     OPENAI_TEMPERATURE,
     OPENAI_MAX_TOKENS,
 )
-from ..config import is_full_mock_mode
+from behavior_tree.core.config import is_full_mock_mode
 from .planner_validators import validate_plan
 from .small_trees import (
     ACTION_FACTORIES,
@@ -55,6 +58,21 @@ from .small_trees import (
     SEARCH_POSE_KEYS,
     create_goto,
 )
+
+
+def _openai_client():
+    if openai is None:
+        raise RuntimeError(
+            "GPSR planning requires the optional 'openai' Python package"
+        )
+    if not OPENAI_API_KEY:
+        raise RuntimeError(
+            "Set OPENROUTER_API_KEY (or OPENAI_API_KEY) before starting GPSR"
+        )
+    return openai.OpenAI(
+        api_key=OPENAI_API_KEY,
+        base_url="https://openrouter.ai/api/v1",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -106,14 +124,18 @@ def _parse_pose_stamped(json_dict: dict) -> PoseStamped:
     )
 
 
-def load_knowledge_from_constants(constants_path: str) -> None:
+def load_knowledge_from_constants(constants_path) -> None:
     """Populate KNOWN_LOCATIONS / KNOWN_OBJECT_PROMPTS from constants.json."""
     KNOWN_LOCATIONS.clear()
     KNOWN_OBJECT_PROMPTS.clear()
     DEFAULT_OBJECT_LOCATIONS.clear()
     ROOM_SEARCH_SPOTS.clear()
-    with open(constants_path, "r") as fh:
-        constants = json.load(fh)
+    if hasattr(constants_path, "open"):
+        with constants_path.open("r", encoding="utf-8") as stream:
+            constants = json.load(stream)
+    else:
+        with open(constants_path, "r", encoding="utf-8") as stream:
+            constants = json.load(stream)
 
     def _try_pose(key, value):
         """Parse a pose entry, skipping (with a warning) malformed/empty ones.
@@ -597,10 +619,7 @@ class BtNode_PlanActions(Behaviour):
         self._offline_mock = is_full_mock_mode()
         self._client_oai = None
         if not self._offline_mock:
-            self._client_oai = openai.OpenAI(
-                api_key=OPENAI_API_KEY,
-                base_url="https://openrouter.ai/api/v1",
-            )
+            self._client_oai = _openai_client()
         self._bb = None
         self._thread: Optional[threading.Thread] = None
         self._plan_result: Optional[List[Dict[str, Any]]] = None
@@ -1337,7 +1356,7 @@ def create_dispatcher() -> py_trees.composites.Selector:
 
 def create_self_correction(max_corrections: int = 3) -> py_trees.composites.Sequence:
     """On step failure: log, bump counter (fail if exhausted), announce, re-plan."""
-    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    from behavior_tree.nodes.Audio import BtNode_Announce
     seq = py_trees.composites.Sequence("self_correction", memory=True)
     seq.add_child(BtNode_LogStepResult("log failure", succeeded=False))
     seq.add_child(BtNode_BumpCorrectionCounter(
@@ -1454,7 +1473,7 @@ def create_execute_command(
 def make_listen_intake(listen_timeout: float = 30.0):
     """Intake factory: for each slot, prompt the operator and listen for the
     command into ``bb_keys.COMMAND`` (real audio; typed in mock)."""
-    from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_ListenAction
+    from behavior_tree.nodes.Audio import BtNode_Announce, BtNode_ListenAction
 
     def factory(slot: int) -> py_trees.behaviour.Behaviour:
         seq = py_trees.composites.Sequence(f"get command {slot + 1}", memory=True)
@@ -1490,7 +1509,7 @@ def _create_plan_and_save(slot: int, emit_plan_dir: Optional[str] = None,
     """Plan the command currently in ``COMMAND``, announce it, and stash the plan
     + command into slot ``slot`` for later execution. The intake step must have
     written ``COMMAND`` first."""
-    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    from behavior_tree.nodes.Audio import BtNode_Announce
     seq = py_trees.composites.Sequence(f"plan+save task {slot + 1}", memory=True)
     _reset_task_state(seq)
     # Bridge the dead air between hearing the command and speaking the plan: the
@@ -1519,7 +1538,7 @@ def _create_execute_slot(slot: int, max_steps: int = 25,
                          max_corrections: int = 3) -> py_trees.composites.Sequence:
     """Announce the start of task ``slot``, restore its saved command + plan, then
     run the dispatch/self-correction loop over it."""
-    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    from behavior_tree.nodes.Audio import BtNode_Announce
     seq = py_trees.composites.Sequence(f"execute task {slot + 1}", memory=True)
     seq.add_child(BtNode_Announce(
         f"announce start task {slot + 1}", bb_source=None,
@@ -1554,7 +1573,7 @@ def create_batch_command_flow(
     announcing before each task. The robot should already be standing at the
     command point (all tasks share that start pose).
     """
-    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    from behavior_tree.nodes.Audio import BtNode_Announce
     if make_intake is None:
         make_intake = make_listen_intake()
 
@@ -1617,7 +1636,7 @@ def create_orchestrator_init(capture_pose: bool = True) -> py_trees.composites.S
     which only plans/announces/draws and never navigates, so it must not need
     localization (TF) up just to start.
     """
-    from behavior_tree.TemplateNodes.Navigation import BtNode_CaptureCurrentPose
+    from behavior_tree.nodes.Navigation import BtNode_CaptureCurrentPose
     from .small_trees import BtNode_BlackboardSet
     seq = py_trees.composites.Sequence("orchestrator_init", memory=True)
     seq.add_child(BtNode_BlackboardSet("clear plan", bb_keys.PLAN, []))

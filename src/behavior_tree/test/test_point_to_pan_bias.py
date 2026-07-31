@@ -26,7 +26,7 @@ that offset. These tests are pure math — no ROS graph.
 
 import math
 
-from behavior_tree.TemplateNodes.pointing_math import compute_point_to_pan
+from behavior_tree.nodes.pointing_math import compute_point_to_pan
 
 # The arm's reachable pan range, mirrored from BtNode_PointTo.send_goal.
 PAN_MIN = -math.pi / 2

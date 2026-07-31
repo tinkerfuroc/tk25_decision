@@ -10,7 +10,7 @@ from behavior_tree.GPSR.small_trees import (  # noqa: E402
     PERSON_APPROACH_TIMEOUT_SEC,
     create_approach_person,
 )
-from behavior_tree.TemplateNodes.Navigation import BtNode_Approach  # noqa: E402
+from behavior_tree.nodes.Navigation import BtNode_Approach  # noqa: E402
 
 
 def _find_approach_node(root):
