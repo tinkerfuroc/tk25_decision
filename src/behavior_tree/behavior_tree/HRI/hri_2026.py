@@ -210,7 +210,7 @@ def createBagFlowReal2026():
     )
 
     root.add_child(
-        createFollowHostUntilStop()
+        createFollowHostUntilStop(operator_stop_key="s")
     )
 
     # --- real drop on HRI's configured drop pose ---
@@ -237,8 +237,7 @@ def createHRITask2026() -> py_trees.behaviour.Behaviour:
             name="Host seating instruction",
             bb_source=None,
             message=(
-                "Dear host, please sit down on the sofa and remain seated. "
-                "Please do not walk around the room during the task."
+                "Dear host, please sit down on the sofa."
             ),
         )
     )

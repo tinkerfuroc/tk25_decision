@@ -10,6 +10,31 @@ def _abs_key(key: str) -> str:
     return py_trees.blackboard.Blackboard.absolute_name("/", key)
 
 
+def _pose_xy(pose: Any):
+    """Best-effort map-frame (x, y) for a queued/detected pose.
+
+    Handles ``PointStamped`` (``.point``) and ``PoseStamped`` (``.pose.position``);
+    returns ``None`` for anything we can't read, so dedup silently skips it.
+    """
+    if pose is None:
+        return None
+    p = getattr(pose, "point", None)
+    if p is None:
+        pose_field = getattr(pose, "pose", None)
+        p = getattr(pose_field, "position", None) if pose_field is not None else None
+    if p is None:
+        return None
+    try:
+        return (float(p.x), float(p.y))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _within_radius(a, b, radius_m: float) -> bool:
+    """True if planar distance between two (x, y) tuples is within ``radius_m``."""
+    return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 <= radius_m * radius_m
+
+
 class BtNode_AppendCustomerCandidate(py_trees.behaviour.Behaviour):
     """Append a detected customer pose to the queue with deterministic metadata."""
 
@@ -156,7 +181,20 @@ class BtNode_QueueWavingCandidates(py_trees.behaviour.Behaviour):
 
         {id, pose, picture_path, timestamp, confidence, status="queued"}
 
-    FAILURE if the pose list is empty or missing; SUCCESS otherwise.
+    Pose-proximity dedup (``dedup_radius_m`` > 0): a detected pose within that
+    map-frame radius of ANY existing queue entry (regardless of status --
+    ``queued``/``active``/``done``) or of another pose already accepted this
+    tick is treated as the same caller and skipped. This keeps a persistent
+    waver seen from overlapping pan angles, or re-seen on a later sweep, from
+    being counted twice.
+
+    If ``summary_key`` is set, a human-readable "I detected N waving
+    customer(s)." line (N = number of poses the vision service returned this
+    pass = the red boxes on screen) is written there whenever at least one new
+    caller is queued, for a downstream announce to speak.
+
+    FAILURE if the pose list is empty/missing, or if every detected pose
+    duplicated an existing caller (nothing new to queue); SUCCESS otherwise.
     """
 
     def __init__(
@@ -169,10 +207,14 @@ class BtNode_QueueWavingCandidates(py_trees.behaviour.Behaviour):
         active_id_key: str,
         max_candidates: int = 2,
         confidence: float = 1.0,
+        dedup_radius_m: float = 0.3,
+        summary_key: str = None,
     ):
         super().__init__(name=name)
         self.max_candidates = max_candidates
         self.confidence = confidence
+        self.dedup_radius_m = float(dedup_radius_m)
+        self._summary_key = summary_key
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(
             key="all_poses",
@@ -199,6 +241,12 @@ class BtNode_QueueWavingCandidates(py_trees.behaviour.Behaviour):
             access=py_trees.common.Access.READ,
             remap_to=_abs_key(active_id_key),
         )
+        if summary_key is not None:
+            self.blackboard.register_key(
+                key="summary_write",
+                access=py_trees.common.Access.WRITE,
+                remap_to=_abs_key(summary_key),
+            )
 
     def update(self) -> py_trees.common.Status:
         try:
@@ -222,9 +270,24 @@ class BtNode_QueueWavingCandidates(py_trees.behaviour.Behaviour):
         if isinstance(active_id, int):
             next_id = max(next_id, active_id + 1)
 
+        # Seed the dedup set with every caller already known (any status), so a
+        # persistent waver re-seen on a later sweep is not re-queued.
+        seen_xy = [
+            xy for item in queue if (xy := _pose_xy(item.get("pose"))) is not None
+        ]
+
         added = 0
         now = time.time()
-        for idx, pose in enumerate(poses[: self.max_candidates]):
+        for idx, pose in enumerate(poses):
+            if added >= self.max_candidates:
+                break
+            xy = _pose_xy(pose)
+            if (
+                self.dedup_radius_m > 0.0
+                and xy is not None
+                and any(_within_radius(xy, s, self.dedup_radius_m) for s in seen_xy)
+            ):
+                continue
             picture_path = pictures[idx] if idx < len(pictures) else ""
             queue.append(
                 {
@@ -236,10 +299,25 @@ class BtNode_QueueWavingCandidates(py_trees.behaviour.Behaviour):
                     "status": "queued",
                 }
             )
+            if xy is not None:
+                seen_xy.append(xy)
             added += 1
+
+        if added == 0:
+            self.feedback_message = (
+                "All detected wavers duplicate already-queued callers"
+            )
+            return py_trees.common.Status.FAILURE
+
         queue.sort(key=lambda item: (item["timestamp"], item["id"]))
         self.blackboard.queue_write = queue
-        self.feedback_message = f"Queued {added} waving candidate(s)"
+        if self._summary_key is not None:
+            n_detected = len(poses)
+            self.blackboard.summary_write = (
+                f"I detected {n_detected} waving "
+                f"customer{'s' if n_detected != 1 else ''}."
+            )
+        self.feedback_message = f"Queued {added} new waving candidate(s)"
         return py_trees.common.Status.SUCCESS
 
 

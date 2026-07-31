@@ -31,13 +31,12 @@ from behavior_tree.PickAndPlace.config import Header, Header, Point, Point, Pose
 import py_trees
 
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction
-from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
+from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_CheckIfEmpty, BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction, BtNode_MoveArmSingle
 from behavior_tree.TemplateNodes.Navigation import (
     BtNode_Approach,
     BtNode_CaptureCurrentPose,
     BtNode_GotoAction,
-    BtNode_ProjectPose,
 )
 from behavior_tree.TemplateNodes.Vision import (
     BtNode_MaintainEyeContact,
@@ -76,10 +75,13 @@ from .config import (
     KEY_ORDER_CHECKLIST,
     KEY_ORDER_LIST,
     KEY_PICKUP_VERIFIED,
+    KEY_REFEREE_ANNOUNCED,
     KEY_TRAY_LOCATION,
     KEY_WAVING_CLOSEST_PERSON,
+    KEY_WAVING_DETECT_SUMMARY,
     KEY_WAVING_PERSON_PICTURES,
     KEY_WAVING_PERSON_POSES,
+    WAVING_DEDUP_RADIUS_M,
     constants,
 )
 from .state_nodes import (
@@ -131,47 +133,16 @@ def _approachCustomerSubtree(name: str = "Approach customer") -> py_trees.compos
     return seq
 
 
-# Projected bar-anchor blackboard key (P3). Local to this module — the raw
-# anchor ``KEY_KITCHEN_BAR_POSE`` is the operator-placed start pose; the
-# projected key holds its nearest-free reprojection from the planner.
-KEY_KITCHEN_BAR_PROJECTED = "kitchen_bar_pose_projected"
+def _barReturnSubtree() -> BtNode_GotoAction:
+    """Bar return: drive straight to the operator-placed kitchen bar anchor.
 
-
-def _barReturnSubtree() -> py_trees.composites.Selector:
-    """Projection-guarded bar return (P3).
-
-    Returns a ``Selector`` whose preferred branch projects the raw bar anchor
-    through the ``find_approach_pose`` service in ANCHOR_NEAREST_FREE mode and
-    drives to the projected pose, and whose fallback is the historical raw
-    ``BtNode_GotoAction(name="Go to kitchen bar")`` straight to the anchor. If
-    the projection service is unavailable or fails, the Selector degrades to
-    today's raw-anchor behavior. Drops into the existing ``Retry`` wrapper at
-    both bar-trip call sites.
+    The projection-guarded variant (P3, via ``find_approach_pose``) was
+    removed — it required a service (``planner_node``) that isn't part of
+    the standard restaurant launch stack, which hung the whole tree's
+    ``setup()`` on start. Drops into the existing ``Retry`` wrapper at both
+    bar-trip call sites.
     """
-    selector = py_trees.composites.Selector(
-        name="Bar return (project or raw)", memory=False
-    )
-    projected = py_trees.composites.Sequence(
-        name="Project then go to bar", memory=True
-    )
-    projected.add_child(
-        BtNode_ProjectPose(
-            name="Project kitchen bar anchor",
-            bb_in_key=KEY_KITCHEN_BAR_POSE,
-            bb_out_key=KEY_KITCHEN_BAR_PROJECTED,
-            projection_mode=3,  # ANCHOR_NEAREST_FREE
-        )
-    )
-    projected.add_child(
-        BtNode_GotoAction(
-            name="Go to kitchen bar (projected)",
-            key=KEY_KITCHEN_BAR_PROJECTED,
-        )
-    )
-    selector.add_child(projected)
-    selector.add_child(
-        BtNode_GotoAction(name="Go to kitchen bar", key=KEY_KITCHEN_BAR_POSE)
-    )
+    return BtNode_GotoAction(name="Go to kitchen bar", key=KEY_KITCHEN_BAR_POSE)
     return selector
 
 
@@ -246,10 +217,23 @@ def createConstantWriter():
     return root
 
 
-def _create_waving_detection_pass():
-    """Primary detection: tk26 waving-person service with per-person picture crops."""
+def _create_waving_detection_pass(summary_key=None, dedup_radius_m=WAVING_DEDUP_RADIUS_M):
+    """Primary detection: tk26 waving-person service with per-person picture crops.
+
+    ``dedup_radius_m`` (map-frame meters) drops a detected waver already queued
+    from an earlier position/sweep, so one person is never counted twice.
+    ``summary_key``, if set, receives an "I detected N waving customer(s)." line
+    (N = red boxes on screen) whenever a new caller is queued -- for a
+    downstream announce to speak.
+    """
     root = py_trees.composites.Parallel(name="scan and announce", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     seq = py_trees.composites.Sequence(name="Waving detection pass", memory=True)
+    seq.add_child(BtNode_Announce(
+        name="keep hand up",
+        bb_source=None,
+        message="Keep your hand raised high above your head until I detect you please",
+        )
+    )
     seq.add_child(
         BtNode_ScanForWavingPerson(
             name="Scan for waving persons",
@@ -269,6 +253,8 @@ def _create_waving_detection_pass():
             queue_key=KEY_CUSTOMER_QUEUE,
             active_id_key=KEY_ACTIVE_CUSTOMER_ID,
             max_candidates=2,
+            dedup_radius_m=dedup_radius_m,
+            summary_key=summary_key,
         )
     )
     root.add_child(seq)
@@ -336,12 +322,7 @@ def createDetectAndArbitrateCustomers(x: float = 0.0, y: float = 35.0):
     root.add_child(BtNode_Announce(
         name="Announce scanning",
         bb_source=None,
-        message="Dear customer, if you need to order, Please raise your hand high above your head.",)
-    )
-    root.add_child(BtNode_Announce(
-        name="Announce scanning",
-        bb_source=None,
-        message="Thank you",)
+        message="Dear customer, if you need to order, Please raise your hand high above your head and keep it there. Thank you",)
     )
     detect.add_child(_create_waving_detection_pass())
     # detect.add_child(_create_legacy_detection_pass())
@@ -364,24 +345,95 @@ def createDetectAndArbitrateCustomers(x: float = 0.0, y: float = 35.0):
     return root
 
 
-def createScanForUpToNCustomers(scan_positions, n_gate: int = 2):
-    """Sweep ``scan_positions`` looking for up to ``n_gate`` waving customers
-    before committing to approach anyone, then select the oldest queued one.
+# Referee-view prompt spoken after each on-screen detection count (restaurant-2026
+# only). First fire of the run speaks REFEREE_VIEW_LINES; every later fire speaks
+# REFEREE_VIEW_REMINDER. User-facing referee-interaction copy — edit here.
+REFEREE_VIEW_LINES = (
+    "Dear referee, please move behind me.",
+    "The bounding boxes are shown on my screen.",
+    "Please take a moment to view it.",
+    "Thank you.",
+)
+REFEREE_VIEW_REMINDER = (
+    "Look at my screen again to view the detection results with bounding boxes."
+)
 
-    ``createDetectAndArbitrateCustomers`` bundles detect-and-select into one
-    step, so a Selector of per-position calls to it stops sweeping as soon as
-    ONE candidate is found -- it never looks further to see if a second
-    customer is also waving from another direction. This instead visits every
-    position in ``scan_positions`` (skipping the actual scan at a given
-    position, via ``BtNode_QueueHasQueued(n_gate=...)``, once enough are
-    already queued -- a position where nobody is detected is not a failure,
-    it just moves on to the next one), and only selects an active target
-    *after* the full sweep. Proceeds with a single customer if the sweep
-    never turns up a second one.
+
+def _create_referee_view_announcement():
+    """Referee-view prompt spoken after each on-screen detection count.
+
+    First fire of the run speaks the full ``REFEREE_VIEW_LINES`` spiel and latches
+    ``KEY_REFEREE_ANNOUNCED``; every later fire speaks ``REFEREE_VIEW_REMINDER``.
+    Wrapped ``FailureIsSuccess`` so a TTS hiccup can't fail the sweep and drop the
+    just-detected caller (mirrors the adjacent "Announce detected count").
+
+    Child order is load-bearing: the guarded reminder branch MUST be the
+    Selector's FIRST child, the unguarded full-spiel branch SECOND.
+    ``BtNode_CheckIfEmpty`` returns SUCCESS when the flag is truthy (already
+    fired) -> reminder wins; FAILURE when falsy (first fire) -> the Selector falls
+    through to the full spiel, which latches the flag. The latch write is last, so
+    a mid-spiel TTS failure re-arms the spiel for the next detection rather than
+    silently swallowing it.
     """
-    root = py_trees.composites.Sequence(
-        name=f"Scan for up to {n_gate} customers", memory=True
+    reminder = py_trees.composites.Sequence(
+        name="Referee reminder (subsequent)", memory=True
     )
+    reminder.add_child(
+        BtNode_CheckIfEmpty(
+            name="Already gave full referee spiel?",
+            bb_source=KEY_REFEREE_ANNOUNCED,
+        )
+    )
+    reminder.add_child(
+        BtNode_Announce(
+            name="Announce referee reminder",
+            bb_source=None,
+            message=REFEREE_VIEW_REMINDER,
+        )
+    )
+
+    full = py_trees.composites.Sequence(name="Referee spiel (first)", memory=True)
+    for idx, line in enumerate(REFEREE_VIEW_LINES):
+        full.add_child(
+            BtNode_Announce(
+                name=f"Announce referee line {idx + 1}",
+                bb_source=None,
+                message=line,
+            )
+        )
+    full.add_child(
+        BtNode_WriteToBlackboard(
+            name="Latch referee spiel done",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_REFEREE_ANNOUNCED,
+            object=True,
+        )
+    )
+
+    selector = py_trees.composites.Selector(
+        name="Referee view announcement", memory=True
+    )
+    selector.add_child(reminder)
+    selector.add_child(full)
+    return py_trees.decorators.FailureIsSuccess(
+        name="Referee announce best-effort", child=selector
+    )
+
+
+def _create_one_sweep(scan_positions, n_gate: int):
+    """One full pass over ``scan_positions``, ending in an ``>= n_gate`` gate.
+
+    Each position either short-circuits (``n_gate`` already queued) or scans:
+    turn the pan-tilt, prompt, run the waving-detection pass, and -- on a pass
+    that queued a NEW caller -- speak the on-screen detection count. A position
+    that finds nobody new is not a failure (``FailureIsSuccess``), the sweep
+    just moves on. The trailing ``BtNode_QueueHasQueued(n_gate)`` makes the
+    whole sweep FAIL until ``n_gate`` distinct callers are queued, so a wrapping
+    ``Retry`` re-runs it; once reached, the per-position gates short-circuit and
+    the sweep succeeds.
+    """
+    sweep = py_trees.composites.Sequence(name="One full sweep", memory=True)
     for x, y in scan_positions:
         per_position = py_trees.composites.Selector(
             name=f"Gate or scan ({x}, {y})", memory=True
@@ -397,9 +449,11 @@ def createScanForUpToNCustomers(scan_positions, n_gate: int = 2):
             name=f"Detect at ({x}, {y})", memory=True
         )
         detect_at_pos.add_child(BtNode_TurnPanTilt("turn pan tilt forwards", x=x, y=y))
-        detect_at_pos.add_child(
-            py_trees.timers.Timer(name="wait for pan tilt to settle", duration=2.5)
-        )
+        detect_at_pos.add_child(BtNode_Announce(
+            name="Announce keep arm up",
+            bb_source=None,
+            message="Please keep your arm high above your head please",
+        ))
         detect_at_pos.add_child(BtNode_Announce(
             name="Announce scanning",
             bb_source=None,
@@ -410,20 +464,97 @@ def createScanForUpToNCustomers(scan_positions, n_gate: int = 2):
             bb_source=None,
             message="Thank you",
         ))
-        detect_at_pos.add_child(_create_waving_detection_pass())
+        detect_at_pos.add_child(
+            _create_waving_detection_pass(summary_key=KEY_WAVING_DETECT_SUMMARY)
+        )
+        # Only reached when the detection pass queued a NEW caller (the pass
+        # FAILs on nobody/duplicate). Speak the on-screen count; wrapped so a
+        # TTS hiccup can't drop the just-detected caller.
+        detect_at_pos.add_child(
+            py_trees.decorators.FailureIsSuccess(
+                name="Announce is best-effort",
+                child=BtNode_Announce(
+                    name="Announce detected count",
+                    bb_source=KEY_WAVING_DETECT_SUMMARY,
+                ),
+            )
+        )
+        # Referee-view prompt after the on-screen count: full spiel on the first
+        # detection of the run, a short reminder on every later detection.
+        detect_at_pos.add_child(_create_referee_view_announcement())
         per_position.add_child(
             py_trees.decorators.FailureIsSuccess(
-                name="Nobody here -- keep sweeping",
+                name="Nobody new here -- keep sweeping",
                 child=detect_at_pos,
             )
         )
-        root.add_child(per_position)
-    root.add_child(
+        sweep.add_child(per_position)
+    sweep.add_child(
+        BtNode_QueueHasQueued(
+            name=f"Reached {n_gate} queued this sweep?",
+            queue_key=KEY_CUSTOMER_QUEUE,
+            n_gate=n_gate,
+        )
+    )
+    return sweep
+
+
+def createScanForUpToNCustomers(scan_positions, n_gate: int = 2, max_sweeps: int = 3):
+    """Detect up to ``n_gate`` distinct waving customers, then select the oldest.
+
+    Two behaviors were added on top of the original single-sweep detect-then-
+    select:
+
+    * **Announce detections.** After any position whose detection pass queues a
+      new caller, the robot speaks the on-screen count ("I detected N waving
+      customers.") -- N matching the red boxes the vision server draws.
+    * **Retry until ``n_gate``.** A single sweep no longer suffices: the sweep
+      is wrapped in a ``Retry`` that re-runs it up to ``max_sweeps`` times until
+      ``n_gate`` distinct callers are queued. Pose-proximity dedup (in
+      ``BtNode_QueueWavingCandidates``) keeps a persistent waver from being
+      counted twice across sweeps. If the cap is hit with at least one caller,
+      we proceed with whoever was found (fallback); zero callers still fails.
+
+    A **skip gate** short-circuits the whole scan when a caller is already
+    queued -- e.g. a second customer batched on an earlier order's scan -- so
+    later orders serve the leftover directly instead of re-sweeping the room
+    hunting for a fresh ``n_gate``.
+    """
+    root = py_trees.composites.Sequence(
+        name=f"Scan for up to {n_gate} customers", memory=True
+    )
+
+    have_caller_or_scan = py_trees.composites.Selector(
+        name="Serve a queued caller, else scan", memory=True
+    )
+    have_caller_or_scan.add_child(
+        BtNode_QueueHasQueued(
+            name="Already have a queued caller?",
+            queue_key=KEY_CUSTOMER_QUEUE,
+            n_gate=1,
+        )
+    )
+    scan = py_trees.composites.Sequence(name="Scan until N (bounded)", memory=True)
+    scan.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name="Cap reached -- proceed with whoever we have",
+            child=py_trees.decorators.Retry(
+                name=f"Re-sweep until {n_gate} queued",
+                child=_create_one_sweep(scan_positions, n_gate),
+                num_failures=max_sweeps,
+            ),
+        )
+    )
+    scan.add_child(
         BtNode_QueueHasQueued(
             name="Any customers queued?",
             queue_key=KEY_CUSTOMER_QUEUE,
+            n_gate=1,
         )
     )
+    have_caller_or_scan.add_child(scan)
+    root.add_child(have_caller_or_scan)
+
     root.add_child(
         BtNode_SelectNextQueuedCustomer(
             name="Select next caller",
@@ -440,12 +571,11 @@ def createApproachCustomer():
     """Reach selected customer; fallback to show-picture partial-score path if unreachable."""
     root = py_trees.composites.Selector(name="Approach selected customer", memory=True)
     success_path = py_trees.composites.Sequence(name="Reach customer", memory=True)
-    success_path.add_child(
-        py_trees.decorators.Retry(
-            name="retry goto customer",
-            child=_approachCustomerSubtree("Approach customer table"),
-            num_failures=3,
-        )
+    success_path.add_child(py_trees.decorators.Retry(
+                name="retry goto customer",
+                child=_approachCustomerSubtree("Approach customer table"),
+                num_failures=3,
+            )
     )
     success_path.add_child(
         BtNode_UpdateChecklistFlag(
@@ -527,6 +657,13 @@ def createTakeAndConfirmOrder():
             checklist_key=KEY_ORDER_CHECKLIST,
             flag="order_confirmed",
             value=True,
+        )
+    )
+    root.add_child(
+        BtNode_Announce(
+            name="announce order taken",
+            bb_source=None,
+            message="I have taken the order.",
         )
     )
 

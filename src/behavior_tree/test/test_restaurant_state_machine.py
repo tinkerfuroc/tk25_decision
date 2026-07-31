@@ -79,6 +79,7 @@ def _install_stubs(monkeypatch):
 
     base = types.ModuleType("behavior_tree.TemplateNodes.BaseBehaviors")
     base.BtNode_WriteToBlackboard = _SuccessNode
+    base.BtNode_CheckIfEmpty = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.BaseBehaviors", base)
 
     manip = types.ModuleType("behavior_tree.TemplateNodes.Manipulation")
@@ -91,9 +92,6 @@ def _install_stubs(monkeypatch):
     # restaurants.py also imports these from Navigation (added 5a433bc).
     nav.BtNode_Approach = _SuccessNode
     nav.BtNode_CaptureCurrentPose = _SuccessNode
-    # restaurants.py imports BtNode_ProjectPose for the projection-guarded bar
-    # return (P3); stub it so the state-machine import path stays ROS-free.
-    nav.BtNode_ProjectPose = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Navigation", nav)
 
     vision = types.ModuleType("behavior_tree.TemplateNodes.Vision")

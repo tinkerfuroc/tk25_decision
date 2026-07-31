@@ -83,16 +83,21 @@ def _detect_command_categories(command: str, category_words: Iterable[str]) -> L
 
 
 def _detect_follow_destinations(command: str) -> List[str]:
-    """Return location nouns trailing a `follow ... to the X` clause.
+    """Return normalized location name(s) trailing a `follow ... to the X` clause.
 
-    Returns the bare destination noun(s). Heuristic only — meant as a tail-drop
-    signal, not as a parser.
+    Captures the FULL (possibly multi-word) destination phrase after "to the" and
+    normalizes spaces to underscores, so "follow ... to the dinner table" yields
+    ``dinner_table`` (the actual location name), not just ``dinner``. Without this
+    every multi-word follow destination (dinner table, coffee table, washing
+    machine, ...) would demand a goto to a truncated name that never matches, and
+    a CORRECT follow plan would be rejected. Heuristic tail-drop signal, not a
+    parser: the phrase is bounded by a conjunction / punctuation / end-of-string.
     """
     matches = re.findall(
-        r"follow(?:\s+\w+){1,4}\s+to\s+the\s+([a-z_][a-z_]*)",
+        r"follow(?:\s+\w+){1,4}\s+to\s+the\s+([a-z][a-z ]*?)(?=\s+and\b|[.,;!?]|$)",
         command.lower(),
     )
-    return matches
+    return [m.strip().replace(" ", "_") for m in matches if m.strip()]
 
 
 def _same_object(a: str, b: str) -> bool:
@@ -332,12 +337,19 @@ def validate_plan(
 
     # Rule: dropped follow-tail. If the command says "follow them to the
     # bedroom" but the plan never goes to the bedroom, that's a silent drop.
+    # Match tolerantly: exact, or an underscore-prefix either direction, so a
+    # normalized multi-word destination ("dinner_table") still matches the plan's
+    # goto(location=dinner_table) — and a command that named the short form still
+    # matches a longer goto name. Only a genuinely missing destination fails.
     for dest in _detect_follow_destinations(command):
-        if dest not in saw_goto_destinations:
+        if not any(
+            g == dest or g.startswith(dest + "_") or dest.startswith(g + "_")
+            for g in saw_goto_destinations
+        ):
             return False, (
-                f"command mentions 'follow ... to the {dest}' but no "
-                f"goto(location={dest!r}) step was emitted. Append a goto "
-                "after the follow so the robot can reach the destination."
+                f"command mentions 'follow ... to the {dest.replace('_', ' ')}' "
+                f"but no goto to that destination was emitted. Append a goto after "
+                "the follow so the robot can reach the destination."
             )
 
     return True, None

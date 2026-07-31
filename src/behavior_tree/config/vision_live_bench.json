@@ -72,7 +72,6 @@
           "BtNode_Approach": "IMMEDIATE",
           "BtNode_FollowAction": "KEYPRESS",
           "BtNode_FindApproachPose": "IMMEDIATE",
-          "BtNode_ProjectPose": "IMMEDIATE",
           "BtNode_CaptureCurrentPose": "IMMEDIATE",
           "BtNode_GetOrientationAngle": "IMMEDIATE"
         }

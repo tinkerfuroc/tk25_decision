@@ -131,6 +131,7 @@ def createFollowHostUntilStop(
     arrived_override=None,
     confirm_question: str = "It looks like you have stopped. Should I place the bag here?",
     num_attempts: int = -1,
+    operator_stop_key=None,
 ):
     """Follow the host until the nav stack reports them stationary, then confirm.
 
@@ -145,14 +146,17 @@ def createFollowHostUntilStop(
 
     The follow tree never self-completes; ``arrived_detector`` ends the inner
     Parallel when the follow executive's OK_PERSON_STATIONARY latch fires, which
-    cancels /track_person + follow_server and triggers the confirmation. A "no"
-    (or no answer) fails the sequence so Retry resumes following; "yes" exits to
-    the bag drop. ``num_attempts=-1`` = follow until confirmed (matches HMC).
+    cancels /track_person + follow_server and continues through the existing
+    post-follow handoff path. ``num_attempts=-1`` = follow until stopped.
 
     Args:
         arrived_override: alternate arrival detector (e.g. an operator-key node
             for offline tests, where the mock Follow action never latches
             ``follow/arrived``). None -> BtNode_CheckFollowArrived.
+        operator_stop_key: optional PTY key consumed by a production operator
+            stop detector. It is combined with the normal stationary detector,
+            so an operator stop follows the same cancellation and post-follow
+            handoff path without disabling autonomous arrival detection.
     """
     follow = create_follow_person_tree(
         target_frame=target_frame,
@@ -161,6 +165,18 @@ def createFollowHostUntilStop(
     )
     arrived = (arrived_override if arrived_override is not None
                else BtNode_CheckFollowArrived())
+    if operator_stop_key is not None:
+        arrived = py_trees.composites.Parallel(
+            name=f"Follow stop detectors ({operator_stop_key})",
+            policy=py_trees.common.ParallelPolicy.SuccessOnOne(),
+            children=[
+                arrived,
+                BtNode_WaitKeyboardPress(
+                    name=f"Operator stop follow ({operator_stop_key})",
+                    key=operator_stop_key,
+                ),
+            ],
+        )
 
     follow_until_arrived = py_trees.composites.Parallel(
         name="Follow until guest stops",

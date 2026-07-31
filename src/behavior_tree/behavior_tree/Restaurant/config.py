@@ -53,6 +53,15 @@ BATCH_SIZE_LIMIT = 3
 KEY_WAVING_PERSON_POSES = "waving_person_poses"
 KEY_WAVING_PERSON_PICTURES = "waving_person_pictures"
 KEY_WAVING_CLOSEST_PERSON = "waving_closest_person"
+# Human-readable "I detected N waving customers." line written by
+# BtNode_QueueWavingCandidates and spoken after a successful detection pass in
+# createScanForUpToNCustomers (matches the red boxes on the robot's screen).
+KEY_WAVING_DETECT_SUMMARY = "waving_detect_summary"
+# Latched True after the first referee-view spiel of the run (BtNode_CheckIfEmpty
+# guard in restaurants._create_referee_view_announcement), so later detections
+# speak the short reminder instead of the full four-line spiel. Task-level;
+# initialized once by createCollectOrdersPhaseItems and never reset.
+KEY_REFEREE_ANNOUNCED = "referee_view_announced"
 KEY_ACTIVE_CUSTOMER_PICTURE = "active_customer_picture"
 KEY_CURRENT_ITEMS = "current_items"
 KEY_CURRENT_ITEM = "current_item"
@@ -65,3 +74,9 @@ KEY_BARMAN_TEXT = "barman_text"
 
 # Radius (meters) for waving-person detection. Raise for larger venues.
 DETECT_WAVING_THRESHOLD_M = 8.0
+
+# Map-frame XY radius (meters) within which a freshly detected waving person is
+# treated as the same caller already in the queue, so re-sweeps and
+# overlapping pan angles don't queue one person twice. Bumped to 0.4 m after
+# 0.3 m still split one person into two callers in the field (2026-07-04).
+WAVING_DEDUP_RADIUS_M = 0.4

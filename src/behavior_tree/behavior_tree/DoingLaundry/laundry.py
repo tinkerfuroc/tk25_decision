@@ -397,7 +397,7 @@ def foldClothingOnce():
         BtNode_Announce(
             name="Announce lay flat",
             bb_source=None,
-            message="Now please help me flatten the clothes on the table.",
+            message="Now please help me pick up one piece of clothing and flatten it on the table.",
         )
     )
     root.add_child(
@@ -615,7 +615,7 @@ def createDoingLaundry():
             name="Announce referee help request",
             bb_source=None,
             message=(
-                "Please help me to pick up a piece of clothing from the washing machine or basket when I requested"
+                "Later, when I am ready to fold, I will request you to pick up a piece of clothing from the washing machine or basket."
             ),
         )
     )
@@ -642,7 +642,7 @@ def createDoingLaundry():
         BtNode_NavBack(
             "Getting closer to the table",
             bb_target_key=None,
-            distance=-0.27,
+            distance=-0.24,
             timeout_sec=5,
         )
     )

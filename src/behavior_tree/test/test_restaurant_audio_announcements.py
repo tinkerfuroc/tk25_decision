@@ -111,6 +111,7 @@ def _install_stubs(monkeypatch, confirmation_cls=_SuccessNode):
 
     base = types.ModuleType("behavior_tree.TemplateNodes.BaseBehaviors")
     base.BtNode_WriteToBlackboard = _SuccessNode
+    base.BtNode_CheckIfEmpty = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.BaseBehaviors", base)
 
     manip = types.ModuleType("behavior_tree.TemplateNodes.Manipulation")
@@ -122,7 +123,6 @@ def _install_stubs(monkeypatch, confirmation_cls=_SuccessNode):
     nav.BtNode_GotoAction = _SuccessNode
     nav.BtNode_Approach = _SuccessNode
     nav.BtNode_CaptureCurrentPose = _SuccessNode
-    nav.BtNode_ProjectPose = _SuccessNode
     monkeypatch.setitem(sys.modules, "behavior_tree.TemplateNodes.Navigation", nav)
 
     vision = types.ModuleType("behavior_tree.TemplateNodes.Vision")

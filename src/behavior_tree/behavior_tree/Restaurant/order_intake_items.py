@@ -75,6 +75,7 @@ from .config import (
     KEY_ORDER_CHECKLIST,
     KEY_ORDER_LIST,
     KEY_PICKUP_VERIFIED,
+    KEY_REFEREE_ANNOUNCED,
 )
 
 # Recording window handed to the order-extraction server. Matches the
@@ -301,6 +302,18 @@ def createCollectOrdersPhaseItems() -> py_trees.composites.Sequence:
     Restaurant tree to collect orders via the free-form order-items action.
     """
     root = py_trees.composites.Sequence(name="Collect orders (2x, items)", memory=True)
+    # Task-level init of the referee-spiel latch: the first detection of the run
+    # speaks the full spiel, every later detection the short reminder. Runs once,
+    # before either order's scan; never reset.
+    root.add_child(
+        BtNode_WriteToBlackboard(
+            name="Init referee-spiel flag",
+            bb_namespace="",
+            bb_source=None,
+            bb_key=KEY_REFEREE_ANNOUNCED,
+            object=False,
+        )
+    )
     for i in range(2):
         root.add_child(
             py_trees.decorators.Retry(

@@ -46,7 +46,7 @@
         }
       },
       "manipulation": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": false,
         "description": "Per-node mock mode for manipulation nodes. Set TELEOP for interactive arm control.",
         "nodes": {
@@ -75,7 +75,6 @@
           "BtNode_Approach": "IMMEDIATE",
           "BtNode_FollowAction": "KEYPRESS",
           "BtNode_FindApproachPose": "IMMEDIATE",
-          "BtNode_ProjectPose": "IMMEDIATE",
           "BtNode_CaptureCurrentPose": "IMMEDIATE",
           "BtNode_GetOrientationAngle": "IMMEDIATE"
         }
@@ -106,13 +105,13 @@
         "description": "Per-node mock mode for TTS nodes",
         "nodes": {
           "BtNode_Announce": "KEYPRESS",
-          "BtNode_TTSCN": "KEYPREfSS",
+          "BtNode_TTSCN": "KEYPRESS",
           "BtNode_Introduce": "KEYPRESS",
           "BtNode_Confirm": "KEYPRESS"
         }
       },
       "mock_controls": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": false,
         "description": "Special mocked control-only nodes that always use MockInputController",
         "nodes": {

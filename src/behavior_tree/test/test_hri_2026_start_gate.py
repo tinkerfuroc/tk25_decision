@@ -50,3 +50,25 @@ def test_host_seating_instruction_is_fourth():
 def test_real_bag_flow_wired_into_full_tree():
     root = createHRITask2026()
     assert root.children[13].name == "HRI bag flow (real follow, 2026)"
+
+
+def test_production_follow_has_allowlisted_operator_stop_detector():
+    root = createBagFlowReal2026()
+    follow_gate = next(
+        node for node in root.iterate()
+        if node.name == "Follow stop detectors (s)"
+    )
+    assert isinstance(follow_gate, py_trees.composites.Parallel)
+    assert isinstance(
+        follow_gate.policy,
+        py_trees.common.ParallelPolicy.SuccessOnOne,
+    )
+    assert any(
+        node.__class__.__name__ == "BtNode_CheckFollowArrived"
+        for node in follow_gate.children
+    )
+    assert any(
+        node.__class__.__name__ == "BtNode_WaitKeyboardPress"
+        and node.key == "s"
+        for node in follow_gate.children
+    )

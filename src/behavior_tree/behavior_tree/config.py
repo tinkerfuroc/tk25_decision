@@ -29,6 +29,19 @@ NODE_MOCK_MODE_MAP = {
     "IMMEDIATE": "immediate",
 }
 
+# Subsystems understood by the behaviour-tree mock implementation.  Keeping
+# this list in one place lets config files (including dashboard-generated
+# files) be validated before a task starts, instead of silently accepting a
+# misspelled subsystem and accidentally running a real ROS client.
+MOCK_SUBSYSTEMS = (
+    "vision",
+    "manipulation",
+    "navigation",
+    "audio_input",
+    "announcement",
+    "mock_controls",
+)
+
 
 class BehaviorTreeConfig:
     """Configuration manager for behavior tree mock mode."""
@@ -105,7 +118,9 @@ class BehaviorTreeConfig:
 
             if config_path.exists():
                 with open(config_path, 'r') as f:
-                    self._mock_config = json.load(f)
+                    loaded_config = json.load(f)
+                self.validate_mock_config(loaded_config)
+                self._mock_config = loaded_config
                 self._config_path = config_path
                 self._config_mtime = config_path.stat().st_mtime
                 print(f"✓ Loaded mock configuration from {config_path}")
@@ -162,14 +177,125 @@ class BehaviorTreeConfig:
 
     def _normalize_node_mode(self, mode_value) -> str:
         """Normalize a configured node mode into internal mode values."""
-        if isinstance(mode_value, str):
-            key = mode_value.strip().upper()
-        return NODE_MOCK_MODE_MAP.get(key, "wait_keypress")
+        # bool is a subclass of int, so handle it first.  The old ordering
+        # attempted to use an uninitialised ``key`` for bool/int values and
+        # could raise UnboundLocalError for dashboard-generated configs.
         if isinstance(mode_value, bool):
             return "wait_keypress" if mode_value else "no_mock"
         if isinstance(mode_value, (int, float)):
             return "wait_keypress" if mode_value else "no_mock"
-        return "wait_keypress"
+        if isinstance(mode_value, str):
+            key = mode_value.strip().upper()
+            try:
+                return NODE_MOCK_MODE_MAP[key]
+            except KeyError as exc:
+                raise ValueError(
+                    f"Unsupported node mock mode {mode_value!r}; "
+                    f"expected one of {sorted(NODE_MOCK_MODE_MAP)}"
+                ) from exc
+        raise ValueError(
+            f"Unsupported node mock mode type {type(mode_value).__name__}; "
+            "expected a string, boolean, or number"
+        )
+
+    def validate_mock_config(self, config: dict) -> dict:
+        """Validate a mock configuration before it is used by a task.
+
+        Configuration files are part of the task's safety boundary: a typo in
+        a node mode must not silently turn a real service/action client on (or
+        leave a task waiting forever).  The validator intentionally permits
+        forward-compatible top-level keys, while strictly checking the fields
+        consumed by this module.
+
+        Returns the original mapping to make it convenient for callers to use
+        as ``config = validate_mock_config(json.load(...))``.  ``ValueError``
+        identifies malformed or unsupported values.
+        """
+        if not isinstance(config, dict):
+            raise ValueError("mock configuration must be a JSON object")
+
+        mock_mode = config.get("mock_mode", {})
+        if not isinstance(mock_mode, dict):
+            raise ValueError("mock_mode must be an object")
+        for key in ("enabled", "auto_detect"):
+            if key in mock_mode and not isinstance(mock_mode[key], bool):
+                raise ValueError(f"mock_mode.{key} must be boolean")
+
+        subsystems = mock_mode.get("subsystems", {})
+        if not isinstance(subsystems, dict):
+            raise ValueError("mock_mode.subsystems must be an object")
+        unknown_subsystems = set(subsystems) - set(MOCK_SUBSYSTEMS)
+        if unknown_subsystems:
+            raise ValueError(
+                "unsupported mock subsystem(s): "
+                + ", ".join(sorted(map(str, unknown_subsystems)))
+            )
+        for subsystem_name, subsystem in subsystems.items():
+            if not isinstance(subsystem, dict):
+                raise ValueError(f"mock_mode.subsystems.{subsystem_name} must be an object")
+            if "enabled" in subsystem and not isinstance(subsystem["enabled"], bool):
+                raise ValueError(
+                    f"mock_mode.subsystems.{subsystem_name}.enabled must be boolean"
+                )
+            nodes = subsystem.get("nodes", {})
+            if not isinstance(nodes, (dict, list)):
+                raise ValueError(
+                    f"mock_mode.subsystems.{subsystem_name}.nodes must be an object or list"
+                )
+            if isinstance(nodes, dict):
+                node_modes = nodes.items()
+            else:
+                node_modes = ((node_name, "KEYPRESS") for node_name in nodes)
+            for node_name, mode in node_modes:
+                if not isinstance(node_name, str) or not node_name.strip():
+                    raise ValueError(f"invalid node name in subsystem {subsystem_name!r}")
+                self._normalize_node_mode(mode)
+
+        forced = config.get("force_mock_nodes", {})
+        if not isinstance(forced, dict):
+            raise ValueError("force_mock_nodes must be an object")
+        for node_name, entry in forced.items():
+            if not isinstance(node_name, str) or not node_name.strip():
+                raise ValueError("force_mock_nodes keys must be non-empty strings")
+            if isinstance(entry, dict):
+                if "subsystem" in entry and not isinstance(entry["subsystem"], str):
+                    raise ValueError(f"force_mock_nodes.{node_name}.subsystem must be a string")
+                if "announce_movement" in entry and not isinstance(
+                    entry["announce_movement"], bool
+                ):
+                    raise ValueError(
+                        f"force_mock_nodes.{node_name}.announce_movement must be boolean"
+                    )
+                self._normalize_node_mode(entry.get("mode", "KEYPRESS"))
+            elif not isinstance(entry, (str, bool, int, float)):
+                raise ValueError(
+                    f"force_mock_nodes.{node_name} must be a mode or object"
+                )
+            else:
+                self._normalize_node_mode(entry)
+
+        keyboard = config.get("keyboard_control", {})
+        if not isinstance(keyboard, dict):
+            raise ValueError("keyboard_control must be an object")
+        if "enabled" in keyboard and not isinstance(keyboard["enabled"], bool):
+            raise ValueError("keyboard_control.enabled must be boolean")
+        return config
+
+    def is_full_mock_mode(self) -> bool:
+        """Return whether every known subsystem is configured for mocking.
+
+        This is deliberately stricter than :meth:`is_mock_mode`: bench
+        configurations such as ``f4_mock_config.json`` mock only selected
+        subsystems and must continue to use real planner/network behaviour.
+        """
+        if not self.is_mock_mode():
+            return False
+        subsystems = self._mock_config.get("mock_mode", {}).get("subsystems", {})
+        return all(
+            isinstance(subsystems.get(name, {}), dict)
+            and subsystems.get(name, {}).get("enabled", True)
+            for name in MOCK_SUBSYSTEMS
+        )
 
     def _get_forced_node_entry(self, node_class_name: str) -> Tuple[Optional[str], object, bool]:
         """
@@ -191,6 +317,8 @@ class BehaviorTreeConfig:
             return "forced_mock", entry, False
         if isinstance(entry, bool):
             return "forced_mock", ("KEYPRESS" if entry else "NO_MOCK"), False
+        if isinstance(entry, (int, float)):
+            return "forced_mock", entry, False
         return "forced_mock", "KEYPRESS", False
 
     def _find_node_subsystem_entry(self, node_class_name: str) -> Tuple[Optional[str], Optional[dict], object]:
@@ -558,6 +686,16 @@ def get_config() -> BehaviorTreeConfig:
 def is_mock_mode() -> bool:
     """Quick check if global mock mode is enabled."""
     return _config.is_mock_mode()
+
+
+def is_full_mock_mode() -> bool:
+    """Quick check for an all-subsystem offline mock configuration."""
+    return _config.is_full_mock_mode()
+
+
+def validate_mock_config(config: dict) -> dict:
+    """Validate a mock configuration using the process-wide config manager."""
+    return _config.validate_mock_config(config)
 
 
 def is_subsystem_mocked(subsystem: str) -> bool:

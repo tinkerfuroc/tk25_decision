@@ -78,7 +78,6 @@ from .custom_nodes import (
     BtNode_GuardActiveClass,
     BtNode_MarkPhase,
     BtNode_PopWorkItem,
-    BtNode_WriteFoundItems,
     record_event,
 )
 from .pick_and_place import (
@@ -100,6 +99,12 @@ _KEY_ACTIVE_SKIP_SCAN = "pp_active_skip_scan"
 # Dedicated key for the per-item "<label> going to <class>" announce string
 # composed by _ComposeItemAnnounceLeaf and spoken by the following Announce.
 _KEY_ITEM_ANNOUNCE_MSG = "pp_item_announce_msg"
+
+# Queue key backing the per-item found-item announce loop
+# (_announceFoundItemsSeparately): _BuildFoundItemsQueueLeaf fills it with one
+# announce string per found label; _PopAnnounceMsgLeaf drains one per Announce
+# so each scanned item is spoken as its OWN utterance, not one combined sentence.
+_KEY_FOUND_ANNOUNCE_QUEUE = "pp_found_announce_queue"
 
 # Frozen breakfast table: (item, source_pose_key, arm_pose_key, point_key).
 # Item names match the official RoboCup@Home Incheon 2026 Known Objects list
@@ -235,6 +240,158 @@ class _ComposeItemAnnounceLeaf(py_trees.behaviour.Behaviour):
             klass = ""
         self.bb.msg = f"{label} going to {klass}"
         return py_trees.common.Status.SUCCESS
+
+
+class _BuildFoundItemsQueueLeaf(py_trees.behaviour.Behaviour):
+    """Turn the object_scan result into a QUEUE of per-item announce strings.
+
+    Reads the packed scan result (``objects[].cls``, as repacked by
+    BtNode_ObjectScan) from ``scan_key`` and writes a list like
+    ``["I see one apple.", "I see one banana."]`` to _KEY_FOUND_ANNOUNCE_QUEUE,
+    which _PopAnnounceMsgLeaf drains one-per-Announce so each found item is
+    spoken as its OWN utterance rather than one combined "I see one apple, one
+    banana." sentence. Defensive like BtNode_WriteFoundItems: a missing key,
+    empty ``.objects``, or malformed result degrades to a single
+    "could not find any objects" message so the phase still says something.
+    Plain Behaviour (runs its real logic under BT_MOCK_MODE); always SUCCESS.
+    """
+
+    def __init__(self, name, scan_key):
+        super().__init__(name=name)
+        self.bb = self.attach_blackboard_client(name=name)
+        self.bb.register_key(
+            key="vision_result",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", scan_key),
+        )
+        self.bb.register_key(
+            key="queue",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name(
+                "/", _KEY_FOUND_ANNOUNCE_QUEUE
+            ),
+        )
+
+    def _fallback(self, reason):
+        self.bb.queue = ["I could not find any objects"]
+        self.feedback_message = reason
+        return py_trees.common.Status.SUCCESS
+
+    def update(self):
+        try:
+            vision_result = self.bb.vision_result
+        except Exception as e:  # noqa: BLE001
+            return self._fallback(f"No scan result on blackboard: {e}")
+        objects = getattr(vision_result, "objects", None)
+        if not objects:
+            return self._fallback("No objects in scan result")
+        try:
+            messages = [
+                f"I see one {obj.cls}."
+                for obj in objects
+                if getattr(obj, "cls", None)
+            ]
+        except Exception as e:  # noqa: BLE001
+            return self._fallback(f"Malformed scan result: {e}")
+        if not messages:
+            return self._fallback("No valid object labels in scan result")
+        self.bb.queue = messages
+        self.feedback_message = f"Queued {len(messages)} per-item announcements"
+        return py_trees.common.Status.SUCCESS
+
+
+class _PopAnnounceMsgLeaf(py_trees.behaviour.Behaviour):
+    """Pop ONE message off _KEY_FOUND_ANNOUNCE_QUEUE into KEY_ANNOUNCEMENT_MSG.
+
+    SUCCESS after popping the front message; FAILURE when the queue is
+    empty/missing -- that FAILURE is the announce loop's only exit (mirrors
+    BtNode_PopWorkItem's role in _cleanupLoop). Plain Behaviour; runs its real
+    logic under BT_MOCK_MODE.
+    """
+
+    def __init__(self, name):
+        super().__init__(name=name)
+        self.bb = self.attach_blackboard_client(name=name)
+        # Same key registered READ + WRITE so we can read the queue and write
+        # the drained remainder back (the BtNode_PopWorkItem idiom).
+        self.bb.register_key(
+            key="queue",
+            access=py_trees.common.Access.READ,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name(
+                "/", _KEY_FOUND_ANNOUNCE_QUEUE
+            ),
+        )
+        self.bb.register_key(
+            key="queue",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name(
+                "/", _KEY_FOUND_ANNOUNCE_QUEUE
+            ),
+        )
+        self.bb.register_key(
+            key="announcement_msg",
+            access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name(
+                "/", KEY_ANNOUNCEMENT_MSG
+            ),
+        )
+
+    def update(self):
+        try:
+            queue = self.bb.queue
+        except Exception:  # noqa: BLE001
+            queue = None
+        if not queue:
+            self.feedback_message = "announce queue empty -> FAILURE (loop exit)"
+            return py_trees.common.Status.FAILURE
+        msg = queue[0]
+        self.bb.queue = list(queue[1:])
+        self.bb.announcement_msg = str(msg)
+        self.feedback_message = f"popped announce msg {msg!r} ({len(queue) - 1} left)"
+        return py_trees.common.Status.SUCCESS
+
+
+def _announceFoundItemsSeparately(scan_key, name="announce found items separately"):
+    """Announce each object_scan-found item as its OWN spoken utterance.
+
+    Drop-in replacement for the old ``BtNode_WriteFoundItems -> BtNode_Announce``
+    pair: instead of one combined "I see one apple, one banana." sentence, this
+    builds a queue of per-item strings and loops, speaking one item per Announce.
+    Reuses the queue -> pop-one -> act -> Repeat-until-empty idiom of _cleanupLoop
+    and the tested, mock-aware BtNode_Announce. Always SUCCESS (announcement must
+    never abort the mission), so it slots directly into a phase Sequence.
+    """
+    loop_body = py_trees.composites.Sequence("announce-one loop body", memory=True)
+    # PopAnnounceMsg is UNWRAPPED -- its FAILURE (empty queue) is the loop's only
+    # exit. The Announce is FailureIsSuccess-wrapped so a TTS error on one item
+    # does not break out of the loop early.
+    loop_body.add_child(_PopAnnounceMsgLeaf(name="pop announce msg"))
+    loop_body.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name="announce failure -> continue loop",
+            child=BtNode_Announce(
+                name="announce one found item", bb_source=KEY_ANNOUNCEMENT_MSG
+            ),
+        )
+    )
+    seq = py_trees.composites.Sequence(name, memory=True)
+    seq.add_child(
+        _BuildFoundItemsQueueLeaf(name="build found-item announce queue", scan_key=scan_key)
+    )
+    # num_success=-1 never reaches the success count, so Repeat re-ticks until the
+    # body FAILS (queue drained). FailureIsSuccess turns that terminal FAILURE into
+    # SUCCESS so the enclosing phase Sequence continues.
+    seq.add_child(
+        py_trees.decorators.FailureIsSuccess(
+            name="announce loop drained -> continue phase",
+            child=py_trees.decorators.Repeat(
+                name="announce every found item (num_success=-1)",
+                child=loop_body,
+                num_success=-1,
+            ),
+        )
+    )
+    return seq
 
 
 # --------------------------------------------------------------------------- #
@@ -738,18 +895,10 @@ def phaseTableCleanup(place_policy="vlm"):
         )
     )
     # Perception summary (spec §8.3): announce what the scan found before building
-    # the inventory. WriteFoundItems is a plain Behaviour (runs real logic in mock;
-    # empty objects -> "could not find any objects", still SUCCESS).
-    seq.add_child(
-        BtNode_WriteFoundItems(
-            name="write found table items",
-            bb_key_vision_res=KEY_SCAN_RESULTS_TABLE,
-            bb_key_announcement=KEY_ANNOUNCEMENT_MSG,
-        )
-    )
-    seq.add_child(
-        BtNode_Announce(name="announce found table items", bb_source=KEY_ANNOUNCEMENT_MSG)
-    )
+    # the inventory. Each found item is spoken as its OWN utterance (loop), not one
+    # combined sentence; empty scan -> "could not find any objects" once. Always
+    # SUCCESS (announcement must never abort the mission).
+    seq.add_child(_announceFoundItemsSeparately(KEY_SCAN_RESULTS_TABLE))
     seq.add_child(
         BtNode_BuildInventory(
             name="build table inventory",
@@ -893,18 +1042,9 @@ def phaseTableScan():
             ),
         )
     )
-    seq.add_child(
-        BtNode_WriteFoundItems(
-            name="write found table items",
-            bb_key_vision_res=KEY_SCAN_RESULTS_TABLE,
-            bb_key_announcement=KEY_ANNOUNCEMENT_MSG,
-        )
-    )
-    seq.add_child(
-        BtNode_Announce(
-            name="announce found table items", bb_source=KEY_ANNOUNCEMENT_MSG
-        )
-    )
+    # Announce each found item as its OWN utterance (loop), not one combined
+    # sentence; empty scan -> "could not find any objects" once. Always SUCCESS.
+    seq.add_child(_announceFoundItemsSeparately(KEY_SCAN_RESULTS_TABLE))
     return seq
 
 
@@ -920,16 +1060,23 @@ def phasePullDishwasher():
         BtNode_Announce(
             name="announce starting pulling rack",
             bb_source=None,
-            message="Start pulling the rack of the dishwasher",
+            message="Start pulling the rack of the dish washer",
         )
     )
-    seq.add_child(_goto("facing washing machine", KEY_POSE_FACING_WASHING_MACHINE))
+    seq.add_child(_goto("facing dish washer", KEY_POSE_FACING_WASHING_MACHINE))
     # 3.2 ask the operator to open the door, wait 10 s
     seq.add_child(
         BtNode_Announce(
             name="announce open washer door",
             bb_source=None,
-            message="Dear referee, please help me fully open the door of the dishwasher. i will wait for 10 seconds",
+            message="Dear referee, i need help",
+        )
+    )
+    seq.add_child(
+        BtNode_Announce(
+            name="announce open washer door",
+            bb_source=None,
+            message="please help me completely open the door of the dish washer. i will wait for 10 seconds",
         )
     )
     seq.add_child(
@@ -952,13 +1099,13 @@ def phasePullDishwasher():
         BtNode_GripperAction(name="open gripper fully (pull)", open_gripper=True)
     )
     # 3.4 creep forward 0.66 m toward the door (nav_back distance < 0 = forward)
-    seq.add_child(_navBack("forward to door", -0.64))
+    seq.add_child(_navBack("forward to door", -0.63))
     # 3.5 close the gripper fully to grip the door
     seq.add_child(
         BtNode_GripperAction(name="close gripper on door", open_gripper=False)
     )
     # 3.6 pull back 0.66 m (opens the door)
-    seq.add_child(_navBack("pull door open", 0.55))
+    seq.add_child(_navBack("pull door open", 0.54))
 
     # release the rack
     seq.add_child(
@@ -995,27 +1142,27 @@ def phaseGrasp():
             message="Failed to grasp the plate",
         )
     )
-    seq.add_child(
-        BtNode_Announce(
-            name="announce help for placing the plate",
-            bb_source=None,
-            message="Dear referee, please help me to place the plate in the dishwasher",
-        )
-    )
-    seq.add_child(
-        BtNode_Announce(
-            name="announce thank you",
-            bb_source=None,
-            message="thank you",
-        )
-    )
+    # seq.add_child(
+    #     BtNode_Announce(
+    #         name="announce help for placing the plate",
+    #         bb_source=None,
+    #         message="Dear referee, please help me to place the plate in the dish washer",
+    #     )
+    # )
+    # seq.add_child(
+    #     BtNode_Announce(
+    #         name="announce thank you",
+    #         bb_source=None,
+    #         message="thank you",
+    #     )
+    # )
 
     return seq  
 
 def phasePushDishwasher():
-    seq = py_trees.composites.Sequence("phase: pushing dishwasher door", memory=True)
+    seq = py_trees.composites.Sequence("phase: pushing dish washer door", memory=True)
     seq.add_child(_moveArmRetry("arm to navigating", KEY_ARM_NAVIGATING, add_octomap=False))
-    seq.add_child(_goto("facing washing machine", KEY_POSE_FACING_WASHING_MACHINE))
+    seq.add_child(_goto("facing dish washer", KEY_POSE_FACING_WASHING_MACHINE))
     seq.add_child(
         BtNode_Announce(
             name="announce pushing the rack",
@@ -1029,9 +1176,9 @@ def phasePushDishwasher():
     seq.add_child(_moveArmRetry("arm to pull", KEY_ARM_PULL, add_octomap=False))
     # 3.7 nudge forward 0.6 m
     seq.add_child(BtNode_GripperAction("close gripper", open_gripper=False))
-    seq.add_child(_navBack("nudge forward", -0.58))
+    seq.add_child(_navBack("nudge forward", -0.57))
     # 3.8 nudge back 0.6 m
-    seq.add_child(_navBack("nudge back", 0.58))
+    seq.add_child(_navBack("nudge back", 0.57))
     # 3.9 stow the arm to the navigating pose
     seq.add_child(_moveArmRetry("arm to navigating", KEY_ARM_NAVIGATING, add_octomap=False))
     # 3.10 ask the operator to close the door
@@ -1039,7 +1186,7 @@ def phasePushDishwasher():
         BtNode_Announce(
             name="announce close washer door",
             bb_source=None,
-            message="please help me fully close the door of the dishwasher",
+            message="please help me completely close the door of the dish washer",
         )
     )
     seq.add_child(
@@ -1067,7 +1214,7 @@ def missionPhases(place_policy="vlm"):
     # _RecordEventLeaf / _headTilt) are NOT used by this tree; they remain only
     # because samplings.py imports them for the pp-test-* dev entry points.
     seq = py_trees.composites.Sequence("mission phases", memory=True)
-    #seq.add_child(phaseKitchenDoor())
+    seq.add_child(phaseKitchenDoor())
     seq.add_child(phaseTableScan())
     seq.add_child(phasePullDishwasher())
     seq.add_child(phaseGrasp())
@@ -1098,5 +1245,4 @@ def pickAndPlaceRulebook(place_policy="vlm"):
         missionPhases(place_policy)
     )
     root.add_child(mission_par)
-    root.add_child(phaseSummary())
     return root

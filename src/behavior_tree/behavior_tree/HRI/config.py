@@ -124,7 +124,8 @@ constants = _load_constants()
 
 POSE_DOOR = _pose_reader(constants["pose_door"])
 POSE_SOFA = _pose_reader(constants["pose_sofa"])
-POSE_SOFA_REVERSED = _flip_pose_180(POSE_SOFA)
+# POSE_SOFA_REVERSED = _flip_pose_180(POSE_SOFA)
+POSE_SOFA_REVERSED = _pose_reader(constants["pose_sofa_reversed"])
 ARM_POS_NAVIGATING = _arm_pose_reader(constants["arm_pos_navigating"])
 ARM_POS_ORBBEC_LOOK = _arm_pose_reader(constants["arm_pos_orbbec_look"])
 ARM_POS_HANDOVER = _arm_pose_reader(

@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.2.21] - 2026-07-04
+
+### 🐛 Restaurant: bar-return projection guard hung the whole tree at setup()
+
+- `restaurant-2026` crashed on launch: `RuntimeError: tree setup interrupted
+  or timed out [Project kitchen bar anchor]`. Root cause: `BtNode_ProjectPose`
+  (added 2026-06-11 for the bar-anchor `find_approach_pose` projection guard)
+  is a `ServiceHandler`, and `ServiceHandler.setup()`
+  (`TemplateNodes/BaseBehaviors.py`) loops `wait_for_service` with no internal
+  bound — it relies entirely on py_trees' outer `tree.setup(timeout=15)` alarm
+  to ever break out. The operator's master launch script
+  (`tk25_basic/src/scripts/master_restaurant1.sh`) only starts
+  `approach_planner`'s `stable_approach_planner.launch.py`
+  (`stable_go_to_approach`, serves the `go_to_approach_stable` action only) —
+  it never launches `planner_node`, the sole provider of the
+  `find_approach_pose` service. So the service never came up and the whole
+  tree died at startup, instead of degrading gracefully as the node's own
+  docstring promised (that fallback logic lives in `update()`, which setup()
+  never reaches).
+- Fix: removed `BtNode_ProjectPose` and the projection-guarded
+  `Selector(Sequence(ProjectPose, Goto), Goto)` wrapper from
+  `Restaurant/restaurants.py::_barReturnSubtree()`. Both kitchen-bar returns
+  (Phase-2 barman trip, Phase-3 per-item pickup verification) go straight to
+  the raw `BtNode_GotoAction(key=KEY_KITCHEN_BAR_POSE)` again, same as before
+  2026-06-11 — no longer depends on `find_approach_pose` / `planner_node`.
+- Deleted `BtNode_ProjectPose` from `TemplateNodes/Navigation.py` (dead code,
+  no other callers) and its `test/test_bar_return_projection.py` unit test;
+  cleaned up the now-stale `BtNode_ProjectPose` stubs/mocks in
+  `test_restaurant_state_machine.py`, `test_restaurant_audio_announcements.py`,
+  and the `mock_config.json` / `f4_mock_config.json` / `vision_live_bench.json`
+  / `full_mock.json` node tables.
+
 ## [2.2.20] - 2026-07-03
 
 ### 🐛 BtNode_CheckIfEmpty: crash on first tick (copy-pasted debug line)

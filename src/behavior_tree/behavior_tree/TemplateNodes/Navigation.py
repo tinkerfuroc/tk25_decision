@@ -48,8 +48,6 @@
 # ... )
 #
 
-# from behavior_tree.messages import FindApproachPose
-import math
 import time
 from typing import Any
 
@@ -68,7 +66,6 @@ from tf2_ros.transform_listener import TransformListener
 from behavior_tree.config import is_node_mocked
 from behavior_tree.messages import (
     ComputeGrasp,
-    FindApproachPose,
     GoToApproach,
     NavigateToPose,
     OrientationAngle,
@@ -389,190 +386,6 @@ class BtNode_GotoAction(ActionHandler):
 #             out.header.frame_id = "map"
 #         out.pose.orientation.w = 1.0
 #         return out
-
-
-class BtNode_ProjectPose(ServiceHandler):
-    """Project an anchor pose to the nearest footprint-free pose (P3).
-
-    Reads a ``PoseStamped`` (or ``PointStamped``) anchor from ``bb_in_key`` and
-    calls the ``find_approach_pose`` service
-    (``tinker_nav_msgs/srv/FindApproachPose``) with
-    ``projection_mode=ANCHOR_NEAREST_FREE`` (3): the anchor *position* becomes
-    ``target.point`` and the anchor *yaw* becomes ``preferred_yaw_rad``. The
-    server returns the anchor unchanged when it is already costmap-free, or the
-    nearest free cell (spiralling out) preserving the yaw when it is blocked.
-    The returned ``PoseStamped`` is written to ``bb_out_key`` for a downstream
-    ``BtNode_GotoAction`` to drive to.
-
-    On any failure (service unavailable, non-OK status, empty/garbage anchor),
-    this node returns ``FAILURE`` so the enclosing ``Selector`` falls back to
-    driving the raw anchor directly — i.e. today's behavior.
-
-    Mock mode: pass-through. Copies the ``bb_in_key`` pose straight to
-    ``bb_out_key`` (synthesizing a ``map``-frame identity pose if the in-key is
-    empty) and succeeds, so mock restaurant trees behave exactly as before the
-    projection guard was added — no service is contacted.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        bb_in_key: str,
-        bb_out_key: str,
-        projection_mode: int = 3,
-        desired_distance: float = 0.0,
-        check_reachability: bool = False,
-        timeout_sec: float = 0.0,
-        service_name: str = "find_approach_pose",
-    ):
-        super().__init__(name, service_name, FindApproachPose)
-        self.bb_in_key = bb_in_key
-        self.bb_out_key = bb_out_key
-        self.projection_mode = int(projection_mode)
-        self.desired_distance = float(desired_distance)
-        self.check_reachability = bool(check_reachability)
-        self.timeout_sec = float(timeout_sec)
-
-    def setup(self, **kwargs):
-        ServiceHandler.setup(self, **kwargs)
-        self.bb_read_client = self.attach_blackboard_client(name="ProjectPoseRead")
-        self.bb_write_client = self.attach_blackboard_client(name="ProjectPoseWrite")
-        self.bb_read_client.register_key(
-            "source",
-            access=py_trees.common.Access.READ,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name(
-                "/", self.bb_in_key
-            ),
-        )
-        self.bb_write_client.register_key(
-            "dest",
-            access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name(
-                "/", self.bb_out_key
-            ),
-        )
-        self.logger.debug(
-            f"Setup BtNode_ProjectPose '{self.bb_in_key}' -> '{self.bb_out_key}'"
-        )
-
-    def initialise(self) -> None:
-        super().initialise()
-
-        if self.mock_mode:
-            # Pass-through: copy in-key straight to out-key so existing mock
-            # restaurant trees keep their raw-anchor behavior. No service call.
-            try:
-                source = self.bb_read_client.source
-            except Exception:
-                source = None
-            self.bb_write_client.dest = self._coerce_to_pose_stamped(source)
-            self.feedback_message = "MOCK: pass-through anchor pose"
-            print(
-                f"📍 MOCK PROJECT POSE: copied '{self.bb_in_key}' -> "
-                f"'{self.bb_out_key}'"
-            )
-            return
-
-        try:
-            source = self.bb_read_client.source
-        except Exception as e:
-            self.feedback_message = (
-                f"Failed to read anchor from '{self.bb_in_key}': {e}"
-            )
-            self.response = None
-            return
-
-        target_point = self._coerce_to_point_stamped(source)
-        if target_point is None or target_point.header.frame_id == "":
-            self.feedback_message = (
-                f"Unusable anchor in '{self.bb_in_key}': "
-                f"{type(source).__name__}"
-            )
-            self.response = None
-            return
-
-        request = FindApproachPose.Request()
-        request.target = target_point
-        request.projection_mode = self.projection_mode
-        request.desired_distance = self.desired_distance
-        # ANCHOR_NEAREST_FREE uses preferred_yaw_rad as the anchor yaw.
-        request.preferred_yaw_rad = self._extract_yaw(source)
-        request.facing_yaw_offset_rad = 0.0
-        request.check_reachability = self.check_reachability
-        request.timeout_sec = self.timeout_sec
-        # robot_pose_override left empty -> server uses TF.
-        self.response = self.call_service_async(request)
-        self.feedback_message = (
-            f"Projecting anchor ({target_point.point.x:.2f}, "
-            f"{target_point.point.y:.2f}) mode={self.projection_mode}"
-        )
-
-    def update(self):
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
-
-        if self.response is None:
-            return py_trees.common.Status.FAILURE
-        if not self.response.done():
-            self.feedback_message = "Projecting anchor pose..."
-            return py_trees.common.Status.RUNNING
-
-        result = self.response.result()
-        if result is None:
-            self.feedback_message = "find_approach_pose returned None"
-            return py_trees.common.Status.FAILURE
-        if int(getattr(result, "status", -1)) == 0:
-            self.bb_write_client.dest = result.pose
-            self.feedback_message = (
-                f"Projected anchor -> ({result.pose.pose.position.x:.2f}, "
-                f"{result.pose.pose.position.y:.2f}) -> '{self.bb_out_key}'"
-            )
-            return py_trees.common.Status.SUCCESS
-        self.feedback_message = (
-            f"projection failed: status={getattr(result, 'status', '?')} "
-            f"{getattr(result, 'errormsg', '')}"
-        )
-        return py_trees.common.Status.FAILURE
-
-    @staticmethod
-    def _coerce_to_point_stamped(source):
-        """Accept PointStamped or PoseStamped; return PointStamped or None."""
-        if isinstance(source, PointStamped):
-            return source
-        if isinstance(source, PoseStamped):
-            ps = PointStamped()
-            ps.header = source.header
-            ps.point.x = float(source.pose.position.x)
-            ps.point.y = float(source.pose.position.y)
-            ps.point.z = float(source.pose.position.z)
-            return ps
-        return None
-
-    @staticmethod
-    def _coerce_to_pose_stamped(source):
-        """Pass-through coercion to PoseStamped (mock path)."""
-        if isinstance(source, PoseStamped):
-            return source
-        out = PoseStamped()
-        if isinstance(source, PointStamped):
-            out.header = source.header
-            out.pose.position.x = float(source.point.x)
-            out.pose.position.y = float(source.point.y)
-            out.pose.position.z = float(source.point.z)
-        else:
-            out.header.frame_id = "map"
-        out.pose.orientation.w = 1.0
-        return out
-
-    @staticmethod
-    def _extract_yaw(source) -> float:
-        """Yaw (rad) from a PoseStamped quaternion; NaN if not a pose."""
-        if isinstance(source, PoseStamped):
-            q = source.pose.orientation
-            siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
-            cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-            return float(math.atan2(siny_cosp, cosy_cosp))
-        return float("nan")
 
 
 class BtNode_Approach(ActionHandler):

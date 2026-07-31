@@ -9,7 +9,7 @@ This module keeps focus on phase composition and node wiring.
 Constants, precomputed poses, and key declarations live in `HRI/config.py`.
 """
 
-from openai import audio
+#from openai import audio
 import py_trees
 
 USE_NAV_ORIENTATION_ANGLE_SERVICE = False
@@ -757,7 +757,7 @@ def createEscortAndSeat(guest_idx: int):
         BtNode_Announce(
             name=f"Arrived at sofa guest {guest_idx}",
             bb_source=None,
-            message="I have arrived at the sofa. Scanning seated personnel. Please cross behind me and stand to my right.",
+            message="I have arrived at the sofa. Please stand to my right.",
         )
     )
 
@@ -792,20 +792,20 @@ def createEscortAndSeat(guest_idx: int):
             message="Trying to determine an empty seat for you. Thank you for your patience.",
         )
     )
-    audio_branch.add_child(
-        BtNode_Announce(
-            name="announce still waiting",
-            bb_source=None,
-            message="Still trying to determine"
-        )
-    )
-    audio_branch.add_child(
-        BtNode_Announce(
-            name="announce still waiting",
-            bb_source=None,
-            message="Patience please"
-        )
-    )
+    # audio_branch.add_child(
+    #     BtNode_Announce(
+    #         name="announce still waiting",
+    #         bb_source=None,
+    #         message="Still trying to determine"
+    #     )
+    # )
+    # audio_branch.add_child(
+    #     BtNode_Announce(
+    #         name="announce still waiting",
+    #         bb_source=None,
+    #         message="Patience please"
+    #     )
+    # )
     gaze_with_audio = py_trees.composites.Parallel(
         name="parallel gaze with audio",
         policy=py_trees.common.ParallelPolicy.SuccessOnSelected([audio_branch]),
