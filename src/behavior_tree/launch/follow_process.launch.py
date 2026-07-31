@@ -16,22 +16,12 @@
 # Follow-person process launch
 # ============================
 #
-# Starts the dummy nav stub and the follow-person behaviour tree runner.
+# Starts the canonical follow-person behaviour tree runner.
 #
-# PREREQUISITES (real-tracker-only; NOT started here):
-#   - The real TrackPerson action server must be running, e.g.:
-#         ros2 run vision_track person_track_server
-#   - The real TextToSpeech service ("announce") must be running (audio stack).
-#
-# DEPRECATED dummy-nav (2026-06-10): the ``/follow_target`` topic the dummy nav
-# node subscribes to has NO publisher since the FollowPerson rewire —
-# ``BtNode_PublishFollowGoal`` (its only publisher) was removed. The follow
-# pipeline now drives navigation through the ``Follow`` action on
-# ``follow_server`` (tk26_navigation ``following`` package), consuming the
-# tracker's ``/target_points`` topic directly. The dummy nav node below is
-# retained for standalone experiments only and is NOT part of the follow
-# pipeline; with the live tree it logs nothing because ``/follow_target`` has no
-# publisher. Run ``follow_server`` separately to actually move the base.
+# PREREQUISITES (not started here):
+#   - ``/track_person`` (tinker_vision_msgs_26/action/TrackPerson)
+#   - ``/follow_server`` (tinker_nav_msgs/action/Follow)
+#   - ``/announce`` (tinker_audio_msgs/srv/TextToSpeech)
 #
 
 import launch
@@ -39,14 +29,7 @@ import launch_ros.actions
 
 
 def generate_launch_description():
-    """Launch the dummy nav node and the follow-person BT runner."""
-    dummy_nav = launch_ros.actions.Node(
-        package="behavior_tree",
-        executable="dummy-nav",
-        name="dummy_nav_node",
-        output="screen",
-    )
-
+    """Launch the canonical follow-person behavior-tree runner."""
     follow_person = launch_ros.actions.Node(
         package="behavior_tree",
         executable="follow-person",
@@ -54,4 +37,4 @@ def generate_launch_description():
         output="screen",
     )
 
-    return launch.LaunchDescription([dummy_nav, follow_person])
+    return launch.LaunchDescription([follow_person])

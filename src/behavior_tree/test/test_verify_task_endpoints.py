@@ -44,3 +44,22 @@ def test_converted_endpoints_are_actions_not_services():
 
     assert services.isdisjoint(CONVERTED)
     assert actions.items() >= CONVERTED.items()
+
+
+def test_hri_verifies_canonical_follow_actions():
+    actions = dict(TASK_SPECS["hri"]["actions"])
+
+    assert actions["/track_person"] == (
+        "tinker_vision_msgs_26/action/TrackPerson"
+    )
+    assert actions["/follow_server"] == "tinker_nav_msgs/action/Follow"
+
+
+def test_restaurant_verifies_order_extraction_action():
+    services = dict(TASK_SPECS["restaurant"]["services"])
+    actions = dict(TASK_SPECS["restaurant"]["actions"])
+
+    assert "/phrase_extraction_service" not in services
+    assert actions["/order_extraction_action"] == (
+        "tinker_audio_msgs/action/OrderExtraction"
+    )
