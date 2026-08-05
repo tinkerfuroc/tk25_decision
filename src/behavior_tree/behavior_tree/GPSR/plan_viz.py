@@ -24,6 +24,11 @@ from typing import Any, Dict, List
 import py_trees
 import py_trees.display
 
+try:  # Keep the documented bare-module development renderer import working.
+    from .tree_serialization import serialize_tree
+except ImportError:  # pragma: no cover - exercised by the standalone renderer
+    from tree_serialization import serialize_tree
+
 _SAFE_LABEL_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -74,6 +79,10 @@ def _short(value: Any, max_len: int = 32) -> str:
 def annotate_subtree(subtree: py_trees.behaviour.Behaviour, action: str,
                      params: Dict[str, Any]) -> None:
     """Inline the plan's actual param values into the subtree's node labels."""
+    action_context = {"action": action, "params": dict(params or {})}
+    # Mark only the action subtree's root as a boundary. Descendants inherit
+    # the context in the serializer but are explicitly not new action scopes.
+    subtree._gpsr_action_context = action_context
     if not params:
         return
     # NOTE: no ':' in node names — Graphviz parses "name: x" as node "name"
@@ -95,7 +104,7 @@ def build_planned_tree(plan: List[Dict[str, Any]], action_factories: Dict[str, A
     replaced by a visible ``Failure`` placeholder so the drawing still renders.
     """
     root = py_trees.composites.Sequence(label, memory=True)
-    for step in plan:
+    for step_index, step in enumerate(plan):
         if not isinstance(step, dict):
             continue
         action = step.get("action")
@@ -111,8 +120,20 @@ def build_planned_tree(plan: List[Dict[str, Any]], action_factories: Dict[str, A
             ))
             continue
         annotate_subtree(subtree, action, params)
+        subtree._gpsr_action_context["step_index"] = step_index
         root.add_child(subtree)
     return root
+
+
+def planned_tree_document(plan: List[Dict[str, Any]], action_factories: Dict[str, Any], label: str) -> Dict[str, Any]:
+    """Return a JSON-safe planned-tree topology for telemetry/debug replay.
+
+    The live GPSR dispatcher is intentionally a separate tree.  This document
+    describes the exact plan-shaped structure that operators see in the
+    generated artifact and gives each node a stable structural path ID.
+    """
+    root = build_planned_tree(plan, action_factories, label)
+    return serialize_tree(root, kind="planned", label=label)
 
 
 def render_plan_tree(

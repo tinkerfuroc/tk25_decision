@@ -21,10 +21,12 @@ Blackboard contract:
 
 import json
 import math
+import os
 import random
 import re
 import textwrap
 import threading
+import time
 import uuid
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
@@ -55,7 +57,42 @@ from .small_trees import (
     SEARCH_POSE_KEYS,
     create_goto,
 )
+from .telemetry import get_default_telemetry
 
+
+def _openai_client():
+    if openai is None:
+        raise RuntimeError(
+            "GPSR planning requires the optional 'openai' Python package"
+        )
+    if not OPENAI_API_KEY:
+        raise RuntimeError(
+            "Set OPENROUTER_API_KEY (or OPENAI_API_KEY) before starting GPSR"
+        )
+    return openai.OpenAI(
+        api_key=OPENAI_API_KEY,
+        base_url="https://openrouter.ai/api/v1",
+    )
+
+
+def _offline_planner_enabled() -> bool:
+    """Resolve planner mocking independently from execution mocking.
+
+    Full execution mock remains offline by default for CI compatibility.
+    Operators can set ``GPSR_OFFLINE_PLANNER=0`` to exercise the real
+    orchestrator API while every ROS/Tinker boundary stays mocked.
+    """
+    override = os.environ.get("GPSR_OFFLINE_PLANNER")
+    if override is None or not override.strip():
+        return is_full_mock_mode()
+    value = override.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        "GPSR_OFFLINE_PLANNER must be one of 1/0, true/false, yes/no, or on/off"
+    )
 
 # ---------------------------------------------------------------------------
 # Knowledge available to the LLM (poses + objects loaded once at import).
@@ -591,13 +628,10 @@ class BtNode_PlanActions(Behaviour):
         max_attempts: int = 4,
     ):
         super().__init__(name)
-        self._offline_mock = is_full_mock_mode()
+        self._offline_mock = _offline_planner_enabled()
         self._client_oai = None
         if not self._offline_mock:
-            self._client_oai = openai.OpenAI(
-                api_key=OPENAI_API_KEY,
-                base_url="https://openrouter.ai/api/v1",
-            )
+            self._client_oai = _openai_client()
         self._bb = None
         self._thread: Optional[threading.Thread] = None
         self._plan_result: Optional[List[Dict[str, Any]]] = None
@@ -605,6 +639,11 @@ class BtNode_PlanActions(Behaviour):
         self._attempts_used: int = 0
         self._rephrase_on_failure = rephrase_on_failure
         self._max_attempts = max(1, int(max_attempts))
+        self._telemetry = get_default_telemetry()
+        self._task_id: str | None = None
+        self._last_raw_response: str = ""
+        self._reasoning: str = ""
+        self._attempt_ids: dict[int, str] = {}
 
     def setup(self, **kwargs):
         self._bb = self.attach_blackboard_client(name=self.name)
@@ -614,9 +653,41 @@ class BtNode_PlanActions(Behaviour):
         self._bb.register_key(bb_keys.STATE_LOG, access=Access.READ)
         self._bb.register_key(bb_keys.LAST_FAILURE, access=Access.WRITE)
         self._bb.register_key(bb_keys.CORRECTION_COUNT, access=Access.WRITE)
+        self._bb.register_key(bb_keys.RUN_ID, access=Access.READ)
+        self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
+        self._bb.register_key(bb_keys.PLAN_REVISION, access=Access.WRITE)
 
-    def _call_llm(self, user_prompt: str, temperature: float) -> Tuple[Optional[dict], Optional[str]]:
+    def _emit(self, event_type: str, payload: dict[str, Any], *, phase: str = "planning") -> None:
+        telemetry = self._telemetry or get_default_telemetry()
+        if telemetry is None:
+            return
+        try:
+            self._task_id = self._task_id or self._bb.get(bb_keys.TASK_ID)
+        except Exception:
+            pass
+        telemetry.emit(event_type, payload, task_id=self._task_id, phase=phase)
+
+    def _call_llm(
+        self, user_prompt: str, temperature: float, *, attempt: int = 0,
+        nonce: str | None = None, command: str = "",
+    ) -> Tuple[Optional[dict], Optional[str]]:
         """One LLM round-trip → (parsed JSON dict, error string). Exactly one is set."""
+        started_ns = time.monotonic_ns()
+        attempt_id = f"{self._task_id or 'task'}/attempt-{attempt}-{uuid.uuid4().hex[:10]}"
+        self._attempt_ids[attempt] = attempt_id
+        self._emit("planner.request", {
+            "attempt_id": attempt_id,
+            "attempt": attempt,
+            "model": OPENAI_MODEL,
+            "temperature": temperature,
+            "max_tokens": max(OPENAI_MAX_TOKENS, 8192),
+            "nonce": nonce,
+            "command": command,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+        })
         try:
             # A fresh random seed every call makes the provider treat this as a
             # brand-new request and sample anew — it defeats any response
@@ -645,22 +716,49 @@ class BtNode_PlanActions(Behaviour):
                 kwargs.pop("seed", None)
                 resp = self._client_oai.chat.completions.create(**kwargs)
             msg = resp.choices[0].message
-            raw = (getattr(msg, "content", None) or "").strip()
+            content = (getattr(msg, "content", None) or "").strip()
+            reasoning = (getattr(msg, "reasoning", None) or "").strip()
+            raw = content
             if not raw:
-                raw = (getattr(msg, "reasoning", None) or "").strip()
+                raw = reasoning
+            self._last_raw_response = raw
+            self._reasoning = reasoning
+            usage = getattr(resp, "usage", None)
+            usage_dict = {}
+            if usage is not None:
+                usage_dict = {
+                    key: getattr(usage, key) for key in
+                    ("prompt_tokens", "completion_tokens", "total_tokens")
+                    if getattr(usage, key, None) is not None
+                }
+            self._emit("planner.response", {
+                "attempt": attempt, "attempt_id": attempt_id, "model": OPENAI_MODEL,
+                "latency_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 3),
+                "raw_content": content, "reasoning": reasoning,
+                "finish_reason": getattr(resp.choices[0], "finish_reason", None),
+                "provider_request_id": getattr(resp, "id", None),
+                "usage": usage_dict,
+            })
             parsed = _extract_json_object(raw)
             if parsed is None:
-                return None, ("your reply was not parseable JSON "
+                error = ("your reply was not parseable JSON "
                               f"(content was {'empty' if not raw else 'non-JSON'}). "
                               "Reply with ONLY the JSON object.")
+                self._emit("planner.error", {"attempt": attempt, "attempt_id": attempt_id, "latency_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 3), "error": error})
+                return None, error
             return parsed, None
         except Exception as exc:  # noqa: BLE001 — surface anything for retry
-            return None, f"LLM call error: {exc!r}"
+            error = f"LLM call error: {exc!r}"
+            self._emit("planner.error", {"attempt": attempt, "attempt_id": attempt_id, "latency_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 3), "error": error})
+            return None, error
 
     def initialise(self):
         self._plan_result = None
         self._fell_back = False
         self._attempts_used = 0
+        self._last_raw_response = ""
+        self._reasoning = ""
+        self._attempt_ids = {}
         try:
             command = self._bb.get(bb_keys.COMMAND)
         except KeyError:
@@ -673,6 +771,11 @@ class BtNode_PlanActions(Behaviour):
             seed_failure = self._bb.get(bb_keys.LAST_FAILURE)
         except KeyError:
             seed_failure = None
+        try:
+            self._task_id = self._bb.get(bb_keys.TASK_ID)
+        except KeyError:
+            self._task_id = None
+        self._emit("task.command_received", {"command": command, "replan": self._rephrase_on_failure}, phase="intake")
         if not self._rephrase_on_failure:
             # Initial plan for a fresh command: plan from the command ALONE.
             # Never carry session history (a previous command's completed/failed
@@ -709,7 +812,10 @@ class BtNode_PlanActions(Behaviour):
                 prompt = _build_planner_user_prompt(
                     command, state_log, last_reason, nonce=nonce,
                 )
-                parsed, err = self._call_llm(prompt, temperature)
+                parsed, err = self._call_llm(
+                    prompt, temperature, attempt=attempt + 1, nonce=nonce,
+                    command=command or "",
+                )
                 if err is not None:
                     last_reason = err
                     print(f"[planner] attempt {attempt+1}/{max_attempts} -> {err}")
@@ -729,6 +835,12 @@ class BtNode_PlanActions(Behaviour):
                         "doable steps and finish with announce(text=...) explaining "
                         "what you could not do."
                     )
+                    self._emit("plan.validated", {
+                        "attempt": attempt + 1, "attempt_id": self._attempt_ids.get(attempt + 1), "accepted": False,
+                        "raw_plan": parsed.get("plan") if isinstance(parsed, dict) else None,
+                        "cleaned_plan": cleaned, "dropped": dropped,
+                        "reason": last_reason,
+                    })
                     continue
                 ok, reason = validate_plan(
                     cleaned, command or "", known_actions,
@@ -737,10 +849,20 @@ class BtNode_PlanActions(Behaviour):
                 if not ok:
                     last_reason = reason
                     print(f"[planner] attempt {attempt+1}/{max_attempts} REJECTED: {reason}")
+                    self._emit("plan.validated", {
+                        "attempt": attempt + 1, "attempt_id": self._attempt_ids.get(attempt + 1), "accepted": False,
+                        "raw_plan": parsed.get("plan"), "cleaned_plan": cleaned,
+                        "dropped": dropped, "reason": reason,
+                    })
                     continue
                 # Accepted.
                 self._attempts_used = attempt + 1
                 self._plan_result = cleaned
+                self._emit("plan.validated", {
+                    "attempt": attempt + 1, "attempt_id": self._attempt_ids.get(attempt + 1), "accepted": True,
+                    "raw_plan": parsed.get("plan"), "cleaned_plan": cleaned,
+                    "dropped": dropped, "reasoning": self._reasoning,
+                })
                 print(f"[planner] accepted on attempt {attempt+1}: "
                       f"{[s['action'] for s in cleaned]}")
                 return
@@ -762,6 +884,12 @@ class BtNode_PlanActions(Behaviour):
         plan = self._plan_result
         self._bb.set(bb_keys.PLAN, plan, overwrite=True)
         self._bb.set(bb_keys.PLAN_INDEX, 0, overwrite=True)
+        try:
+            previous_revision = int(self._bb.get(bb_keys.PLAN_REVISION) or 0)
+        except (KeyError, TypeError, ValueError):
+            previous_revision = 0
+        revision = previous_revision + 1
+        self._bb.set(bb_keys.PLAN_REVISION, revision, overwrite=True)
         # Clear the stale failure so it isn't fed into the next planning call.
         self._bb.set(bb_keys.LAST_FAILURE, "", overwrite=True)
         try:
@@ -777,6 +905,17 @@ class BtNode_PlanActions(Behaviour):
             f"Planned {len(plan)} step(s) in {self._attempts_used} attempt(s){tag}: "
             f"{[s['action'] for s in plan]}"
         )
+        if previous_revision > 0:
+            self._emit("plan.superseded", {
+                "old_revision": previous_revision,
+                "new_revision": revision,
+                "reason": "self_correction" if self._rephrase_on_failure else "replanned",
+            })
+        self._emit("plan.committed", {
+            "plan": plan, "plan_revision": revision,
+            "attempts": self._attempts_used, "fallback": self._fell_back,
+            "offline_mock": self._offline_mock,
+        })
         return Status.SUCCESS
 
     def terminate(self, new_status):
@@ -997,6 +1136,9 @@ class BtNode_PopNextAction(Behaviour):
 
     def setup(self, **kwargs):
         self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
+        self._bb.register_key(bb_keys.PLAN_REVISION, access=Access.READ)
+        self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.READ)
         self._bb.register_key(bb_keys.PLAN, access=Access.READ)
         self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
         self._bb.register_key(bb_keys.CURRENT_ACTION, access=Access.WRITE)
@@ -1045,6 +1187,33 @@ class BtNode_PopNextAction(Behaviour):
         materialise_params(self._bb, action, params)
         self._bb.set(bb_keys.PLAN_INDEX, index + 1, overwrite=True)
         self.feedback_message = f"step {index+1}/{len(plan)}: {action}({params})"
+        telemetry = get_default_telemetry()
+        if telemetry is not None:
+            try:
+                plan_revision = self._bb.get(bb_keys.PLAN_REVISION) or 1
+                step_id = f"plan-r{plan_revision}/step-{index:04d}"
+                if index == 0:
+                    telemetry.emit(
+                        "task.execution_started",
+                        {"plan_revision": plan_revision, "plan_length": len(plan)},
+                        task_id=self._bb.get(bb_keys.TASK_ID),
+                        phase="execution",
+                    )
+                telemetry.emit(
+                    "step.started",
+                    {
+                        "step_index": index,
+                        "step_id": step_id,
+                        "plan_revision": plan_revision,
+                        "action": action,
+                        "params": params,
+                        "plan_length": len(plan),
+                    },
+                    task_id=self._bb.get(bb_keys.TASK_ID),
+                    phase="execution",
+                )
+            except Exception:
+                pass
         return Status.SUCCESS
 
 
@@ -1152,6 +1321,9 @@ class BtNode_LogStepResult(Behaviour):
         self._bb.register_key(bb_keys.CURRENT_PARAMS, access=Access.READ)
         self._bb.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
         self._bb.register_key(bb_keys.LAST_FAILURE, access=Access.WRITE)
+        self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
+        self._bb.register_key(bb_keys.PLAN_REVISION, access=Access.READ)
+        self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.READ)
 
     def update(self):
         try:
@@ -1174,6 +1346,27 @@ class BtNode_LogStepResult(Behaviour):
                 f"{action}({params}) failed",
                 overwrite=True,
             )
+        telemetry = get_default_telemetry()
+        if telemetry is not None:
+            try:
+                plan_revision = self._bb.get(bb_keys.PLAN_REVISION) or 1
+                plan_index = int(self._bb.get(bb_keys.PLAN_INDEX) or 1) - 1
+                telemetry.emit(
+                    "step.finished",
+                    {
+                        "step_index": plan_index,
+                        "step_id": f"plan-r{plan_revision}/step-{max(0, plan_index):04d}",
+                        "plan_revision": plan_revision,
+                        "action": action,
+                        "params": params,
+                        "outcome": verdict.lower(),
+                        "feedback": getattr(self, "feedback_message", ""),
+                    },
+                    task_id=self._bb.get(bb_keys.TASK_ID),
+                    phase="execution",
+                )
+            except Exception:
+                pass
         return Status.SUCCESS
 
 
@@ -1188,6 +1381,7 @@ class BtNode_BumpCorrectionCounter(Behaviour):
     def setup(self, **kwargs):
         self._bb = self.attach_blackboard_client(name=self.name)
         self._bb.register_key(bb_keys.CORRECTION_COUNT, access=Access.WRITE)
+        self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
 
     def update(self):
         try:
@@ -1200,6 +1394,65 @@ class BtNode_BumpCorrectionCounter(Behaviour):
             self.feedback_message = f"correction limit reached ({count} > {self._max})"
             return Status.FAILURE
         self.feedback_message = f"correction #{count}"
+        telemetry = get_default_telemetry()
+        if telemetry is not None:
+            try:
+                telemetry.emit(
+                    "correction.started",
+                    {"correction_number": count, "max_corrections": self._max},
+                    task_id=self._bb.get(bb_keys.TASK_ID),
+                    phase="correction",
+                )
+            except Exception:
+                pass
+        return Status.SUCCESS
+
+
+class BtNode_FinalizeTask(Behaviour):
+    """Write an explicit terminal outcome and emit it for the debugger."""
+
+    def __init__(self, name: str = "finalize GPSR task", max_corrections: int = 3):
+        super().__init__(name)
+        self._max_corrections = max_corrections
+        self._bb = None
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        for key, access in (
+            (bb_keys.TASK_ID, Access.READ),
+            (bb_keys.PLAN, Access.READ),
+            (bb_keys.PLAN_INDEX, Access.READ),
+            (bb_keys.CORRECTION_COUNT, Access.READ),
+            (bb_keys.LAST_FAILURE, Access.READ),
+            (bb_keys.TASK_OUTCOME, Access.WRITE),
+        ):
+            self._bb.register_key(key, access=access)
+
+    def update(self):
+        try:
+            plan = self._bb.get(bb_keys.PLAN) or []
+            index = int(self._bb.get(bb_keys.PLAN_INDEX) or 0)
+            corrections = int(self._bb.get(bb_keys.CORRECTION_COUNT) or 0)
+            failure = self._bb.get(bb_keys.LAST_FAILURE) or ""
+        except (KeyError, TypeError, ValueError):
+            plan, index, corrections, failure = [], 0, 0, ""
+        if corrections > self._max_corrections:
+            status, reason = "failed", "correction_limit"
+        elif index >= len(plan):
+            status, reason = "succeeded", "plan_exhausted"
+        elif failure:
+            status, reason = "failed", failure
+        else:
+            status, reason = "incomplete", "execution stopped before plan exhaustion"
+        outcome = {"status": status, "reason": reason, "plan_index": index, "plan_length": len(plan), "corrections": corrections}
+        self._bb.set(bb_keys.TASK_OUTCOME, outcome, overwrite=True)
+        self.feedback_message = f"{status}: {reason}"
+        telemetry = get_default_telemetry()
+        if telemetry is not None:
+            try:
+                telemetry.emit("task.finished", outcome, task_id=self._bb.get(bb_keys.TASK_ID), phase="terminal")
+            except Exception:
+                pass
         return Status.SUCCESS
 
 
@@ -1602,6 +1855,8 @@ class BtNode_GeneratePlanFile(Behaviour):
         self._bb = self.attach_blackboard_client(name=self.name)
         self._bb.register_key(bb_keys.COMMAND, access=Access.READ)
         self._bb.register_key(bb_keys.PLAN, access=Access.READ)
+        self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
+        self._bb.register_key(bb_keys.PLAN_REVISION, access=Access.READ)
 
     def update(self):
         from pathlib import Path
@@ -1615,9 +1870,18 @@ class BtNode_GeneratePlanFile(Behaviour):
             return Status.SUCCESS
         try:
             stamp = datetime.now().strftime("%H%M%S")
-            out = Path(self._out_dir) / f"gpsr_plan_{stamp}_{safe_slug(command)}.py"
+            revision = self._bb.get(bb_keys.PLAN_REVISION) or 1
+            task = safe_slug(str(self._bb.get(bb_keys.TASK_ID) or "task"), 20)
+            out = Path(self._out_dir) / f"gpsr_plan_{stamp}_{task}_r{revision}_{safe_slug(command)}.py"
             write_plan_module(command, plan, out)
             self.feedback_message = f"wrote plan module: {out}"
+            telemetry = get_default_telemetry()
+            if telemetry is not None:
+                telemetry.emit(
+                    "artifact.created",
+                    {"kind": "plan_module", "path": str(out), "plan_revision": self._bb.get(bb_keys.PLAN_REVISION) or 1},
+                    task_id=self._bb.get(bb_keys.TASK_ID), phase="planning",
+                )
         except Exception as exc:  # noqa: BLE001 — best-effort, never abort
             self.feedback_message = f"plan-file emit failed (ignored): {exc!r}"
         return Status.SUCCESS
@@ -1752,10 +2016,12 @@ class BtNode_RenderPlanTree(Behaviour):
         self._bb = self.attach_blackboard_client(name=self.name)
         self._bb.register_key(bb_keys.COMMAND, access=Access.READ)
         self._bb.register_key(bb_keys.PLAN, access=Access.READ)
+        self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
+        self._bb.register_key(bb_keys.PLAN_REVISION, access=Access.READ)
 
     def update(self):
         from datetime import datetime
-        from .plan_viz import render_plan_tree
+        from .plan_viz import render_plan_tree, planned_tree_document
         from .codegen import safe_slug
         try:
             command = self._bb.get(bb_keys.COMMAND) or ""
@@ -1768,11 +2034,28 @@ class BtNode_RenderPlanTree(Behaviour):
             return Status.SUCCESS
         try:
             stamp = datetime.now().strftime("%H%M%S")
-            name = f"gpsr_tree_{stamp}_{safe_slug(command)}"
+            plan_revision = self._bb.get(bb_keys.PLAN_REVISION) or 1
+            task = safe_slug(str(self._bb.get(bb_keys.TASK_ID) or "task"), 20)
+            name = f"gpsr_tree_{stamp}_{task}_r{plan_revision}_{safe_slug(command)}"
             artifacts = render_plan_tree(plan, ACTION_FACTORIES, self._out_dir, name)
+            tree_document = planned_tree_document(plan, ACTION_FACTORIES, name)
             self.feedback_message = (
                 f"rendered tree: {artifacts.get('png') or artifacts.get('dot')}"
             )
+            telemetry = get_default_telemetry()
+            if telemetry is not None:
+                telemetry.emit(
+                    "tree.generated",
+                    {
+                        "kind": "planned",
+                        "plan_revision": plan_revision,
+                        "tree_revision": f"planned-r{plan_revision}",
+                        "artifacts": artifacts,
+                        "node_count": len(tree_document.get("nodes", [])),
+                        "tree": tree_document,
+                    },
+                    task_id=self._bb.get(bb_keys.TASK_ID), phase="tree",
+                )
         except Exception as exc:  # noqa: BLE001 — best-effort, never abort
             self.feedback_message = f"tree render failed (ignored): {exc!r}"
         return Status.SUCCESS
@@ -1850,10 +2133,17 @@ def _reset_task_state(seq: py_trees.composites.Sequence) -> None:
     seq.add_child(BtNode_BlackboardSet("reset state_log", bb_keys.STATE_LOG, []))
     seq.add_child(BtNode_BlackboardSet("reset correction", bb_keys.CORRECTION_COUNT, 0))
     seq.add_child(BtNode_BlackboardSet("reset last_failure", bb_keys.LAST_FAILURE, ""))
+    seq.add_child(BtNode_BlackboardSet("reset plan revision", bb_keys.PLAN_REVISION, 0))
     seq.add_child(BtNode_BlackboardSet("reset nav location", bb_keys.LAST_NAV_LOCATION, ""))
     seq.add_child(BtNode_BlackboardSet("reset grasp-referee", bb_keys.GRASP_ASK_REFEREE, False))
     seq.add_child(BtNode_BlackboardSet("reset appliance-opened", bb_keys.APPLIANCE_OPENED, False))
     seq.add_child(BtNode_BlackboardSet("reset plan_index", bb_keys.PLAN_INDEX, 0))
+
+
+def _task_identity(slot: int) -> str:
+    """Return a run-scoped task id when telemetry is active."""
+    telemetry = get_default_telemetry()
+    return telemetry.task_id(slot + 1) if telemetry is not None else f"task-{slot + 1}"
 
 
 def create_execute_loop(
@@ -1896,11 +2186,13 @@ def create_execute_command(
     root.add_child(BtNode_PlanActions(name="plan initial"))
     if emit_plan_dir is not None:
         root.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
+        root.add_child(BtNode_RenderPlanTree(out_dir=emit_plan_dir))
     if announce_plan:
         # Speak the full plan ("Here is my plan. First... Then... Finally...")
         # right after planning so the operator hears it before execution starts.
         root.add_child(create_announce_plan())
     root.add_child(create_execute_loop(max_steps, max_corrections))
+    root.add_child(BtNode_FinalizeTask(max_corrections=max_corrections))
     return root
 
 
@@ -1951,6 +2243,9 @@ def _create_plan_and_save(slot: int, emit_plan_dir: Optional[str] = None,
     written ``COMMAND`` first."""
     from behavior_tree.TemplateNodes.Audio import BtNode_Announce
     seq = py_trees.composites.Sequence(f"plan+save task {slot + 1}", memory=True)
+    seq.add_child(BtNode_BlackboardSet(
+        f"set task identity {slot + 1}", bb_keys.TASK_ID, _task_identity(slot),
+    ))
     _reset_task_state(seq)
     # Bridge the dead air between hearing the command and speaking the plan: the
     # LLM planning call below takes a few seconds, so acknowledge first.
@@ -1961,6 +2256,7 @@ def _create_plan_and_save(slot: int, emit_plan_dir: Optional[str] = None,
     seq.add_child(BtNode_PlanActions(name=f"plan task {slot + 1}"))
     if emit_plan_dir is not None:
         seq.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
+        seq.add_child(BtNode_RenderPlanTree(out_dir=emit_plan_dir))
     if announce_plan:
         seq.add_child(BtNode_Announce(
             f"announce task {slot + 1} plan intro", bb_source=None,
@@ -1980,6 +2276,9 @@ def _create_execute_slot(slot: int, max_steps: int = 25,
     run the dispatch/self-correction loop over it."""
     from behavior_tree.TemplateNodes.Audio import BtNode_Announce
     seq = py_trees.composites.Sequence(f"execute task {slot + 1}", memory=True)
+    seq.add_child(BtNode_BlackboardSet(
+        f"set execution task identity {slot + 1}", bb_keys.TASK_ID, _task_identity(slot),
+    ))
     seq.add_child(BtNode_Announce(
         f"announce start task {slot + 1}", bb_source=None,
         message=f"Starting task {slot + 1} now.",
@@ -1991,7 +2290,11 @@ def _create_execute_slot(slot: int, max_steps: int = 25,
     seq.add_child(BtNode_BlackboardCopy(
         f"restore plan {slot}", f"{bb_keys.SAVED_PLAN_PREFIX}{slot}", bb_keys.PLAN))
     _reset_task_state(seq)
+    seq.add_child(BtNode_BlackboardSet(
+        f"restore plan revision {slot + 1}", bb_keys.PLAN_REVISION, 1,
+    ))
     seq.add_child(create_execute_loop(max_steps, max_corrections))
+    seq.add_child(BtNode_FinalizeTask(max_corrections=max_corrections))
     return seq
 
 

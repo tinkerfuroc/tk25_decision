@@ -48,13 +48,14 @@ def create_command_logger(
     for key in (
         bb_keys.COMMAND, bb_keys.PLAN, bb_keys.STATE_LOG,
         bb_keys.CORRECTION_COUNT, bb_keys.PLAN_INDEX,
+        bb_keys.TASK_ID,
     ):
         bb.register_key(key, access=Access.READ)
 
     # phase: "wait" until this command's per-command STATE_LOG reset is observed
     # (so we never dump the PREVIOUS command's residual state), then "active".
     state = {
-        "cmd": None, "fh": None, "phase": "wait", "baseline": 0,
+        "cmd": None, "task": None, "fh": None, "phase": "wait", "baseline": 0,
         "plan_repr": None, "state_len": 0, "corr": 0, "seen_fail": set(),
     }
 
@@ -75,19 +76,22 @@ def create_command_logger(
 
     def handler(tree: Any) -> None:
         cmd = _get(bb_keys.COMMAND)
+        task_id = _get(bb_keys.TASK_ID)
         slog = _get(bb_keys.STATE_LOG) or []
         plan = _get(bb_keys.PLAN)
         corr = _get(bb_keys.CORRECTION_COUNT) or 0
 
         # New command -> new file, but stay in "wait" until the orchestrator's
         # per-command reset shrinks STATE_LOG (so we log THIS command's run only).
-        if cmd and cmd != state["cmd"]:
+        identity = task_id or cmd
+        previous_identity = state["task"] or state["cmd"]
+        if cmd and identity != previous_identity:
             if state["fh"]:
                 state["fh"].write("\n")
                 state["fh"].close()
             base = len(slog)
             state.update(
-                cmd=cmd, fh=_open_for(cmd, base),
+                cmd=cmd, task=task_id, fh=_open_for(cmd, base),
                 # First-ever command (no residual state): log immediately.
                 # Otherwise wait for this command's reset to shrink STATE_LOG
                 # below the previous command's length before logging anything.
