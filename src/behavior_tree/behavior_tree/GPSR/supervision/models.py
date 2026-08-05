@@ -378,7 +378,13 @@ RECOVERY_JSON_SCHEMA: dict[str, Any] = {
             "issue_id": {"type": "string"},
             "strategy_id": {"type": "string"},
             "kind": {"enum": [item.value for item in RecoveryKind]},
-            "arguments": {"type": "object"},
+            "arguments": {
+                "type": "string",
+                "description": (
+                    "JSON-encoded object containing only the selected macro's "
+                    "documented arguments"
+                ),
+            },
             "rationale": {"type": "string"},
             "expected_evidence": {"type": "array", "items": {"type": "string"}},
             "stop_conditions": {"type": "array", "items": {"type": "string"}},
@@ -403,7 +409,12 @@ GLOBAL_PLAN_JSON_SCHEMA: dict[str, Any] = {
             "action": {"enum": [item.value for item in GlobalAction]},
             "replacement_plan": {
                 "type": "array",
-                "items": {"type": "object"},
+                "items": {
+                    "type": "string",
+                    "description": (
+                        "One JSON-encoded GPSR step with action and params keys"
+                    ),
+                },
             },
             "preserved_completed_steps": {"type": "integer", "minimum": 0},
             "relaxed_constraints": {"type": "array", "items": {"type": "string"}},
