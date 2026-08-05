@@ -35,10 +35,13 @@ session automatically. State defaults to
 `--state-dir` to place SQLite, the session token, ROS logs, and
 `ingest.sock` elsewhere.
 
-The debugger is organized around six stable investigation surfaces:
+The debugger is organized around seven stable investigation surfaces:
 
 - Overview: mission phases, projection health, filtered causal timeline, and
   event envelope/payload/ancestor/descendant inspection.
+- LLM Supervisor: post-effect BT checkpoints with front/wrist camera evidence,
+  rendered map and arm state, relevant tree/blackboard context, verifier
+  rationale, bounded local recovery, and global replan/stop decisions.
 - Planning & LLM: complete model attempts and committed large-step revisions.
 - Behavior tree: planned/executor revisions rendered as left-to-right semantic
   Cytoscape graphs, with per-tick activation evidence, node search, stable ids,
@@ -109,6 +112,30 @@ Use an SSH tunnel for a browser on another machine:
 ```bash
 ssh -L 8766:127.0.0.1:8766 robot-host
 ```
+
+### Hardware-free supervisor replay
+
+Populate a disposable state directory with the committed camera fixtures,
+rendered navigation map/arm poses, and all-clear, local-recovery,
+retry-exhaustion, and destructive-change paths:
+
+```bash
+PYTHONPATH=src/gpsr_debug_server:src/behavior_tree \
+  python3 src/gpsr_debug_server/tools/seed_supervisor_demo.py \
+  --state-dir /tmp/gpsr-supervisor-dashboard
+
+PYTHONPATH=src/gpsr_debug_server \
+  python3 -m gpsr_debug_server.main \
+  --state-dir /tmp/gpsr-supervisor-dashboard \
+  --port 8766 --no-ros --no-ingest
+```
+
+Then open
+`http://127.0.0.1:8766/?trajectory=gpsr-supervisor-hardware-free-validation&view=supervisor`.
+`--no-ingest` is intended for immutable replays; omit it when live trace
+producers need the Unix ingest socket. Checkpoint images are served only from
+the debugger-owned `artifacts/` directory and require the ephemeral browser
+session token.
 
 The server has no dependency on the operations dashboard and never executes
 arbitrary model output, Python, or shell commands. Mutations are submitted to

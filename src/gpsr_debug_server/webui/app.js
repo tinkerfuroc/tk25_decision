@@ -3,7 +3,7 @@
 
 const API = "/api/v1";
 const Model = window.GpsrUiModel;
-const VIEW_IDS = new Set(["overview", "planning", "tree", "agents", "state", "controls"]);
+const VIEW_IDS = new Set(["overview", "supervisor", "planning", "tree", "agents", "state", "controls"]);
 const $ = id => document.getElementById(id);
 const state = {
   token: "",
@@ -257,6 +257,7 @@ function renderAll() {
   renderHealth();
   renderTimeline();
   renderEventInspector();
+  renderSupervisor();
   renderPlanning();
   renderTreeControls();
   renderAgents();
@@ -530,6 +531,266 @@ function causalGroup(title, events) {
   if (!events.length) list.append(el("span", "quiet-label", "None recorded"));
   block.append(list);
   return block;
+}
+
+function renderSupervisor() {
+  const checkpoints = Model.supervisorCheckpoints(state.events);
+  const metrics = $("supervisor-metrics");
+  metrics.replaceChildren();
+  const local = checkpoints.filter(item => item.recoveries.some(event => event.type === "supervisor.recovery.proposed")).length;
+  const global = checkpoints.filter(item => item.global).length;
+  const clear = checkpoints.filter(item => item.verdict?.verdict === "all_clear").length;
+  [
+    ["Checkpoints", checkpoints.length],
+    ["All clear", clear],
+    ["Local recovery", local],
+    ["Global / stop", global],
+  ].forEach(([label, value]) => {
+    const item = el("div", "supervisor-metric");
+    item.append(el("strong", "", value), el("span", "", label));
+    metrics.append(item);
+  });
+
+  renderSupervisorTestMatrix();
+  const root = $("supervisor-checkpoints");
+  root.replaceChildren();
+  checkpoints.forEach((checkpoint, index) => root.append(renderSupervisorCheckpoint(checkpoint, index)));
+  if (!checkpoints.length) {
+    root.append(emptyBlock(
+      "No supervisor checkpoints",
+      "Enable GPSR supervision or load the hardware-free validation replay.",
+      "◎",
+    ));
+  }
+}
+
+function renderSupervisorTestMatrix() {
+  const root = $("supervisor-test-matrix");
+  root.replaceChildren();
+  const event = state.events.find(item => eventType(item) === "supervisor.test.summary");
+  const payload = eventPayload(event);
+  const tests = Array.isArray(payload.tests) ? payload.tests : [];
+  if (!tests.length) return;
+  const heading = el("div", "supervisor-test-heading");
+  heading.append(
+    el("div", "", payload.title || "Hardware-free validation"),
+    el("span", "badge success", payload.status || "passed"),
+  );
+  root.append(heading);
+  const grid = el("div", "test-role-grid");
+  tests.forEach(test => {
+    const card = el("article", "surface test-role");
+    const top = el("div", "test-role-top");
+    top.append(el("strong", "", test.role || test.name || "Test"));
+    top.append(el("span", `badge ${statusClass(test.status || "passed")}`, test.status || "passed"));
+    card.append(top);
+    card.append(el("p", "", test.coverage || test.description || ""));
+    const meta = el("div", "test-role-meta");
+    [test.model, test.effort ? `${test.effort} reasoning` : "", test.mode].filter(Boolean)
+      .forEach(value => meta.append(el("span", "", value)));
+    card.append(meta);
+    grid.append(card);
+  });
+  root.append(grid);
+}
+
+function renderSupervisorCheckpoint(checkpoint, index) {
+  const created = checkpoint.created || {};
+  const verdict = checkpoint.verdict || {};
+  const terminal = created.node || created.terminal_node || {};
+  const card = el("article", "surface supervisor-card");
+  const head = el("div", "supervisor-card-head");
+  const title = el("div");
+  title.append(el("p", "section-kicker", created.test_case || `Checkpoint ${index + 1}`));
+  title.append(el("h2", "", terminal.name || terminal.class_name || created.subtask_goal || checkpoint.checkpointId));
+  title.append(el("p", "checkpoint-id", checkpoint.checkpointId));
+  const route = supervisorRoute(checkpoint);
+  head.append(title, el("span", `decision-pill ${route.className}`, route.label));
+  card.append(head);
+
+  const flow = el("div", "supervisor-flow");
+  flow.append(
+    supervisorFlowStep("1", "BT returned", created.reported_status || terminal.reported_status || "recorded", statusClass(created.reported_status || terminal.reported_status)),
+    el("span", "supervisor-arrow", "→"),
+    supervisorFlowStep("2", "Luna verified", verdict.verdict || (checkpoint.unavailable ? "unavailable" : "pending"), supervisorDecisionClass(verdict.verdict)),
+    el("span", "supervisor-arrow", "→"),
+    supervisorFlowStep("3", "Runtime action", route.label, route.className),
+  );
+  card.append(flow);
+
+  const evidence = el("div", "supervisor-evidence-layout");
+  const artifacts = el("section", "supervisor-pane");
+  artifacts.append(el("h3", "", "Synchronized visual context"));
+  const artifactGrid = el("div", "artifact-grid");
+  const artifactList = Array.isArray(created.artifacts) ? created.artifacts : [];
+  ["front_camera", "wrist_camera", "map", "arm"].forEach(role => {
+    artifactGrid.append(renderSupervisorArtifact(artifactList.find(item => item.role === role), role));
+  });
+  artifacts.append(artifactGrid);
+
+  const context = el("section", "supervisor-pane context-pane");
+  context.append(el("h3", "", "Decision context"));
+  const contextGrid = el("div", "context-grid");
+  contextGrid.append(
+    supervisorContextItem("Subtask goal", created.subtask_goal || "Not recorded"),
+    supervisorContextItem("Current node", terminal.name || terminal.class_name || safeJson(terminal)),
+    supervisorContextItem("Next node", nodeLabel(created.next_node)),
+    supervisorContextItem("Tree", treeSummary(created.subtask_tree)),
+  );
+  context.append(contextGrid);
+  const blackboard = el("details", "supervisor-details");
+  blackboard.append(el("summary", "", `Associated blackboard · ${Object.keys(created.blackboard || {}).length} keys`));
+  blackboard.append(el("pre", "code-block", safeJson(created.blackboard || {})));
+  context.append(blackboard);
+  evidence.append(artifacts, context);
+  card.append(evidence);
+
+  card.append(renderSupervisorDecision(checkpoint));
+  return card;
+}
+
+function renderSupervisorArtifact(artifact, role) {
+  const card = el("figure", `artifact-card ${artifact?.missing ? "missing" : ""}`);
+  const source = supervisorArtifactSource(artifact);
+  if (source) {
+    const image = document.createElement("img");
+    image.src = source;
+    image.alt = `${humanType(role)} checkpoint evidence`;
+    image.loading = "lazy";
+    card.append(image);
+  } else {
+    card.append(el("div", "artifact-placeholder", artifact?.missing ? "Missing" : "Not captured"));
+  }
+  const caption = document.createElement("figcaption");
+  caption.append(el("strong", "", humanType(role)));
+  const detail = artifact?.metadata?.robot_pose
+    ? `pose ${artifact.metadata.robot_pose.join(", ")}`
+    : artifact?.metadata?.joints
+      ? `${artifact.metadata.joints.length} joints`
+      : artifact?.metadata?.camera || (artifact?.missing ? artifact?.metadata?.reason : "fixture evidence");
+  caption.append(el("span", "", detail || ""));
+  card.append(caption);
+  return card;
+}
+
+function supervisorArtifactSource(artifact) {
+  const value = artifact && (artifact.url || artifact.href);
+  if (!value) return "";
+  try {
+    const url = new URL(String(value), location.origin);
+    if (url.origin !== location.origin || !url.pathname.startsWith(`${API}/artifacts/`)) return "";
+    url.searchParams.set("token", state.token);
+    return url.toString();
+  } catch (_) {
+    return "";
+  }
+}
+
+function renderSupervisorDecision(checkpoint) {
+  const verdict = checkpoint.verdict || {};
+  const section = el("section", "supervisor-decision");
+  const top = el("div", "decision-summary");
+  const confidence = Number(verdict.confidence);
+  top.append(
+    el("div", "", verdict.rationale || checkpoint.unavailable?.error || "No verifier rationale recorded."),
+    el("span", "confidence", Number.isFinite(confidence) ? `${Math.round(confidence * 100)}% confidence` : ""),
+  );
+  section.append(top);
+  const tags = el("div", "decision-tags");
+  [
+    verdict.bt_assessment,
+    verdict.subtask_status,
+    verdict.world_change,
+    verdict.failure_category,
+    verdict.escalation,
+  ].filter(Boolean).forEach(value => tags.append(el("span", "badge muted", String(value).replaceAll("_", " "))));
+  section.append(tags);
+  if (Array.isArray(verdict.evidence) && verdict.evidence.length) {
+    const list = el("ul", "evidence-list");
+    verdict.evidence.forEach(item => list.append(el("li", "", item)));
+    section.append(list);
+  }
+
+  const interventions = checkpoint.recoveries.filter(item => item.type === "supervisor.recovery.proposed");
+  interventions.forEach(recovery => {
+    const block = el("div", "intervention-block local");
+    const finished = checkpoint.recoveries.find(item =>
+      item.type === "supervisor.recovery.finished" && item.strategy_id === recovery.strategy_id);
+    block.append(el("strong", "", `Local recovery · ${humanType(recovery.kind)}`));
+    block.append(el("span", `badge ${finished ? statusClass(finished.succeeded ? "success" : "failure") : "running"}`,
+      finished ? (finished.succeeded ? "succeeded" : "failed") : "proposed"));
+    block.append(el("p", "", recovery.rationale || `Strategy ${recovery.strategy_id || "recorded"}`));
+    if (recovery.arguments) block.append(el("pre", "mini-code", safeJson(recovery.arguments)));
+    section.append(block);
+  });
+  if (checkpoint.global) {
+    const global = checkpoint.global;
+    const block = el("div", "intervention-block global");
+    block.append(el("strong", "", `Global decision · ${humanType(global.action)}`));
+    block.append(el("span", "badge failure", "execution barrier"));
+    block.append(el("p", "", global.rationale || "Global escalation requested."));
+    if (global.operator_message) block.append(el("blockquote", "", global.operator_message));
+    if (Array.isArray(global.replacement_plan) && global.replacement_plan.length) {
+      const plan = el("ol", "replacement-plan");
+      global.replacement_plan.forEach(step => plan.append(el("li", "", step.action || step.name || safeJson(step))));
+      block.append(plan);
+    }
+    section.append(block);
+  }
+  return section;
+}
+
+function supervisorFlowStep(number, label, value, className) {
+  const step = el("div", `supervisor-flow-step ${className || ""}`);
+  step.append(el("span", "flow-number", number));
+  const copy = el("div");
+  copy.append(el("small", "", label), el("strong", "", String(value || "unknown").replaceAll("_", " ")));
+  step.append(copy);
+  return step;
+}
+
+function supervisorContextItem(label, value) {
+  const item = el("div", "context-item");
+  item.append(el("span", "", label), el("strong", "", value));
+  return item;
+}
+
+function supervisorRoute(checkpoint) {
+  if (checkpoint.unavailable) return { label: "stop / fallback", className: "failure" };
+  if (checkpoint.global) {
+    const action = checkpoint.global.action || "global replan";
+    return { label: String(action).replaceAll("_", " "), className: "failure" };
+  }
+  const finished = checkpoint.recoveries.filter(item => item.type === "supervisor.recovery.finished").at(-1);
+  if (finished) {
+    return finished.succeeded
+      ? { label: "recovered", className: "success" }
+      : { label: "recovery failed", className: "failure" };
+  }
+  if (checkpoint.recoveries.some(item => item.type === "supervisor.recovery.proposed")) {
+    return { label: "local recovery", className: "running" };
+  }
+  if (checkpoint.verdict?.verdict === "all_clear") return { label: "continue", className: "success" };
+  return { label: checkpoint.verdict?.escalation || "pending", className: "running" };
+}
+
+function supervisorDecisionClass(value) {
+  if (value === "all_clear") return "success";
+  if (value === "recoverable" || value === "uncertain") return "running";
+  if (value === "unrecoverable") return "failure";
+  return "";
+}
+
+function nodeLabel(node) {
+  if (!node || typeof node !== "object") return "End of subtask";
+  return node.name || node.class_name || node.node_id || safeJson(node);
+}
+
+function treeSummary(tree) {
+  if (!tree || typeof tree !== "object") return "Not recorded";
+  const nodes = Array.isArray(tree.nodes) ? tree.nodes.length : Object.keys(tree.nodes || {}).length;
+  const edges = Array.isArray(tree.edges) ? tree.edges.length : Object.keys(tree.edges || {}).length;
+  return `${nodes} nodes · ${edges} edges`;
 }
 
 function renderPlanning() {
@@ -1576,6 +1837,7 @@ function queueSelectedRender() {
     renderTimeline();
     renderMission();
     renderPhases();
+    renderSupervisor();
   });
 }
 

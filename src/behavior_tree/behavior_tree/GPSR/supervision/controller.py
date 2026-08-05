@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 import threading
 import time
 from typing import Any, Mapping
@@ -110,11 +110,20 @@ class MissionSupervisor:
             "supervisor.checkpoint.created",
             {
                 "checkpoint_id": request.checkpoint_id,
+                "task_id": request.task_id,
                 "subtask_id": request.subtask_id,
+                "original_instruction": request.original_instruction,
+                "subtask_goal": request.subtask_goal,
                 "node": dict(request.terminal_node),
+                "next_node": dict(request.next_node) if request.next_node else None,
+                "subtask_tree": dict(request.subtask_tree),
+                "blackboard": dict(request.blackboard),
+                "execution_history": list(request.execution_history),
+                "recovery_ledger": list(request.recovery_ledger),
                 "reported_status": reported_status.value,
                 "risk": contract.risk.value,
                 "artifact_roles": [artifact.role for artifact in snapshot.artifacts],
+                "artifacts": [asdict(artifact) for artifact in snapshot.artifacts],
             },
         )
         return request.checkpoint_id
@@ -290,7 +299,12 @@ class MissionSupervisor:
                 "checkpoint_id": expected,
                 "verdict": decision.verdict.value,
                 "bt_assessment": decision.bt_assessment.value,
+                "subtask_status": decision.subtask_status.value,
                 "world_change": decision.world_change.value,
+                "escalation": decision.escalation.value,
+                "failure_category": decision.failure_category,
+                "evidence": list(decision.evidence),
+                "rationale": decision.rationale,
                 "confidence": decision.confidence,
             },
         )
@@ -408,6 +422,10 @@ class MissionSupervisor:
                 "issue_id": proposal.issue_id,
                 "strategy_id": proposal.strategy_id,
                 "kind": proposal.kind.value,
+                "arguments": dict(proposal.arguments),
+                "rationale": proposal.rationale,
+                "expected_evidence": list(proposal.expected_evidence),
+                "stop_conditions": list(proposal.stop_conditions),
             },
         )
 
@@ -433,7 +451,11 @@ class MissionSupervisor:
             {
                 "checkpoint_id": expected,
                 "action": decision.action.value,
+                "replacement_plan": list(decision.replacement_plan),
+                "preserved_completed_steps": decision.preserved_completed_steps,
                 "relaxed_constraints": list(decision.relaxed_constraints),
+                "rationale": decision.rationale,
+                "operator_message": decision.operator_message,
             },
         )
 
