@@ -115,14 +115,15 @@ ssh -L 8766:127.0.0.1:8766 robot-host
 
 ### Hardware-free supervisor replay
 
-Populate a disposable state directory with the committed camera fixtures,
-rendered navigation map/arm poses, and all-clear, local-recovery,
-retry-exhaustion, and destructive-change paths:
+Populate a disposable state directory with the ten committed camera scenarios,
+rendered navigation map/scene-only arm poses, and the optional 57-call live
+Luna report:
 
 ```bash
 PYTHONPATH=src/gpsr_debug_server:src/behavior_tree \
   python3 src/gpsr_debug_server/tools/seed_supervisor_demo.py \
-  --state-dir /tmp/gpsr-supervisor-dashboard
+  --state-dir /tmp/gpsr-supervisor-dashboard \
+  --live-results /path/to/live-results-v7.json --replace
 
 PYTHONPATH=src/gpsr_debug_server \
   python3 -m gpsr_debug_server.main \
@@ -131,7 +132,7 @@ PYTHONPATH=src/gpsr_debug_server \
 ```
 
 Then open
-`http://127.0.0.1:8766/?trajectory=gpsr-supervisor-hardware-free-validation&view=supervisor`.
+`http://127.0.0.1:8766/?trajectory=gpsr-vlm-ten-case-validation&view=supervisor`.
 `--no-ingest` is intended for immutable replays; omit it when live trace
 producers need the Unix ingest socket. Checkpoint images are served only from
 the debugger-owned `artifacts/` directory and require the ephemeral browser

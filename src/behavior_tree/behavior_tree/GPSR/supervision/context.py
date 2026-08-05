@@ -24,6 +24,28 @@ def gpsr_arm_pose(name: str) -> tuple[float, ...]:
     return tuple(math.radians(float(value)) for value in degrees)
 
 
+def gpsr_named_pose(name: str) -> tuple[float, float, float]:
+    """Resolve one named arena pose from the GPSR runtime constants."""
+    constants_path = Path(__file__).resolve().parents[1] / "constants.json"
+    constants = json.loads(constants_path.read_text(encoding="utf-8"))
+    raw = constants.get("possible_poses", {}).get(name)
+    if not isinstance(raw, Mapping):
+        raise KeyError(f"unknown GPSR named pose {name!r}")
+    point = raw.get("point", {})
+    orientation = raw.get("orientation", {})
+    x = float(point["x"])
+    y = float(point["y"])
+    qx = float(orientation.get("x", 0.0))
+    qy = float(orientation.get("y", 0.0))
+    qz = float(orientation.get("z", 0.0))
+    qw = float(orientation.get("w", 1.0))
+    yaw = math.atan2(
+        2.0 * (qw * qz + qx * qy),
+        1.0 - 2.0 * (qy * qy + qz * qz),
+    )
+    return (x, y, yaw)
+
+
 def gpsr_arm_pose_navigating() -> tuple[float, ...]:
     return gpsr_arm_pose("arm_pos_navigating")
 
@@ -46,14 +68,23 @@ class FixtureContextProvider:
         output_dir: Path | None = None,
         *,
         clock: Callable[[], datetime] | None = None,
+        scenario_id: str | None = None,
+        require_urdf_renderer: bool = False,
     ) -> None:
         self.fixture_dir = fixture_dir or Path(__file__).with_name("fixtures")
         self.output_dir = output_dir or Path(tempfile.gettempdir()) / "gpsr-supervisor-fixtures"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self.scenario_id = scenario_id
+        self.require_urdf_renderer = require_urdf_renderer
         self._verify_manifest()
 
     def capture(self, request: CaptureRequest) -> SnapshotBundle:
+        scenario = None
+        if self.scenario_id:
+            from .scenarios import get_scenario
+
+            scenario = get_scenario(self.scenario_id)
         captured_at = self._clock().isoformat()
         safe_checkpoint = "".join(
             char if char.isalnum() or char in "-_" else "_" for char in request.checkpoint_id
@@ -65,6 +96,19 @@ class FixtureContextProvider:
             self.fixture_dir / "arena_map.yaml",
             request.robot_pose,
             map_output,
+            goal_pose=(
+                gpsr_named_pose(scenario.map_goal_name)
+                if scenario and scenario.map_goal_name
+                else None
+            ),
+            last_known_pose=(
+                gpsr_named_pose(scenario.map_last_known_name)
+                if scenario and scenario.map_last_known_name
+                else None
+            ),
+            uncertainty_radius_m=(
+                scenario.map_uncertainty_radius_m if scenario else None
+            ),
         )
         pose_name = str(
             request.blackboard.get(
@@ -76,24 +120,55 @@ class FixtureContextProvider:
             arm_output,
             pose_name=pose_name,
         )
+        if (
+            self.require_urdf_renderer
+            and arm_metadata.get("renderer") != "xarm_urdf_headless"
+        ):
+            raise RuntimeError(
+                "the GPSR validation suite requires the xArm URDF renderer"
+            )
+        front_path = self.fixture_dir / (
+            scenario.front_image if scenario else "front_camera.jpg"
+        )
+        wrist_path = self.fixture_dir / (
+            scenario.wrist_image if scenario else "wrist_camera.jpg"
+        )
+        wrist_direction = (
+            scenario.wrist_view_direction if scenario else "upward"
+        )
         artifacts = (
             ArtifactRef.from_path(
                 role="front_camera",
-                mime_type="image/jpeg",
-                path=self.fixture_dir / "front_camera.jpg",
+                mime_type=_image_mime(front_path),
+                path=front_path,
                 captured_at=captured_at,
-                metadata={"fixture": True, "camera": "orbbec"},
+                metadata={
+                    "fixture": True,
+                    "camera": "orbbec",
+                    "scenario_id": self.scenario_id,
+                    "provenance": (
+                        "generated_hardware_free"
+                        if scenario and scenario.generated
+                        else "vision_log"
+                    ),
+                },
             ),
             ArtifactRef.from_path(
                 role="wrist_camera",
-                mime_type="image/jpeg",
-                path=self.fixture_dir / "wrist_camera.jpg",
+                mime_type=_image_mime(wrist_path),
+                path=wrist_path,
                 captured_at=captured_at,
                 metadata={
                     "fixture": True,
                     "camera": "wrist",
-                    "view_direction": "upward",
-                    "provenance": "synthetic_hardware_free",
+                    "scenario_id": self.scenario_id,
+                    "view_direction": wrist_direction,
+                    "provenance": (
+                        "real_calibration_negative_control"
+                        if scenario
+                        and scenario.scenario_id == "case08-sensor-mismatch-stop"
+                        else "synthetic_hardware_free"
+                    ),
                 },
             ),
             ArtifactRef.from_path(
@@ -101,7 +176,19 @@ class FixtureContextProvider:
                 mime_type="image/png",
                 path=map_output,
                 captured_at=captured_at,
-                metadata={"fixture": True, "robot_pose": list(request.robot_pose)},
+                metadata={
+                    "fixture": True,
+                    "robot_pose": list(request.robot_pose),
+                    "goal_pose_name": (
+                        scenario.map_goal_name if scenario else None
+                    ),
+                    "last_known_pose_name": (
+                        scenario.map_last_known_name if scenario else None
+                    ),
+                    "uncertainty_radius_m": (
+                        scenario.map_uncertainty_radius_m if scenario else None
+                    ),
+                },
             ),
             ArtifactRef.from_path(
                 role="arm",
@@ -156,6 +243,10 @@ def render_map_pose(
     metadata_path: Path,
     robot_pose: tuple[float, float, float],
     output_path: Path,
+    *,
+    goal_pose: tuple[float, float, float] | None = None,
+    last_known_pose: tuple[float, float, float] | None = None,
+    uncertainty_radius_m: float | None = None,
 ) -> None:
     try:
         from PIL import Image, ImageDraw
@@ -165,12 +256,95 @@ def render_map_pose(
     metadata = _read_map_yaml(metadata_path)
     resolution = float(metadata["resolution"])
     origin_x, origin_y, _ = metadata["origin"]
-    image = Image.open(map_path).convert("RGB")
+    source = Image.open(map_path).convert("RGB")
+    display_scale = 3
+    resampling = getattr(Image, "Resampling", Image)
+    image = source.resize(
+        (source.width * display_scale, source.height * display_scale),
+        resampling.NEAREST,
+    )
     draw = ImageDraw.Draw(image)
     x, y, yaw = robot_pose
-    px = (x - origin_x) / resolution
-    py = image.height - (y - origin_y) / resolution
-    radius = max(5, int(0.22 / resolution))
+    px = (x - origin_x) / resolution * display_scale
+    py = image.height - (y - origin_y) / resolution * display_scale
+    radius = max(9, int(0.22 / resolution) * display_scale)
+    if goal_pose is not None:
+        gx, gy, _ = goal_pose
+        goal_x = (gx - origin_x) / resolution * display_scale
+        goal_y = image.height - (gy - origin_y) / resolution * display_scale
+        goal_radius = radius + 7
+        draw.ellipse(
+            (
+                goal_x - goal_radius,
+                goal_y - goal_radius,
+                goal_x + goal_radius,
+                goal_y + goal_radius,
+            ),
+            outline=(21, 171, 96),
+            width=6,
+        )
+        draw.line(
+            (
+                goal_x - goal_radius,
+                goal_y,
+                goal_x + goal_radius,
+                goal_y,
+            ),
+            fill=(21, 171, 96),
+            width=3,
+        )
+        draw.line(
+            (
+                goal_x,
+                goal_y - goal_radius,
+                goal_x,
+                goal_y + goal_radius,
+            ),
+            fill=(21, 171, 96),
+            width=3,
+        )
+        draw.text(
+            (goal_x + goal_radius + 5, goal_y - goal_radius),
+            f"goal ({gx:.2f}, {gy:.2f})",
+            fill=(7, 91, 48),
+        )
+    if last_known_pose is not None:
+        lx, ly, _ = last_known_pose
+        last_x = (lx - origin_x) / resolution * display_scale
+        last_y = image.height - (ly - origin_y) / resolution * display_scale
+        marker = radius
+        draw.line(
+            (last_x - marker, last_y - marker, last_x + marker, last_y + marker),
+            fill=(231, 126, 34),
+            width=6,
+        )
+        draw.line(
+            (last_x - marker, last_y + marker, last_x + marker, last_y - marker),
+            fill=(231, 126, 34),
+            width=6,
+        )
+        draw.text(
+            (last_x + marker + 5, last_y - marker),
+            f"last reliable ({lx:.2f}, {ly:.2f})",
+            fill=(132, 66, 9),
+        )
+    if uncertainty_radius_m is not None and uncertainty_radius_m > 0:
+        uncertainty_px = uncertainty_radius_m / resolution * display_scale
+        draw.ellipse(
+            (
+                px - uncertainty_px,
+                py - uncertainty_px,
+                px + uncertainty_px,
+                py + uncertainty_px,
+            ),
+            outline=(222, 50, 73),
+            width=7,
+        )
+        draw.text(
+            (px - uncertainty_px, py + uncertainty_px + 5),
+            f"pose uncertainty {uncertainty_radius_m:.1f} m",
+            fill=(151, 24, 42),
+        )
     draw.ellipse(
         (px - radius, py - radius, px + radius, py + radius),
         fill=(26, 115, 232),
@@ -183,6 +357,10 @@ def render_map_pose(
     draw.text((px + radius + 3, py - radius), f"robot ({x:.2f}, {y:.2f})", fill=(10, 10, 10))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
+
+
+def _image_mime(path: Path) -> str:
+    return "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
 
 
 def render_arm_pose(
@@ -336,6 +514,7 @@ __all__ = [
     "gpsr_arm_pose",
     "gpsr_arm_pose_navigating",
     "gpsr_arm_pose_orbbec_look",
+    "gpsr_named_pose",
     "next_unticked_node",
     "render_arm_pose",
     "render_map_pose",

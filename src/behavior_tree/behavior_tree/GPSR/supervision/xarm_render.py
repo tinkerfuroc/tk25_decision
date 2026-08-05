@@ -90,21 +90,11 @@ def render_xarm_urdf(
     link_transforms, joint_points = _forward_kinematics(model, configuration, np)
     robot_origin = np.linalg.inv(link_transforms["base_link"])
 
-    width, height = 1080, 720
-    panel_left = 825
+    width, height = 768, 768
     # High-contrast diagnostic palette: white xArm, blue Tinker chassis, and
     # orange gripper/camera cues on a near-black background.
     image = Image.new("RGB", (width, height), (10, 16, 25))
     draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, width, 58), fill=(4, 8, 14))
-    draw.rectangle((panel_left, 58, width, height), fill=(18, 27, 39))
-    draw.line((panel_left, 58, panel_left, height), fill=(80, 102, 124), width=2)
-    draw.text(
-        (28, 17),
-        f"Tinker base + xArm7 · {pose_name}",
-        fill=(247, 250, 252),
-    )
-    draw.text((panel_left + 22, 82), "JOINT STATE", fill=(159, 189, 218))
 
     eye = np.asarray((2.0, -2.35, 1.65), dtype=float)
     target = np.asarray((-0.12, 0.0, 0.55), dtype=float)
@@ -135,7 +125,7 @@ def render_xarm_urdf(
     all_camera = np.concatenate(projected_points, axis=0)
     min_x, max_x = float(all_camera[:, 0].min()), float(all_camera[:, 0].max())
     min_y, max_y = float(all_camera[:, 1].min()), float(all_camera[:, 1].max())
-    viewport = (38.0, 88.0, panel_left - 35.0, height - 44.0)
+    viewport = (32.0, 32.0, width - 32.0, height - 32.0)
     scale = min(
         (viewport[2] - viewport[0]) / max(max_x - min_x, 0.01),
         (viewport[3] - viewport[1]) / max(max_y - min_y, 0.01),
@@ -297,48 +287,16 @@ def render_xarm_urdf(
         draw.line((*origin_screen, *end_screen), fill=color, width=4)
         draw.text((end_screen[0] + 4, end_screen[1] - 8), label, fill=color)
 
-    for index, value in enumerate(values, start=1):
-        row_y = 124 + (index - 1) * 51
-        draw.text(
-            (panel_left + 22, row_y),
-            f"J{index}",
-            fill=(172, 194, 214),
-        )
-        draw.rounded_rectangle(
-            (panel_left + 62, row_y - 4, width - 24, row_y + 25),
-            radius=5,
-            fill=(220, 225, 230),
-        )
-        draw.text(
-            (panel_left + 76, row_y + 1),
-            f"{value:+.3f} rad",
-            fill=(28, 39, 49),
-        )
-    draw.text((panel_left + 22, 514), "GRIPPER", fill=(172, 194, 214))
-    draw.text(
-        (panel_left + 22, 543),
-        f"drive_joint  {gripper_position:.2f} rad",
-        fill=(225, 233, 240),
-    )
-    draw.line((panel_left + 22, 582, width - 24, 582), fill=(193, 201, 208))
-    draw.multiline_text(
-        (panel_left + 22, 604),
-        "Geometry\nTinker base + xArm7 + D435\n\nKinematics\nxarm7.urdf",
-        fill=(166, 184, 201),
-        spacing=6,
-    )
-    draw.text(
-        (panel_left + 22, 683),
-        "blue=base · white=arm\norange=wrist · cyan=view axis",
-        fill=(77, 224, 229),
-    )
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    image.resize((720, 480), Image.Resampling.LANCZOS).save(output_path)
+    resampling = getattr(Image, "Resampling", Image)
+    image.resize((768, 768), resampling.LANCZOS).save(output_path)
     return {
         "renderer": "xarm_urdf_headless",
         "urdf": str(model.urdf_path),
         "geometry": "Tinker base + xarm_description visual STL",
+        "layout": "scene_only",
+        "image_size": "768x768",
+        "pose_name": pose_name,
         "camera_axis": "calibrated Tinker2 wrist optical frame",
         "camera_axis_up_dot": f"{float(camera_direction[2]):.3f}",
         "camera_elevation_deg": f"{camera_elevation_deg:.1f}",
