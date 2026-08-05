@@ -94,6 +94,7 @@ def create_app(
     store: Any,
     *,
     webui_dir: str | Path,
+    artifact_dir: str | Path | None = None,
     secret: str | None = None,
     control_submitter: Callable[[dict[str, Any]], Any] | None = None,
     on_ingest: Callable[[dict[str, Any]], None] | None = None,
@@ -102,6 +103,7 @@ def create_app(
         raise RuntimeError("install gpsr_debug_server[web] to run the web server")
 
     webui = Path(webui_dir)
+    artifacts = Path(artifact_dir).resolve() if artifact_dir is not None else None
     token = secret or secrets.token_urlsafe(32)
     broker = EventBroker()
     lease = ControllerLease()
@@ -202,6 +204,17 @@ def create_app(
             media_type="application/javascript",
             headers={"Cache-Control": "public, max-age=86400"},
         )
+
+    @app.get("/api/v1/artifacts/{name}", dependencies=[Depends(read_guard)])
+    async def checkpoint_artifact(name: str):
+        """Serve one captured image from the debugger-owned artifact root."""
+
+        if artifacts is None or not name or Path(name).name != name:
+            raise HTTPException(404, "unknown checkpoint artifact")
+        asset = (artifacts / name).resolve()
+        if artifacts not in asset.parents or not asset.is_file():
+            raise HTTPException(404, "unknown checkpoint artifact")
+        return FileResponse(asset, headers={"Cache-Control": "private, max-age=3600"})
 
     @app.get("/api/v1/session")
     async def session():

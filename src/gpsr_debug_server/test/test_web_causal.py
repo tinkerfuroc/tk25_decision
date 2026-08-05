@@ -81,3 +81,34 @@ def test_ui_model_route_serves_the_local_module(tmp_path) -> None:
         assert response.status_code == 200
         assert response.text == "window.GpsrUiModel = {};"
         assert response.headers["content-type"].startswith("application/javascript")
+
+
+def test_checkpoint_artifacts_are_rooted_and_authenticated(tmp_path) -> None:
+    webui = tmp_path / "webui"
+    webui.mkdir()
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "front.jpg").write_bytes(b"fixture-image")
+    (tmp_path / "secret.jpg").write_bytes(b"outside-root")
+    with DebugStore(":memory:") as store:
+        app = create_app(
+            store,
+            webui_dir=webui,
+            artifact_dir=artifacts,
+            secret="test-secret",
+        )
+        client = TestClient(app, base_url="http://localhost")
+        route = "/api/v1/artifacts/front.jpg"
+
+        assert client.get(route).status_code == 403
+        response = client.get(route, headers={"x-gpsr-session": "test-secret"})
+        assert response.status_code == 200
+        assert response.content == b"fixture-image"
+        assert client.get(
+            "/api/v1/artifacts/missing.jpg",
+            headers={"x-gpsr-session": "test-secret"},
+        ).status_code == 404
+        assert client.get(
+            "/api/v1/artifacts/%2E%2E%2Fsecret.jpg",
+            headers={"x-gpsr-session": "test-secret"},
+        ).status_code in {404, 422}

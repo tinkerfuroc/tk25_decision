@@ -77,7 +77,7 @@
     if (type === "heartbeat" || type.endsWith(".heartbeat")) return "heartbeat";
     if (/(fail|error|reject|warning|warn)/.test(type)) return "failure";
     if (type.startsWith("tree.")) return "tree";
-    if (type.startsWith("planner.") || type.startsWith("plan.")) return "planning";
+    if (type.startsWith("planner.") || type.startsWith("plan.") || type.startsWith("supervisor.")) return "planning";
     if (type.startsWith("step.") || type.includes("execution")) return "execution";
     if (type.startsWith("run.") || type.startsWith("mission.") || type.startsWith("trajectory.")) return "lifecycle";
     if (type.startsWith("agent.") || type.startsWith("proposal.") || type.startsWith("vote.")) return "agent";
@@ -235,6 +235,50 @@
 
   function filterEvents(events, filters) {
     return (Array.isArray(events) ? events : []).filter(event => matchesEvent(event, filters));
+  }
+
+  /**
+   * Fold the append-only supervisor stream into one visual record per BT
+   * checkpoint. Unknown supervisor events stay attached to the record so a
+   * newer producer remains inspectable in an older dashboard.
+   */
+  function supervisorCheckpoints(events) {
+    const checkpoints = new Map();
+    for (const event of Array.isArray(events) ? events : []) {
+      const type = eventType(event).toLowerCase();
+      if (!type.startsWith("supervisor.")) continue;
+      const payload = eventPayload(event);
+      const checkpointId = text(payload.checkpoint_id || event.checkpoint_id).trim();
+      if (!checkpointId) continue;
+      if (!checkpoints.has(checkpointId)) {
+        checkpoints.set(checkpointId, {
+          checkpointId,
+          sequence: Number.isFinite(Number(event.sequence)) ? Number(event.sequence) : 0,
+          created: null,
+          verdict: null,
+          queries: [],
+          recoveries: [],
+          global: null,
+          unavailable: null,
+          events: [],
+        });
+      }
+      const checkpoint = checkpoints.get(checkpointId);
+      checkpoint.sequence = Math.min(
+        checkpoint.sequence,
+        Number.isFinite(Number(event.sequence)) ? Number(event.sequence) : checkpoint.sequence,
+      );
+      checkpoint.events.push(event);
+      if (type === "supervisor.checkpoint.created") checkpoint.created = payload;
+      else if (type === "supervisor.verdict.received") checkpoint.verdict = payload;
+      else if (type === "supervisor.query.completed" || type === "supervisor.query.failed") {
+        checkpoint.queries.push(payload);
+      } else if (type.startsWith("supervisor.recovery.")) {
+        checkpoint.recoveries.push({ type, sequence: event.sequence, ...payload });
+      } else if (type === "supervisor.global.proposed") checkpoint.global = payload;
+      else if (type === "supervisor.unavailable") checkpoint.unavailable = payload;
+    }
+    return Array.from(checkpoints.values()).sort((left, right) => left.sequence - right.sequence);
   }
 
   function queryTime(value) {
@@ -1134,6 +1178,7 @@
     eventSearchText,
     matchesEvent,
     filterEvents,
+    supervisorCheckpoints,
     normalizeTree,
     nodeSemantics,
     ancestorIds,

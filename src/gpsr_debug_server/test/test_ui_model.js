@@ -60,6 +60,52 @@ test("event search and filters include payloads without mutating records", () =>
   assert.equal(circular.payload.self, circular.payload);
 });
 
+test("supervisor events fold into checkpoint decisions and interventions", () => {
+  const events = [
+    {
+      type: "supervisor.checkpoint.created", sequence: 10,
+      payload: { checkpoint_id: "cp-1", reported_status: "FAILURE", artifacts: [{ role: "front_camera" }] },
+    },
+    {
+      type: "supervisor.query.completed", sequence: 11,
+      payload: { checkpoint_id: "cp-1", role: "verify", model: "openai/gpt-5.6-luna" },
+    },
+    {
+      type: "supervisor.verdict.received", sequence: 12,
+      payload: { checkpoint_id: "cp-1", verdict: "recoverable", escalation: "local_recovery" },
+    },
+    {
+      type: "supervisor.recovery.proposed", sequence: 13,
+      payload: { checkpoint_id: "cp-1", strategy_id: "scan-left", kind: "scan_views" },
+    },
+    {
+      type: "supervisor.recovery.finished", sequence: 14,
+      payload: { checkpoint_id: "cp-1", strategy_id: "scan-left", succeeded: true },
+    },
+    {
+      type: "supervisor.checkpoint.created", sequence: 20,
+      payload: { checkpoint_id: "cp-2", reported_status: "FAILURE" },
+    },
+    {
+      type: "supervisor.global.proposed", sequence: 21,
+      payload: { checkpoint_id: "cp-2", action: "abort_and_report" },
+    },
+    { type: "tree.tick_observed", sequence: 22, payload: {} },
+  ];
+
+  const checkpoints = model.supervisorCheckpoints(events);
+
+  assert.equal(checkpoints.length, 2);
+  assert.equal(checkpoints[0].created.reported_status, "FAILURE");
+  assert.equal(checkpoints[0].queries[0].role, "verify");
+  assert.equal(checkpoints[0].verdict.verdict, "recoverable");
+  assert.deepEqual(checkpoints[0].recoveries.map(item => item.type), [
+    "supervisor.recovery.proposed",
+    "supervisor.recovery.finished",
+  ]);
+  assert.equal(checkpoints[1].global.action, "abort_and_report");
+});
+
 test("tree normalisation accepts object nodes and edges without recursion hazards", () => {
   const tree = model.normalizeTree({
     root: "root",

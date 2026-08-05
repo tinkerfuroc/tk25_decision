@@ -60,6 +60,7 @@
 
       <nav class="tabs" aria-label="Debugger views">
         <button class="tab active" data-view="overview" type="button">Overview</button>
+        <button class="tab" data-view="supervisor" type="button">LLM Supervisor</button>
         <button class="tab" data-view="planning" type="button">Planning &amp; LLM</button>
         <button class="tab" data-view="tree" type="button">Behavior tree</button>
         <button class="tab" data-view="agents" type="button">Agents &amp; adaptation</button>
@@ -117,6 +118,19 @@
             </div>
           </aside>
         </section>
+      </section>
+
+      <section id="view-supervisor" class="view">
+        <section class="surface supervisor-intro">
+          <div>
+            <p class="section-kicker">Post-node multimodal verification</p>
+            <h2>BT checkpoint → evidence → LLM decision → bounded intervention</h2>
+            <p class="supervisor-copy">Each card reconstructs what the supervisor saw and why execution continued, recovered locally, replanned, or stopped.</p>
+          </div>
+          <div id="supervisor-metrics" class="supervisor-metrics"></div>
+        </section>
+        <section id="supervisor-test-matrix" class="supervisor-test-matrix"></section>
+        <section id="supervisor-checkpoints" class="supervisor-checkpoints"></section>
       </section>
 
       <section id="view-planning" class="view">

@@ -113,6 +113,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--state-dir", type=Path, default=_state_dir())
     parser.add_argument("--no-ros", action="store_true")
+    parser.add_argument(
+        "--no-ingest",
+        action="store_true",
+        help="serve an existing replay without opening the Unix ingest socket",
+    )
     args = parser.parse_args(argv)
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("gpsr-debug-server only binds loopback; use an SSH tunnel")
@@ -131,6 +136,8 @@ def main(argv: list[str] | None = None) -> None:
         os.chmod(token_path, 0o600)
 
     store = DebugStore(args.state_dir / "events.sqlite3")
+    artifact_dir = args.state_dir / "artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
     # Retention runs once at deliberate server startup, never in a ROS callback.
     # Active, named, and pinned trajectories are protected by the policy.
     try:
@@ -147,7 +154,13 @@ def main(argv: list[str] | None = None) -> None:
             store.append_event(event)
 
     ros = RosBridge(ingest, lambda message: print(f"[gpsr-debug] ROS warning: {message}"))
-    app = create_app(store, webui_dir=_webui_dir(), secret=token, control_submitter=ros.send_command)
+    app = create_app(
+        store,
+        webui_dir=_webui_dir(),
+        artifact_dir=artifact_dir,
+        secret=token,
+        control_submitter=ros.send_command,
+    )
     app_holder["app"] = app
     def ingest_from_app(event: dict) -> None:
         # ``append_event`` returns False for an idempotent replay.  Do not use
@@ -158,14 +171,16 @@ def main(argv: list[str] | None = None) -> None:
 
     app.state.ingest_event = ingest_from_app
     ingest_socket = UnixIngest(args.state_dir / "ingest.sock", ingest)
-    ingest_socket.start()
+    if not args.no_ingest:
+        ingest_socket.start()
     if not args.no_ros:
         ros.start()
     try:
         import uvicorn
         uvicorn.run(app, host=args.host, port=args.port, log_level="info", access_log=True)
     finally:
-        ingest_socket.stop()
+        if not args.no_ingest:
+            ingest_socket.stop()
         ros.stop()
         store.close()
 
