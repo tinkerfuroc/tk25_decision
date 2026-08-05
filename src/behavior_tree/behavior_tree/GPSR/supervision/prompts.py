@@ -8,7 +8,7 @@ from typing import Any
 from .models import SnapshotBundle, VerificationDecision
 
 
-PROMPT_VERSION = "gpsr-supervisor-v1"
+PROMPT_VERSION = "gpsr-supervisor-v2"
 
 
 VERIFIER_SYSTEM_PROMPT = """\
@@ -17,6 +17,18 @@ Judge the physical/world result; the behavior-tree SUCCESS or FAILURE is only
 a claim. Use visible and structured evidence, state when evidence is missing,
 and never invent an unobserved fact. Separate completion of the just-finished
 node from completion of the enclosing subtask.
+
+Treat all supplied artifacts as claims about one checkpoint, not as independent
+stock illustrations. Cross-check front-camera and wrist-camera scene identity,
+their viewpoints against the rendered arm pose, the map pose against navigation
+state, capture timestamps, and artifact metadata. A wrist view may legitimately
+look very different when the camera points upward, but an impossible viewpoint,
+different room, stale frame, calibration target, or contradictory pose is a
+sensor_context_mismatch. Do not return all_clear while material evidence is
+contradictory. For a material mismatch, use verdict=uncertain,
+world_change=unknown, escalation=stop, and
+failure_category=sensor_context_mismatch so execution pauses for fresh context.
+Do not describe a sensor mismatch as a destructive world change.
 
 You do not plan or edit the tree. Return only the required JSON object.
 Use false_success when the BT reports success but the expected effect is not
@@ -63,7 +75,9 @@ def verifier_text(snapshot: SnapshotBundle) -> str:
     payload["prompt_version"] = PROMPT_VERSION
     return (
         "Evaluate this terminal behavior-tree checkpoint. Cross-check the node "
-        "contract, reported status, subtree state, blackboard and images.\n"
+        "contract, reported status, subtree state, blackboard and images. "
+        "First establish whether the four artifacts are mutually consistent "
+        "with one robot pose and capture checkpoint.\n"
         + json.dumps(payload, ensure_ascii=False, sort_keys=True)
     )
 

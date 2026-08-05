@@ -9,6 +9,8 @@ from behavior_tree.GPSR.supervision.clients import ScriptedSupervisorClient
 from behavior_tree.GPSR.supervision.context import (
     FixtureContextProvider,
     StaticContextProvider,
+    gpsr_arm_pose_navigating,
+    gpsr_arm_pose_orbbec_look,
 )
 from behavior_tree.GPSR.supervision.controller import MissionSupervisor
 from behavior_tree.GPSR.supervision.models import (
@@ -50,7 +52,7 @@ def _request(checkpoint_id: str = "checkpoint-1") -> CaptureRequest:
         execution_history=(),
         recovery_ledger=(),
         robot_pose=(1.0, 2.0, 0.3),
-        arm_joints=(0.0, 0.2, -0.3, 0.1, 0.0, 0.4, -0.2),
+        arm_joints=gpsr_arm_pose_orbbec_look(),
     )
 
 
@@ -123,6 +125,40 @@ def test_fixture_provider_renders_complete_context(tmp_path: Path) -> None:
     assert all(not artifact.missing and artifact.sha256 for artifact in snapshot.artifacts)
     assert (tmp_path / "checkpoint-1-map.png").exists()
     assert (tmp_path / "checkpoint-1-arm.png").exists()
+    arm = next(artifact for artifact in snapshot.artifacts if artifact.role == "arm")
+    assert arm.metadata["renderer"] in {
+        "xarm_urdf_headless",
+        "kinematic_fallback",
+    }
+    if arm.metadata["renderer"] == "xarm_urdf_headless":
+        assert arm.metadata["geometry"] == (
+            "Tinker base + xarm_description visual STL"
+        )
+        assert float(arm.metadata["camera_elevation_deg"]) > 30.0
+    wrist = next(
+        artifact for artifact in snapshot.artifacts
+        if artifact.role == "wrist_camera"
+    )
+    assert wrist.metadata["view_direction"] == "upward"
+    assert wrist.metadata["provenance"] == "synthetic_hardware_free"
+
+
+def test_navigating_pose_comes_from_gpsr_runtime_constants() -> None:
+    expected_degrees = (-15.0, -44.0, 12.0, 65.0, 5.0, -55.0, 8.0)
+    actual_degrees = tuple(
+        round(value * 180.0 / 3.141592653589793, 6)
+        for value in gpsr_arm_pose_navigating()
+    )
+    assert actual_degrees == expected_degrees
+
+
+def test_orbbec_look_pose_comes_from_gpsr_runtime_constants() -> None:
+    expected_degrees = (-86.0, -52.0, 18.0, 2.0, 34.0, -73.0, -9.0)
+    actual_degrees = tuple(
+        round(value * 180.0 / 3.141592653589793, 6)
+        for value in gpsr_arm_pose_orbbec_look()
+    )
+    assert actual_degrees == expected_degrees
 
 
 def test_false_failure_overrides_reported_failure() -> None:
