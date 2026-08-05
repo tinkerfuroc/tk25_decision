@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>GPSR Mission Debugger</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <button id="sidebar-toggle" class="icon-button sidebar-toggle" type="button" aria-label="Toggle trajectory sidebar">☰</button>
+      <div class="brand-mark" aria-hidden="true">G</div>
+      <div>
+        <p class="eyebrow">Decision systems observability</p>
+        <h1>GPSR Mission Debugger</h1>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span id="history-mode" class="history-pill hidden">Historical snapshot</span>
+      <div class="connection" role="status" aria-live="polite">
+        <span id="connection-dot" class="dot off"></span>
+        <span id="connection-text">Connecting</span>
+      </div>
+      <button id="lease-button" class="button compact" type="button">Acquire control</button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-head">
+        <div><p class="section-kicker">Runs</p><h2>Trajectories</h2></div>
+        <button id="refresh" class="icon-button" type="button" title="Refresh trajectories" aria-label="Refresh trajectories">↻</button>
+      </div>
+      <label class="search-wrap">
+        <span aria-hidden="true">⌕</span>
+        <input id="trajectory-filter" class="search" type="search" placeholder="Filter runs">
+      </label>
+      <div class="status-filters" role="group" aria-label="Trajectory status">
+        <button class="filter-chip active" data-run-status="all" type="button">All</button>
+        <button class="filter-chip" data-run-status="running" type="button">Active</button>
+        <button class="filter-chip" data-run-status="succeeded" type="button">Passed</button>
+        <button class="filter-chip" data-run-status="failed" type="button">Failed</button>
+      </div>
+      <div id="trajectory-list" class="trajectory-list" aria-live="polite"></div>
+      <div class="retention-note">
+        <span aria-hidden="true">◈</span>
+        <p>Name or pin important traces. Unnamed completed runs follow the configured retention policy.</p>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <section id="mission-card" class="mission-header surface">
+        <div class="empty-state compact-empty">
+          <span class="empty-icon">⌁</span>
+          <div><strong>Selecting a trajectory…</strong><p>Loading the newest mission trace.</p></div>
+        </div>
+      </section>
+
+      <nav class="tabs" aria-label="Debugger views">
+        <button class="tab active" data-view="overview" type="button">Overview</button>
+        <button class="tab" data-view="planning" type="button">Planning &amp; LLM</button>
+        <button class="tab" data-view="tree" type="button">Behavior tree</button>
+        <button class="tab" data-view="agents" type="button">Agents &amp; adaptation</button>
+        <button class="tab" data-view="state" type="button">State</button>
+        <button class="tab" data-view="controls" type="button">Controls</button>
+      </nav>
+
+      <section id="view-overview" class="view active">
+        <section class="surface phase-surface">
+          <div class="surface-head">
+            <div><p class="section-kicker">Mission flow</p><h2>Execution phases</h2></div>
+            <span id="phase-summary" class="quiet-label">Waiting for trace</span>
+          </div>
+          <div id="phase-rail" class="phase-rail"></div>
+        </section>
+
+        <div id="health-grid" class="health-grid"></div>
+
+        <section class="timeline-workspace">
+          <div class="surface timeline-panel">
+            <div class="surface-head timeline-title">
+              <div><p class="section-kicker">Causal log</p><h2>Mission timeline</h2></div>
+              <span id="event-count" class="badge">0 events</span>
+            </div>
+            <div class="event-toolbar">
+              <label class="search-wrap event-search">
+                <span aria-hidden="true">⌕</span>
+                <input id="event-search" class="search" type="search" placeholder="Search event, action, agent…">
+              </label>
+              <select id="event-category" class="select" aria-label="Event category">
+                <option value="all">All categories</option>
+                <option value="mission">Mission</option>
+                <option value="planning">Planning</option>
+                <option value="tree">Tree</option>
+                <option value="execution">Execution</option>
+                <option value="agent">Agents</option>
+                <option value="state">State</option>
+                <option value="control">Control</option>
+                <option value="other">Other</option>
+              </select>
+              <label class="toggle"><input id="raw-events" type="checkbox"><span></span>Raw</label>
+            </div>
+            <div id="timeline" class="timeline" role="list"></div>
+            <button id="event-more" class="button ghost wide hidden" type="button">Show more events</button>
+          </div>
+
+          <aside class="surface inspector-panel">
+            <div class="surface-head">
+              <div><p class="section-kicker">Inspector</p><h2>Selected event</h2></div>
+              <span id="event-kind" class="badge muted">None</span>
+            </div>
+            <div id="event-inspector" class="inspector empty-state">
+              <span class="empty-icon">↳</span>
+              <div><strong>Choose an event</strong><p>Inspect its payload, timing, and causal chain.</p></div>
+            </div>
+          </aside>
+        </section>
+      </section>
+
+      <section id="view-planning" class="view">
+        <div class="planning-layout">
+          <section class="surface">
+            <div class="surface-head">
+              <div><p class="section-kicker">Model calls</p><h2>Planning attempts</h2></div>
+              <span id="attempt-count" class="badge">0 attempts</span>
+            </div>
+            <div id="planning-attempts" class="attempt-list"></div>
+          </section>
+          <section class="surface">
+            <div class="surface-head">
+              <div><p class="section-kicker">Plan evolution</p><h2>Committed revisions</h2></div>
+              <select id="plan-revision" class="select compact-select" aria-label="Plan revision"></select>
+            </div>
+            <div id="plan-view" class="plan-view"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-tree" class="view">
+        <section class="surface graph-surface">
+          <div class="graph-toolbar">
+            <div>
+              <p class="section-kicker">Topology and runtime state</p>
+              <h2>Behavior tree</h2>
+            </div>
+            <div class="toolbar-group">
+              <div class="segmented" role="group" aria-label="Tree kind">
+                <button id="planned-toggle" class="seg" type="button" data-tree-kind="planned">Planned</button>
+                <button id="executor-toggle" class="seg active" type="button" data-tree-kind="executor">Executor</button>
+              </div>
+              <select id="tree-revision-select" class="select compact-select" aria-label="Tree revision"></select>
+              <div class="segmented tree-mode" role="group" aria-label="Tree detail mode">
+                <button class="seg active tree-mode-button" type="button" data-tree-view="explain">Explain</button>
+                <button class="seg tree-mode-button" type="button" data-tree-view="runtime">Runtime</button>
+                <button class="seg tree-mode-button" type="button" data-tree-view="full">Full</button>
+              </div>
+              <label class="search-wrap graph-search">
+                <span aria-hidden="true">⌕</span>
+                <input id="tree-search" class="search" type="search" placeholder="Find node">
+              </label>
+              <button id="tree-fit" class="icon-button text-icon" type="button">Fit</button>
+            </div>
+          </div>
+          <div class="tree-runtime-bar">
+            <div class="tree-tick-nav" role="group" aria-label="Executor tick">
+              <button id="tree-tick-prev" class="icon-button" type="button" aria-label="Previous recorded tree tick">←</button>
+              <span id="tree-tick-label" class="tree-tick-label">No tick visitation recorded</span>
+              <button id="tree-tick-next" class="icon-button" type="button" aria-label="Next recorded tree tick">→</button>
+              <button id="tree-tick-live" class="button compact hidden" type="button">Return to live</button>
+            </div>
+            <p id="tree-flow-hint" class="tree-flow-hint">Arrows show parent-to-child activation. Select a node to explain its gate.</p>
+          </div>
+          <div class="graph-body">
+            <div class="canvas-wrap">
+              <div id="tree-canvas" class="graph-canvas" aria-label="Interactive behavior tree"></div>
+              <div class="graph-legend semantic-legend" aria-label="Tree activation legend">
+                <span><i class="legend-mark ticked">T</i>Ticked</span>
+                <span><i class="legend-mark resumed">R</i>Resumed</span>
+                <span><i class="legend-mark skipped">S</i>Skipped</span>
+                <span><i class="legend-mark blocked">B</i>Blocked</span>
+                <span class="legend-separator" aria-hidden="true"></span>
+                <span><i class="legend-dot success"></i>Success</span>
+                <span><i class="legend-dot running"></i>Running</span>
+                <span><i class="legend-dot failure"></i>Failure</span>
+              </div>
+            </div>
+            <aside id="node-detail" class="node-inspector empty-state">
+              <span class="empty-icon">◇</span>
+              <div><strong>Select a node</strong><p>Explain its activation rule, selected-tick state, and blackboard access.</p></div>
+            </aside>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-agents" class="view">
+        <div id="agent-lanes" class="agent-grid"></div>
+        <div class="agent-layout">
+          <section class="surface graph-surface agent-graph-surface">
+            <div class="surface-head">
+              <div><p class="section-kicker">Collaboration graph</p><h2>Agents and decisions</h2></div>
+              <button id="agent-fit" class="icon-button text-icon" type="button">Fit graph</button>
+            </div>
+            <div id="agent-canvas" class="agent-canvas" aria-label="Interactive agent causality graph"></div>
+          </section>
+          <section class="surface">
+            <div class="surface-head">
+              <div><p class="section-kicker">Adaptive changes</p><h2>Proposals &amp; votes</h2></div>
+              <span id="proposal-count" class="badge">0</span>
+            </div>
+            <div id="proposal-list" class="proposal-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-state" class="view">
+        <section class="surface replay-surface">
+          <div class="surface-head">
+            <div><p class="section-kicker">Time travel</p><h2>Historical replay</h2></div>
+            <button id="return-live" class="button compact hidden" type="button">Return to live</button>
+          </div>
+          <div class="replay-controls">
+            <span>Sequence 0</span>
+            <input id="history-range" type="range" min="0" max="0" value="0">
+            <span id="history-sequence">Live</span>
+          </div>
+        </section>
+        <div class="state-layout">
+          <section class="surface">
+            <div class="surface-head">
+              <div><p class="section-kicker">Checkpoints and deltas</p><h2>State history</h2></div>
+              <span id="state-count" class="badge">0 changes</span>
+            </div>
+            <div id="state-history" class="state-history"></div>
+          </section>
+          <section class="surface">
+            <div class="surface-head"><div><p class="section-kicker">Structured payload</p><h2>State inspector</h2></div></div>
+            <div id="state-detail" class="inspector empty-state">
+              <span class="empty-icon">{ }</span>
+              <div><strong>Select a state change</strong><p>Changed keys and values appear here.</p></div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-controls" class="view">
+        <div class="controls-layout">
+          <section class="surface">
+            <div class="surface-head">
+              <div><p class="section-kicker">Safety boundary</p><h2>Controller lease</h2></div>
+              <span id="lease-state" class="badge warning">Lease required</span>
+            </div>
+            <p class="callout">Commands pass through the typed GPSR debug gateway, include the current tree revision, and are recorded in the trace. Arbitrary code execution is never supported.</p>
+            <dl id="lease-detail" class="definition-list"></dl>
+          </section>
+          <section class="surface controls-card">
+            <div class="surface-head">
+              <div><p class="section-kicker">Audited intervention</p><h2>Send command</h2></div>
+              <span id="control-mode" class="quiet-label">Live view required</span>
+            </div>
+            <div class="control-row" role="group" aria-label="Common controls">
+              <button data-command="pause" class="control button" type="button">Pause</button>
+              <button data-command="resume" class="control button" type="button">Resume</button>
+              <button data-command="capture_checkpoint" class="control button" type="button">Checkpoint</button>
+              <button data-command="cancel" class="control button danger" type="button">Cancel mission</button>
+            </div>
+            <label class="field">Command
+              <select id="command-select" class="select">
+                <option value="pause">Pause</option>
+                <option value="resume">Resume</option>
+                <option value="cancel">Cancel mission</option>
+                <option value="retry_step">Retry step</option>
+                <option value="skip_step">Skip step</option>
+                <option value="capture_checkpoint">Capture checkpoint</option>
+                <option value="apply_patch">Apply tree patch</option>
+                <option value="rollback">Rollback revision</option>
+                <option value="edit_state">Edit state</option>
+                <option value="agent_directive">Agent directive</option>
+                <option value="activate_proposal">Activate proposal</option>
+              </select>
+            </label>
+            <label class="field">Justification
+              <textarea id="justification" rows="3" placeholder="Why is this intervention necessary?"></textarea>
+            </label>
+            <label class="field">Payload <span class="field-note">JSON object</span>
+              <textarea id="command-payload" class="code-input" rows="7" spellcheck="false">{}</textarea>
+            </label>
+            <div id="command-validation" class="validation-text"></div>
+            <button id="send-command" class="button primary" type="button">Review and send</button>
+            <pre id="command-result" class="result hidden"></pre>
+          </section>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="confirm-dialog" class="confirm-dialog">
+    <form method="dialog">
+      <p class="section-kicker">Confirm intervention</p>
+      <h2 id="confirm-title">Send command?</h2>
+      <p id="confirm-copy"></p>
+      <div class="dialog-actions">
+        <button value="cancel" class="button" type="submit">Go back</button>
+        <button id="confirm-send" value="confirm" class="button primary" type="submit">Confirm and send</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/vendor/cytoscape.min.js"></script>
+  <script src="/ui_model.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

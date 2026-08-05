@@ -38,6 +38,7 @@ from .orchestrator import (
     load_knowledge_from_constants,
 )
 from .small_trees import bb_keys, create_enter_arena
+from .telemetry import GpsrTelemetry, set_default_telemetry
 
 DEFAULT_PLAN_DIR = Path(os.environ.get("BT_GPSR_PLAN_DIR", "gpsr_runs")).resolve()
 # How many commands to collect up front before executing (RoboCup GPSR = 3).
@@ -67,6 +68,7 @@ def createGPSROrchestrator(
     max_steps: int = 25,
     max_corrections: int = 3,
     num_commands: int = NUM_COMMANDS,
+    telemetry: GpsrTelemetry | None = None,
 ) -> py_trees.behaviour.Behaviour:
     """Build the live orchestrator root.
 
@@ -78,6 +80,8 @@ def createGPSROrchestrator(
     ``|``-separated list) is injected — used for desktop / mock e2e tests. With
     neither, the robot prompts + listens for each command by voice (competition).
     """
+    if telemetry is not None:
+        set_default_telemetry(telemetry)
     load_knowledge_from_constants(CONSTANTS_PATH)
     if commands is None:
         cmd_env = os.environ.get("BT_GPSR_CMD", "").strip()
@@ -90,7 +94,21 @@ def createGPSROrchestrator(
         make_intake = make_listen_intake()
         n = num_commands
 
+    if telemetry is not None:
+        telemetry.emit(
+            "run.configured",
+            {"expected_task_count": n, "mode": "injected" if commands else "voice"},
+            phase="intake",
+        )
+
     root = py_trees.composites.Sequence("GPSR orchestrator", memory=True)
+    # Stable trajectory identity is kept on the blackboard for all task slots
+    # and is independent of the natural-language command text.
+    run_id = telemetry.trajectory_id if telemetry is not None else f"gpsr-{os.getpid()}"
+    root.add_child(BtNode_WriteToBlackboard(
+        "set GPSR run id", bb_namespace="", bb_source=None,
+        bb_key=bb_keys.RUN_ID, object=run_id,
+    ))
     # Arm poses must be on the blackboard before arena entry: the door watch
     # stows the arm to the orbbec-look pose before sensing the door.
     _arm_constants_to_bb(root)
@@ -116,18 +134,24 @@ def createGPSROrchestrator(
 def main():
     rclpy.init(args=None)
     DEFAULT_PLAN_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"[gpsr-orchestrator] plan modules -> {DEFAULT_PLAN_DIR}")
+    telemetry = GpsrTelemetry(DEFAULT_PLAN_DIR)
+    print(f"[gpsr-orchestrator] plan modules -> {DEFAULT_PLAN_DIR}; trajectory={telemetry.trajectory_id}")
 
-    root = createGPSROrchestrator()
+    root = createGPSROrchestrator(telemetry=telemetry)
     tree = py_trees_ros.trees.BehaviourTree(root=root)
     tree.setup(timeout=15, node_name="gpsr_orchestrator")
+    telemetry.attach_ros(tree.node)
+    # ``py_trees_ros`` supplies a SnapshotVisitor; telemetry reuses it so its
+    # tick records describe nodes actually visited, not merely the topology.
+    telemetry.attach_tick_visitor(tree)
     print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(title="GPSR orchestrator")
     # Per-command logging (plan + each step's result + the failing node's feedback).
     from .command_logger import create_command_logger, combine_post_tick_handlers
     log_tree, shutdown_logger = create_command_logger(str(DEFAULT_PLAN_DIR / "logs"))
+    trace_tree = telemetry.post_tick_handler()
     tree.tick_tock(
         period_ms=500.0,
-        post_tick_handler=combine_post_tick_handlers(print_tree, log_tree),
+        post_tick_handler=combine_post_tick_handlers(print_tree, log_tree, trace_tree),
     )
     try:
         rclpy.spin(tree.node)
@@ -137,6 +161,8 @@ def main():
         shutdown_logger()
         shutdown_visualizer()
         tree.shutdown()
+        telemetry.close()
+        set_default_telemetry(None)
         rclpy.try_shutdown()
 
 

@@ -58,6 +58,11 @@ from .custom_nodes import (
 
 class bb_keys:
     # Orchestrator state
+    RUN_ID = "gpsr/run_id"                    # str — mission/trajectory id
+    TASK_ID = "gpsr/task_id"                  # str — stable task id, not command text
+    PLAN_REVISION = "gpsr/plan_revision"      # int — initial plan=1, replans increment
+    TREE_REVISION = "gpsr/tree_revision"      # int/string — active generated tree revision
+    TASK_OUTCOME = "gpsr/task_outcome"        # dict — explicit terminal classification
     COMMAND = "gpsr/command"
     START_POSE = "gpsr/start_pose"      # PoseStamped — where the command was received
     DYNAMIC_LOCATIONS = "gpsr/dynamic_locations"  # dict[str -> PoseStamped] (runtime-recorded labels)
