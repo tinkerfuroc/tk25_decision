@@ -8,8 +8,14 @@ from behavior_tree.GPSR.supervision.clients import OpenRouterSupervisorClient
 from behavior_tree.GPSR.supervision.context import StaticContextProvider
 from behavior_tree.GPSR.supervision.models import (
     ArtifactRef,
+    BtAssessment,
     CaptureRequest,
+    Escalation,
+    SubtaskStatus,
     SupervisorConfig,
+    Verdict,
+    VerificationDecision,
+    WorldChange,
 )
 
 
@@ -40,12 +46,13 @@ def _snapshot():
 
 
 class _FakeCompletions:
-    def __init__(self):
+    def __init__(self, contents=None):
         self.requests = []
+        self.contents = list(contents or [])
 
     def create(self, **kwargs):
         self.requests.append(kwargs)
-        content = json.dumps(
+        content = self.contents.pop(0) if self.contents else json.dumps(
             {
                 "checkpoint_id": "cp",
                 "verdict": "all_clear",
@@ -82,3 +89,63 @@ def test_openrouter_verifier_uses_luna_medium_without_temperature():
     assert request["extra_body"]["reasoning"]["effort"] == "medium"
     assert request["response_format"]["type"] == "json_schema"
     assert "temperature" not in request
+
+
+def test_openrouter_planners_decode_strict_embedded_json_fields():
+    local = json.dumps(
+        {
+            "checkpoint_id": "cp",
+            "issue_id": "issue",
+            "strategy_id": "look-left",
+            "kind": "scan_views",
+            "arguments": json.dumps(
+                {
+                    "angles": [[-30, 10]],
+                    "perception_action": "find_object",
+                }
+            ),
+            "rationale": "new view",
+            "expected_evidence": ["target visible"],
+            "stop_conditions": ["target absent"],
+        }
+    )
+    global_abort = json.dumps(
+        {
+            "checkpoint_id": "cp",
+            "action": "abort_and_report",
+            "replacement_plan": [],
+            "preserved_completed_steps": 0,
+            "relaxed_constraints": [],
+            "rationale": "unsafe",
+            "operator_message": "I stopped safely.",
+        }
+    )
+    completions = _FakeCompletions([local, global_abort])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(),
+        api_key="test-key",
+        client=fake,
+    )
+    verification = VerificationDecision(
+        checkpoint_id="cp",
+        verdict=Verdict.RECOVERABLE,
+        bt_assessment=BtAssessment.AGREE,
+        subtask_status=SubtaskStatus.NOT_ACHIEVED,
+        world_change=WorldChange.NON_DESTRUCTIVE,
+        escalation=Escalation.LOCAL_RECOVERY,
+        failure_category="missing",
+        evidence=(),
+        rationale="test",
+        confidence=0.8,
+    )
+    recovery = client.plan_local_recovery(_snapshot(), verification, "issue")
+    assert recovery.arguments["angles"] == [[-30, 10]]
+    global_decision = client.plan_global_replan(
+        _snapshot(), verification, "unsafe"
+    )
+    assert global_decision.action.value == "abort_and_report"
+    assert all(
+        request["extra_body"]["reasoning"]["effort"] == "high"
+        for request in completions.requests
+    )

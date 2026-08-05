@@ -168,6 +168,7 @@ class OpenRouterSupervisorClient:
             max_completion_tokens=16384,
             timeout_s=self.config.plan_timeout_s,
         )
+        raw = _decode_embedded_object(raw, "arguments")
         decision = RecoveryProposal.from_dict(raw)
         _same_checkpoint(snapshot, decision.checkpoint_id)
         if decision.issue_id != issue_id:
@@ -192,6 +193,7 @@ class OpenRouterSupervisorClient:
             max_completion_tokens=16384,
             timeout_s=self.config.plan_timeout_s,
         )
+        raw = _decode_embedded_plan(raw)
         decision = GlobalPlanDecision.from_dict(raw)
         _same_checkpoint(snapshot, decision.checkpoint_id)
         return decision
@@ -300,6 +302,43 @@ def _decode_json_content(content: Any) -> Mapping[str, Any]:
     if not isinstance(raw, Mapping):
         raise SchemaError("model response must be a JSON object")
     return raw
+
+
+def _decode_embedded_object(
+    raw: Mapping[str, Any], key: str
+) -> Mapping[str, Any]:
+    value = raw.get(key)
+    if not isinstance(value, str):
+        raise SchemaError(f"{key} must be a JSON-encoded object string")
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise SchemaError(f"{key} is not valid encoded JSON") from exc
+    if not isinstance(decoded, Mapping):
+        raise SchemaError(f"{key} must decode to an object")
+    return {**raw, key: dict(decoded)}
+
+
+def _decode_embedded_plan(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    value = raw.get("replacement_plan")
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise SchemaError(
+            "replacement_plan must be an array of JSON-encoded step strings"
+        )
+    decoded = []
+    for index, item in enumerate(value):
+        try:
+            step = json.loads(item)
+        except json.JSONDecodeError as exc:
+            raise SchemaError(
+                f"replacement_plan[{index}] is not valid encoded JSON"
+            ) from exc
+        if not isinstance(step, Mapping):
+            raise SchemaError(
+                f"replacement_plan[{index}] must decode to an object"
+            )
+        decoded.append(dict(step))
+    return {**raw, "replacement_plan": decoded}
 
 
 def _same_checkpoint(snapshot: SnapshotBundle, response_checkpoint_id: str) -> None:

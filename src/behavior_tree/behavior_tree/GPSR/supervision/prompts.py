@@ -32,7 +32,9 @@ the current subtask goal. Choose exactly one typed strategy from:
 scan_views, reacquire_object, retry_navigation, relocalize, ask_human.
 Do not emit code, arbitrary behavior-tree nodes, a global task rewrite, or a
 strategy already recorded as executed for this issue. Prefer the least
-invasive safe action. Return only the required JSON object.
+invasive safe action. Return only the required JSON object. The structured
+response's arguments field is a JSON-encoded string; encode exactly one of the
+argument objects below inside that string.
 
 Argument contracts:
 - scan_views: {"angles": [[pan_deg, tilt_deg], ...], "perception_action": str}
@@ -50,7 +52,9 @@ destructively changed, or exhausted three distinct local strategies.
 Preserve completed steps and change the current/remaining suffix as little as
 possible. Never relax safety constraints. Any relaxed source, location, object
 attribute or other task detail must be listed explicitly and communicated in
-the operator message. Return only the required JSON object.
+the operator message. Return only the required JSON object. Each
+replacement_plan item is a JSON-encoded string containing one
+{"action": "...", "params": {...}} GPSR step.
 """
 
 
