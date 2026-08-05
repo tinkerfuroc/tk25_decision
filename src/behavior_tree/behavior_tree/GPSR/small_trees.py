@@ -63,6 +63,7 @@ class bb_keys:
     PLAN_REVISION = "gpsr/plan_revision"      # int — initial plan=1, replans increment
     TREE_REVISION = "gpsr/tree_revision"      # int/string — active generated tree revision
     TASK_OUTCOME = "gpsr/task_outcome"        # dict — explicit terminal classification
+    SUPERVISOR_STEP_DISPOSITION = "gpsr/supervisor_step_disposition"
     COMMAND = "gpsr/command"
     START_POSE = "gpsr/start_pose"      # PoseStamped — where the command was received
     DYNAMIC_LOCATIONS = "gpsr/dynamic_locations"  # dict[str -> PoseStamped] (runtime-recorded labels)

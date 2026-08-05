@@ -61,6 +61,8 @@ from .small_trees import (
     create_goto,
 )
 from .telemetry import get_default_telemetry
+from .supervision.models import SupervisionMode
+from .supervision.runtime import get_default_supervisor, wrap_action_factory
 
 
 def _openai_client():
@@ -1250,6 +1252,8 @@ class BtNode_LogStepResult(Behaviour):
         self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
         self._bb.register_key(bb_keys.PLAN_REVISION, access=Access.READ)
         self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.READ)
+        self._bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.READ)
+        self._bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.WRITE)
 
     def update(self):
         try:
@@ -1263,7 +1267,17 @@ class BtNode_LogStepResult(Behaviour):
             log = None
         if log is None:
             log = []
-        verdict = "SUCCEEDED" if self._succeeded else "FAILED"
+        try:
+            disposition = self._bb.get(bb_keys.SUPERVISOR_STEP_DISPOSITION)
+        except KeyError:
+            disposition = None
+        if self._succeeded and disposition:
+            verdict = "SUPERSEDED"
+            self._bb.set(
+                bb_keys.SUPERVISOR_STEP_DISPOSITION, None, overwrite=True
+            )
+        else:
+            verdict = "SUCCEEDED" if self._succeeded else "FAILED"
         log.append(f"{action}({params}) {verdict}")
         self._bb.set(bb_keys.STATE_LOG, log, overwrite=True)
         if not self._succeeded:
@@ -1355,6 +1369,30 @@ class BtNode_FinalizeTask(Behaviour):
             self._bb.register_key(key, access=access)
 
     def update(self):
+        try:
+            existing_outcome = Blackboard.get(bb_keys.TASK_OUTCOME)
+        except KeyError:
+            existing_outcome = None
+        if (
+            isinstance(existing_outcome, dict)
+            and existing_outcome.get("source") == "llm_supervisor"
+        ):
+            self.feedback_message = (
+                f"{existing_outcome.get('status')}: "
+                f"{existing_outcome.get('reason')}"
+            )
+            telemetry = get_default_telemetry()
+            if telemetry is not None:
+                try:
+                    telemetry.emit(
+                        "task.finished",
+                        existing_outcome,
+                        task_id=self._bb.get(bb_keys.TASK_ID),
+                        phase="terminal",
+                    )
+                except Exception:
+                    pass
+            return Status.SUCCESS
         try:
             plan = self._bb.get(bb_keys.PLAN) or []
             index = int(self._bb.get(bb_keys.PLAN_INDEX) or 0)
@@ -1618,10 +1656,11 @@ def create_dispatcher() -> py_trees.composites.Selector:
     (which the orchestrator interprets as "unknown action — trigger correction").
     """
     selector = py_trees.composites.Selector("dispatcher", memory=False)
+    supervisor = get_default_supervisor()
     for action_name, factory in ACTION_FACTORIES.items():
         branch = py_trees.composites.Sequence(f"branch:{action_name}", memory=True)
         branch.add_child(BtNode_ActionRouter(action_name))
-        branch.add_child(factory())
+        branch.add_child(wrap_action_factory(action_name, factory, supervisor))
         selector.add_child(branch)
     return selector
 
@@ -1657,13 +1696,18 @@ def create_execute_one_step(max_corrections: int = 3) -> py_trees.composites.Seq
     monitor_then_log.add_child(dispatch)
     monitor_then_log.add_child(BtNode_LogStepResult("log success", succeeded=True))
 
-    # Self-correction triggered only when the dispatch+monitor returned FAILURE.
-    correction = create_self_correction(max_corrections=max_corrections)
-
-    dispatch_or_correct = py_trees.composites.Selector(
-        "dispatch_or_correct", memory=False,
-        children=[monitor_then_log, correction],
-    )
+    supervisor = get_default_supervisor()
+    if supervisor is not None and supervisor.config.mode is SupervisionMode.ACTIVE:
+        # Effect failures are held at RUNNING by SupervisedEffect until the
+        # verifier resolves them. Never enter the legacy whole-plan correction
+        # path while the active supervisor owns recovery.
+        dispatch_or_correct = monitor_then_log
+    else:
+        correction = create_self_correction(max_corrections=max_corrections)
+        dispatch_or_correct = py_trees.composites.Selector(
+            "dispatch_or_correct", memory=False,
+            children=[monitor_then_log, correction],
+        )
 
     step = py_trees.composites.Sequence("execute_step", memory=True)
     step.add_child(pop)
@@ -1683,6 +1727,12 @@ def _reset_task_state(seq: py_trees.composites.Sequence) -> None:
     seq.add_child(BtNode_BlackboardSet("reset correction", bb_keys.CORRECTION_COUNT, 0))
     seq.add_child(BtNode_BlackboardSet("reset last_failure", bb_keys.LAST_FAILURE, ""))
     seq.add_child(BtNode_BlackboardSet("reset plan revision", bb_keys.PLAN_REVISION, 0))
+    seq.add_child(BtNode_BlackboardSet(
+        "reset task outcome", bb_keys.TASK_OUTCOME, None,
+    ))
+    seq.add_child(BtNode_BlackboardSet(
+        "reset supervisor disposition", bb_keys.SUPERVISOR_STEP_DISPOSITION, None,
+    ))
     seq.add_child(BtNode_BlackboardSet("reset nav location", bb_keys.LAST_NAV_LOCATION, ""))
     seq.add_child(BtNode_BlackboardSet("reset grasp-referee", bb_keys.GRASP_ASK_REFEREE, False))
     seq.add_child(BtNode_BlackboardSet("reset appliance-opened", bb_keys.APPLIANCE_OPENED, False))

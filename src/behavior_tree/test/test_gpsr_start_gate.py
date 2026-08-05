@@ -12,12 +12,30 @@ sys.modules.setdefault("openai", types.ModuleType("openai"))
 from pathlib import Path  # noqa: E402
 
 import py_trees  # noqa: E402
+import pytest  # noqa: E402
 
 import behavior_tree.GPSR.gpsr_orchestrator as gpsr  # noqa: E402
+import behavior_tree.GPSR.orchestrator as planner  # noqa: E402
 
 
 def _success(name):
     return py_trees.behaviours.Success(name=name)
+
+
+def test_real_planner_can_be_used_with_full_execution_mock(monkeypatch):
+    monkeypatch.setattr(planner, "is_full_mock_mode", lambda: True)
+    monkeypatch.delenv("GPSR_OFFLINE_PLANNER", raising=False)
+    assert planner._offline_planner_enabled() is True
+
+    monkeypatch.setenv("GPSR_OFFLINE_PLANNER", "0")
+    assert planner._offline_planner_enabled() is False
+
+    monkeypatch.setenv("GPSR_OFFLINE_PLANNER", "1")
+    assert planner._offline_planner_enabled() is True
+
+    monkeypatch.setenv("GPSR_OFFLINE_PLANNER", "invalid")
+    with pytest.raises(ValueError, match="GPSR_OFFLINE_PLANNER"):
+        planner._offline_planner_enabled()
 
 
 def _stub_orchestrator_dependencies(monkeypatch, *, command_point):
@@ -70,6 +88,7 @@ def test_current_factory_seeds_arm_then_enters_arena_before_command_flow(
     assert isinstance(root, py_trees.composites.Sequence)
     assert root.memory is True
     assert [child.name for child in root.children] == [
+        "set GPSR run id",
         "seed arm constants",
         "enter arena",
         "command point",
@@ -98,6 +117,6 @@ def test_command_point_step_is_optional_but_arena_entry_is_not(
     )
 
     names = [child.name for child in root.children]
-    assert names[:2] == ["seed arm constants", "enter arena"]
+    assert names[:3] == ["set GPSR run id", "seed arm constants", "enter arena"]
     assert "command point" not in names
     assert names[-3:] == ["orchestrator init", "batch command flow", "idle"]
