@@ -1,0 +1,23 @@
+{
+  "fixture_version": 1,
+  "assets": {
+    "front_camera.jpg": {
+      "source": "/home/tinker/tk25_ws/vision_log/object_scan_orbbec_20260704_101135_263.jpg",
+      "sha256": "cb1b1829b83b84fa23634644e63af35f5bfae44816384c97c312fc2092a3f89b",
+      "description": "Orbbec view of a dining table with bottles and tableware."
+    },
+    "wrist_camera.jpg": {
+      "source": "/home/tinker/tk25_ws/calibration_data/wrist_handeye_20260627_233006_livecapture/thumbs/sample_10.jpg",
+      "sha256": "4bf5508d10cd6a0b0ae76c06988c680985c5633809c789300e5f841ec34d8f93",
+      "description": "Wrist-camera hand-eye calibration capture."
+    },
+    "arena_map.pgm": {
+      "source": "/home/tinker/tk25_ws/src/tk26_navigation/src/navigation_bringup/maps/0701_robocup_arena3.pgm",
+      "sha256": "ae6254124fb44838e583f41a1f37bee47d622851ab376a5b92691a3fd989e537"
+    },
+    "arena_map.yaml": {
+      "source": "/home/tinker/tk25_ws/src/tk26_navigation/src/navigation_bringup/maps/0701_robocup_arena3.yaml",
+      "sha256": "3365b7592e4022324ca56366074e8baa381e8fe661cfdf39a9ac180afabc43aa"
+    }
+  }
+}
