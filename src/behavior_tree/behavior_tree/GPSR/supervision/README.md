@@ -34,6 +34,21 @@ production `ContextProvider`. That worker is responsible for capturing both
 cameras and rendering current map/arm state. It returns the same four-role
 `SnapshotBundle` used by the fixture provider.
 
+The hardware-free arm panel is not a schematic: it loads
+`arm_pos_orbbec_look` from the GPSR runtime constants, applies those seven
+values to the generated `xarm7.urdf`, and rasterizes the Tinker base, xArm,
+gripper, and D435 visual STL meshes headlessly. Its high-contrast overlay also
+shows the calibrated Tinker2 wrist optical axis, which is about 36 degrees
+above horizontal in this pose. The default wrist fixture is therefore an
+explicitly synthetic upper-wall/ceiling view. A real AprilTag calibration frame is kept as
+`wrist_camera_mismatch.jpg` only for the live negative-control test.
+
+Verifier prompt v2 first checks whether all four artifacts could belong to the
+same checkpoint. A stale/different-scene camera frame, impossible viewpoint, or
+pose contradiction returns `uncertain`, `stop`, and
+`sensor_context_mismatch`; it is not misclassified as destructive world
+change.
+
 Local recovery output is never executable model text. It is validated against
 one of five schemas (`scan_views`, `reacquire_object`, `retry_navigation`,
 `relocalize`, `ask_human`) and passed to a trusted handler. Fixture/full-mock

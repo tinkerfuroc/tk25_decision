@@ -9,13 +9,19 @@ from pathlib import Path
 import shutil
 from typing import Any, Mapping
 
-from behavior_tree.GPSR.supervision.context import FixtureContextProvider
+from behavior_tree.GPSR.supervision.context import (
+    FixtureContextProvider,
+    gpsr_arm_pose_orbbec_look,
+)
 from behavior_tree.GPSR.supervision.models import CaptureRequest
 from gpsr_debug_server.store import DebugStore
 
 
 TRAJECTORY_ID = "gpsr-supervisor-hardware-free-validation"
 BASE_TIME = datetime(2026, 8, 5, 7, 0, tzinfo=timezone.utc)
+
+
+ARM_POSE_ORBBEC_LOOK = gpsr_arm_pose_orbbec_look()
 
 
 def _tree(active: str, next_node: str | None) -> dict[str, Any]:
@@ -64,7 +70,7 @@ def _request(
     blackboard: Mapping[str, Any],
     recovery_ledger: tuple[Mapping[str, Any], ...] = (),
     pose: tuple[float, float, float] = (1.0, 1.0, 0.0),
-    joints: tuple[float, ...] = (0.0, 0.2, -0.4, 0.1, 0.0, 0.3, 0.0),
+    joints: tuple[float, ...] = ARM_POSE_ORBBEC_LOOK,
 ) -> CaptureRequest:
     return CaptureRequest(
         checkpoint_id=checkpoint_id,
@@ -84,7 +90,10 @@ def _request(
         },
         next_node=dict(next_node) if next_node else None,
         subtask_tree=_tree(node_id, next_node.get("node_id") if next_node else None),
-        blackboard=dict(blackboard),
+        blackboard={
+            **dict(blackboard),
+            "gpsr/arm_pose_name": "arm_pos_orbbec_look",
+        },
         execution_history=(
             {"node": node_name, "status": status},
         ),
@@ -182,7 +191,9 @@ def seed(state_dir: Path) -> str:
                 "name": "GPSR supervisor · hardware-free validation",
                 "pinned": True,
                 "status": "running",
-                "source": "committed camera fixtures + rendered navigation map/arm",
+                "source": (
+                    "camera fixtures + rendered navigation map + xArm7 URDF/STL"
+                ),
                 "mode": "hardware-free replay",
                 "metadata": {
                     "command": "Pick up the coke from the dining table and bring it back to me.",
@@ -207,7 +218,22 @@ def seed(state_dir: Path) -> str:
                     {
                         "role": "Multimodal verifier",
                         "status": "passed",
-                        "coverage": "Front + wrist cameras, rendered map and rendered arm entered one strict-schema query.",
+                        "coverage": (
+                            "Front + upward wrist cameras, rendered map and "
+                            "Tinker-base/xArm7 pose entered one strict-schema "
+                            "query."
+                        ),
+                        "model": "openai/gpt-5.6-luna",
+                        "effort": "medium",
+                        "mode": "live OpenRouter",
+                    },
+                    {
+                        "role": "Cross-camera negative control",
+                        "status": "passed",
+                        "coverage": (
+                            "A real AprilTag calibration frame from another "
+                            "scene was rejected as sensor_context_mismatch."
+                        ),
                         "model": "openai/gpt-5.6-luna",
                         "effort": "medium",
                         "mode": "live OpenRouter",
@@ -266,7 +292,7 @@ def seed(state_dir: Path) -> str:
                 "role": "verify",
                 "model": "openai/gpt-5.6-luna",
                 "reasoning_effort": "medium",
-                "prompt_version": "gpsr-supervisor-v1",
+                "prompt_version": "gpsr-supervisor-v2",
                 "latency_ms": 4821,
                 "attempt": 1,
                 "usage": {"total_tokens": 1876},
@@ -479,7 +505,6 @@ def seed(state_dir: Path) -> str:
                 "gpsr/safety_state": "stop",
             },
             pose=(1.45, 1.15, 0.0),
-            joints=(0.1, 0.55, -0.65, 0.3, -0.2, 0.42, 0.0),
         )
         replay.checkpoint(broken, test_case="Destructive change · stop and explain", risk="irreversible")
         replay.emit(

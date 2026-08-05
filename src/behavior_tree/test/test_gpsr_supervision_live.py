@@ -6,13 +6,18 @@ import os
 import pytest
 
 from behavior_tree.GPSR.supervision.clients import OpenRouterSupervisorClient
-from behavior_tree.GPSR.supervision.context import FixtureContextProvider
+from behavior_tree.GPSR.supervision.context import (
+    FixtureContextProvider,
+    gpsr_arm_pose_orbbec_look,
+)
 from behavior_tree.GPSR.supervision.models import (
+    ArtifactRef,
     BtAssessment,
     CaptureRequest,
     Escalation,
     SubtaskStatus,
     SupervisorConfig,
+    SnapshotBundle,
     Verdict,
     VerificationDecision,
     WorldChange,
@@ -55,7 +60,7 @@ def test_luna_multimodal_verifier_medium(tmp_path):
         execution_history=(),
         recovery_ledger=(),
         robot_pose=(1.0, 1.0, 0.0),
-        arm_joints=(0.0, 0.2, -0.4, 0.1, 0.0, 0.3, 0.0),
+        arm_joints=gpsr_arm_pose_orbbec_look(),
     )
     snapshot = FixtureContextProvider(output_dir=tmp_path).capture(request)
     client = OpenRouterSupervisorClient(
@@ -65,6 +70,74 @@ def test_luna_multimodal_verifier_medium(tmp_path):
     decision = client.verify(snapshot)
     assert decision.checkpoint_id == request.checkpoint_id
     assert 0.0 <= decision.confidence <= 1.0
+    assert decision.failure_category != "sensor_context_mismatch"
+    assert not (
+        decision.verdict is Verdict.UNCERTAIN
+        and decision.escalation is Escalation.STOP
+    )
+
+
+@pytest.mark.skipif(not _enabled(), reason="set GPSR_RUN_LIVE_LLM_TESTS=1")
+def test_luna_medium_flags_cross_camera_mismatch(tmp_path):
+    key = (
+        os.environ.get("OPENROUTER_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or OPENAI_API_KEY
+    )
+    if not key:
+        pytest.skip("OpenRouter credential is not configured")
+    request = CaptureRequest(
+        checkpoint_id="live-cross-camera-mismatch",
+        task_id="live-task",
+        subtask_id="live-task/find-table-object",
+        tree_revision="1",
+        plan_revision=1,
+        original_instruction="Look for a bottle on the dining table.",
+        subtask_goal="determine whether a bottle is visible on the table",
+        terminal_node={
+            "node_id": "scan",
+            "class_name": "BtNode_ScanForGeneralist",
+            "reported_status": "SUCCESS",
+            "effect": "perception",
+        },
+        next_node={"name": "grasp bottle"},
+        subtask_tree={"nodes": [], "edges": []},
+        blackboard={"gpsr/target_object_name": "bottle"},
+        execution_history=(),
+        recovery_ledger=(),
+        robot_pose=(1.0, 1.0, 0.0),
+        arm_joints=gpsr_arm_pose_orbbec_look(),
+    )
+    provider = FixtureContextProvider(output_dir=tmp_path)
+    snapshot = provider.capture(request)
+    mismatch_path = provider.fixture_dir / "wrist_camera_mismatch.jpg"
+    mismatch = ArtifactRef.from_path(
+        role="wrist_camera",
+        mime_type="image/jpeg",
+        path=mismatch_path,
+        captured_at=snapshot.artifacts[0].captured_at,
+        metadata={
+            "fixture": True,
+            "camera": "wrist",
+            "negative_test": "different calibration scene",
+        },
+    )
+    snapshot = SnapshotBundle(
+        request=request,
+        artifacts=tuple(
+            mismatch if artifact.role == "wrist_camera" else artifact
+            for artifact in snapshot.artifacts
+        ),
+    )
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig.from_env(os.environ),
+        api_key=key,
+    )
+    decision = client.verify(snapshot)
+    assert decision.verdict is Verdict.UNCERTAIN
+    assert decision.escalation is Escalation.STOP
+    assert decision.world_change is WorldChange.UNKNOWN
+    assert decision.failure_category == "sensor_context_mismatch"
 
 
 @pytest.mark.skipif(not _enabled(), reason="set GPSR_RUN_LIVE_LLM_TESTS=1")

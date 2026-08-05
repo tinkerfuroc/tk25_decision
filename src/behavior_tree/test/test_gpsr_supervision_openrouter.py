@@ -89,6 +89,8 @@ def test_openrouter_verifier_uses_luna_medium_without_temperature():
     assert request["extra_body"]["reasoning"]["effort"] == "medium"
     assert request["response_format"]["type"] == "json_schema"
     assert "temperature" not in request
+    assert "sensor_context_mismatch" in request["messages"][0]["content"]
+    assert "mutually consistent" in request["messages"][1]["content"][0]["text"]
 
 
 def test_openrouter_planners_decode_strict_embedded_json_fields():

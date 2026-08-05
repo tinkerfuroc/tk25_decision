@@ -14,6 +14,24 @@ from .models import ArtifactRef, CaptureRequest, SnapshotBundle
 REQUIRED_ARTIFACT_ROLES = ("front_camera", "wrist_camera", "map", "arm")
 
 
+def gpsr_arm_pose(name: str) -> tuple[float, ...]:
+    """Load one GPSR runtime arm pose and convert degrees to radians."""
+    constants_path = Path(__file__).resolve().parents[1] / "constants.json"
+    constants = json.loads(constants_path.read_text(encoding="utf-8"))
+    degrees = constants.get(name)
+    if not isinstance(degrees, list) or len(degrees) != 7:
+        raise ValueError(f"GPSR {name} must contain seven joints")
+    return tuple(math.radians(float(value)) for value in degrees)
+
+
+def gpsr_arm_pose_navigating() -> tuple[float, ...]:
+    return gpsr_arm_pose("arm_pos_navigating")
+
+
+def gpsr_arm_pose_orbbec_look() -> tuple[float, ...]:
+    return gpsr_arm_pose("arm_pos_orbbec_look")
+
+
 class ContextProvider(Protocol):
     def capture(self, request: CaptureRequest) -> SnapshotBundle:
         """Return artifacts for a checkpoint without changing robot state."""
@@ -48,7 +66,16 @@ class FixtureContextProvider:
             request.robot_pose,
             map_output,
         )
-        render_arm_pose(request.arm_joints, arm_output)
+        pose_name = str(
+            request.blackboard.get(
+                "gpsr/arm_pose_name", "joint-state snapshot"
+            )
+        )
+        arm_metadata = render_arm_pose(
+            request.arm_joints,
+            arm_output,
+            pose_name=pose_name,
+        )
         artifacts = (
             ArtifactRef.from_path(
                 role="front_camera",
@@ -62,7 +89,12 @@ class FixtureContextProvider:
                 mime_type="image/jpeg",
                 path=self.fixture_dir / "wrist_camera.jpg",
                 captured_at=captured_at,
-                metadata={"fixture": True, "camera": "wrist"},
+                metadata={
+                    "fixture": True,
+                    "camera": "wrist",
+                    "view_direction": "upward",
+                    "provenance": "synthetic_hardware_free",
+                },
             ),
             ArtifactRef.from_path(
                 role="map",
@@ -76,7 +108,12 @@ class FixtureContextProvider:
                 mime_type="image/png",
                 path=arm_output,
                 captured_at=captured_at,
-                metadata={"fixture": True, "joints": list(request.arm_joints)},
+                metadata={
+                    "fixture": True,
+                    "joints": list(request.arm_joints),
+                    "pose_name": pose_name,
+                    **arm_metadata,
+                },
             ),
         )
         return SnapshotBundle(request=request, artifacts=artifacts)
@@ -148,7 +185,28 @@ def render_map_pose(
     image.save(output_path)
 
 
-def render_arm_pose(joints: tuple[float, ...], output_path: Path) -> None:
+def render_arm_pose(
+    joints: tuple[float, ...],
+    output_path: Path,
+    *,
+    pose_name: str = "joint-state snapshot",
+) -> dict[str, str]:
+    """Render ROS xArm7 visual geometry, with a portable fallback."""
+    try:
+        from .xarm_render import render_xarm_urdf
+
+        return render_xarm_urdf(
+            joints,
+            output_path,
+            pose_name=pose_name,
+        )
+    except (FileNotFoundError, ImportError, RuntimeError):
+        return _render_arm_pose_fallback(joints, output_path)
+
+
+def _render_arm_pose_fallback(
+    joints: tuple[float, ...], output_path: Path
+) -> dict[str, str]:
     try:
         from PIL import Image, ImageDraw
     except ImportError as exc:  # pragma: no cover - fixture-only dependency
@@ -178,10 +236,11 @@ def render_arm_pose(joints: tuple[float, ...], output_path: Path) -> None:
         )
         if index:
             draw.text((point[0] + 10, point[1] - 12), f"J{index}", fill=(20, 20, 20))
-    draw.text((20, 20), "Deterministic 2-D arm-state fixture", fill=(20, 20, 20))
+    draw.text((20, 20), "Portable xArm kinematic fallback", fill=(20, 20, 20))
     draw.text((20, 45), ", ".join(f"{value:+.2f}" for value in values), fill=(60, 60, 60))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
+    return {"renderer": "kinematic_fallback", "geometry": "link centerlines"}
 
 
 def blackboard_keys_from_tree(tree_document: Mapping[str, Any]) -> tuple[str, ...]:
@@ -274,6 +333,9 @@ __all__ = [
     "REQUIRED_ARTIFACT_ROLES",
     "StaticContextProvider",
     "blackboard_keys_from_tree",
+    "gpsr_arm_pose",
+    "gpsr_arm_pose_navigating",
+    "gpsr_arm_pose_orbbec_look",
     "next_unticked_node",
     "render_arm_pose",
     "render_map_pose",

@@ -1,5 +1,5 @@
 {
-  "fixture_version": 1,
+  "fixture_version": 2,
   "assets": {
     "front_camera.jpg": {
       "source": "/home/tinker/tk25_ws/vision_log/object_scan_orbbec_20260704_101135_263.jpg",
@@ -7,9 +7,14 @@
       "description": "Orbbec view of a dining table with bottles and tableware."
     },
     "wrist_camera.jpg": {
+      "source": "synthetic hardware-free fixture generated from front_camera.jpg room appearance",
+      "sha256": "6997eadbd9bf3c2028af6c874776719d585cc1e9f586dae85edc861779be52ba",
+      "description": "Upward-facing wrist-camera view of a white ceiling and room corner; synthetic and intended only for hardware-free supervision tests."
+    },
+    "wrist_camera_mismatch.jpg": {
       "source": "/home/tinker/tk25_ws/calibration_data/wrist_handeye_20260627_233006_livecapture/thumbs/sample_10.jpg",
       "sha256": "4bf5508d10cd6a0b0ae76c06988c680985c5633809c789300e5f841ec34d8f93",
-      "description": "Wrist-camera hand-eye calibration capture."
+      "description": "Real wrist calibration frame retained only as a negative cross-camera mismatch test."
     },
     "arena_map.pgm": {
       "source": "/home/tinker/tk25_ws/src/tk26_navigation/src/navigation_bringup/maps/0701_robocup_arena3.pgm",
