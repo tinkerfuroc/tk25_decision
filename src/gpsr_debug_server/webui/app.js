@@ -687,6 +687,7 @@ function supervisorArtifactSource(artifact) {
 }
 
 function renderSupervisorDecision(checkpoint) {
+  const created = checkpoint.created || {};
   const verdict = checkpoint.verdict || {};
   const section = el("section", "supervisor-decision");
   const top = el("div", "decision-summary");
@@ -737,7 +738,50 @@ function renderSupervisorDecision(checkpoint) {
     }
     section.append(block);
   }
+  const regression = renderSupervisorRegression(created);
+  if (regression) section.append(regression);
   return section;
+}
+
+function renderSupervisorRegression(created) {
+  const expected = created.expected_response;
+  if (!expected || typeof expected !== "object") return null;
+  const block = el("div", "regression-block");
+  const heading = el("div", "regression-heading");
+  heading.append(
+    el("strong", "", "Three-run regression"),
+    el("span", `badge ${created.live_passed ? "success" : "muted"}`, created.live_passed ? "passed" : "not passed"),
+  );
+  block.append(heading);
+  const expectedPlanner = created.expected_planner;
+  block.append(el(
+    "p",
+    "regression-expected",
+    `Expected verifier · ${expected.verdict} / ${expected.bt_assessment} / ${expected.escalation}`
+      + (expectedPlanner?.action ? ` → ${expectedPlanner.action}` : ""),
+  ));
+  const samples = [
+    ...(Array.isArray(created.observed_responses) ? created.observed_responses : []),
+    ...(Array.isArray(created.observed_planners) ? created.observed_planners : []),
+  ];
+  if (!samples.length) {
+    block.append(el("p", "regression-empty", "Live Luna samples have not been attached."));
+    return block;
+  }
+  const rows = el("div", "regression-rows");
+  samples.forEach(sample => {
+    const observed = sample.observed || {};
+    const result = observed.verdict || observed.kind || observed.action || "error";
+    const row = el("div", "regression-row");
+    row.append(
+      el("span", "", `Run ${sample.repetition || "?"}`),
+      el("span", "", `${humanType(sample.role || "query")} · ${humanType(result)}`),
+      el("span", `badge ${sample.passed ? "success" : "failure"}`, sample.passed ? "pass" : "fail"),
+    );
+    rows.append(row);
+  });
+  block.append(rows);
+  return block;
 }
 
 function supervisorFlowStep(number, label, value, className) {

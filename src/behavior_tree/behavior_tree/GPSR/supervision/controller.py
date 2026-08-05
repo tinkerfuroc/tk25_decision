@@ -312,6 +312,17 @@ class MissionSupervisor:
             record.stage = "shadow_complete"
             record.resolution = record.reported_status.value.lower()
             return
+        if decision.escalation is Escalation.STOP:
+            record.stage = "complete"
+            record.resolution = "stop"
+            self._interventions.append(
+                SupervisorIntervention(
+                    kind="stop",
+                    checkpoint_id=expected,
+                    reason=decision.failure_category or "verifier_stop",
+                )
+            )
+            return
         if decision.bt_assessment is BtAssessment.FALSE_FAILURE:
             record.stage = "complete"
             record.resolution = "success"

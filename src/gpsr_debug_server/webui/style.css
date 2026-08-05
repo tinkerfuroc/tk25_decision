@@ -696,6 +696,26 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
   white-space: pre-wrap;
 }
 .replacement-plan { grid-column: 1 / -1; margin: 3px 0 0; padding-left: 21px; color: var(--text-soft); font-size: 10px; }
+.regression-block {
+  margin-top: 10px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-raised);
+}
+.regression-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.regression-heading strong { font-size: 10px; }
+.regression-expected { margin: 7px 0; color: var(--text-soft); font-size: 10px; }
+.regression-empty { margin: 7px 0 0; color: var(--muted); font-size: 10px; }
+.regression-rows { display: grid; gap: 4px; }
+.regression-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 9px;
+}
 
 .planning-layout, .state-layout, .controls-layout, .agent-layout {
   display: grid;

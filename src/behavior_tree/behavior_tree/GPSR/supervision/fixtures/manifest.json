@@ -1,5 +1,5 @@
 {
-  "fixture_version": 2,
+  "fixture_version": 3,
   "assets": {
     "front_camera.jpg": {
       "source": "/home/tinker/tk25_ws/vision_log/object_scan_orbbec_20260704_101135_263.jpg",
@@ -23,6 +23,61 @@
     "arena_map.yaml": {
       "source": "/home/tinker/tk25_ws/src/tk26_navigation/src/navigation_bringup/maps/0701_robocup_arena3.yaml",
       "sha256": "3365b7592e4022324ca56366074e8baa381e8fe661cfdf39a9ac180afabc43aa"
+    },
+    "scenarios/case02-front-waving.png": {
+      "source": "generated edit of vision_log/20260702_070449/generalist_detection_node_yolo_orig_20260702_071304_870.jpg",
+      "sha256": "c7d70135138a1edd27b18261817c55d66855f1c49d12bdbb8013ba0b4f5825fb",
+      "description": "Sofa scene with exactly one clearly waving person."
+    },
+    "scenarios/sofa-front-three-people.jpg": {
+      "source": "/home/tinker/tk25_ws/vision_log/20260702_070449/generalist_detection_node_yolo_orig_20260702_071304_870.jpg",
+      "sha256": "1f761b7f1b11cdb8f2684ddf01c5839ed5dfcfd0c2e0e37f2af4f5ae0412e695",
+      "description": "Real Orbbec sofa scene with three people and no identity labels."
+    },
+    "scenarios/sofa-wrist-upper-wall.png": {
+      "source": "generated matching wrist view for the sofa scene",
+      "sha256": "cb3e3b3ffd2557a28be4aa92fc915dec6b7501a05575f5c275607c4ff9989d61",
+      "description": "Upward wrist view matching the white-partition arena."
+    },
+    "scenarios/case04-front-occluded-cola.png": {
+      "source": "generated edit of front_camera.jpg",
+      "sha256": "1f57d9ba3dd98529742ef773671510e0eeec99ba5d18efd248d5bfd523931527",
+      "description": "Previously tracked cola partially occluded by table objects."
+    },
+    "scenarios/case04-wrist-occluded-cola.png": {
+      "source": "generated matching wrist view for case04",
+      "sha256": "bf9bac8bb9e9e44ed7dff51a544deb46eff83780635174ae1cb64466172974d4",
+      "description": "Downward wrist view of the same occluded cola."
+    },
+    "scenarios/case06-front-featureless-corridor.png": {
+      "source": "generated hardware-free localization fixture",
+      "sha256": "f1bf98ed895b3cc722dcafcfae3c84eaa208bf696148ecc232c47b07955bbb52",
+      "description": "Feature-poor white-partition corridor with mild motion blur."
+    },
+    "scenarios/case06-wrist-corridor-ceiling.png": {
+      "source": "generated matching wrist view for case06",
+      "sha256": "b30503a875f342444ff70749296ee8091a71dcde57234187bca937696914e831",
+      "description": "Near-vertical wrist view of the same corridor ceiling."
+    },
+    "scenarios/case09-front-regular-cola-fridge.png": {
+      "source": "generated hardware-free product-variant fixture",
+      "sha256": "46e93818d491d19a583aa3d5c209000c024dabc4404dc2119597bbcab179fe78",
+      "description": "Refrigerator containing regular cola and no zero-sugar variant."
+    },
+    "scenarios/case09-wrist-regular-cola-fridge.png": {
+      "source": "generated matching wrist view for case09",
+      "sha256": "2b43d55bbd667f15553d4bdbfaaec413e174c064cae6a1bf15d3633b7dbd4e0a",
+      "description": "Downward wrist view of the same regular-cola shelf."
+    },
+    "scenarios/case10-front-broken-spill.png": {
+      "source": "generated edit of front_camera.jpg",
+      "sha256": "5edc2594ca8d18bdbf8ddb87e922d6d9e95c640669e862484f532cb7ea487a2b",
+      "description": "Broken cola bottle, glass fragments, and liquid spill."
+    },
+    "scenarios/case10-wrist-broken-spill.png": {
+      "source": "generated matching wrist view for case10",
+      "sha256": "657771c6cb43abf811eb7b0ee9d6fbecac6cbe074dfa98496e5d0acd66540119",
+      "description": "Close downward wrist view of the same destructive spill."
     }
   }
 }

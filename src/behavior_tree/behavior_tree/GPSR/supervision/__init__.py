@@ -26,10 +26,22 @@ from .clients import (
     ScriptedSupervisorClient,
     SupervisorClient,
 )
-from .context import ContextProvider, FixtureContextProvider, StaticContextProvider
+from .context import (
+    ContextProvider,
+    FixtureContextProvider,
+    StaticContextProvider,
+    gpsr_named_pose,
+)
 from .contracts import NodeContractRegistry, default_node_contracts
 from .controller import MissionSupervisor, SupervisorIntervention
 from .recovery import RecoveryLedger, RecoveryMacroCompiler
+from .scenarios import (
+    SCENARIO_CASES,
+    ScenarioCase,
+    ScenarioStage,
+    build_capture_request,
+    iter_stages,
+)
 
 __all__ = [
     "ArtifactRef",
@@ -50,6 +62,9 @@ __all__ = [
     "RecoveryMacroCompiler",
     "RecoveryProposal",
     "ReportedStatus",
+    "SCENARIO_CASES",
+    "ScenarioCase",
+    "ScenarioStage",
     "ScriptedSupervisorClient",
     "SnapshotBundle",
     "StaticContextProvider",
@@ -63,4 +78,7 @@ __all__ = [
     "VerificationDecision",
     "WorldChange",
     "default_node_contracts",
+    "build_capture_request",
+    "gpsr_named_pose",
+    "iter_stages",
 ]
