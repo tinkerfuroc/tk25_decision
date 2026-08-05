@@ -51,6 +51,12 @@ def serialize_tree(root: Any, *, kind: str, label: str | None = None) -> dict[st
             "blackboard_access": _blackboard_access(node),
             "action_context": action_context,
         }
+        effect_contract = getattr(node, "_gpsr_effect_contract", None)
+        if isinstance(effect_contract, Mapping):
+            node_record["effect_contract"] = _json_value(effect_contract)
+            node_record["effect_node_id"] = _text(
+                getattr(node, "_gpsr_effect_node_id", node_id)
+            )
         nodes.append(node_record)
         for index, child in enumerate(children):
             child_id = stable_node_id(kind, f"{path}/{index}")

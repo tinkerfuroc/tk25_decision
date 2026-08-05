@@ -40,6 +40,12 @@ from .orchestrator import (
 from .planner import GPSRPlanner
 from .small_trees import bb_keys, create_enter_arena
 from .telemetry import GpsrTelemetry, set_default_telemetry
+from .supervision.controller import MissionSupervisor
+from .supervision.runtime import (
+    configure_default_supervisor,
+    get_default_supervisor,
+    set_default_supervisor,
+)
 
 # Module-level decoupled orchestrator: the two-layer planner invoked repeatedly
 # (per slot, per target, per replan) by the bridge nodes + DynamicExecutor. It
@@ -75,6 +81,7 @@ def createGPSROrchestrator(
     max_corrections: int = 3,
     num_commands: int = NUM_COMMANDS,
     telemetry: GpsrTelemetry | None = None,
+    supervisor: MissionSupervisor | None = None,
 ) -> py_trees.behaviour.Behaviour:
     """Build the live orchestrator root.
 
@@ -88,6 +95,10 @@ def createGPSROrchestrator(
     """
     if telemetry is not None:
         set_default_telemetry(telemetry)
+    if supervisor is not None:
+        set_default_supervisor(supervisor)
+    elif get_default_supervisor() is None:
+        configure_default_supervisor(telemetry=telemetry)
     load_knowledge_from_constants(CONSTANTS_PATH)
     if commands is None:
         cmd_env = os.environ.get("BT_GPSR_CMD", "").strip()
