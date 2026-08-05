@@ -1,8 +1,8 @@
 # GPSR End-to-End Observability Dashboard Plan
 
-**Date:** 2026-08-03  
+**Date:** 2026-08-03
 **Scope:** `tk25_decision` GPSR telemetry producer, versioned declarative
-behavior-tree IR/patches, and a separate developer-only `gpsr_debug_server`  
+behavior-tree IR/patches, and a separate developer-only `gpsr_debug_server`
 **Primary goal:** Track a GPSR mission from command intake through every LLM
 attempt, accepted plan, behavior-tree artifact, live execution, correction, and
 terminal outcome without coupling the web server to GPSR's current Python
