@@ -159,6 +159,18 @@ class bb_keys:
     SAVED_PLAN_PREFIX = "gpsr/saved_plan_"        # + <i> -> list[dict] plan for task i
     SAVED_COMMAND_PREFIX = "gpsr/saved_command_"  # + <i> -> str command for task i
 
+    # --- two-layer planning (top-layer split + lower-layer per-target plans) ---
+    TARGETS = "gpsr/targets"                     # list[str] top-layer target descriptions (current command)
+    NUM_TARGETS = "gpsr/num_targets"             # int — how many targets the top layer split out
+    TARGET_INDEX = "gpsr/target_index"           # int — current target being executed (DynamicExecutor writes)
+    CURRENT_TARGET = "gpsr/current_target"       # str — the active target's NL description
+    CURRENT_TARGET_PLAN = "gpsr/current_target_plan"  # list[dict] flattened aggregate (logging/plan_judge compat)
+    SAVED_TARGETS_PREFIX = "gpsr/saved_targets_"      # + <slot> -> list[str] targets for command slot
+    SAVED_TARGET_PLAN_PREFIX = "gpsr/saved_target_plan_"  # + <slot>_<i> -> list[dict] action-plan for target i of slot
+    # Replan request channel (extension point; trigger logic to be announced).
+    REPLAN_REQUEST = "gpsr/replan_request"       # dict {level: "target"|"command", index: int, reason: str}
+    TARGET_REPLAN_COUNT = "gpsr/target_replan_count"  # int — per-target replan budget, reset when a target advances
+
 
 ARM_ACTION_NAME = "joint_move_action"
 GRASP_SERVICE_NAME = "start_grasp"

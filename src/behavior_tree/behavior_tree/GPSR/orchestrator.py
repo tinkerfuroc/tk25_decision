@@ -787,6 +787,191 @@ class BtNode_PlanActions(Behaviour):
 # Step pop / parameter materialisation
 # ---------------------------------------------------------------------------
 
+def resolve_pose(bb_client, name: Any) -> Optional[PoseStamped]:
+    """Resolve a location name to a PoseStamped, or None if unknown.
+
+    Resolution order: start-position aliases (pose captured at command
+    start) → known map locations (exact then case-insensitive) →
+    runtime-recorded dynamic-location registry (labels fixed by an earlier
+    record_position step).
+    """
+    if not name:
+        return None
+    key = str(name).lower()
+    if key in START_LOCATION_ALIASES:
+        try:
+            return bb_client.get(bb_keys.START_POSE)
+        except KeyError:
+            return None
+    if name in KNOWN_LOCATIONS:
+        return KNOWN_LOCATIONS.get(name)
+    for known_name, pose in KNOWN_LOCATIONS.items():
+        if known_name.lower() == key:
+            return pose
+    try:
+        registry = bb_client.get(bb_keys.DYNAMIC_LOCATIONS) or {}
+    except KeyError:
+        registry = {}
+    return registry.get(key)
+
+
+def materialise_params(bb_client, action: str, params: Dict[str, Any]) -> None:
+    """Translate the LLM's params into the BB keys the small trees consume.
+
+    Shared by the legacy ``BtNode_PopNextAction`` and the two-layer
+    ``BtNode_MaterialiseStep`` so every dispatched step runs the exact same
+    safeguarded parameter resolution (appliance must-do referee-open,
+    no-grasp shelf/cabinet/coat-rack inference, search-spot sweep, ...).
+    """
+    # Location → PoseStamped lookup (see resolve_pose for the order).
+    loc_name = params.get("location") or params.get("recipient_location")
+    if loc_name:
+        bb_client.set(bb_keys.TARGET_LOCATION, loc_name, overwrite=True)
+        pose = resolve_pose(bb_client, loc_name)
+        if pose is not None:
+            bb_client.set(bb_keys.TARGET_POSE, pose, overwrite=True)
+
+    # Track where the robot navigates so a following grasp can tell it is a
+    # shelf grasp (the fetch flow is goto(location) -> grasp(object)).
+    if action == "goto":
+        bb_client.set(bb_keys.LAST_NAV_LOCATION, str(params.get("location") or ""), overwrite=True)
+
+    # search_object: resolve the room's sweep spots into SEARCH_POSE_0..N.
+    # location is optional — when omitted, fall back to the object's default
+    # location (DEFAULT_OBJECT_LOCATIONS). A location with no explicit
+    # search-spot list sweeps just itself. Unused slots are cleared to None
+    # so the sweep guards them out.
+    if action == "search_object":
+        loc = params.get("location")
+        obj = params.get("object")
+        if not loc and obj:
+            loc = DEFAULT_OBJECT_LOCATIONS.get(str(obj).lower())
+        if loc:
+            bb_client.set(bb_keys.TARGET_LOCATION, loc, overwrite=True)
+        # Remember where we searched so a following grasp can tell it is a
+        # shelf grasp even if the planner forgot the from_shelf flag.
+        bb_client.set(bb_keys.LAST_NAV_LOCATION, str(loc or ""), overwrite=True)
+        spot_names = ROOM_SEARCH_SPOTS.get(str(loc).lower(), [loc]) if loc else []
+        for i, search_key in enumerate(SEARCH_POSE_KEYS):
+            pose = resolve_pose(bb_client, spot_names[i]) if i < len(spot_names) else None
+            bb_client.set(search_key, pose, overwrite=True)
+
+    # grasp: decide whether to bypass the real grasp and ask a referee. The
+    # robot cannot safely grasp from a shelf, cabinet, or coat rack. Truthy
+    # from ANY signal: an explicit planner flag (from_shelf / from_cabinet /
+    # from_coat_rack / ask_referee), a no-grasp word in the grasp step's
+    # location/surface, OR the location the robot last navigated to (covers
+    # default-furniture objects even if the planner omits the flag).
+    if action == "grasp":
+        def _is_no_grasp(v) -> bool:
+            s = str(v or "").lower()
+            return any(loc in s or loc.replace("_", " ") in s
+                       for loc in NO_GRASP_LOCATIONS)
+        try:
+            last_nav = bb_client.get(bb_keys.LAST_NAV_LOCATION)
+        except KeyError:
+            last_nav = ""
+        ask_referee = bool(
+            params.get("from_shelf")
+            or params.get("from_cabinet")
+            or params.get("from_coat_rack")
+            or params.get("ask_referee")
+            or _is_no_grasp(params.get("location"))
+            or _is_no_grasp(params.get("surface"))
+            or _is_no_grasp(last_nav)
+        )
+        bb_client.set(bb_keys.GRASP_ASK_REFEREE, ask_referee, overwrite=True)
+        # When bypassing to the referee, drive to the no-grasp furniture
+        # first (the grasp small tree's ex_machina branch gotos this pose).
+        # Figure out WHICH furniture: an explicit flag maps 1:1, otherwise
+        # take the no-grasp word that matched location / surface / last_nav.
+        referee_loc, referee_pose = "", None
+        if ask_referee:
+            flag_map = {
+                "from_shelf": "shelf",
+                "from_cabinet": "cabinet",
+                "from_coat_rack": "coat_rack",
+            }
+            for flag, furn in flag_map.items():
+                if params.get(flag):
+                    referee_loc = furn
+                    break
+            if not referee_loc:
+                for cand in (params.get("location"), params.get("surface"), last_nav):
+                    s = str(cand or "").lower()
+                    for furn in NO_GRASP_LOCATIONS:
+                        if furn in s or furn.replace("_", " ") in s:
+                            referee_loc = furn
+                            break
+                    if referee_loc:
+                        break
+            if referee_loc:
+                referee_pose = resolve_pose(bb_client, referee_loc)
+        bb_client.set(bb_keys.GRASP_REFEREE_LOCATION,
+                      referee_loc.replace("_", " "), overwrite=True)
+        bb_client.set(bb_keys.GRASP_REFEREE_POSE, referee_pose, overwrite=True)
+        # Closed appliances (fridge / washing machine / dishwasher) can't be
+        # opened by the robot: flag it so the grasp ask-referee branch always
+        # asks the referee to open it first, even if the planner omitted a
+        # separate open() step.
+        bb_client.set(bb_keys.GRASP_REFEREE_IS_APPLIANCE,
+                      referee_loc in ALWAYS_NO_GRASP, overwrite=True)
+
+    # record_position: stash the label so the small tree registers the
+    # captured pose under it.
+    if action == "record_position":
+        bb_client.set(
+            bb_keys.CURRENT_DYNLABEL,
+            str(params.get("label") or "").strip(),
+            overwrite=True,
+        )
+
+    # Object → vision prompt + name
+    obj_name = params.get("object")
+    if obj_name:
+        bb_client.set(bb_keys.TARGET_OBJECT_NAME, obj_name, overwrite=True)
+        prompt = KNOWN_OBJECT_PROMPTS.get(obj_name, obj_name)
+        bb_client.set(bb_keys.TARGET_OBJECT_PROMPT, prompt, overwrite=True)
+
+    # Person descriptor
+    person = params.get("descriptor") or params.get("person") or params.get("recipient")
+    if person:
+        bb_client.set(bb_keys.TARGET_PERSON_PROMPT, person, overwrite=True)
+
+    # announce: a literal ``text`` is spoken as-is; an announce with NO text
+    # reports the latest gathered result buffered in REPORT_INFO by the most
+    # recent count / describe_person / ask_person / vlm_fallback. This is the
+    # generalized "go gather X then come back and tell ME X" reporter that
+    # replaced the per-result report_* actions.
+    if action == "announce":
+        text = params.get("text") or params.get("message") or ""
+        if not text:
+            try:
+                text = str(bb_client.get(bb_keys.REPORT_INFO) or "")
+            except KeyError:
+                text = ""
+        bb_client.set(bb_keys.ANNOUNCE_TEXT, text, overwrite=True)
+
+    # ask_person carries the literal question to speak
+    if action == "ask_person":
+        question = params.get("question") or params.get("text") or "Please tell me."
+        bb_client.set(bb_keys.ASK_QUESTION, question, overwrite=True)
+
+    # fallbacks carry the literal question to answer
+    if action == "vlm_fallback":
+        bb_client.set(
+            bb_keys.VLM_QUESTION,
+            params.get("question") or params.get("text") or "Describe what you see.",
+            overwrite=True,
+        )
+    if action == "llm_fallback":
+        bb_client.set(
+            bb_keys.LLM_QUESTION,
+            params.get("question") or params.get("text") or "",
+            overwrite=True,
+        )
+
+
 class BtNode_PopNextAction(Behaviour):
     """Pop ``plan[plan_index]``, resolve its params into BB targets.
 
@@ -846,187 +1031,10 @@ class BtNode_PopNextAction(Behaviour):
 
         self._bb.set(bb_keys.CURRENT_ACTION, action, overwrite=True)
         self._bb.set(bb_keys.CURRENT_PARAMS, params, overwrite=True)
-        self._materialise_params(action, params)
+        materialise_params(self._bb, action, params)
         self._bb.set(bb_keys.PLAN_INDEX, index + 1, overwrite=True)
         self.feedback_message = f"step {index+1}/{len(plan)}: {action}({params})"
         return Status.SUCCESS
-
-    def _resolve_pose(self, name: Any) -> Optional[PoseStamped]:
-        """Resolve a location name to a PoseStamped, or None if unknown.
-
-        Resolution order: start-position aliases (pose captured at command
-        start) → known map locations (exact then case-insensitive) →
-        runtime-recorded dynamic-location registry (labels fixed by an earlier
-        record_position step).
-        """
-        if not name:
-            return None
-        key = str(name).lower()
-        if key in START_LOCATION_ALIASES:
-            try:
-                return self._bb.get(bb_keys.START_POSE)
-            except KeyError:
-                return None
-        if name in KNOWN_LOCATIONS:
-            return KNOWN_LOCATIONS.get(name)
-        for known_name, pose in KNOWN_LOCATIONS.items():
-            if known_name.lower() == key:
-                return pose
-        try:
-            registry = self._bb.get(bb_keys.DYNAMIC_LOCATIONS) or {}
-        except KeyError:
-            registry = {}
-        return registry.get(key)
-
-    def _materialise_params(self, action: str, params: Dict[str, Any]) -> None:
-        """Translate the LLM's params into the BB keys the small trees consume."""
-        # Location → PoseStamped lookup (see _resolve_pose for the order).
-        loc_name = params.get("location") or params.get("recipient_location")
-        if loc_name:
-            self._bb.set(bb_keys.TARGET_LOCATION, loc_name, overwrite=True)
-            pose = self._resolve_pose(loc_name)
-            if pose is not None:
-                self._bb.set(bb_keys.TARGET_POSE, pose, overwrite=True)
-
-        # Track where the robot navigates so a following grasp can tell it is a
-        # shelf grasp (the fetch flow is goto(location) -> grasp(object)).
-        if action == "goto":
-            self._bb.set(bb_keys.LAST_NAV_LOCATION, str(params.get("location") or ""), overwrite=True)
-
-        # search_object: resolve the room's sweep spots into SEARCH_POSE_0..N.
-        # location is optional — when omitted, fall back to the object's default
-        # location (DEFAULT_OBJECT_LOCATIONS). A location with no explicit
-        # search-spot list sweeps just itself. Unused slots are cleared to None
-        # so the sweep guards them out.
-        if action == "search_object":
-            loc = params.get("location")
-            obj = params.get("object")
-            if not loc and obj:
-                loc = DEFAULT_OBJECT_LOCATIONS.get(str(obj).lower())
-            if loc:
-                self._bb.set(bb_keys.TARGET_LOCATION, loc, overwrite=True)
-            # Remember where we searched so a following grasp can tell it is a
-            # shelf grasp even if the planner forgot the from_shelf flag.
-            self._bb.set(bb_keys.LAST_NAV_LOCATION, str(loc or ""), overwrite=True)
-            spot_names = ROOM_SEARCH_SPOTS.get(str(loc).lower(), [loc]) if loc else []
-            for i, search_key in enumerate(SEARCH_POSE_KEYS):
-                pose = self._resolve_pose(spot_names[i]) if i < len(spot_names) else None
-                self._bb.set(search_key, pose, overwrite=True)
-
-        # grasp: decide whether to bypass the real grasp and ask a referee. The
-        # robot cannot safely grasp from a shelf, cabinet, or coat rack. Truthy
-        # from ANY signal: an explicit planner flag (from_shelf / from_cabinet /
-        # from_coat_rack / ask_referee), a no-grasp word in the grasp step's
-        # location/surface, OR the location the robot last navigated to (covers
-        # default-furniture objects even if the planner omits the flag).
-        if action == "grasp":
-            def _is_no_grasp(v) -> bool:
-                s = str(v or "").lower()
-                return any(loc in s or loc.replace("_", " ") in s
-                           for loc in NO_GRASP_LOCATIONS)
-            try:
-                last_nav = self._bb.get(bb_keys.LAST_NAV_LOCATION)
-            except KeyError:
-                last_nav = ""
-            ask_referee = bool(
-                params.get("from_shelf")
-                or params.get("from_cabinet")
-                or params.get("from_coat_rack")
-                or params.get("ask_referee")
-                or _is_no_grasp(params.get("location"))
-                or _is_no_grasp(params.get("surface"))
-                or _is_no_grasp(last_nav)
-            )
-            self._bb.set(bb_keys.GRASP_ASK_REFEREE, ask_referee, overwrite=True)
-            # When bypassing to the referee, drive to the no-grasp furniture
-            # first (the grasp small tree's ex_machina branch gotos this pose).
-            # Figure out WHICH furniture: an explicit flag maps 1:1, otherwise
-            # take the no-grasp word that matched location / surface / last_nav.
-            referee_loc, referee_pose = "", None
-            if ask_referee:
-                flag_map = {
-                    "from_shelf": "shelf",
-                    "from_cabinet": "cabinet",
-                    "from_coat_rack": "coat_rack",
-                }
-                for flag, furn in flag_map.items():
-                    if params.get(flag):
-                        referee_loc = furn
-                        break
-                if not referee_loc:
-                    for cand in (params.get("location"), params.get("surface"), last_nav):
-                        s = str(cand or "").lower()
-                        for furn in NO_GRASP_LOCATIONS:
-                            if furn in s or furn.replace("_", " ") in s:
-                                referee_loc = furn
-                                break
-                        if referee_loc:
-                            break
-                if referee_loc:
-                    referee_pose = self._resolve_pose(referee_loc)
-            self._bb.set(bb_keys.GRASP_REFEREE_LOCATION,
-                         referee_loc.replace("_", " "), overwrite=True)
-            self._bb.set(bb_keys.GRASP_REFEREE_POSE, referee_pose, overwrite=True)
-            # Closed appliances (fridge / washing machine / dishwasher) can't be
-            # opened by the robot: flag it so the grasp ask-referee branch always
-            # asks the referee to open it first, even if the planner omitted a
-            # separate open() step.
-            self._bb.set(bb_keys.GRASP_REFEREE_IS_APPLIANCE,
-                         referee_loc in ALWAYS_NO_GRASP, overwrite=True)
-
-        # record_position: stash the label so the small tree registers the
-        # captured pose under it.
-        if action == "record_position":
-            self._bb.set(
-                bb_keys.CURRENT_DYNLABEL,
-                str(params.get("label") or "").strip(),
-                overwrite=True,
-            )
-
-        # Object → vision prompt + name
-        obj_name = params.get("object")
-        if obj_name:
-            self._bb.set(bb_keys.TARGET_OBJECT_NAME, obj_name, overwrite=True)
-            prompt = KNOWN_OBJECT_PROMPTS.get(obj_name, obj_name)
-            self._bb.set(bb_keys.TARGET_OBJECT_PROMPT, prompt, overwrite=True)
-
-        # Person descriptor
-        person = params.get("descriptor") or params.get("person") or params.get("recipient")
-        if person:
-            self._bb.set(bb_keys.TARGET_PERSON_PROMPT, person, overwrite=True)
-
-        # announce: a literal ``text`` is spoken as-is; an announce with NO text
-        # reports the latest gathered result buffered in REPORT_INFO by the most
-        # recent count / describe_person / ask_person / vlm_fallback. This is the
-        # generalized "go gather X then come back and tell ME X" reporter that
-        # replaced the per-result report_* actions.
-        if action == "announce":
-            text = params.get("text") or params.get("message") or ""
-            if not text:
-                try:
-                    text = str(self._bb.get(bb_keys.REPORT_INFO) or "")
-                except KeyError:
-                    text = ""
-            self._bb.set(bb_keys.ANNOUNCE_TEXT, text, overwrite=True)
-
-        # ask_person carries the literal question to speak
-        if action == "ask_person":
-            question = params.get("question") or params.get("text") or "Please tell me."
-            self._bb.set(bb_keys.ASK_QUESTION, question, overwrite=True)
-
-        # fallbacks carry the literal question to answer
-        if action == "vlm_fallback":
-            self._bb.set(
-                bb_keys.VLM_QUESTION,
-                params.get("question") or params.get("text") or "Describe what you see.",
-                overwrite=True,
-            )
-        if action == "llm_fallback":
-            self._bb.set(
-                bb_keys.LLM_QUESTION,
-                params.get("question") or params.get("text") or "",
-                overwrite=True,
-            )
 
 
 class BtNode_ActionRouter(Behaviour):
