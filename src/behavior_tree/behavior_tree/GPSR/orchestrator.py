@@ -44,6 +44,7 @@ from .config import (
     OPENAI_TEMPERATURE,
     OPENAI_MAX_TOKENS,
 )
+from ..config import is_full_mock_mode
 from .planner_validators import validate_plan
 from .small_trees import (
     ACTION_FACTORIES,
@@ -563,6 +564,14 @@ def _fallback_plan(command: str) -> List[Dict[str, Any]]:
     }]
 
 
+def _offline_mock_plan(command: str) -> List[Dict[str, Any]]:
+    """Return a deterministic, network-free plan for the all-mock preset."""
+    text = "Mock mode: planner bypassed; no network request was made."
+    if command:
+        text += f" Command received: {command}"
+    return [{"action": "announce", "params": {"text": text}}]
+
+
 class BtNode_PlanActions(Behaviour):
     """Plan a command into actions, with internal retries and a guaranteed plan.
 
@@ -582,10 +591,13 @@ class BtNode_PlanActions(Behaviour):
         max_attempts: int = 4,
     ):
         super().__init__(name)
-        self._client_oai = openai.OpenAI(
-            api_key=OPENAI_API_KEY,
-            base_url="https://openrouter.ai/api/v1",
-        )
+        self._offline_mock = is_full_mock_mode()
+        self._client_oai = None
+        if not self._offline_mock:
+            self._client_oai = openai.OpenAI(
+                api_key=OPENAI_API_KEY,
+                base_url="https://openrouter.ai/api/v1",
+            )
         self._bb = None
         self._thread: Optional[threading.Thread] = None
         self._plan_result: Optional[List[Dict[str, Any]]] = None
@@ -669,6 +681,17 @@ class BtNode_PlanActions(Behaviour):
             seed_failure = None
             state_log = []
 
+        if self._offline_mock:
+            # Full mock must be deterministic and must never touch the network.
+            # Keep the normal blackboard/update path so dispatch and completion
+            # are still exercised by offline integration tests.
+            self._attempts_used = 0
+            self._fell_back = False
+            self._plan_result = _offline_mock_plan(command or "")
+            self.feedback_message = "Offline mock planner (OpenRouter disabled)"
+            self._thread = None
+            return
+
         known_locs = set(KNOWN_LOCATIONS.keys())
         known_loc_arg = (known_locs | START_LOCATION_ALIASES) if known_locs else None
         known_actions = set(ACTION_FACTORIES.keys())
@@ -746,7 +769,10 @@ class BtNode_PlanActions(Behaviour):
         except KeyError:
             count = 0
         self._bb.set(bb_keys.CORRECTION_COUNT, count, overwrite=True)
-        tag = " [FALLBACK]" if self._fell_back else ""
+        if self._offline_mock:
+            tag = " [OFFLINE MOCK]"
+        else:
+            tag = " [FALLBACK]" if self._fell_back else ""
         self.feedback_message = (
             f"Planned {len(plan)} step(s) in {self._attempts_used} attempt(s){tag}: "
             f"{[s['action'] for s in plan]}"
@@ -1431,7 +1457,7 @@ def make_listen_intake(listen_timeout: float = 30.0):
         seq = py_trees.composites.Sequence(f"get command {slot + 1}", memory=True)
         seq.add_child(BtNode_Announce(
             f"prompt task {slot + 1}", bb_source=None,
-            message=f"Please tell me task number {slot + 1} after the beep.",
+            message=f"Speak loudly near to the microphone. Please tell me task number {slot + 1} after the beep.",
         ))
         seq.add_child(BtNode_ListenAction(
             f"listen task {slot + 1}", bb_dest_key=bb_keys.COMMAND,

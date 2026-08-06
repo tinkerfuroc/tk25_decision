@@ -29,6 +29,15 @@ NODE_MOCK_MODE_MAP = {
     "IMMEDIATE": "immediate",
 }
 
+MOCK_SUBSYSTEMS = (
+    "vision",
+    "manipulation",
+    "navigation",
+    "audio_input",
+    "announcement",
+    "mock_controls",
+)
+
 
 class BehaviorTreeConfig:
     """Configuration manager for behavior tree mock mode."""
@@ -294,7 +303,23 @@ class BehaviorTreeConfig:
                     return True
         
         return False
-    
+
+    def is_full_mock_mode(self) -> bool:
+        """Return whether every known subsystem is configured for mocking.
+
+        This is deliberately stricter than :meth:`is_mock_mode`: bench
+        configurations mock only selected subsystems and must continue to use
+        real planner/network behaviour.
+        """
+        if not self.is_mock_mode():
+            return False
+        subsystems = self._mock_config.get("mock_mode", {}).get("subsystems", {})
+        return all(
+            isinstance(subsystems.get(name, {}), dict)
+            and subsystems.get(name, {}).get("enabled", True)
+            for name in MOCK_SUBSYSTEMS
+        )
+
     def is_subsystem_mocked(self, subsystem: str) -> bool:
         """
         Check if a specific subsystem should be mocked.
@@ -558,6 +583,11 @@ def get_config() -> BehaviorTreeConfig:
 def is_mock_mode() -> bool:
     """Quick check if global mock mode is enabled."""
     return _config.is_mock_mode()
+
+
+def is_full_mock_mode() -> bool:
+    """Quick check for an all-subsystem offline mock configuration."""
+    return _config.is_full_mock_mode()
 
 
 def is_subsystem_mocked(subsystem: str) -> bool:
