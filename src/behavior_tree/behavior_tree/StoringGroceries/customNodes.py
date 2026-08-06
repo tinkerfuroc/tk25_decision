@@ -5,6 +5,7 @@ from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.messages import ObjectDetection, Categorize
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
+from geometry_msgs.msg import Pose
 
 import action_msgs.msg as action_msgs
 
@@ -13,15 +14,16 @@ class BtNode_FindObjTable(ServiceHandler):
     Find object on table
     """
 
-    def __init__(self, name: str, 
-                 bb_key_prompt: str, 
-                 bb_key_image: str, 
-                 bb_key_segment: str, 
+    def __init__(self, name: str,
+                 bb_key_prompt: str,
+                 bb_key_image: str,
+                 bb_key_segment: str,
                  bb_key_result: str,
                  bb_key_announcement: str,
+                 bb_key_object_label: str = None,
                  target_frame: str = "base_link",
                  use_realsense: bool = True,
-                 service_name = "object_detection",
+                 service_name = "object_detection_yolo",
                  service_type = ObjectDetection,
                  ):
         super(BtNode_FindObjTable, self).__init__(name=name,
@@ -56,9 +58,19 @@ class BtNode_FindObjTable(ServiceHandler):
             access=py_trees.common.Access.WRITE,
             remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_announcement)
         )
+        if bb_key_object_label is not None:
+            self.blackboard.register_key(
+                key="object_label",
+                access=py_trees.common.Access.WRITE,
+                remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_object_label)
+            )
         self.use_realsense = use_realsense
 
     def initialise(self):
+        # In mock mode the base ServiceHandler skips client creation, so there is
+        # no real service to call — don't touch self.client (it is None).
+        if self.mock_mode:
+            return
         request = ObjectDetection.Request()
         request.prompt = self.blackboard.prompt
         request.flags = "find_for_grasp|request_image|request_segmentation"
@@ -70,18 +82,44 @@ class BtNode_FindObjTable(ServiceHandler):
         self.logger.debug(f"Initialized FindObjTable with prompt: {self.blackboard.prompt}")
 
     def update(self):
+        # Mock: use the shared mock-interaction path (IMMEDIATE / keypress)
+        # instead of polling a service response that was never requested.
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
         self.logger.debug(f"Updating FindObjTable with prompt: {self.blackboard.prompt}")
         if self.response.done():
-            if self.response.result().status == 0:
-                response = self.response.result()
+            result = self.response.result()
+            prompt = self.blackboard.prompt
+            cam = "realsense" if self.use_realsense else "orbbec"
+            n_obj = len(getattr(result, "objects", []) or [])
+            if result.status == 0 and n_obj > 0:
+                response = result
                 self.blackboard.image = response.rgb_image
                 self.blackboard.segmentation = response.segments[0]
                 self.blackboard.result = response
-                self.blackboard.announcement_msg = f"Grasping {response.objects[0].cls}"
-                self.feedback_message = f"Found object: {response.objects[0].cls}"
+                cls = response.objects[0].cls
+                self.blackboard.announcement_msg = f"Grasping {cls}"
+                try:
+                    self.blackboard.object_label = cls
+                except AttributeError:
+                    pass
+                # Surface the detection on the DECISION terminal so the operator
+                # sees what the (RealSense) vision actually found.
+                classes = [getattr(o, "cls", "?") for o in response.objects]
+                print(f"[VISION/{cam}] DETECTED {n_obj} object(s) for '{prompt}': "
+                      f"{classes} -> grasping '{cls}'", flush=True)
+                self.feedback_message = f"Found object: {cls}"
                 return py_trees.common.Status.SUCCESS
             else:
-                self.feedback_message = f"Failed to find object with {self.response.result().status} and error message {self.response.result().error_msg}"
+                # status==0 with 0 objects, or a real error status.
+                err = getattr(result, "error_msg", "")
+                print(f"[VISION/{cam}] NO DETECTION for '{prompt}' "
+                      f"(status={result.status}, objects={n_obj}"
+                      f"{', err=' + repr(err) if err else ''})", flush=True)
+                self.feedback_message = (
+                    f"No object for '{prompt}' on {cam} "
+                    f"(status={result.status}, objects={n_obj}, err={err})"
+                )
                 return py_trees.common.Status.FAILURE
         else:
             self.feedback_message = "Waiting for response from find object service"
@@ -193,11 +231,18 @@ class BtNode_CategorizeGrocery(ActionHandler):
 
 
 class BtNode_GraspWithPose(BtNode_Grasp):
-    def __init__(self, name: str, 
-                 bb_key_vision_res: str, 
-                 bb_key_pose: str, 
-                 action_name: str = "grasp"):
-        super().__init__(name, bb_key_vision_res, action_name)
+    def __init__(self, name: str,
+                 bb_key_vision_res: str,
+                 bb_key_pose: str,
+                 action_name: str = "grasp",
+                 bb_key_object_label: str = None):
+        # NOTE: pass bb_key_vision_res as a KEYWORD. BtNode_Grasp's 2nd positional
+        # is bb_source, not bb_key_vision_res — passing it positionally left
+        # bb_key_vision_res=None, so the "vision_result" key was never registered
+        # and send_goal failed with "no read/write access to '/vision_result'".
+        super().__init__(name, bb_key_vision_res=bb_key_vision_res,
+                         action_name=action_name,
+                         bb_key_object_label=bb_key_object_label)
         self.blackboard.register_key(
             key="pose",
             access=py_trees.common.Access.WRITE,
@@ -206,30 +251,18 @@ class BtNode_GraspWithPose(BtNode_Grasp):
     
     def process_result(self):
         try:
-            if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED and False:
-                self.feedback_message = f"Grasp feedback received with status: {self.result_status}"
-                self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
-                self.logger.debug(textwrap.dedent("""       
-            'STATUS_UNKNOWN': 0,
-            'STATUS_ACCEPTED': 1,
-            'STATUS_EXECUTING': 2,
-            'STATUS_CANCELING': 3,
-            'STATUS_SUCCEEDED': 4,
-            'STATUS_CANCELED': 5,
-            'STATUS_ABORTED': 6,"""))
+            if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+                result = self.result_message.result
+                self.feedback_message = f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}"
+                self.logger.debug(f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}")
                 return py_trees.common.Status.FAILURE
             else:
-                self.logger.debug(f"Grasp feedback received with status: {self.result_status}")
-                result = self.result_message.result
-                if result.success:
-                    self.blackboard.pose = result.grasp_pose
-                    self.feedback_message = f"Grasp completed received with success: {result.success}"
-                    self.logger.debug(f"Grasp completed received with success")
-                    return py_trees.common.Status.SUCCESS
-                else: 
-                    self.feedback_message = f"Grasp completed received with stage: {result.stage} and error message {result.error_msg}"
-                    self.logger.debug(f"Grasp completed received with stage: {result.stage} and error message {result.error_msg}")
-                    return py_trees.common.Status.FAILURE
+                # Grasp.Result 不再返回 grasp_pose；下游 Place 的 orientation 留空即可，
+                # pick_and_place server 会回退到它在 Pick 里缓存的 last_grasp_orientation_
+                self.blackboard.pose = Pose()
+                self.feedback_message = "Grasp succeeded"
+                self.logger.debug("Grasp succeeded")
+                return py_trees.common.Status.SUCCESS
         except Exception as e:
             self.feedback_message = f"Failed to process grasp result: {e}"
             self.logger.debug(f"Failed to process grasp result: {e}")

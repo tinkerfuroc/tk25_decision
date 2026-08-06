@@ -1,18 +1,20 @@
 import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
+from behavior_tree.TemplateNodes.OperatorGate import BtNode_PressEnterToSucceed
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_Listen
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction, BtNode_ListenAction
 from behavior_tree.TemplateNodes.Vision import BtNode_DoorDetection, BtNode_TurnPanTilt
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle, BtNode_GripperAction
 from behavior_tree.StoringGroceries.customNodes import BtNode_FindObjTable, BtNode_GraspWithPose
 
 from .node_test import DecideNextAction, CheckAndWriteAction, WriteActionSuccessful
-from .custom_nodes import BtNode_QA, BtNode_ScanForWavingPerson
+from .custom_nodes import BtNode_ScanForWavingPersonNew #BtNode_QA,
 from geometry_msgs.msg import PointStamped, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import Header
 import py_trees_ros
 import rclpy
+from behavior_tree.visualization import create_post_tick_visualizer
 
 import json
 import math
@@ -72,8 +74,11 @@ KEY_POSE_COMMAND = "pose_command"
 
 KEY_QA_ANSWER = "qa_answer"
 KEY_POSE_WAVING_PERSON = "waving_person"
+KEY_ALL_WAVING_PERSONS = "all_waving_persons"
 
-arm_service_name = "arm_joint_service"
+WAVING_PERSON_THRESHOLD_METERS = 6.0
+
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 point_target_frame = "base_link"
 
@@ -116,8 +121,9 @@ prompt_list = " . ".join([prompt_drinks, prompt_foods, prompt_snacks, prompt_fru
 
 def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter arena", memory=True)
-    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_service_name, KEY_ARM_NAVIGATING), num_failures=5))
+    root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_MoveArmSingle("move arm to navigating", arm_pose_bb_key=KEY_ARM_NAVIGATING), num_failures=5))
     root.add_child(py_trees.decorators.Retry(name="retry", child=BtNode_DoorDetection(name="Door detection", bb_door_state_key=KEY_DOOR_STATUS), num_failures=999))
+    root.add_child(BtNode_WaitTicks("wait for 10 ticks", 10))
     parallel_enter_arena = py_trees.composites.Parallel("Enter arena", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_enter_arena.add_child(BtNode_Announce(name="Announce entering arena", bb_source=None, message="Entering arena"))
     parallel_enter_arena.add_child(BtNode_TurnPanTilt(name="Turn pan tile", x=0.0, y=20.0, speed=0.0))
@@ -141,19 +147,28 @@ def createGoto():
 
 def createGotoWaving():
     root = py_trees.composites.Sequence("root of goto_waving", True)
-    root.add_child(BtNode_ScanForWavingPerson("find waving person", KEY_POSE_WAVING_PERSON, use_orbbec=True, target_frame="base_link"))
+    root.add_child(py_trees.decorators.Retry(
+        "retry",
+        BtNode_ScanForWavingPersonNew(
+            "find waving persons",
+            KEY_ALL_WAVING_PERSONS,
+            KEY_POSE_WAVING_PERSON,
+            WAVING_PERSON_THRESHOLD_METERS,
+            target_frame="map",
+        ),
+        5,
+    ))
     root.add_child(BtNode_Announce("announce found waving person", None, message="Found waving person. Dear person, could you move a little so I can reach you?"))
-    root.add_child(py_trees.decorators.Retry(BtNode_GotoAction(
-        name="goto waving person",
-        key=KEY_POSE_WAVING_PERSON
-    )))
+    root.add_child(py_trees.decorators.Retry("retry", BtNode_GotoAction("goto instruction point", KEY_POSE_WAVING_PERSON), 5))
+    return root
+
 def createGrasp():
     root = py_trees.composites.Sequence(name="Grasp Once", memory=True)
     root.add_child(BtNode_TurnPanTilt(name='turn pantilt', x=0.0, y=20.0))
-    root.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
+    root.add_child(BtNode_MoveArmSingle("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     parallel_move_arm = py_trees.composites.Parallel("Move arm to find object", policy=py_trees.common.ParallelPolicy.SuccessOnAll())
     parallel_move_arm.add_child(BtNode_Announce(name="Announce moving arm", bb_source=None, message="Moving arm to find object"))
-    parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
+    parallel_move_arm.add_child(BtNode_MoveArmSingle("Move arm to find", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_SCAN, add_octomap=True))
     root.add_child(parallel_move_arm)
 
     find_and_grasp = py_trees.composites.Sequence(name="find and grasp", memory=True)
@@ -166,11 +181,11 @@ def createGrasp():
     find_and_grasp.add_child(parallel_grasp)
 
     root.add_child(find_and_grasp)
-    root.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
+    root.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
     grasp_root = py_trees.decorators.Retry(name=f"retry 3 times", child=root, num_failures=3)
 
     ex_machina_grasp = py_trees.composites.Sequence("grasp ex machina", True)
-    ex_machina_grasp.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
+    ex_machina_grasp.add_child(py_trees.decorators.Retry('retry', BtNode_MoveArmSingle("Move arm back", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING), 5))
     ex_machina_grasp.add_child(BtNode_GripperAction("open gripper", True))
     ex_machina_grasp.add_child(BtNode_Announce("announce help grasp", bb_source=KEY_TARGET_OBJECT_NAME, message="Dear referee, please help me grasp the "))
     ex_machina_grasp.add_child(BtNode_Announce("announce help grasp2", bb_source=None, message="Put it in my gripper please. Thank you"))
@@ -181,7 +196,7 @@ def createGrasp():
     total_grasp = py_trees.composites.Selector(
         "grasp selector",
         True,
-        [grasp_root, total_grasp]
+        [grasp_root, ex_machina_grasp]
         )
     return total_grasp
 
@@ -190,7 +205,7 @@ def createAnnounce():
 
 def createQA():
     root = py_trees.composites.Sequence(name="QA root", memory=True)
-    root.add_child(BtNode_QA("QA node", KEY_QA_ANSWER))
+    # root.add_child(BtNode_QA("QA node", KEY_QA_ANSWER))
     root.add_child(BtNode_Announce("announce answer", KEY_QA_ANSWER))
     return root
 
@@ -269,14 +284,15 @@ def createExecuteInstruction():
 def createCompleteOneCommand():
     root = py_trees.composites.Sequence("complete one command", True)
 
-    get_command = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
-    get_command.add_child(BtNode_Announce(name=f"Prompt for getting command", bb_source="", message=f"Please speak to me after the beep sound. Tell me your command."))
-    get_command.add_child(BtNode_Listen(name="Listen to guest", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
-    get_command.add_child(BtNode_Announce(name=f"ask to confirm command", bb_source=KEY_INSTRUCTION, message=f"Am I correct, you command is "))
-    get_command.add_child(BtNode_GetConfirmation("confirm instruction"))
-    get_command.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="Starting execution."))
+    # get_command = py_trees.composites.Sequence(name=f"get and confirm {type}", memory=True)
+    # get_command.add_child(BtNode_Announce(name=f"Prompt for getting command", bb_source=None, message=f"Please speak to me after the beep sound. Tell me your command."))
     
-    root.add_child(py_trees.decorators.Retry("retry", get_command, 100))
+    # get_command.add_child(BtNode_ListenAction(name="Listen to guest", bb_dest_key=KEY_INSTRUCTION, timeout=10.0))
+    # get_command.add_child(BtNode_Announce(name=f"ask to confirm command", bb_source=KEY_INSTRUCTION, message=f"Am I correct, you command is "))
+    # get_command.add_child(BtNode_GetConfirmationAction("confirm instruction"))
+    # get_command.add_child(BtNode_Announce(name="announce confirmed", bb_source=None, message="Starting execution."))
+    root.add_child(BtNode_WriteToBlackboard("Write Pose Command", bb_namespace="", bb_source=None, bb_key=KEY_INSTRUCTION, object="go to waving person"))
+    # root.add_child(py_trees.decorators.Retry("retry", get_command, 100))
 
     root.add_child(createExecuteInstruction())
 
@@ -284,8 +300,9 @@ def createCompleteOneCommand():
 
 def createGPSR():
     root = py_trees.composites.Sequence("GPSR", True)
+    root.add_child(BtNode_PressEnterToSucceed(name="Wait for operator to start"))
     root.add_child(createConstantWriter())
-    root.add_child(createEnterArena())
+    # root.add_child(createEnterArena())
 
     return_to_instruction_point = py_trees.composites.Parallel("return to instruction point", py_trees.common.ParallelPolicy.SuccessOnAll())
     return_to_instruction_point.add_child(BtNode_Announce("announce returning", bb_source=None, message="Returning to instruction point"))
@@ -331,11 +348,13 @@ def main():
 
     # Setup and spin
     tree.setup(timeout=15, node_name="root_node")
-    def print_tree(tree):
-        print(py_trees.display.unicode_tree(root=tree.root, show_status=True))
-        # print(py_trees.display.unicode_blackboard())
+    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+        title="GPSR",
+    )
     tree.tick_tock(period_ms=500.0,post_tick_handler=print_tree)
 
-    rclpy.spin(tree.node)
-
-    rclpy.shutdown()
+    try:
+        rclpy.spin(tree.node)
+    finally:
+        shutdown_visualizer()
+        rclpy.shutdown()

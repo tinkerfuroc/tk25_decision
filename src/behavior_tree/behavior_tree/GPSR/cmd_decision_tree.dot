@@ -1,0 +1,239 @@
+digraph gpsr_cmd_understanding {
+  rankdir=LR;
+  graph [fontname="Helvetica", labelloc="t", label="GPSR command understanding — 20 commands"];
+  node  [fontname="Helvetica", shape=box, style="rounded,filled"];
+  edge  [fontname="Helvetica", fontsize=10];
+
+  subgraph cluster_1 {
+    label="01. escort Alex from the bathroom to the bedroom — OK (3 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n1_0 [label="goto\\nlocation=bathroom", fillcolor=white];
+    n1_1 [label="find_person\\ndescriptor=Alex", fillcolor=white];
+    n1_0 -> n1_1;
+    n1_2 [label="guide\\nlocation=bedroom", fillcolor=white];
+    n1_1 -> n1_2;
+  }
+
+  subgraph cluster_2 {
+    label="02. navigate to the desk_lamp then look for a pear and fetch it and put it on the shelf — OK (5 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n2_0 [label="goto\\nlocation=desk_lamp", fillcolor=white];
+    n2_1 [label="find_object\\nobject=pear", fillcolor=white];
+    n2_0 -> n2_1;
+    n2_2 [label="grasp\\nobject=pear", fillcolor=white];
+    n2_1 -> n2_2;
+    n2_3 [label="goto\\nlocation=shelf", fillcolor=white];
+    n2_2 -> n2_3;
+    n2_4 [label="place\\nlocation=shelf", fillcolor=white];
+    n2_3 -> n2_4;
+  }
+
+  subgraph cluster_3 {
+    label="03. tell me how many snacks there are on the shelf — OK (3 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n3_0 [label="goto\\nlocation=shelf", fillcolor=white];
+    n3_1 [label="find_object\\nobject=snack\\nlocation=shelf", fillcolor=white];
+    n3_0 -> n3_1;
+    n3_2 [label="count\\nobject=snack", fillcolor=white];
+    n3_1 -> n3_2;
+  }
+
+  subgraph cluster_4 {
+    label="04. navigate to the bathroom then look for a tangerine and get it and give it to John in the kitchen — OK (4 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n4_0 [label="goto\\nlocation=bathroom", fillcolor=white];
+    n4_1 [label="find_object\\nobject=tangerine", fillcolor=white];
+    n4_0 -> n4_1;
+    n4_2 [label="grasp\\nobject=tangerine", fillcolor=white];
+    n4_1 -> n4_2;
+    n4_3 [label="deliver\\nobject=tangerine\\nrecipient=John\\nrecipient_location=kitchen", fillcolor=white];
+    n4_2 -> n4_3;
+  }
+
+  subgraph cluster_5 {
+    label="05. tell something about yourself to the person pointing to the left in the living_room — OK (3 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n5_0 [label="goto\\nlocation=living_room", fillcolor=white];
+    n5_1 [label="find_person\\ndescriptor=person pointing to the left", fillcolor=white];
+    n5_0 -> n5_1;
+    n5_2 [label="tell_info\\ntext=I am a household service robot designed to assist with daily tasks.", fillcolor=white];
+    n5_1 -> n5_2;
+  }
+
+  subgraph cluster_6 {
+    label="06. give me a coke from the desk_lamp — OK (4 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n6_0 [label="goto\\nlocation=desk_lamp", fillcolor=white];
+    n6_1 [label="find_object\\nobject=coke", fillcolor=white];
+    n6_0 -> n6_1;
+    n6_2 [label="grasp\\nobject=coke", fillcolor=white];
+    n6_1 -> n6_2;
+    n6_3 [label="deliver\\nobject=coke\\nrecipient=requester", fillcolor=white];
+    n6_2 -> n6_3;
+  }
+
+  subgraph cluster_7 {
+    label="07. look for a person pointing to the right in the living_room and guide them to the shelf — OK (3 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n7_0 [label="goto\\nlocation=living_room", fillcolor=white];
+    n7_1 [label="find_person\\ndescriptor=person pointing to the right", fillcolor=white];
+    n7_0 -> n7_1;
+    n7_2 [label="guide\\nlocation=shelf", fillcolor=white];
+    n7_1 -> n7_2;
+  }
+
+  subgraph cluster_8 {
+    label="08. tell me what is the largest snack on the desk_lamp — OK (2 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n8_0 [label="find_object\\nobject=snack\\nlocation=desk_lamp", fillcolor=white];
+    n8_1 [label="say\\ntext=I cannot determine which is the largest snack on the desk_lamp.", fillcolor=white];
+    n8_0 -> n8_1;
+  }
+
+  subgraph cluster_9 {
+    label="09. locate a drink in the bedroom then fetch it and put it on the desk_lamp — OK (5 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n9_0 [label="find_object\\nobject=drink\\nlocation=bedroom", fillcolor=white];
+    n9_1 [label="goto\\nlocation=bedroom", fillcolor=white];
+    n9_0 -> n9_1;
+    n9_2 [label="grasp\\nobject=drink", fillcolor=white];
+    n9_1 -> n9_2;
+    n9_3 [label="goto\\nlocation=desk_lamp", fillcolor=white];
+    n9_2 -> n9_3;
+    n9_4 [label="place\\nlocation=desk_lamp", fillcolor=white];
+    n9_3 -> n9_4;
+  }
+
+  subgraph cluster_10 {
+    label="10. tell me the pose of the person at the shelf — EMPTY plan";
+    style=filled; color="#f0f0f0";
+    node [fillcolor=white];
+    n10_0 [label="(empty)", fillcolor="#f0f0f0"];
+  }
+
+  subgraph cluster_11 {
+    label="11. navigate to the kitchen then look for the lying person and follow them to the shelf — GUARD: command mentions 'follow ... to the shelf' but no goto(location='shelf') step wa";
+    style=filled; color="#ffe6c2";
+    node [fillcolor=white];
+    n11_0 [label="goto\\nlocation=kitchen", fillcolor=white];
+    n11_1 [label="say\\ntext=I cannot look for a lying person because that descriptor is not supported.", fillcolor=white];
+    n11_0 -> n11_1;
+  }
+
+  subgraph cluster_12 {
+    label="12. navigate to the bathroom then look for a lime and get it and give it to me — OK (4 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n12_0 [label="goto\\nlocation=bathroom", fillcolor=white];
+    n12_1 [label="find_object\\nobject=lime", fillcolor=white];
+    n12_0 -> n12_1;
+    n12_2 [label="grasp\\nobject=lime", fillcolor=white];
+    n12_1 -> n12_2;
+    n12_3 [label="deliver\\nobject=lime\\nrecipient=user", fillcolor=white];
+    n12_2 -> n12_3;
+  }
+
+  subgraph cluster_13 {
+    label="13. go to the desk_lamp then look for the lying person and follow them to the shelf — GUARD: command mentions 'follow ... to the shelf' but no goto(location='shelf') step wa";
+    style=filled; color="#ffe6c2";
+    node [fillcolor=white];
+    n13_0 [label="goto\\nlocation=desk_lamp", fillcolor=white];
+    n13_1 [label="say\\ntext=I cannot find a person described as 'lying person'.", fillcolor=white];
+    n13_0 -> n13_1;
+  }
+
+  subgraph cluster_14 {
+    label="14. tell something about yourself to the person pointing to the left in the kitchen — OK (3 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n14_0 [label="goto\\nlocation=kitchen", fillcolor=white];
+    n14_1 [label="find_person\\ndescriptor=person pointing to the left", fillcolor=white];
+    n14_0 -> n14_1;
+    n14_2 [label="tell_info\\ntext=I am a household service robot designed to help with daily tasks.", fillcolor=white];
+    n14_1 -> n14_2;
+  }
+
+  subgraph cluster_15 {
+    label="15. locate a person raising their right arm in the bedroom and tell the day of the month — OK (3 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n15_0 [label="goto\\nlocation=bedroom", fillcolor=white];
+    n15_1 [label="find_person\\ndescriptor=person raising their right arm", fillcolor=white];
+    n15_0 -> n15_1;
+    n15_2 [label="tell_info\\ntext=Today is the 5th.", fillcolor=white];
+    n15_1 -> n15_2;
+  }
+
+  subgraph cluster_16 {
+    label="16. meet Liam in the bedroom and say your teams country — OK (3 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n16_0 [label="goto\\nlocation=bedroom", fillcolor=white];
+    n16_1 [label="find_person\\ndescriptor=Liam", fillcolor=white];
+    n16_0 -> n16_1;
+    n16_2 [label="say\\ntext=I cannot say my team's country.", fillcolor=white];
+    n16_1 -> n16_2;
+  }
+
+  subgraph cluster_17 {
+    label="17. locate a drink in the kitchen then take it and throw it in the trash — OK (3 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n17_0 [label="find_object\\nobject=drink\\nlocation=kitchen", fillcolor=white];
+    n17_1 [label="grasp\\nobject=drink", fillcolor=white];
+    n17_0 -> n17_1;
+    n17_2 [label="say\\ntext=I cannot throw the drink in the trash because the trash location is unknown.", fillcolor=white];
+    n17_1 -> n17_2;
+  }
+
+  subgraph cluster_18 {
+    label="18. look for a waving person in the kitchen and follow them — OK (3 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n18_0 [label="goto\\nlocation=kitchen", fillcolor=white];
+    n18_1 [label="find_person\\ndescriptor=waving person", fillcolor=white];
+    n18_0 -> n18_1;
+    n18_2 [label="follow", fillcolor=white];
+    n18_1 -> n18_2;
+  }
+
+  subgraph cluster_19 {
+    label="19. navigate to the desk_lamp then find a ketchup and fetch it and place it on the shelf — OK (5 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n19_0 [label="goto\\nlocation=desk_lamp", fillcolor=white];
+    n19_1 [label="find_object\\nobject=ketchup", fillcolor=white];
+    n19_0 -> n19_1;
+    n19_2 [label="grasp\\nobject=ketchup", fillcolor=white];
+    n19_1 -> n19_2;
+    n19_3 [label="goto\\nlocation=shelf", fillcolor=white];
+    n19_2 -> n19_3;
+    n19_4 [label="place\\nlocation=shelf", fillcolor=white];
+    n19_3 -> n19_4;
+  }
+
+  subgraph cluster_20 {
+    label="20. go to the shelf then look for a tuna and take it and bring it to the lying person in the living_room — OK (5 steps)";
+    style=filled; color="#d6ffd6";
+    node [fillcolor=white];
+    n20_0 [label="goto\\nlocation=shelf", fillcolor=white];
+    n20_1 [label="find_object\\nobject=tuna", fillcolor=white];
+    n20_0 -> n20_1;
+    n20_2 [label="grasp\\nobject=tuna", fillcolor=white];
+    n20_1 -> n20_2;
+    n20_3 [label="goto\\nlocation=living_room", fillcolor=white];
+    n20_2 -> n20_3;
+    n20_4 [label="say\\ntext=I could not identify the lying person in the living_room to deliver the tuna.", fillcolor=white];
+    n20_3 -> n20_4;
+  }
+
+}
