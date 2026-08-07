@@ -29,7 +29,7 @@ from behavior_tree.visualization import create_post_tick_visualizer
 
 from .gpsr_full import CONSTANTS_PATH, _load_arm_constants, _load_arm_orbbec_look
 from .orchestrator import (
-    create_batch_command_flow,
+    create_batch_command_flow_new,
     make_inject_intake,
     make_listen_intake,
     create_orchestrator_init,
@@ -37,7 +37,13 @@ from .orchestrator import (
     has_command_point,
     load_knowledge_from_constants,
 )
+from .planner import GPSRPlanner
 from .small_trees import bb_keys, create_enter_arena
+
+# Module-level decoupled orchestrator: the two-layer planner invoked repeatedly
+# (per slot, per target, per replan) by the bridge nodes + DynamicExecutor. It
+# never holds a tree/node reference and its planner threads never touch the BB.
+PLANNER = GPSRPlanner()
 
 DEFAULT_PLAN_DIR = Path(os.environ.get("BT_GPSR_PLAN_DIR", "gpsr_runs")).resolve()
 # How many commands to collect up front before executing (RoboCup GPSR = 3).
@@ -100,11 +106,14 @@ def createGPSROrchestrator(
         root.add_child(create_goto_command_point())
     # Capture the command-point start pose once (operator spot for deliveries).
     root.add_child(create_orchestrator_init())
-    root.add_child(create_batch_command_flow(
+    # TWO-LAYER batch flow: top split + parallel per-target planning up front,
+    # then a DynamicExecutor per slot swaps ready target subtrees into the
+    # RUNNING tree at runtime. PLANNER is the module-level decoupled orchestrator.
+    root.add_child(create_batch_command_flow_new(
+        PLANNER,
         num_commands=n,
         make_intake=make_intake,
-        max_steps=max_steps,
-        max_corrections=max_corrections,
+        max_replans_per_target=max_corrections,
         emit_plan_dir=str(plan_dir),
     ))
     root.add_child(py_trees.behaviours.Running("idle"))
@@ -118,7 +127,10 @@ def main():
 
     root = createGPSROrchestrator()
     tree = py_trees_ros.trees.BehaviourTree(root=root)
-    tree.setup(timeout=15, node_name="gpsr_orchestrator")
+    # gpsr_tree=tree forwards the running tree into every behaviour's setup()
+    # (py_trees_ros relays extra kwargs). DynamicExecutor reads it so it can
+    # swap in freshly-planned target subtrees at runtime.
+    tree.setup(timeout=15, node_name="gpsr_orchestrator", gpsr_tree=tree)
     print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(title="GPSR orchestrator")
     # Per-command logging (plan + each step's result + the failing node's feedback).
     from .command_logger import create_command_logger, combine_post_tick_handlers

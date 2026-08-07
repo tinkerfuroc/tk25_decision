@@ -82,6 +82,50 @@
                 "z": -0.21906708194120658,
                 "w": 0.9757097998942947
             }
+        },
+        "sofa": {
+            "point": {"x": -2.6, "y": 1.6, "z": 0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        },
+        "side_table": {
+            "point": {"x": -2.2, "y": 1.2, "z": 0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        },
+        "shelf": {
+            "point": {"x": -1.4, "y": -0.6, "z": 0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        },
+        "desk": {
+            "point": {"x": -0.4, "y": -0.7, "z": 0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        },
+        "cabinet": {
+            "point": {"x": 2.4, "y": 0.8, "z": 0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        },
+        "dishwasher": {
+            "point": {"x": 1.5, "y": 2.0, "z": 0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        },
+        "refrigerator": {
+            "point": {"x": 2.6, "y": 1.8, "z": 0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        },
+        "kitchen_table": {
+            "point": {"x": 1.6, "y": 0.6, "z": 0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        },
+        "coat_rack": {
+            "point": {"x": 0.0, "y": 0.9, "z": 0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        },
+        "entrance": {
+            "point": {"x": 0.2, "y": 1.2, "z": 0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+        },
+        "trash_bin": {
+            "point": {"x": 2.2, "y": 2.2, "z": 0.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
         }
     },
     "possible_objects":{

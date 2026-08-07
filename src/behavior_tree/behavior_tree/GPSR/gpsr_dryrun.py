@@ -48,12 +48,14 @@ from behavior_tree.visualization import create_post_tick_visualizer
 from .gpsr_full import CONSTANTS_PATH
 from .orchestrator import (
     BtNode_GeneratePlanFile,
-    BtNode_PlanActions,
+    BtNode_PlanAllTargets,
     BtNode_RenderPlanTree,
-    create_announce_plan,
+    BtNode_SplitCommand,
+    create_announce_targets,
     create_orchestrator_init,
     load_knowledge_from_constants,
 )
+from .planner import GPSRPlanner
 from .small_trees import bb_keys
 
 DEFAULT_PLAN_DIR = Path(os.environ.get("BT_GPSR_PLAN_DIR", "gpsr_runs")).resolve()
@@ -104,15 +106,21 @@ def createGPSRDryRun(
     """
     load_knowledge_from_constants(CONSTANTS_PATH)
     env_cmd = os.environ.get("BT_GPSR_CMD")
+    # Module-level decoupled planner (per-slot/per-target/replan, never a tree ref).
+    planner = GPSRPlanner()
 
     cycle = py_trees.composites.Sequence("GPSR dry-run", memory=True)
     cycle.add_child(_command_intake())
     # No TF/localization in this test — skip the start-pose capture.
     cycle.add_child(create_orchestrator_init(capture_pose=False))
-    cycle.add_child(BtNode_PlanActions(name="plan command"))
+    # TWO-LAYER planning: top split into targets, then parallel per-target plans.
+    # Dry-run has no executor (no gpsr_tree), so it rehearses the plan only.
+    cycle.add_child(BtNode_SplitCommand(name="split command", planner=planner))
+    cycle.add_child(BtNode_PlanAllTargets(name="plan all targets", slot=0,
+                                          planner=planner))
     cycle.add_child(BtNode_GeneratePlanFile(out_dir=str(plan_dir)))   # .py replay
     cycle.add_child(BtNode_RenderPlanTree(out_dir=str(plan_dir)))      # tree PNG
-    cycle.add_child(create_announce_plan())                           # speak plan
+    cycle.add_child(create_announce_targets(0))                       # speak target list
 
     if env_cmd:
         # One-shot desktop test: run the injected command once, then idle.

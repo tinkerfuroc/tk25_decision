@@ -454,3 +454,205 @@ def main_orchestrator():
         shutdown_logger()
         shutdown_visualizer()
         rclpy.shutdown()
+
+
+# ---- two-layer planner / executor dev tests (offline, no ROS needed) ----
+
+def main_orchestrator_two_layer():
+    """TWO-LAYER end-to-end harness: split + parallel-plan up front, then a
+    DynamicExecutor per slot swaps target subtrees into the RUNNING tree.
+
+    Same command source / arena / command-point shape as ``main_orchestrator``,
+    but uses ``create_batch_command_flow_new`` so the top layer splits each
+    command into targets and the lower layer plans them in parallel, then the
+    executor phase drives them with runtime subtree swaps (``gpsr_tree=tree``).
+    Full-mock preset makes the whole run deterministic and network-free.
+    """
+    from pathlib import Path
+    from .orchestrator import (
+        create_batch_command_flow_new, make_inject_intake, make_listen_intake,
+        create_orchestrator_init, create_goto_command_point, has_command_point,
+    )
+    from .planner import GPSRPlanner
+    from .small_trees import create_enter_arena
+
+    load_knowledge_from_constants(CONSTANTS_PATH)
+    plan_dir = Path(os.environ.get("BT_GPSR_PLAN_DIR", "gpsr_runs")).resolve()
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    num_commands = int(os.environ.get("BT_GPSR_NUM_COMMANDS", "3"))
+    debug = os.environ.get("BT_GPSR_DEBUG_CMD", "").strip()
+    if debug:
+        commands = [c.strip() for c in debug.split("|") if c.strip()]
+        make_intake = make_inject_intake(commands)
+        num_commands = len(commands)
+    else:
+        listen_timeout = float(os.environ.get("BT_GPSR_LISTEN_TIMEOUT", "30.0"))
+        make_intake = make_listen_intake(listen_timeout=listen_timeout)
+    print(f"[gpsr-test-orchestrator-2layer] saved plans -> {plan_dir}  "
+          f"(collecting {num_commands} command(s) up front, then executing)")
+
+    rclpy.init()
+    root = py_trees.composites.Sequence("Test orchestrator (two-layer)", memory=True)
+    root.add_child(create_enter_arena())
+    _arm_constants_to_bb(root)
+    if has_command_point():
+        root.add_child(create_goto_command_point())
+    root.add_child(create_orchestrator_init())
+    planner = GPSRPlanner()
+    root.add_child(create_batch_command_flow_new(
+        planner, num_commands=num_commands, make_intake=make_intake,
+        max_replans_per_target=3, emit_plan_dir=str(plan_dir),
+    ))
+    root.add_child(py_trees.behaviours.Running("idle (ctrl-c to exit)"))
+
+    tree = py_trees_ros.trees.BehaviourTree(root=root)
+    tree.setup(timeout=15, node_name="gpsr_test_orchestrator_2layer",
+               gpsr_tree=tree)
+    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+        title="orchestrator (two-layer)")
+    from .command_logger import create_command_logger, combine_post_tick_handlers
+    log_tree, shutdown_logger = create_command_logger(str(plan_dir / "logs"))
+    tree.tick_tock(
+        period_ms=500.0,
+        post_tick_handler=combine_post_tick_handlers(print_tree, log_tree),
+    )
+    try:
+        rclpy.spin(tree.node)
+    finally:
+        shutdown_logger()
+        shutdown_visualizer()
+        rclpy.shutdown()
+
+
+def main_split_command():
+    """TOP LAYER: split a command into self-contained targets (offline).
+
+    Reads ``BT_GPSR_CMD`` (default: "fetch Susan a coke, she is in the living
+    room"). Uses a fresh GPSRPlanner so full-mock mode stays deterministic and
+    network-free. Prints the split; no tree is built, no ROS involved.
+    """
+    command = os.environ.get("BT_GPSR_CMD",
+                             "fetch Susan a coke, she is in the living room")
+    from .planner import GPSRPlanner
+    planner = GPSRPlanner()
+    targets = planner.split_command(command)
+    print(f"[split] command: {command!r}")
+    print(f"[split] {len(targets)} target(s):")
+    for i, t in enumerate(targets):
+        print(f"  {i}. {t}")
+    return targets
+
+
+def main_lower_layer():
+    """LOWER LAYER: plan ONE target and show its subtree (offline).
+
+    Reads ``BT_GPSR_TARGET`` (default: "grab a coke"). Plans it, validates the
+    plan, builds + prints the executing subtree via ``py_trees.display``. Uses
+    full-mock planner so no network/ROS is touched.
+    """
+    from .planner import GPSRPlanner
+    from .planner_validators import validate_plan
+    from .small_trees import ACTION_FACTORIES
+    from .orchestrator import KNOWN_LOCATIONS, START_LOCATION_ALIASES
+    target = os.environ.get("BT_GPSR_TARGET", "grab a coke")
+    planner = GPSRPlanner()
+    planner.request_plan_all(0, [target])
+    import time
+    for _ in range(200):
+        if planner.all_targets_ready(0, 1):
+            break
+        time.sleep(0.01)
+    plan = planner.get_action_plan(0, 0)
+    known_loc_arg = (set(KNOWN_LOCATIONS.keys()) | START_LOCATION_ALIASES) or None
+    ok, reason = validate_plan(plan, target, set(ACTION_FACTORIES.keys()),
+                               known_locations=known_loc_arg)
+    print(f"[lower] target: {target!r}")
+    print(f"[lower] plan ({len(plan)} step(s)): {plan}")
+    print(f"[lower] validate_plan -> {ok}"
+          + (f" ({reason})" if reason else ""))
+    subtree = planner.get_target_subtree(0, 0)
+    if subtree is not None:
+        print(py_trees.display.unicode_tree(subtree))
+    return plan, ok
+
+
+def main_dynamic_executor():
+    """DynamicExecutor unit test (offline, FakePlanner, no LLM/robot).
+
+    Drives a 3-target command where target 0 fails once then succeeds, target 1
+    succeeds, and target 2 fails through its replan budget and is skipped. Runs
+    a ``py_trees.trees.BehaviourTree`` with a stub ROS node + ``gpsr_tree=tree``
+    and asserts the executor swaps subtrees at runtime, advances TARGET_INDEX,
+    logs target-level STATE_LOG, and ends SUCCESS. Prints PASS/FAIL + the log.
+    """
+    import types
+    from py_trees.common import Status, Access
+    from py_trees.blackboard import Client
+    from .orchestrator import DynamicExecutor
+
+    class TicksBehaviour(py_trees.behaviour.Behaviour):
+        def __init__(self, name, status):
+            super().__init__(name)
+            self._status = status
+        def update(self):
+            return self._status
+
+    def make_subtree(name, status):
+        root = py_trees.composites.Sequence(name, memory=True)
+        root.add_child(TicksBehaviour(name + "/leaf", status))
+        return root
+
+    class FakePlanner:
+        def __init__(self):
+            self.replans = []
+            self.t0_first = True
+        def _get_desc(self, slot, index):
+            return {0: "grab coke", 1: "count apples", 2: "wave"}.get(index, "?")
+        def get_target_subtree(self, slot, index):
+            if index == 0 and self.t0_first:
+                return make_subtree("target:0:0-fail", Status.FAILURE)
+            if index == 2:
+                return make_subtree("target:0:2-fail", Status.FAILURE)
+            return make_subtree(f"target:0:{index}", Status.SUCCESS)
+        def replan_target(self, slot, index, reason):
+            self.replans.append((index, reason))
+            if index == 0:
+                self.t0_first = False
+
+    fp = FakePlanner()
+    node = types.SimpleNamespace(get_name=lambda: "stub")
+    root = py_trees.composites.Sequence("root", memory=True)
+    executor = DynamicExecutor("exec", 0, fp, max_replans_per_target=2)
+    root.add_child(executor)
+    tree = py_trees.trees.BehaviourTree(root)
+    tree.setup(timeout=15, node_name="dynamic_executor_test", node=node,
+               gpsr_tree=tree)
+    bb = Client(name="exec_test")
+    bb.register_key(bb_keys.SAVED_TARGETS_PREFIX + "0", access=Access.WRITE)
+    bb.register_key(bb_keys.TARGETS, access=Access.WRITE)
+    bb.register_key(bb_keys.TARGET_INDEX, access=Access.READ)
+    bb.register_key(bb_keys.STATE_LOG, access=Access.READ)
+    bb.set(bb_keys.SAVED_TARGETS_PREFIX + "0",
+           ["grab coke", "count apples", "wave"], overwrite=True)
+    bb.set(bb_keys.TARGETS, ["grab coke", "count apples", "wave"], overwrite=True)
+
+    import time
+    for _ in range(60):
+        tree.tick()
+        if tree.root.status != Status.RUNNING:
+            break
+        time.sleep(0.005)
+    # Target 0 replans exactly once (first attempt fails, then succeeds).
+    # Target 2 fails 3 times through its budget of 2 replans, then is skipped.
+    t0_replans = [r for r in fp.replans if r[0] == 0]
+    t2_replans = [r for r in fp.replans if r[0] == 2]
+    ok = (tree.root.status == Status.SUCCESS
+          and bb.get(bb_keys.TARGET_INDEX) == 3
+          and len(t0_replans) == 1 and len(t2_replans) == 2)
+    print(f"[exec] root status: {tree.root.status}")
+    print(f"[exec] target_index: {bb.get(bb_keys.TARGET_INDEX)}")
+    print(f"[exec] replans: {fp.replans}")
+    for line in (bb.get(bb_keys.STATE_LOG) or []):
+        print(f"[exec] {line}")
+    print(f"[exec] {'PASS' if ok else 'FAIL'}")
+    return ok

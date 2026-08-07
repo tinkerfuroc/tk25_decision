@@ -51,6 +51,17 @@ START_LOCATION_WORDS = frozenset({
     "start_position", "instruction_point", "start", "operator",
 })
 
+
+def _norm_loc(name: str) -> str:
+    """Normalise a location name for matching: lowercase, spaces -> underscores.
+
+    The generator / operator / LLM say "living room", while the map waypoint
+    (constants.json possible_poses) is ``living_room``. Both spellings must
+    match. Mirrors ``orchestrator._norm_loc`` (kept local to avoid a circular
+    import).
+    """
+    return str(name).lower().replace(" ", "_").strip()
+
 # Command clauses that address a result back to the operator ("tell me",
 # "bring me", "deliver it to me", ...).
 OPERATOR_REPORT_RE = re.compile(
@@ -125,7 +136,7 @@ def validate_plan(
 
     known_actions = set(known_actions)
     known_loc_set = (
-        {str(l).lower() for l in known_locations} if known_locations else None
+        {_norm_loc(l) for l in known_locations} if known_locations else None
     )
     saw_find_person = False
     saw_ask_person = False
@@ -172,11 +183,11 @@ def validate_plan(
         if action == "record_position":
             lab = params.get("label")
             if isinstance(lab, str) and lab.strip():
-                recorded_labels.add(lab.strip().lower())
+                recorded_labels.add(_norm_loc(lab))
         if action == "goto":
             loc = params.get("location")
             if isinstance(loc, str):
-                saw_goto_destinations.add(loc.lower())
+                saw_goto_destinations.add(_norm_loc(loc))
 
         # Rule: every location param must be a known location, a recorded
         # dynamic label, or a start alias. An unknown name has no pose, so the
@@ -189,7 +200,8 @@ def validate_plan(
                 loc = params.get(loc_key)
                 if not isinstance(loc, str):
                     continue
-                low = loc.lower()
+                low = _norm_loc(loc)
+                # known locations are also normalised ("living room" == living_room)
                 if low in known_loc_set or low in recorded_labels:
                     continue
                 return False, (
@@ -210,7 +222,7 @@ def validate_plan(
         # param must come after an explicit goto to that location.
         if action == "find_object":
             loc = params.get("location")
-            if isinstance(loc, str) and loc.lower() not in saw_goto_destinations:
+            if isinstance(loc, str) and _norm_loc(loc) not in saw_goto_destinations:
                 return False, (
                     f"step {i}: find_object(location={loc!r}) without a "
                     f"preceding goto(location={loc!r}). Emit the goto step "

@@ -26,7 +26,7 @@ import re
 import textwrap
 import threading
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import py_trees
 import rclpy
@@ -787,17 +787,28 @@ class BtNode_PlanActions(Behaviour):
 # Step pop / parameter materialisation
 # ---------------------------------------------------------------------------
 
+def _norm_loc(name: Any) -> str:
+    """Normalise a location name for matching: lowercase, spaces -> underscores.
+
+    The generator / operator / LLM all say "living room", while the map waypoint
+    (constants.json possible_poses) is stored as ``living_room``. Without this
+    normalisation a perfectly valid goto(location="living room") would never
+    resolve to a pose at runtime. Both the underscore and space spellings match.
+    """
+    return str(name).lower().replace(" ", "_").strip()
+
+
 def resolve_pose(bb_client, name: Any) -> Optional[PoseStamped]:
     """Resolve a location name to a PoseStamped, or None if unknown.
 
     Resolution order: start-position aliases (pose captured at command
-    start) → known map locations (exact then case-insensitive) →
-    runtime-recorded dynamic-location registry (labels fixed by an earlier
-    record_position step).
+    start) → known map locations (exact then case- and space/underscore-
+    insensitive) → runtime-recorded dynamic-location registry (labels fixed by
+    an earlier record_position step).
     """
     if not name:
         return None
-    key = str(name).lower()
+    key = _norm_loc(name)
     if key in START_LOCATION_ALIASES:
         try:
             return bb_client.get(bb_keys.START_POSE)
@@ -806,7 +817,7 @@ def resolve_pose(bb_client, name: Any) -> Optional[PoseStamped]:
     if name in KNOWN_LOCATIONS:
         return KNOWN_LOCATIONS.get(name)
     for known_name, pose in KNOWN_LOCATIONS.items():
-        if known_name.lower() == key:
+        if _norm_loc(known_name) == key:
             return pose
     try:
         registry = bb_client.get(bb_keys.DYNAMIC_LOCATIONS) or {}
@@ -1037,6 +1048,72 @@ class BtNode_PopNextAction(Behaviour):
         return Status.SUCCESS
 
 
+class BtNode_MaterialiseStep(Behaviour):
+    """Materialise ``plan_key[step_index]`` into the BB targets a small tree needs.
+
+    Generalized from ``BtNode_PopNextAction`` for the two-layer executor: the
+    step index is baked into the node, so there is no index bookkeeping and the
+    node can be embedded once per step inside a per-target subtree. Reads the
+    step's ``{action, params}`` from the blackboard key named by ``plan_key``
+    (a per-target slot like ``gpsr/saved_target_plan_<slot>_<i>``), writes
+    CURRENT_ACTION / CURRENT_PARAMS, and runs the shared ``materialise_params``.
+    """
+
+    def __init__(self, name: str, plan_key: str, step_index: int):
+        super().__init__(name)
+        self._plan_key = plan_key
+        self._step_index = int(step_index)
+        self._bb = None
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(self._plan_key, access=Access.READ)
+        self._bb.register_key(bb_keys.CURRENT_ACTION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.CURRENT_PARAMS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.TARGET_POSE, access=Access.WRITE)
+        self._bb.register_key(bb_keys.TARGET_LOCATION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.TARGET_OBJECT_NAME, access=Access.WRITE)
+        self._bb.register_key(bb_keys.TARGET_OBJECT_PROMPT, access=Access.WRITE)
+        self._bb.register_key(bb_keys.TARGET_PERSON_PROMPT, access=Access.WRITE)
+        self._bb.register_key(bb_keys.ANNOUNCE_TEXT, access=Access.WRITE)
+        self._bb.register_key(bb_keys.REPORT_INFO, access=Access.READ)
+        self._bb.register_key(bb_keys.ASK_QUESTION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.VLM_QUESTION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.LLM_QUESTION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.START_POSE, access=Access.READ)
+        self._bb.register_key(bb_keys.DYNAMIC_LOCATIONS, access=Access.READ)
+        self._bb.register_key(bb_keys.CURRENT_DYNLABEL, access=Access.WRITE)
+        # written by goto/search_object, read back by grasp (shelf inference)
+        self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.READ)
+        self._bb.register_key(bb_keys.GRASP_ASK_REFEREE, access=Access.WRITE)
+        self._bb.register_key(bb_keys.GRASP_REFEREE_LOCATION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.GRASP_REFEREE_POSE, access=Access.WRITE)
+        self._bb.register_key(bb_keys.GRASP_REFEREE_IS_APPLIANCE, access=Access.WRITE)
+        for search_pose_key in SEARCH_POSE_KEYS:
+            self._bb.register_key(search_pose_key, access=Access.WRITE)
+
+    def update(self):
+        try:
+            plan = self._bb.get(self._plan_key) or []
+        except KeyError:
+            self.feedback_message = f"Plan key {self._plan_key} not initialised"
+            return Status.FAILURE
+        if self._step_index >= len(plan):
+            self.feedback_message = (
+                f"step {self._step_index} out of range (plan has {len(plan)})"
+            )
+            return Status.FAILURE
+        step = plan[self._step_index]
+        action = step.get("action")
+        params = step.get("params", {}) or {}
+        self._bb.set(bb_keys.CURRENT_ACTION, action, overwrite=True)
+        self._bb.set(bb_keys.CURRENT_PARAMS, params, overwrite=True)
+        materialise_params(self._bb, action, params)
+        self.feedback_message = f"step {self._step_index}: {action}({params})"
+        return Status.SUCCESS
+
+
 class BtNode_ActionRouter(Behaviour):
     """Guard that succeeds only if ``CURRENT_ACTION`` matches this branch."""
 
@@ -1127,8 +1204,385 @@ class BtNode_BumpCorrectionCounter(Behaviour):
 
 
 # ---------------------------------------------------------------------------
+# Two-layer bridge nodes: TOP layer (split_command) and LOWER layer
+# (request_plan_all). Both delegate the heavy lifting to a GPSRPlanner
+# (injected at composition time; never imported here to avoid a cycle), spawn
+# planner threads, and RUN until the planner reports ready. The planner threads
+# never touch the Blackboard — every BB write below happens on the executor
+# thread in these nodes' update(), on the same thread that ticks the tree.
+# ---------------------------------------------------------------------------
+
+class BtNode_SplitCommand(Behaviour):
+    """TOP LAYER bridge: NL command -> ordered list of self-contained targets.
+
+    Reads ``COMMAND``, spawns a daemon thread running ``planner.split_command``
+    (blocking LLM split; deterministic under full-mock), RUNNING until it
+    returns, then writes ``TARGETS`` / ``NUM_TARGETS`` and clears
+    ``REPLAN_REQUEST``. ``rephrase_on_failure`` + failure seeding are the future
+    hook for command-level replans (trigger not wired yet).
+    """
+
+    def __init__(self, name: str, planner, rephrase_on_failure: bool = False):
+        super().__init__(name)
+        self._planner = planner
+        self._rephrase_on_failure = rephrase_on_failure
+        self._bb = None
+        self._thread = None
+        self._targets = None
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(bb_keys.COMMAND, access=Access.READ)
+        self._bb.register_key(bb_keys.TARGETS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.NUM_TARGETS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.WRITE)
+
+    def initialise(self):
+        self._targets = None
+        try:
+            command = self._bb.get(bb_keys.COMMAND)
+        except KeyError:
+            command = ""
+        self._thread = threading.Thread(
+            target=self._split_worker, args=(command,), daemon=True,
+        )
+        self._thread.start()
+        self.feedback_message = "splitting command into targets..."
+
+    def _split_worker(self, command: str):
+        self._targets = self._planner.split_command(command)
+
+    def update(self):
+        if self._targets is None:
+            return Status.RUNNING
+        self._bb.set(bb_keys.TARGETS, self._targets, overwrite=True)
+        self._bb.set(bb_keys.NUM_TARGETS, len(self._targets), overwrite=True)
+        self._bb.set(bb_keys.REPLAN_REQUEST, {}, overwrite=True)
+        self.feedback_message = (
+            f"split into {len(self._targets)} target(s): {self._targets}"
+        )
+        return Status.SUCCESS
+
+    def terminate(self, new_status):
+        self._thread = None
+
+
+class BtNode_PlanAllTargets(Behaviour):
+    """LOWER LAYER parallel bridge: plan EVERY target of the current command.
+
+    Reads ``TARGETS``, calls ``planner.request_plan_all(slot, targets)`` (one
+    daemon thread per target — parallel planning), RUNNING until every target
+    is ready, then:
+      - copies each per-target action plan to ``SAVED_TARGET_PLAN_PREFIX+<slot>_<i>``
+        (the slots ``BtNode_MaterialiseStep`` reads at execution time),
+      - copies ``TARGETS`` to ``SAVED_TARGETS_PREFIX+<slot>``,
+      - writes the concatenated aggregate to ``gpsr/plan`` + resets
+        ``gpsr/plan_index=0`` so command_logger / codegen / plan_judge / the
+        plan-reading tests keep working on the flattened form.
+    """
+
+    def __init__(self, name: str, slot: int, planner):
+        super().__init__(name)
+        self._slot = int(slot)
+        self._planner = planner
+        self._bb = None
+        self._targets = []
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(bb_keys.TARGETS, access=Access.READ)
+        self._bb.register_key(bb_keys.TARGETS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.NUM_TARGETS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.SAVED_TARGETS_PREFIX + str(self._slot),
+                              access=Access.WRITE)
+        self._bb.register_key(bb_keys.PLAN, access=Access.WRITE)
+        self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
+        self._bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.WRITE)
+
+    def initialise(self):
+        try:
+            targets = self._bb.get(bb_keys.TARGETS) or []
+        except KeyError:
+            targets = []
+        self._targets = list(targets)
+        for i in range(len(self._targets)):
+            self._bb.register_key(
+                bb_keys.SAVED_TARGET_PLAN_PREFIX + f"{self._slot}_{i}",
+                access=Access.WRITE,
+            )
+        if not self._targets:
+            self.feedback_message = "no targets to plan (COMMAND was empty)"
+            return
+        self._planner.request_plan_all(self._slot, self._targets)
+        self.feedback_message = f"planning {len(self._targets)} target(s) in parallel..."
+
+    def update(self):
+        if not self._targets:
+            return Status.FAILURE
+        if not self._planner.all_targets_ready(self._slot, len(self._targets)):
+            return Status.RUNNING
+        # Copy the per-target plans into their execution slots.
+        aggregate = []
+        for i, desc in enumerate(self._targets):
+            plan = self._planner.get_action_plan(self._slot, i)
+            aggregate.extend(plan)
+            self._bb.set(
+                bb_keys.SAVED_TARGET_PLAN_PREFIX + f"{self._slot}_{i}",
+                plan, overwrite=True,
+            )
+        self._bb.set(bb_keys.SAVED_TARGETS_PREFIX + str(self._slot),
+                     self._targets, overwrite=True)
+        # Flattened aggregate for the legacy plan readers.
+        self._bb.set(bb_keys.PLAN, aggregate, overwrite=True)
+        self._bb.set(bb_keys.PLAN_INDEX, 0, overwrite=True)
+        self._bb.set(bb_keys.NUM_TARGETS, len(self._targets), overwrite=True)
+        self._bb.set(bb_keys.REPLAN_REQUEST, {}, overwrite=True)
+        self.feedback_message = (
+            f"planned {len(self._targets)} target(s) -> {len(aggregate)} step(s)"
+        )
+        return Status.SUCCESS
+
+
+# ---------------------------------------------------------------------------
 # Tree composition
 # ---------------------------------------------------------------------------
+
+class DynamicExecutor(py_trees.composites.Composite):
+    """Runtime-changeable executor: owns ONE child = the active target subtree.
+
+    This composite implements the executing half of the two-layer orchestrator.
+    It holds exactly one child at a time — the subtree ``planner`` built for the
+    current target — and *swaps in* the next target's subtree the moment it is
+    ready. The swap is a real runtime mutation of the running tree
+    (``tree.replace_subtree``), so a newly planned subtree starts executing
+    immediately on the same tick cycle.
+
+    State machine::
+
+        REQUESTING --(target i ready)--> EXECUTING --(child SUCCESS + more targets)--> REQUESTING (i+1)
+                     EXECUTING --(child FAILURE)--> replan_target(i) + REQUESTING (re-run i, budget)
+                     EXECUTING --(last target SUCCESS)--> DONE (SUCCESS)
+
+    Swap-safety (the whole point of the custom tick):
+    - Swaps happen ONLY at the two safe tick-boundary points below — the top of
+      the tick (REQUESTING, when a fresh subtree is ready) or right after the
+      current child returned a terminal status. They NEVER happen from a
+      sibling's ``update()``, and NEVER while the child is RUNNING.
+    - A runtime-created subtree MUST be ``py_trees.trees.setup``'d before
+      insertion (it needs a ROS node handle + BB clients). Done in ``_swap_in``.
+    """
+
+    def __init__(self, name: str, slot: int, planner, max_replans_per_target: int = 3):
+        super().__init__(name)
+        self._slot = int(slot)
+        self._planner = planner
+        self._max_replans = max(1, int(max_replans_per_target))
+        self._tree = None
+        self._node = None
+        self._bb = None
+        self._state = "REQUESTING"
+        self._index = 0
+        self._num_targets = 0
+
+    # -- lifecycle ----------------------------------------------------------
+
+    def setup(self, **kwargs):
+        # The running tree + ROS node are distributed via tree.setup(..., gpsr_tree=tree).
+        # py_trees_ros forwards extra kwargs to every behaviour's setup(), so the
+        # orchestrator entry point passes gpsr_tree=tree and it lands here.
+        self._tree = kwargs.get("gpsr_tree")
+        self._node = kwargs.get("node")
+        if self._tree is None:
+            raise RuntimeError(
+                "DynamicExecutor requires the running tree: tree.setup(..., gpsr_tree=tree)"
+            )
+        if self._node is None:
+            raise RuntimeError("DynamicExecutor requires a ROS node in setup kwargs")
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(bb_keys.TARGET_INDEX, access=Access.WRITE)
+        self._bb.register_key(bb_keys.CURRENT_TARGET, access=Access.WRITE)
+        self._bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.WRITE)
+        self._bb.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+        self._bb.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
+        self._bb.register_key(bb_keys.SAVED_TARGETS_PREFIX + str(self._slot),
+                              access=Access.READ)
+        self._bb.register_key(bb_keys.TARGETS, access=Access.READ)
+
+    def _log(self, text: str) -> None:
+        try:
+            log = self._bb.get(bb_keys.STATE_LOG) or []
+        except KeyError:
+            log = []
+        log.append(text)
+        self._bb.set(bb_keys.STATE_LOG, log, overwrite=True)
+
+    # -- swap machinery (safe points only) ----------------------------------
+
+    def _swap_in(self, index: int) -> py_trees.composites.Sequence:
+        """Setup + swap the ready target subtree into the live tree. Safe points only."""
+        new_subtree = self._planner.get_target_subtree(self._slot, index)
+        if new_subtree is None:
+            return None
+        # A runtime-created subtree must be setup before insertion; this wires
+        # its BB clients + ROS handles. Node is forwarded so the small trees can
+        # (re)discover action servers — default timeout, signal-based timeout is
+        # unsafe on a thread.
+        py_trees.trees.setup(root=new_subtree, node=self._node)
+        if self.children:
+            old_id = self.children[0].id
+            # replace_subtree looks up old_id under the tree root and swaps the
+            # child in place — fires the tree_update_handler for viz republish.
+            self._tree.replace_subtree(old_id, new_subtree)
+        else:
+            self.add_child(new_subtree)
+        self.current_child = new_subtree
+        return new_subtree
+
+    def _announce(self, text: str) -> None:
+        from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+        announce = BtNode_Announce(name=self.name + "/announce", bb_source=None,
+                                   message=text)
+        py_trees.trees.setup(root=announce, node=self._node)
+        announce.initialise()
+        announce.update()
+
+    # -- per-target event handlers ------------------------------------------
+
+    def _on_target_success(self) -> None:
+        self._log(f"target:{self._index}:{self._current_desc()} SUCCEEDED")
+        self._bb.set(bb_keys.TARGET_INDEX, self._index + 1, overwrite=True)
+        self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+        if self._index + 1 >= self._num_targets:
+            self._state = "DONE"
+        else:
+            self._state = "REQUESTING"
+            self._index += 1
+
+    def _on_target_failure(self, reason: str) -> None:
+        self._log(f"target:{self._index}:{self._current_desc()} FAILED: {reason}")
+        try:
+            replans = int(self._bb.get(bb_keys.TARGET_REPLAN_COUNT) or 0)
+        except KeyError:
+            replans = 0
+        replans += 1
+        self._bb.set(bb_keys.TARGET_REPLAN_COUNT, replans, overwrite=True)
+        if replans > self._max_replans:
+            self._announce(f"I could not complete {self._current_desc()} after "
+                           f"{self._max_replans} attempts. I will skip it.")
+            self._log(f"target:{self._index}:{self._current_desc()} SKIPPED "
+                      f"(replan budget exceeded)")
+            self._bb.set(bb_keys.TARGET_INDEX, self._index + 1, overwrite=True)
+            self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+            if self._index + 1 >= self._num_targets:
+                self._state = "DONE"
+            else:
+                self._state = "REQUESTING"
+                self._index += 1
+            return
+        # Lower-layer replan ONLY: re-plan this target (planner threads rebuild
+        # + cache the fresh subtree; they never touch the BB). The top layer
+        # and the other targets are untouched. Command-level replan becomes a
+        # stub writing REPLAN_REQUEST={"level":"command",...} when the trigger
+        # mechanism is announced.
+        self._planner.replan_target(self._slot, self._index, reason)
+        self._bb.set(bb_keys.REPLAN_REQUEST,
+                     {"level": "target", "index": self._index, "reason": reason},
+                     overwrite=True)
+        self._state = "REQUESTING"
+
+    def _current_desc(self) -> str:
+        try:
+            return str(self._bb.get(bb_keys.CURRENT_TARGET) or self._index)
+        except KeyError:
+            return str(self._index)
+
+    # -- custom tick ---------------------------------------------------------
+
+    def tick(self) -> Iterator[py_trees.behaviour.Behaviour]:
+        """Generator tick: yield the active child each cycle, driving swaps.
+
+        Two safe swap points, both at tick boundaries:
+          (A) top of tick in REQUESTING, when the target's subtree is ready;
+          (B) right after the current child returned a terminal status.
+        Never swap from a sibling's update(); never swap while RUNNING.
+
+        The executor stays RUNNING across target advances (state ``REQUESTING``
+        with the next index), so the tree never re-initialises mid-command; it
+        only reaches SUCCESS once the last target is done.
+        """
+        self.logger.debug("%s.tick()" % self.__class__.__name__)
+
+        if self.status != py_trees.common.Status.RUNNING:
+            # Fresh activation (INVALID/terminal -> RUNNING): (re)init state.
+            self.initialise()
+            try:
+                targets = self._bb.get(bb_keys.SAVED_TARGETS_PREFIX + str(self._slot)) \
+                    or self._bb.get(bb_keys.TARGETS) or []
+            except KeyError:
+                targets = []
+            self._num_targets = len(targets)
+            if self._num_targets == 0:
+                self.feedback_message = "no saved targets to execute"
+                self.stop(py_trees.common.Status.SUCCESS)
+                yield self
+                return
+            self._index = 0
+            self._state = "REQUESTING"
+            self._bb.set(bb_keys.TARGET_INDEX, 0, overwrite=True)
+            self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+
+        # --- SWAP POINT A: REQUESTING, subtree ready -> swap + fall through ---
+        if self._state == "REQUESTING":
+            subtree = self._swap_in(self._index)
+            if subtree is None:
+                self.feedback_message = (
+                    f"waiting for target {self._index} plan...")
+                self.status = py_trees.common.Status.RUNNING
+                yield self
+                return
+            self._state = "EXECUTING"
+            desc = self._planner._get_desc(self._slot, self._index) or f"target {self._index}"
+            self._bb.set(bb_keys.CURRENT_TARGET, desc, overwrite=True)
+            self.feedback_message = f"executing target {self._index}: {desc}"
+
+        # Tick the active child once (sequence semantics over a single child).
+        for child in self.children:
+            for node in child.tick():
+                yield node
+                if node is child and node.status != py_trees.common.Status.RUNNING:
+                    # --- SWAP POINT B: child just returned terminal ---
+                    terminal = node.status
+                    if terminal == py_trees.common.Status.SUCCESS:
+                        self._on_target_success()
+                    else:
+                        self._on_target_failure(self._last_child_feedback(node))
+                    if self._state == "DONE":
+                        self.stop(py_trees.common.Status.SUCCESS)
+                        yield self
+                        return
+                    # Next target (or replan): stay RUNNING, swap at point A on
+                    # the next tick. The terminal child stays in children[0]
+                    # until then — harmless, never ticked again.
+                    self.status = py_trees.common.Status.RUNNING
+                    yield self
+                    return
+            # Child was RUNNING: stay RUNNING.
+            self.status = py_trees.common.Status.RUNNING
+            yield self
+            return
+
+    @staticmethod
+    def _last_child_feedback(node) -> str:
+        try:
+            return str(getattr(node, "feedback_message", "") or node.name)
+        except Exception:  # noqa: BLE001
+            return node.name
+
+    def tip(self) -> Optional[py_trees.behaviour.Behaviour]:
+        if self.current_child is not None:
+            return self.current_child.tip()
+        return None
+
 
 class BtNode_GeneratePlanFile(Behaviour):
     """Freeze the just-planned command into a standalone, re-runnable .py.
@@ -1581,6 +2035,175 @@ def create_batch_command_flow(
     execute = py_trees.composites.Sequence("execute phase", memory=True)
     for i in range(num_commands):
         execute.add_child(_create_execute_slot(i, max_steps, max_corrections))
+    root.add_child(execute)
+    return root
+
+
+# --------------------------------------------------------------------------- #
+# TWO-LAYER batch flow. Same collect-then-execute shape as the legacy flow
+# above, but the intake phase runs the TOP layer (split_command) then the
+# LOWER layer (request_plan_all — one thread per target, in parallel), and the
+# execute phase hands each slot to a DynamicExecutor that swaps ready target
+# subtrees into the RUNNING tree at runtime.
+# --------------------------------------------------------------------------- #
+
+class BtNode_BuildTargetsSpeech(Behaviour):
+    """Turn the saved target list into one spoken rehearsal sentence.
+
+    Mirrors ``BtNode_BuildPlanSpeech`` for the two-layer flow: reads the slot's
+    saved targets (``SAVED_TARGETS_PREFIX+<slot>``, a list of NL descriptions)
+    and writes an ordered spoken summary to ``PLAN_SPEECH`` for the announce.
+    """
+
+    def __init__(self, name: str, slot: int):
+        super().__init__(name)
+        self._slot = int(slot)
+        self._bb = None
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(bb_keys.SAVED_TARGETS_PREFIX + str(self._slot),
+                              access=Access.READ)
+        self._bb.register_key(bb_keys.PLAN_SPEECH, access=Access.WRITE)
+
+    def update(self):
+        try:
+            targets = self._bb.get(bb_keys.SAVED_TARGETS_PREFIX + str(self._slot)) or []
+        except KeyError:
+            targets = []
+        if not targets:
+            self._bb.set(bb_keys.PLAN_SPEECH, "I have no tasks.", overwrite=True)
+            return Status.SUCCESS
+        parts = []
+        for i, t in enumerate(targets, start=1):
+            lead = "First" if i == 1 else "Finally" if i == len(targets) else "Then"
+            parts.append(f"{lead}, {t}.")
+        text = f"Here is my plan. I will complete {len(targets)} tasks. " + " ".join(parts)
+        self._bb.set(bb_keys.PLAN_SPEECH, text, overwrite=True)
+        self.feedback_message = text[:80]
+        return Status.SUCCESS
+
+
+def create_announce_targets(slot: int) -> py_trees.composites.Sequence:
+    """Speak the two-layer target list aloud (build text, then announce)."""
+    seq = py_trees.composites.Sequence(f"announce_targets_{slot}", memory=True)
+    seq.add_child(BtNode_BuildTargetsSpeech(f"build targets speech {slot}", slot))
+    seq.add_child(BtNode_AnnounceFromBB(f"announce targets {slot}", bb_keys.PLAN_SPEECH))
+    return seq
+
+
+def request_command_replan(bb_client, reason: str = "") -> None:
+    """Stub for a COMMAND-level replan request (extension point).
+
+    The replan-trigger mechanism is not wired yet: a failing target re-plans
+    only itself inside DynamicExecutor._on_target_failure. When the trigger is
+    announced, calling this asks the top layer to re-split the whole command
+    (``BtNode_SplitCommand`` consumes this and re-runs). Writes a request the
+    orchestrator's bridge nodes already clear on their next run.
+    """
+    bb_client.set(bb_keys.REPLAN_REQUEST,
+                  {"level": "command", "index": -1, "reason": reason},
+                  overwrite=True)
+
+
+def _create_plan_and_save_new(
+    slot: int,
+    planner,
+    announce_targets: bool = True,
+    emit_plan_dir: Optional[str] = None,
+) -> py_trees.composites.Sequence:
+    """Two-layer intake for one slot: split -> parallel plan-all -> announce + stash.
+
+    Reads the command (already in ``COMMAND`` from intake), runs the TOP layer
+    (BtNode_SplitCommand) then the LOWER layer in parallel
+    (BtNode_PlanAllTargets), announces the target list, and stashes the saved
+    command + aggregate plan so the execute phase can restore + log them.
+    """
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    seq = py_trees.composites.Sequence(f"plan+save two-layer task {slot + 1}", memory=True)
+    _reset_task_state(seq)
+    seq.add_child(BtNode_Announce(
+        f"announce planning task {slot + 1}", bb_source=None,
+        message="I am planning, please wait.",
+    ))
+    seq.add_child(BtNode_SplitCommand(f"split command {slot + 1}", planner))
+    seq.add_child(BtNode_PlanAllTargets(f"plan all targets {slot + 1}", slot, planner))
+    if emit_plan_dir is not None:
+        # Freeze the aggregate plan (COMMAND + PLAN are set by PlanAllTargets) to
+        # a standalone replayable .py — preserves the legacy check-after-run.
+        seq.add_child(BtNode_GeneratePlanFile(out_dir=emit_plan_dir))
+    if announce_targets:
+        seq.add_child(create_announce_targets(slot))
+    seq.add_child(BtNode_BlackboardCopy(
+        f"save command {slot}", bb_keys.COMMAND, f"{bb_keys.SAVED_COMMAND_PREFIX}{slot}"))
+    # Aggregate plan (concatenation of per-target plans) for the legacy readers.
+    seq.add_child(BtNode_BlackboardCopy(
+        f"save aggregate plan {slot}", bb_keys.PLAN, f"{bb_keys.SAVED_PLAN_PREFIX}{slot}"))
+    return seq
+
+
+def _create_execute_slot_new(
+    slot: int,
+    planner,
+    max_replans_per_target: int = 3,
+) -> py_trees.composites.Sequence:
+    """Two-layer execute for one slot: restore + run a DynamicExecutor over it."""
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    seq = py_trees.composites.Sequence(f"execute two-layer task {slot + 1}", memory=True)
+    seq.add_child(BtNode_Announce(
+        f"announce start task {slot + 1}", bb_source=None,
+        message=f"Starting task {slot + 1} now.",
+    ))
+    seq.add_child(BtNode_BlackboardCopy(
+        f"restore command {slot}", f"{bb_keys.SAVED_COMMAND_PREFIX}{slot}", bb_keys.COMMAND))
+    seq.add_child(BtNode_BlackboardCopy(
+        f"restore targets {slot}", f"{bb_keys.SAVED_TARGETS_PREFIX}{slot}", bb_keys.TARGETS))
+    _reset_task_state(seq)
+    seq.add_child(DynamicExecutor(
+        f"executor task {slot + 1}", slot, planner,
+        max_replans_per_target=max_replans_per_target,
+    ))
+    return seq
+
+
+def create_batch_command_flow_new(
+    planner,
+    num_commands: int = 3,
+    make_intake=None,
+    max_replans_per_target: int = 3,
+    announce_targets: bool = True,
+    emit_plan_dir: Optional[str] = None,
+) -> py_trees.composites.Sequence:
+    """TWO-LAYER batch command flow: split + parallel plan up front, execute later.
+
+    ``planner`` is a GPSRPlanner (decoupled orchestrator); required. Each slot
+    runs ``_create_plan_and_save_new`` (top split + parallel lower layer) in the
+    intake phase, then ``_create_execute_slot_new`` (a DynamicExecutor that swaps
+    ready target subtrees into the live tree at runtime) in the execute phase.
+    """
+    from behavior_tree.TemplateNodes.Audio import BtNode_Announce
+    if make_intake is None:
+        make_intake = make_listen_intake()
+
+    root = py_trees.composites.Sequence("batch_command_flow_two_layer", memory=True)
+
+    intake = py_trees.composites.Sequence("intake phase (split+plan parallel)", memory=True)
+    for i in range(num_commands):
+        slot = py_trees.composites.Sequence(f"intake task {i + 1}", memory=True)
+        slot.add_child(make_intake(i))
+        slot.add_child(_create_plan_and_save_new(i, planner, announce_targets,
+                                                 emit_plan_dir))
+        intake.add_child(slot)
+    root.add_child(intake)
+
+    root.add_child(BtNode_Announce(
+        "announce start execution", bb_source=None,
+        message=f"I have {num_commands} tasks. I will start executing them now.",
+    ))
+
+    execute = py_trees.composites.Sequence("execute phase", memory=True)
+    for i in range(num_commands):
+        execute.add_child(_create_execute_slot_new(i, planner, max_replans_per_target))
     root.add_child(execute)
     return root
 

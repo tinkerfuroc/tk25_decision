@@ -68,6 +68,11 @@ setup(
             'gpsr-test-vlm = behavior_tree.GPSR.test_uncovered_actions:main_vlm_fallback',
             'gpsr-test-llm = behavior_tree.GPSR.test_uncovered_actions:main_llm_fallback',
             'gpsr-test-cmd = behavior_tree.GPSR.test_orchestrator_grammar:main',
+            # two-layer planner / executor dev tests (offline)
+            'gpsr-test-split = behavior_tree.GPSR.dev_tests:main_split_command',
+            'gpsr-test-lower-layer = behavior_tree.GPSR.dev_tests:main_lower_layer',
+            'gpsr-test-dynamic-executor = behavior_tree.GPSR.dev_tests:main_dynamic_executor',
+            'gpsr-test-orchestrator-2layer = behavior_tree.GPSR.dev_tests:main_orchestrator_two_layer',
         ],
     },
 )
