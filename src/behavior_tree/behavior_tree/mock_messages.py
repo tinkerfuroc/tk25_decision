@@ -211,6 +211,22 @@ class PlacingLocation(MockService):
             self.candidate_bboxes = []
 
 
+class GetImage(MockService):
+    """Mock camera image service used by GPSR visual state capture."""
+
+    class Request(MockService.Request):
+        def __init__(self):
+            super().__init__()
+            self.camera = ""
+            self.depth = False
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.rgb_image = MockMessage()
+            self.depth_image = MockMessage()
+
+
 # Mock Arm Services
 class Drop(MockService):
     """Mock Drop service."""

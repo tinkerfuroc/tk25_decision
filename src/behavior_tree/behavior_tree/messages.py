@@ -15,7 +15,7 @@ if _config.has_dependency('tinker_vision_msgs_26'):
     from tinker_vision_msgs_26.action import Categorize, FollowHeadAction, HumanFollowing, TrackPerson
 else:
     from behavior_tree.mock_messages import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
-    from behavior_tree.mock_messages import ObjectDetectionGeneralist, SeatRecommendBbox, PlacingLocation, ReseedTarget
+    from behavior_tree.mock_messages import ObjectDetectionGeneralist, SeatRecommendBbox, PlacingLocation, GetImage, ReseedTarget
     from behavior_tree.mock_messages import Object, PanTiltCtrl, PanTiltCommand, PanTiltState, BoundingBox
     from behavior_tree.mock_messages import Categorize, FollowHeadAction, HumanFollowing, TrackPerson
 

@@ -540,6 +540,7 @@ def main_split_command():
     print(f"[split] {len(targets)} target(s):")
     for i, t in enumerate(targets):
         print(f"  {i}. {t}")
+    print(f"[split] descs: {[t.get('desc') if isinstance(t, dict) else t for t in targets]}")
     return targets
 
 

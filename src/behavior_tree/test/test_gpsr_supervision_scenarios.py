@@ -275,7 +275,7 @@ def test_scene_only_urdf_arm_renders_all_four_runtime_poses(
     tmp_path: Path,
 ) -> None:
     expected_directions = {
-        "arm_pos_navigating": ("upward", 60.0),
+        "arm_pos_navigating": ("upward", 30.0),
         "arm_pos_orbbec_look": ("upward", 30.0),
         "arm_pos_scan": ("downward", -20.0),
         "arm_pos_scan_original": ("downward", -40.0),

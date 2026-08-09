@@ -15,9 +15,14 @@ called from a Behaviour.update()).
 Usage:
   BT_MOCK_MODE=true BT_MOCK_CONFIG=full.json  .../run_ten_cmd.py --mock   # offline
   .../run_ten_cmd.py --count 10 --seed 7                                     # real LLM
+  .../run_ten_cmd.py --count 10 --seed 8 --save --label gpt5.6-luna
+      # --save writes BOTH to gpsr_runs/logs under the GPSR module:
+      #   ten_cmd_<stamp>_<label>_<count>cmds_seed<seed>.log          (detailed, tee'd stdout)
+      #   ten_cmd_<stamp>_<label>_<count>cmds_seed<seed>_simple.log   (simplified planner summary)
 """
 
 import argparse
+import datetime
 import json
 import os
 import random
@@ -135,7 +140,7 @@ def generate_commands(generator, count, seed):
 def plan_one_command(planner, slot, command, max_wait=90.0):
     """Top split + parallel lower layer; returns (targets, per_target_plans)."""
     targets = planner.split_command(command)
-    planner.request_plan_all(slot, targets)
+    planner.request_plan_all(slot, targets, command=command)
     deadline = time.time() + max_wait
     while time.time() < deadline:
         if planner.all_targets_ready(slot, len(targets)):
@@ -145,13 +150,157 @@ def plan_one_command(planner, slot, command, max_wait=90.0):
     return targets, plans
 
 
+# GPSR-package gpsr_runs/logs — run logs live under the GPSR module, not the
+# workspace root, so they stay with the code that produces them.
+RUNS_LOG_DIR = Path(__file__).resolve().parent.parent / "gpsr_runs" / "logs"
+
+
+def _slug(text: str, n: int = 40) -> str:
+    return "".join(c if c.isalnum() else "_" for c in text).strip("_")[:n] or "run"
+
+
+class _Tee:
+    """Duplicate all writes to both the real stdout and a log file."""
+
+    def __init__(self, fh):
+        self._fh = fh
+        self._real = sys.stdout
+
+    def write(self, data):
+        self._real.write(data)
+        self._fh.write(data)
+        self._fh.flush()
+
+    def flush(self):
+        self._real.flush()
+        self._fh.flush()
+
+
+class _SimpleLog:
+    """Human-readable planner summary: command -> targets -> action steps -> pass/fail.
+
+    Deliberately omits blackboard write-maps and decision trees (those live in
+    the detailed log). One line per action, indented under its target.
+    """
+
+    def __init__(self, path: str):
+        self._path = path
+        self._fh = open(path, "w", buffering=1)
+        self._valid = 0
+        self._total = 0
+        self._rejected: list[str] = []
+
+    def header(self, model: str, seed: int, count: int, timestamp: str):
+        self._fh.write("==== GPSR PLANNER RUN (SIMPLIFIED) ====\n")
+        self._fh.write(f"model:     {model}\n")
+        self._fh.write(f"seed:      {seed}\n")
+        self._fh.write(f"commands:  {count}\n")
+        self._fh.write(f"timestamp: {timestamp}\n")
+
+    def command(self, idx: int, cmd: str):
+        self._fh.write("\n" + "=" * 60 + "\n")
+        self._fh.write(f"COMMAND {idx}: {cmd}\n")
+        self._fh.write("-" * 60 + "\n")
+
+    def targets(self, targets):
+        self._fh.write(f"[top-layer] {len(targets)} target(s)\n")
+        for i, t in enumerate(targets):
+            if not isinstance(t, dict):
+                self._fh.write(f"  T{i}: {t}\n")
+                continue
+            obj = t.get("object") or ""
+            loc = t.get("location") or ""
+            dep = t.get("depends_on")
+            bits = []
+            if obj:
+                bits.append(f"object={obj}")
+            if loc:
+                bits.append(f"location={loc}")
+            if dep is not None and dep >= 0:
+                bits.append(f"after=T{dep}")
+            suffix = ("  [" + ", ".join(bits) + "]") if bits else ""
+            self._fh.write(f"  T{i}: {t.get('desc')}{suffix}\n")
+
+    def plan(self, desc: str, steps, ok: bool, reason: str = ""):
+        self._total += 1
+        self._fh.write(f"\n  TARGET: {desc}\n")
+        if not steps:
+            self._fh.write("    (empty plan)\n")
+        for k, step in enumerate(steps):
+            act = step.get("action")
+            params = step.get("params", {})
+            arg = ", ".join(f"{k2}={v}" for k2, v in params.items()) if params else ""
+            self._fh.write(f"    {k}. {act}({arg})\n")
+        if ok:
+            self._valid += 1
+            self._fh.write("    PASS\n")
+        else:
+            self._rejected.append(f"{desc}: {reason}")
+            self._fh.write(f"    FAIL: {reason}\n")
+
+    def summary(self):
+        self._fh.write("\n" + "=" * 60 + "\n")
+        self._fh.write(f"VALIDATED: {self._valid}/{self._total} plans passed\n")
+        if self._rejected:
+            self._fh.write("REJECTED:\n")
+            for r in self._rejected:
+                self._fh.write(f"  - {r}\n")
+        else:
+            self._fh.write("All plans validated.\n")
+
+    def close(self):
+        self._fh.close()
+
+
+def open_run_log(label: str, seed: int, count: int) -> str:
+    """Create a labelled log path in gpsr_runs/logs, return its path."""
+    RUNS_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = RUNS_LOG_DIR / f"ten_cmd_{stamp}_{_slug(label)}_{count}cmds_seed{seed}.log"
+    return str(path)
+
+
+def open_simple_log(label: str, seed: int, count: int) -> str:
+    """Create the simplified-log path, derived from the detailed log's name."""
+    RUNS_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = RUNS_LOG_DIR / f"ten_cmd_{stamp}_{_slug(label)}_{count}cmds_seed{seed}_simple.log"
+    return str(path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--count", type=int, default=10)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--mock", action="store_true",
                     help="use full-mock planner (no network; trivial plans)")
+    ap.add_argument("--save", action="store_true",
+                    help="tee stdout to a labelled log in gpsr_runs/logs")
+    ap.add_argument("--label", default="",
+                    help="label used in the saved log filename (default: model)")
     args = ap.parse_args()
+
+    # Save-to-file: tee stdout (detailed log) + write a simplified log alongside.
+    log_path = None
+    simple = None
+    if args.save:
+        label = args.label or (
+            os.environ.get("GPSR_LLM_MODEL", "unknown") or "mock" if args.mock else "unknown"
+        )
+        log_path = open_run_log(label, args.seed, args.count)
+        simple_path = open_simple_log(label, args.seed, args.count)
+        fh = open(log_path, "w", buffering=1)
+        sys.stdout = _Tee(fh)
+        print(f"[run-ten-cmd] saving this run -> {log_path}")
+        print(f"[run-ten-cmd] model={os.environ.get('GPSR_LLM_MODEL', '?')} "
+              f"seed={args.seed} count={args.count} label={label or '?'}")
+        simple = _SimpleLog(simple_path)
+        simple.header(
+            model=os.environ.get("GPSR_LLM_MODEL", "?"),
+            seed=args.seed,
+            count=args.count,
+            timestamp=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
 
     # Same knowledge set the real orchestrator loads: KNOWN_LOCATIONS drives
     # both the validator (known_locations) and the LLM prompt (Known locations).
@@ -173,6 +322,8 @@ def main():
         print("=" * 78)
         print(f"COMMAND {slot + 1}: {cmd}")
         print("=" * 78)
+        if simple:
+            simple.command(slot + 1, cmd)
         try:
             targets, plans = plan_one_command(planner, slot, cmd)
         except Exception as exc:  # noqa: BLE001
@@ -180,13 +331,27 @@ def main():
             continue
 
         print(f"\n[TOP-LAYER] split -> {len(targets)} target(s):")
+        if simple:
+            simple.targets(targets)
         for i, t in enumerate(targets):
-            print(f"  T{i}: {t}")
+            desc = t.get("desc") if isinstance(t, dict) else t
+            print(f"  T{i}: {desc}   object={t.get('object','') if isinstance(t, dict) else ''}"
+                  f" location={t.get('location','') if isinstance(t, dict) else ''}"
+                  f" depends_on={t.get('depends_on','') if isinstance(t, dict) else ''}")
 
+        # Flat list of already-accepted steps from prior targets (validate_plan's
+        # prior_plan is a flat list of dict steps — a list of lists would seed
+        # nothing, since the cross-target seeding loop skips non-dicts).
+        prior_steps = []
         for i, (t, plan) in enumerate(zip(targets, plans)):
-            print(f"\n  --- TARGET T{i}: {t} ---")
-            ok, reason = validate_plan(plan, t, set(ACTION_FACTORIES.keys()),
-                                       known_locations=known_loc)
+            desc = t.get("desc") if isinstance(t, dict) else t
+            print(f"\n  --- TARGET T{i}: {desc} ---")
+            ok, reason = validate_plan(plan, desc, set(ACTION_FACTORIES.keys()),
+                                       known_locations=known_loc,
+                                       prior_plan=prior_steps)
+            prior_steps.extend(plan)
+            if simple:
+                simple.plan(desc, plan, ok, reason)
             print(f"  action plan ({len(plan)} step(s), validate={ok}"
                   + (f": {reason}" if reason else "") + "):")
             for k, step in enumerate(plan):
@@ -211,6 +376,13 @@ def main():
             else:
                 print("      (no subtree built)")
         print()
+
+    if log_path:
+        simple.summary()
+        simple.close()
+        print(f"\n[run-ten-cmd] done — log saved to {log_path}")
+        fh.close()
+        sys.stdout = sys.__stdout__
 
 
 if __name__ == "__main__":

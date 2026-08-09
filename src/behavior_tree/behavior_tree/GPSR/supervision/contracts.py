@@ -128,6 +128,7 @@ def default_node_contracts() -> NodeContractRegistry:
             "BtNode_CartesianMove",
             "BtNode_JointMoveAction",
             "BtNode_PointTo",
+            "BtNode_PointToPoseStamped",
         ),
         "arm_motion",
         EffectRisk.REVERSIBLE_MOTION,

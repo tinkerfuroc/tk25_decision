@@ -353,7 +353,7 @@ def test_actual_goto_factory_runs_with_fixture_context_and_full_mock(
 ):
     full_mock = Path(__file__).parents[1] / "config" / "full_mock.json"
     monkeypatch.setenv("BT_MOCK_CONFIG", str(full_mock))
-    from behavior_tree.core.config import BehaviorTreeConfig
+    from behavior_tree.config import BehaviorTreeConfig
     from behavior_tree.GPSR.supervision.context import FixtureContextProvider
 
     BehaviorTreeConfig()._load_mock_config(force=True)

@@ -70,7 +70,7 @@ def configure_default_supervisor(
     if context_provider is None:
         use_fixture = os.environ.get("GPSR_SUPERVISOR_CONTEXT", "").lower() == "fixture"
         try:
-            from behavior_tree.core.config import is_full_mock_mode
+            from behavior_tree.config import is_full_mock_mode
 
             use_fixture = use_fixture or is_full_mock_mode()
         except Exception:
@@ -133,7 +133,7 @@ class BtNode_RecoveryDirective(py_trees.behaviour.Behaviour):
             self._done = succeeded
             return Status.SUCCESS if succeeded else Status.FAILURE
         try:
-            from behavior_tree.core.config import is_full_mock_mode
+            from behavior_tree.config import is_full_mock_mode
 
             mock_mode = is_full_mock_mode()
         except Exception:
@@ -481,6 +481,20 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
                     "relaxed_constraints": list(decision.relaxed_constraints),
                 },
             )
+        _bb_set(
+            "gpsr/replan_request",
+            {
+                "level": "supervisor",
+                "action": decision.action.value,
+                "reason": decision.rationale,
+                "replacement_plan": [
+                    dict(step) for step in decision.replacement_plan
+                ],
+                "operator_message": decision.operator_message,
+                "preserved_completed_steps": decision.preserved_completed_steps,
+                "relaxed_constraints": list(decision.relaxed_constraints),
+            },
+        )
         self._release_after_global = True
 
     def _materialize_subtask(self) -> py_trees.behaviour.Behaviour:

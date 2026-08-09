@@ -51,6 +51,11 @@ START_LOCATION_WORDS = frozenset({
     "start_position", "instruction_point", "start", "operator",
 })
 
+# Descriptor words that can follow "follow ... to the" in a person's pointing
+# gesture ("pointing to the left/right") but are NOT destinations — the
+# dropped-follow-tail rule must not demand a goto() to them.
+FOLLOW_DIRECTION_WORDS = frozenset({"left", "right"})
+
 
 def _norm_loc(name: str) -> str:
     """Normalise a location name for matching: lowercase, spaces -> underscores.
@@ -100,10 +105,12 @@ def _detect_follow_destinations(command: str) -> List[str]:
     signal, not as a parser.
     """
     matches = re.findall(
-        r"follow(?:\s+\w+){1,4}\s+to\s+the\s+([a-z_][a-z_]*)",
+        r"follow(?:\s+\w+){1,4}\s+to\s+the\s+((?:[a-z]+_)*[a-z]+(?:\s+room)?)",
         command.lower(),
     )
-    return matches
+    # Normalize to the canonical underscore form used by known locations
+    # (living room -> living_room), since lower-layer plans use _norm_loc.
+    return [re.sub(r"\s+", "_", m.strip()) for m in matches]
 
 
 def _same_object(a: str, b: str) -> bool:
@@ -123,8 +130,17 @@ def validate_plan(
     known_actions: Iterable[str],
     category_words: Iterable[str] = DEFAULT_CATEGORY_WORDS,
     known_locations: Optional[Iterable[str]] = None,
+    prior_plan: Optional[Iterable[Dict[str, Any]]] = None,
 ) -> Tuple[bool, Optional[str]]:
     """Apply post-checks to a planner-returned plan.
+
+    ``prior_plan`` (optional) is an already-accepted action plan from an EARLIER
+    target of the same command (two-layer planner). Its actions seed the
+    cross-target state so a later target is not re-rejected for legitimate
+    handoff: a ``guide()`` after an earlier ``find_person``, a ``find_object``
+    at a location an earlier ``goto`` already reached, or a ``goto`` to a label
+    an earlier ``record_position`` fixed. Only the prior STEPS are seeded —
+    the current ``plan`` is validated on its own.
 
     Returns (True, None) if the plan passes, (False, reason) otherwise.
     Empty plans are accepted here — callers decide whether emptiness is a
@@ -145,6 +161,32 @@ def validate_plan(
     saw_describe_person = False
     saw_goto_destinations: set = set()
     recorded_labels: set = set()  # labels fixed by an earlier record_position
+
+    # Seed cross-target state from an earlier target's accepted plan.
+    if prior_plan:
+        for step in prior_plan:
+            if not isinstance(step, dict):
+                continue
+            action = step.get("action")
+            params = step.get("params") or {}
+            if action == "find_person":
+                saw_find_person = True
+            elif action == "ask_person":
+                saw_ask_person = True
+            elif action == "vlm_fallback":
+                saw_vlm_fallback = True
+            elif action == "count":
+                saw_count = True
+            elif action == "describe_person":
+                saw_describe_person = True
+            elif action == "record_position":
+                lab = params.get("label")
+                if isinstance(lab, str) and lab.strip():
+                    recorded_labels.add(_norm_loc(lab))
+            elif action == "goto":
+                loc = params.get("location")
+                if isinstance(loc, str):
+                    saw_goto_destinations.add(_norm_loc(loc))
 
     for i, step in enumerate(plan):
         if not isinstance(step, dict):
@@ -344,7 +386,11 @@ def validate_plan(
 
     # Rule: dropped follow-tail. If the command says "follow them to the
     # bedroom" but the plan never goes to the bedroom, that's a silent drop.
+    # Skip bare direction descriptors ("pointing to the left/right") — those
+    # are person descriptors, not destinations.
     for dest in _detect_follow_destinations(command):
+        if dest in FOLLOW_DIRECTION_WORDS:
+            continue
         if dest not in saw_goto_destinations:
             return False, (
                 f"command mentions 'follow ... to the {dest}' but no "

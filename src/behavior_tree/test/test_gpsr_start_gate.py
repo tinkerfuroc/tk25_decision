@@ -1,13 +1,15 @@
 """Structural contract for the production GPSR orchestrator entry factory."""
 
 import os
+import importlib.util
 import sys
 import types
 
 os.environ.setdefault("BT_MOCK_MODE", "true")
 # Planning is never invoked in these factory-structure tests. Keep the optional
 # network client out of test collection on operator images that omit it.
-sys.modules.setdefault("openai", types.ModuleType("openai"))
+if importlib.util.find_spec("openai") is None:
+    sys.modules.setdefault("openai", types.ModuleType("openai"))
 
 from pathlib import Path  # noqa: E402
 
@@ -62,12 +64,15 @@ def _stub_orchestrator_dependencies(monkeypatch, *, command_point):
         captured["commands"] = list(commands)
         return intake
 
-    def create_batch_command_flow(**kwargs):
+    def create_batch_command_flow(planner_instance, **kwargs):
+        captured["planner"] = planner_instance
         captured["batch_kwargs"] = kwargs
         return _success("batch command flow")
 
     monkeypatch.setattr(gpsr, "make_inject_intake", make_inject_intake)
-    monkeypatch.setattr(gpsr, "create_batch_command_flow", create_batch_command_flow)
+    monkeypatch.setattr(
+        gpsr, "create_batch_command_flow_new", create_batch_command_flow
+    )
     return captured, intake
 
 
@@ -97,11 +102,11 @@ def test_current_factory_seeds_arm_then_enters_arena_before_command_flow(
         "idle",
     ]
     assert captured["commands"] == ["bring water", "find a guest"]
+    assert captured["planner"] is gpsr.PLANNER
     assert captured["batch_kwargs"] == {
         "num_commands": 2,
         "make_intake": intake,
-        "max_steps": 12,
-        "max_corrections": 2,
+        "max_replans_per_target": 2,
         "emit_plan_dir": str(tmp_path),
     }
 

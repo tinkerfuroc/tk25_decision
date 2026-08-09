@@ -181,6 +181,10 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        supervisor = get_default_supervisor()
+        if supervisor is not None:
+            supervisor.close()
+        set_default_supervisor(None)
         shutdown_logger()
         shutdown_visualizer()
         tree.shutdown()

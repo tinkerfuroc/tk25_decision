@@ -130,6 +130,13 @@ NO_GRASP_LOCATIONS: set = {"shelf", "cabinet", "coat_rack"} | ALWAYS_NO_GRASP
 START_LOCATION_ALIASES = {"start_position", "instruction_point", "start", "operator"}
 
 
+def _target_desc(t: Any) -> str:
+    """A target's human-readable description: ``desc`` if structured, else itself."""
+    if isinstance(t, dict):
+        return str(t.get("desc") or "")
+    return str(t)
+
+
 def _parse_pose_stamped(json_dict: dict) -> PoseStamped:
     point = json_dict["point"]
     orientation = json_dict["orientation"]
@@ -710,6 +717,11 @@ class BtNode_PlanActions(Behaviour):
                 max_tokens=max(OPENAI_MAX_TOKENS, 8192),
                 response_format={"type": "json_object"},
             )
+            # OpenRouter reasoning-effort knob for the reasoning-capable planner
+            # (openai/gpt-5.6-luna and friends). High effort = deeper planning.
+            # extra_body (not the typed kwarg) so the request works on SDK 2.30.
+            if "gpt-5.6-luna" in OPENAI_MODEL:
+                kwargs["extra_body"] = {"reasoning": {"effort": "high"}}
             try:
                 resp = self._client_oai.chat.completions.create(**kwargs)
             except Exception as exc:  # a model/provider that rejects `seed`?
@@ -1241,6 +1253,7 @@ class BtNode_MaterialiseStep(Behaviour):
         self._bb.register_key(self._plan_key, access=Access.READ)
         self._bb.register_key(bb_keys.CURRENT_ACTION, access=Access.WRITE)
         self._bb.register_key(bb_keys.CURRENT_PARAMS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_POSE, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_LOCATION, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_OBJECT_NAME, access=Access.WRITE)
@@ -1280,6 +1293,7 @@ class BtNode_MaterialiseStep(Behaviour):
         params = step.get("params", {}) or {}
         self._bb.set(bb_keys.CURRENT_ACTION, action, overwrite=True)
         self._bb.set(bb_keys.CURRENT_PARAMS, params, overwrite=True)
+        self._bb.set(bb_keys.PLAN_INDEX, self._step_index + 1, overwrite=True)
         materialise_params(self._bb, action, params)
         self.feedback_message = f"step {self._step_index}: {action}({params})"
         return Status.SUCCESS
@@ -1382,6 +1396,36 @@ class BtNode_LogStepResult(Behaviour):
             except Exception:
                 pass
         return Status.SUCCESS
+
+
+class BtNode_SupervisorBarrier(Behaviour):
+    """Stop a target at the safe boundary after a supervisor global decision.
+
+    The supervised action finishes first, its state is logged, then this node
+    turns the typed intervention into a target-level FAILURE.  The dynamic
+    executor consumes the request and swaps in the validated remaining plan;
+    no running subtree is ever mutated mid-tick.
+    """
+
+    def __init__(self, name: str = "supervisor replan barrier"):
+        super().__init__(name)
+        self._bb = None
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.READ)
+
+    def update(self):
+        try:
+            request = self._bb.get(bb_keys.REPLAN_REQUEST) or {}
+        except KeyError:
+            request = {}
+        if request.get("level") != "supervisor":
+            return Status.SUCCESS
+        self.feedback_message = str(
+            request.get("reason") or "supervisor requested a global replan"
+        )
+        return Status.FAILURE
 
 
 class BtNode_BumpCorrectionCounter(Behaviour):
@@ -1527,6 +1571,7 @@ class BtNode_SplitCommand(Behaviour):
         self._bb.register_key(bb_keys.TARGETS, access=Access.WRITE)
         self._bb.register_key(bb_keys.NUM_TARGETS, access=Access.WRITE)
         self._bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.WRITE)
+        self._bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.READ)
 
     def initialise(self):
         self._targets = None
@@ -1549,8 +1594,9 @@ class BtNode_SplitCommand(Behaviour):
         self._bb.set(bb_keys.TARGETS, self._targets, overwrite=True)
         self._bb.set(bb_keys.NUM_TARGETS, len(self._targets), overwrite=True)
         self._bb.set(bb_keys.REPLAN_REQUEST, {}, overwrite=True)
+        descs = [_target_desc(t) for t in self._targets]
         self.feedback_message = (
-            f"split into {len(self._targets)} target(s): {self._targets}"
+            f"split into {len(self._targets)} target(s): {descs}"
         )
         return Status.SUCCESS
 
@@ -1582,6 +1628,7 @@ class BtNode_PlanAllTargets(Behaviour):
     def setup(self, **kwargs):
         self._bb = self.attach_blackboard_client(name=self.name)
         self._bb.register_key(bb_keys.TARGETS, access=Access.READ)
+        self._bb.register_key(bb_keys.COMMAND, access=Access.READ)
         self._bb.register_key(bb_keys.TARGETS, access=Access.WRITE)
         self._bb.register_key(bb_keys.NUM_TARGETS, access=Access.WRITE)
         self._bb.register_key(bb_keys.SAVED_TARGETS_PREFIX + str(self._slot),
@@ -1595,6 +1642,10 @@ class BtNode_PlanAllTargets(Behaviour):
             targets = self._bb.get(bb_keys.TARGETS) or []
         except KeyError:
             targets = []
+        try:
+            command = self._bb.get(bb_keys.COMMAND) or ""
+        except KeyError:
+            command = ""
         self._targets = list(targets)
         for i in range(len(self._targets)):
             self._bb.register_key(
@@ -1604,7 +1655,7 @@ class BtNode_PlanAllTargets(Behaviour):
         if not self._targets:
             self.feedback_message = "no targets to plan (COMMAND was empty)"
             return
-        self._planner.request_plan_all(self._slot, self._targets)
+        self._planner.request_plan_all(self._slot, self._targets, command=command)
         self.feedback_message = f"planning {len(self._targets)} target(s) in parallel..."
 
     def update(self):
@@ -1614,15 +1665,16 @@ class BtNode_PlanAllTargets(Behaviour):
             return Status.RUNNING
         # Copy the per-target plans into their execution slots.
         aggregate = []
-        for i, desc in enumerate(self._targets):
+        for i, t in enumerate(self._targets):
             plan = self._planner.get_action_plan(self._slot, i)
             aggregate.extend(plan)
             self._bb.set(
                 bb_keys.SAVED_TARGET_PLAN_PREFIX + f"{self._slot}_{i}",
                 plan, overwrite=True,
             )
+        # Store the target DESC list (not the dicts) for speech/execution readers.
         self._bb.set(bb_keys.SAVED_TARGETS_PREFIX + str(self._slot),
-                     self._targets, overwrite=True)
+                     [_target_desc(t) for t in self._targets], overwrite=True)
         # Flattened aggregate for the legacy plan readers.
         self._bb.set(bb_keys.PLAN, aggregate, overwrite=True)
         self._bb.set(bb_keys.PLAN_INDEX, 0, overwrite=True)
@@ -1714,6 +1766,17 @@ class DynamicExecutor(py_trees.composites.Composite):
         new_subtree = self._planner.get_target_subtree(self._slot, index)
         if new_subtree is None:
             return None
+        # Keep the blackboard plan slot in sync with both LLM replans and
+        # supervisor-supplied replacement plans before materialisation begins.
+        get_action_plan = getattr(self._planner, "get_action_plan", None)
+        if callable(get_action_plan):
+            plan_key = bb_keys.SAVED_TARGET_PLAN_PREFIX + f"{self._slot}_{index}"
+            self._bb.register_key(plan_key, access=Access.WRITE)
+            self._bb.set(
+                plan_key,
+                get_action_plan(self._slot, index),
+                overwrite=True,
+            )
         # A runtime-created subtree must be setup before insertion; this wires
         # its BB clients + ROS handles. Node is forwarded so the small trees can
         # (re)discover action servers — default timeout, signal-based timeout is
@@ -1752,6 +1815,32 @@ class DynamicExecutor(py_trees.composites.Composite):
     def _on_target_failure(self, reason: str) -> None:
         self._log(f"target:{self._index}:{self._current_desc()} FAILED: {reason}")
         try:
+            request = self._bb.get(bb_keys.REPLAN_REQUEST) or {}
+        except KeyError:
+            request = {}
+        if request.get("level") == "supervisor":
+            self._bb.set(bb_keys.REPLAN_REQUEST, {}, overwrite=True)
+            action = request.get("action")
+            if action == "abort_and_report":
+                message = str(request.get("operator_message") or reason)
+                if message:
+                    self._announce(message)
+                self._bb.set(
+                    bb_keys.TARGET_INDEX, self._num_targets, overwrite=True,
+                )
+                self._state = "DONE"
+                return
+            replacement = request.get("replacement_plan") or []
+            self._planner.replace_target_plan(
+                self._slot, self._index, replacement, reason,
+            )
+            self._log(
+                f"target:{self._index}:{self._current_desc()} SUPERVISOR_REPLAN "
+                f"({len(replacement)} remaining step(s))"
+            )
+            self._state = "REQUESTING"
+            return
+        try:
             replans = int(self._bb.get(bb_keys.TARGET_REPLAN_COUNT) or 0)
         except KeyError:
             replans = 0
@@ -1783,9 +1872,12 @@ class DynamicExecutor(py_trees.composites.Composite):
 
     def _current_desc(self) -> str:
         try:
-            return str(self._bb.get(bb_keys.CURRENT_TARGET) or self._index)
+            cur = self._bb.get(bb_keys.CURRENT_TARGET) or self._index
         except KeyError:
-            return str(self._index)
+            cur = self._index
+        if isinstance(cur, dict):
+            return str(cur.get("desc") or "")
+        return str(cur)
 
     # -- custom tick ---------------------------------------------------------
 
@@ -1832,7 +1924,9 @@ class DynamicExecutor(py_trees.composites.Composite):
                 yield self
                 return
             self._state = "EXECUTING"
-            desc = self._planner._get_desc(self._slot, self._index) or f"target {self._index}"
+            desc = _target_desc(
+                self._planner._get_desc(self._slot, self._index)
+            ) or f"target {self._index}"
             self._bb.set(bb_keys.CURRENT_TARGET, desc, overwrite=True)
             self.feedback_message = f"executing target {self._index}: {desc}"
 
@@ -2430,7 +2524,7 @@ class BtNode_BuildTargetsSpeech(Behaviour):
         parts = []
         for i, t in enumerate(targets, start=1):
             lead = "First" if i == 1 else "Finally" if i == len(targets) else "Then"
-            parts.append(f"{lead}, {t}.")
+            parts.append(f"{lead}, {_target_desc(t)}.")
         text = f"Here is my plan. I will complete {len(targets)} tasks. " + " ".join(parts)
         self._bb.set(bb_keys.PLAN_SPEECH, text, overwrite=True)
         self.feedback_message = text[:80]

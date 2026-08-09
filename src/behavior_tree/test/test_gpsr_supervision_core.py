@@ -144,12 +144,10 @@ def test_fixture_provider_renders_complete_context(tmp_path: Path) -> None:
 
 
 def test_navigating_pose_comes_from_gpsr_runtime_constants() -> None:
-    expected_degrees = (-15.0, -44.0, 12.0, 65.0, 5.0, -55.0, 8.0)
-    actual_degrees = tuple(
-        round(value * 180.0 / 3.141592653589793, 6)
-        for value in gpsr_arm_pose_navigating()
-    )
-    assert actual_degrees == expected_degrees
+    from behavior_tree.GPSR.gpsr_full import _load_arm_constants
+
+    expected, _ = _load_arm_constants()
+    assert gpsr_arm_pose_navigating() == pytest.approx(tuple(expected))
 
 
 def test_orbbec_look_pose_comes_from_gpsr_runtime_constants() -> None:
