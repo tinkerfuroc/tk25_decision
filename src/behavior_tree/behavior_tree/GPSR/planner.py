@@ -113,9 +113,27 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
        picked up). Use -1 when the target is independent.
     5. Keep each target as close to the original wording as possible; do not
        invent actions, locations, or details not present in the command.
-    6. Never return an empty list. If the command has one clause, return a
-       single-element list containing the command itself.
-    7. If a clause cannot be resolved into concrete work, keep it as a target
+    6. Split by DISTINCT EXECUTABLE JOBS, not by sentence connectives. A
+       target is one job the robot can execute end-to-end; count the jobs the
+       command names and emit one target per job, EVEN when there is no
+       "then"/"and". "Bring Susan the red jacket she left in the office" names
+       three jobs with no connective -> ["get the red jacket from the office",
+       "find Susan", "deliver the red jacket to Susan"].
+    7. Do NOT split a single job just because it has several phrases or a
+       connective. "Move the plant from the kitchen to the balcony" relocates
+       ONE object -> one target. "Grasp the cup, then put it on the table" is
+       one place-job -> one target. A "then"/"and" separates targets only when
+       it joins distinct work: "grab a coke from the kitchen, then take it to
+       Susan in the living room" has TWO end-states (coke acquired; Susan has
+       the coke) -> two targets, the second with depends_on=0.
+    8. Enumeration of SEVERAL separately-named concrete objects is the one
+       intra-verb-phrase case that does split: "grab a coke, some chips and a
+       lemonade from the kitchen" -> three fetch targets, each carrying
+       object=... and location=kitchen. A single named whole ("breakfast",
+       "the mail") stays one target.
+    9. Never return an empty list. If the command is genuinely one job, return
+       a single-element list containing the command itself.
+    10. If a clause cannot be resolved into concrete work, keep it as a target
        anyway — the lower layer will plan an announcement for it.
 """).strip()
 
