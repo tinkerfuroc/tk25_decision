@@ -43,12 +43,18 @@ from .config import (
 )
 from ..config import is_full_mock_mode
 from .modifiable_nodes import (
+    TEMPLATES,
     apply_modifications,
     group_modifications_by_step,
     validate_plan_modifications,
 )
 from .planner_validators import validate_plan
-from .small_trees import ACTION_FACTORIES, bb_keys, BtNode_AnnounceFromBB
+from .small_trees import (
+    ACTION_FACTORIES,
+    bb_keys,
+    BtNode_AnnounceFromBB,
+    get_small_tree_roles,
+)
 from .supervision.runtime import get_default_supervisor, wrap_action_factory
 from .orchestrator import (
     SYSTEM_PROMPT,
@@ -207,9 +213,20 @@ LOWER_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
     - "search-spots" (action search_object): params {"capacity": <int 1..32>}
       — scale the room sweep capacity.
 
-    The ``target_node_id`` must exist in the target action's serialized small
-    tree (stable structural ids like ``small/find_person/root/3``). If you are
-    unsure a modification is valid, OMIT it — the generic tree still runs.
+    The ``target_node_id`` must be one of the concrete ids listed under
+    "Modifiable tree targets" in the user prompt — the id of the node in the
+    target action's serialized small tree that carries the role the template
+    applies to (e.g. ``small/find_person/root/3`` for find_person's sweep).
+    The "Modifiable tree targets" block is authoritative; only emit an id you
+    see there. If a modification is not applicable, OMIT it — the generic tree
+    still runs.
+
+    WHEN to modify: a person described by an ATTRIBUTE or GESTURE — "the
+    person wearing a red jacket", "the man in the blue shirt", "the person
+    raising their left arm" — is not handled well by the generic find_person
+    tree, which only special-cases waving. For such a descriptor, emit an
+    ``attribute-person-specialist`` modification pinning the attribute into the
+    vision prompt. A bare NAME needs no modification.
 """).strip() + "\n\n" + SYSTEM_PROMPT
 
 
@@ -338,8 +355,30 @@ def _build_lower_layer_user_prompt(
         )
     if nonce:
         body += f"\n(Planning request id: {nonce} — ignore, ensures a fresh plan.)"
+    body += "\n\n" + _modification_targets_blurb()
     body += "\nReturn the JSON plan now."
     return body
+
+
+def _modification_targets_blurb() -> str:
+    """Render the concrete valid ``target_node_id`` options per template.
+
+    The lower-layer LLM must name a real serialized node id for any
+    modification it emits; without the id it can only omit. This renders the
+    authoritative map (template -> roles -> node ids) from the role audit so
+    the model picks a genuinely valid target.
+    """
+    roles = get_small_tree_roles()
+    lines = ["Modifiable tree targets (concrete target_node_id per template):"]
+    for name, spec in sorted(TEMPLATES.items()):
+        entries = []
+        for role in spec.applies_to:
+            for node_id in roles.get(role, ()):
+                entries.append(f"{role} -> {node_id}")
+        if not entries:
+            continue
+        lines.append(f"- {name}: " + "; ".join(entries))
+    return "\n".join(lines)
 
 
 def _offline_mock_targets(command: str) -> List[Dict[str, Any]]:
