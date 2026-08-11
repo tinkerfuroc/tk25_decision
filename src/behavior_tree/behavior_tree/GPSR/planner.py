@@ -42,6 +42,11 @@ from .config import (
     OPENAI_MAX_TOKENS,
 )
 from ..config import is_full_mock_mode
+from .modifiable_nodes import (
+    apply_modifications,
+    group_modifications_by_step,
+    validate_plan_modifications,
+)
 from .planner_validators import validate_plan
 from .small_trees import ACTION_FACTORIES, bb_keys, BtNode_AnnounceFromBB
 from .supervision.runtime import get_default_supervisor, wrap_action_factory
@@ -146,6 +151,47 @@ LOWER_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
       so the pose is captured at runtime. NEVER refuse a step with
       "cannot find a known location" when the command names a real room or
       place — record it instead.
+
+    OPTIONAL small-tree modifications: when a step's generic small tree cannot
+    express the behaviour the command needs, you may attach a TYPED modification
+    to that step instead of inventing a new action. This is the ONLY way to
+    specialise a tree. Return a top-level ``modifications`` array alongside
+    ``plan``:
+    {
+      "modifications": [
+        {
+          "action": "<the action this modifies, e.g. find_person>",
+          "template": "<one of the templates below>",
+          "target_node_id": "<a node id from that action's serialized tree>",
+          "step_index": <optional integer; REQUIRED when the plan has >1 step
+                         of this action>,
+          "params": { "<template-specific params>" },
+          "reason": "<short why — becomes part of the audit record>"
+        }
+      ]
+    }
+
+    Allowed templates (closed set — never invent others):
+    - "attribute-person-specialist" (action find_person): params
+      {"gate": "<attribute, e.g. red jacket>", "prompt": "<optional pinned
+      vision prompt>"} — add a descriptor-gated specialist branch so a
+      person described by an attribute (not just a name) is detected.
+    - "person-specialist" (action find_person): params
+      {"name": "<named person>"} — pin the generalist scan to a named person.
+    - "vlm-template" (actions count / vlm_fallback): params
+      {"question_template": "<must contain the {value} placeholder>"} — swap
+      the VLM question.
+    - "announce-text" (actions whose tree has a literal-message announce):
+      params {"text": "<spoken text>"} — change a spoken announcement.
+    - "pan-tilt-sweep" (actions find_person / find_object / describe_person):
+      params {"pan_deg": [floats], "tilt_deg": [floats]} — override the
+      scan sweep ranges.
+    - "search-spots" (action search_object): params {"capacity": <int 1..32>}
+      — scale the room sweep capacity.
+
+    The ``target_node_id`` must exist in the target action's serialized small
+    tree (stable structural ids like ``small/find_person/root/3``). If you are
+    unsure a modification is valid, OMIT it — the generic tree still runs.
 """).strip() + "\n\n" + SYSTEM_PROMPT
 
 
@@ -391,7 +437,7 @@ class GPSRPlanner:
 
     # -- cache ---------------------------------------------------------------
 
-    def _store(self, slot, index, desc, plan, subtree, error):
+    def _store(self, slot, index, desc, plan, subtree, error, modifications=None):
         with self._lock:
             self._cache[(slot, index)] = {
                 "desc": desc,
@@ -399,6 +445,7 @@ class GPSRPlanner:
                 "subtree": subtree,
                 "ready": True,
                 "error": error,
+                "modifications": modifications,
             }
 
     def _get_desc(self, slot, index) -> Optional[str]:
@@ -588,17 +635,30 @@ class GPSRPlanner:
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"REJECTED: {reason}")
                 continue
+            # Modifications: the LLM may attach typed, template-constrained
+            # directives to plan steps. Validate them against the step small
+            # trees — an invalid modification rejects the WHOLE attempt (never
+            # partially applied), feeding the reason back into the next prompt.
+            mods = parsed.get("modifications")
+            ok, reason = validate_plan_modifications(mods, cleaned)
+            if not ok:
+                last_reason = f"invalid modifications: {reason}"
+                print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
+                      f"REJECTED: {last_reason}")
+                continue
             # Accepted — build the subtree on this (worker) thread, then cache.
             try:
-                subtree = self.build_target_subtree(slot, index, cleaned)
+                subtree = self.build_target_subtree(slot, index, cleaned, modifications=mods)
             except Exception as exc:  # noqa: BLE001 — surface for retry
                 last_reason = f"subtree build failed: {exc!r}"
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"-> {last_reason}")
                 continue
             print(f"[plan:{slot}:{index}] accepted on attempt {attempt+1}: "
-                  f"{[s['action'] for s in cleaned]}")
-            self._store(slot, index, desc, cleaned, subtree, None)
+                  f"{[s['action'] for s in cleaned]}"
+                  + (f" mods={len(mods or [])}" if mods else ""))
+            self._store(slot, index, desc, cleaned, subtree, None,
+                        modifications=group_modifications_by_step(cleaned, mods or []))
             return
         # Every attempt failed -> guaranteed non-empty fallback plan.
         plan = _fallback_plan(desc)
@@ -721,6 +781,18 @@ class GPSRPlanner:
             return []
         return list(entry.get("plan") or [])
 
+    def get_modifications(self, slot: int, index: int) -> Dict[int, List[Dict[str, Any]]]:
+        """The step-indexed modification groups for a cached target plan.
+
+        Empty when the accepted plan carried no modifications.
+        """
+        with self._lock:
+            entry = self._cache.get((slot, index))
+        if not entry:
+            return {}
+        mods = entry.get("modifications") or {}
+        return {int(k): list(v) for k, v in mods.items()}
+
     def all_targets_ready(self, slot: int, num: int) -> bool:
         with self._lock:
             return all(
@@ -735,6 +807,8 @@ class GPSRPlanner:
         slot: int,
         index: int,
         action_plan: List[Dict[str, Any]],
+        *,
+        modifications: Any = None,
     ) -> py_trees.composites.Sequence:
         """Compose the per-target executing subtree for ``action_plan``.
 
@@ -744,12 +818,18 @@ class GPSRPlanner:
         only ever reads the Blackboard, and announces the target (CURRENT_TARGET)
         on entry.
 
+        ``modifications`` is the plan-level modification list (validated by
+        ``validate_plan_modifications`` before this is called). Each step's
+        small tree is built then its modifications applied at plan-build time,
+        BEFORE wrapping — the applied change is deterministic and never mutates
+        a live tree.
+
         Structure:
             Sequence("target:<slot>:<i>")
             ├── BtNode_AnnounceFromBB(CURRENT_TARGET, prefix="Next: ")
             └── per step k: Sequence[
                     BtNode_MaterialiseStep(plan_key, k),
-                    supervised ACTION_FACTORIES[act](),
+                    supervised ACTION_FACTORIES[act](),  # modifications applied here
                     BtNode_LogStepResult(ok=True),
                 ]
         """
@@ -760,6 +840,7 @@ class GPSRPlanner:
             prefix="Next: ",
         ))
         plan_key = bb_keys.SAVED_TARGET_PLAN_PREFIX + f"{slot}_{index}"
+        step_mods = group_modifications_by_step(action_plan, modifications or [])
         for k, step in enumerate(action_plan):
             action = step.get("action")
             factory = ACTION_FACTORIES.get(action)
@@ -771,8 +852,14 @@ class GPSRPlanner:
             step_seq.add_child(BtNode_MaterialiseStep(
                 f"materialise:{slot}:{index}:{k}", plan_key, k,
             ))
+            small_tree = factory()
+            mods = step_mods.get(k) or []
+            if mods:
+                small_tree, _applied = apply_modifications(
+                    small_tree, action, mods,
+                )
             step_seq.add_child(wrap_action_factory(
-                action, factory, get_default_supervisor(),
+                action, lambda: small_tree, get_default_supervisor(),
             ))
             step_seq.add_child(BtNode_LogStepResult(
                 f"log:{slot}:{index}:{k}", succeeded=True,

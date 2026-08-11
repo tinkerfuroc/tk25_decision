@@ -756,24 +756,28 @@ def _arm_to_orbbec_look(label: str = "arm to orbbec look"):
     )
 
 
-def _pantilt_sweep(label: str, tilts, make_detect):
+def _pantilt_sweep(label: str, tilts, make_detect, pan_deg=None):
     """Sweep the pan-tilt across every (pan, tilt) combination until the
     detection subtree ``make_detect()`` SUCCEEDS.
 
-    Iterates ``tilts`` (outer) × ``PAN_SWEEP_DEG`` (inner), so the robot does a
-    full left/centre/right pan at the first tilt, then repeats at the next tilt,
-    stopping the instant a combination detects the target. ``make_detect`` is a
-    zero-arg factory that must return a FRESH detection behaviour on each call —
-    a py_trees node can only occupy one slot in the tree, so every branch needs
-    its own instance. ``tilts`` picks the look range: ``HUMAN_TILT_DEG`` (up at a
-    standing person) or ``OBJECT_TILT_DEG`` (level/down at a surface).
+    Iterates ``tilts`` (outer) × ``pan_deg`` (inner, default ``PAN_SWEEP_DEG``),
+    so the robot does a full left/centre/right pan at the first tilt, then
+    repeats at the next tilt, stopping the instant a combination detects the
+    target. ``make_detect`` is a zero-arg factory that must return a FRESH
+    detection behaviour on each call — a py_trees node can only occupy one slot
+    in the tree, so every branch needs its own instance. ``tilts`` picks the
+    look range: ``HUMAN_TILT_DEG`` (up at a standing person) or
+    ``OBJECT_TILT_DEG`` (level/down at a surface). ``pan_deg`` overrides the pan
+    sweep when a caller (e.g. a ``pan-tilt-sweep`` modification) needs a
+    different range.
 
     Returns a memory Selector: SUCCESS the moment a combination detects the
     target, FAILURE only after every (pan, tilt) has been tried with no hit.
     """
+    pans = PAN_SWEEP_DEG if pan_deg is None else [float(p) for p in pan_deg]
     sweep = py_trees.composites.Selector(f"{label} pantilt sweep", memory=True)
     for tilt in tilts:
-        for pan in PAN_SWEEP_DEG:
+        for pan in pans:
             branch = py_trees.composites.Sequence(
                 f"{label} pan={pan:+.0f} tilt={tilt:+.0f}", memory=True)
             branch.add_child(BtNode_TurnPanTilt(
@@ -932,25 +936,32 @@ def _object_scan_and_verify():
     return seq
 
 
-def create_find_object():
+def create_find_object(pan_deg=None, tilt_deg=None):
     """Scan for the object named in ``bb_keys.TARGET_OBJECT_PROMPT``.
 
     Sweeps the pan-tilt across ``PAN_SWEEP_DEG`` × ``OBJECT_TILT_DEG`` (level,
     then angled down at a surface), scanning + verifying at each angle and
     stopping at the first (pan, tilt) where the object is seen — so an object
     off to the side or on a higher/lower surface is still found without moving
-    the base. Locate-only: it does NOT pick a single instance.
+    the base. Locate-only: it does NOT pick a single instance. ``pan_deg`` /
+    ``tilt_deg`` override the sweep ranges (used by ``pan-tilt-sweep``
+    modifications).
     """
     seq = py_trees.composites.Sequence("small/find_object", memory=True)
     seq.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
-    seq.add_child(_pantilt_sweep("find_object", OBJECT_TILT_DEG, _object_scan_and_verify))
+    seq.add_child(_pantilt_sweep(
+        "find_object",
+        OBJECT_TILT_DEG if tilt_deg is None else [float(t) for t in tilt_deg],
+        _object_scan_and_verify,
+        pan_deg=pan_deg,
+    ))
     seq.add_child(BtNode_AnnounceFromBB(
         "announce found", bb_keys.TARGET_OBJECT_NAME, prefix="I can see the "
     ))
     return seq
 
 
-def create_search_object():
+def create_search_object(capacity: int = MAX_SEARCH_SPOTS):
     """Sweep a room's search spots until the target object is located.
 
     The finder for FETCH / GRASP tasks. For "fetch a coke from the living room"
@@ -960,14 +971,18 @@ def create_search_object():
     where the object is seen (the robot is then parked there with the object in
     view for grasp). SUCCESS = found; FAILURE = swept every spot, none found.
 
-    Built at fixed capacity (MAX_SEARCH_SPOTS) because the dispatcher constructs
-    each small tree once. The orchestrator fills only the SEARCH_POSE_i keys the
-    location has; unfilled slots are guarded out by BtNode_CheckBBKeySet so they
-    neither navigate nor count as "found". A memory Selector returns SUCCESS on
-    the first branch that succeeds, FAILURE only if all branches fail.
+    Built at fixed capacity (``MAX_SEARCH_SPOTS``; ``capacity`` overrides it,
+    e.g. via the ``search-spots`` modification) because the dispatcher
+    constructs each small tree once. The orchestrator fills only the
+    SEARCH_POSE_i keys the location has; unfilled slots are guarded out by
+    BtNode_CheckBBKeySet so they neither navigate nor count as "found". A
+    memory Selector returns SUCCESS on the first branch that succeeds, FAILURE
+    only if all branches fail.
     """
+    cap = max(1, int(capacity))
+    pose_keys = [f"gpsr/search_pose_{i}" for i in range(cap)]
     sweep = py_trees.composites.Selector("small/search_object", memory=True)
-    for i, pose_key in enumerate(SEARCH_POSE_KEYS):
+    for i, pose_key in enumerate(pose_keys):
         branch = py_trees.composites.Sequence(f"search spot {i}", memory=True)
         branch.add_child(BtNode_CheckBBKeySet(f"spot {i} set?", pose_key))
         branch.add_child(_tuck_arm_for_nav(f"tuck arm before spot {i}"))
@@ -1005,11 +1020,13 @@ def create_approach_person():
     return seq
 
 
-def _person_scan_strategies():
+def _person_scan_strategies(extra_specialist=None):
     """Fresh person-detection Selector for one pan angle.
 
     Waving-person specialist first (only when the descriptor mentions waving),
-    else the generalist vision scan with a prompt built from the descriptor.
+    then an optional attribute-specialist branch (only when the descriptor
+    mentions ``extra_specialist["gate"]``, scanning with the pinned prompt), and
+    finally the generalist vision scan with a prompt built from the descriptor.
     Returns NEW node instances each call so it can be dropped into every branch
     of the pan-tilt sweep (see ``_pantilt_sweep``).
     """
@@ -1027,6 +1044,11 @@ def _person_scan_strategies():
         target_frame="map",
     ))
     selector.add_child(waving_branch)
+    if extra_specialist:
+        gate = str(extra_specialist.get("gate") or "").strip()
+        prompt = str(extra_specialist.get("prompt") or "").strip()
+        if gate:
+            selector.add_child(_attribute_person_specialist_branch(gate, prompt))
     # generalist fallback — prompt carries the descriptor where possible
     generalist_branch = py_trees.composites.Sequence("generalist person scan", memory=True)
     generalist_branch.add_child(BtNode_ScanForGeneralist(
@@ -1047,7 +1069,43 @@ def _person_scan_strategies():
     return selector
 
 
-def create_find_person():
+def _attribute_person_specialist_branch(gate: str, prompt: str = ""):
+    """Fresh descriptor-gated attribute branch for the person scan strategies.
+
+    Gated on the descriptor mentioning ``gate`` (e.g. "red jacket"); when it
+    fires it pins ``PERSON_VISION_PROMPT`` to ``prompt`` (default "person
+    <gate>") so the attribute reliably reaches the generalist VLM, scans, and
+    extracts the detection. Returns NEW node instances each call so a caller
+    (the ``attribute-person-specialist`` modification) can insert a fresh copy
+    into every pan-tilt strategy selector.
+    """
+    gate = gate.strip()
+    prompt = (prompt or f"person {gate}").strip()
+    branch = py_trees.composites.Sequence(f"{gate} person branch", memory=True)
+    branch.add_child(BtNode_CheckBBContains(
+        f"descriptor mentions {gate}?", bb_keys.TARGET_PERSON_PROMPT, gate,
+    ))
+    branch.add_child(BtNode_BlackboardSet(
+        f"pin {gate} prompt", bb_keys.PERSON_VISION_PROMPT, prompt,
+    ))
+    branch.add_child(BtNode_ScanForGeneralist(
+        name=f"{gate} specialist scan",
+        bb_source=bb_keys.PERSON_VISION_PROMPT,
+        bb_key=bb_keys.TARGET_PERSON_DETECTION,
+        use_orbbec=True,
+        transform_to_map=True,
+        sort_closest=True,
+    ))
+    branch.add_child(BtNode_ExtractDetection(
+        f"pick {gate} person",
+        bb_detection_src=bb_keys.TARGET_PERSON_DETECTION,
+        bb_object_dst=bb_keys.TARGET_OBJECT,
+        bb_point_dst=bb_keys.TARGET_PERSON_POSE,
+    ))
+    return branch
+
+
+def create_find_person(extra_specialist=None, pan_deg=None, tilt_deg=None):
     """Scan for a person matching ``bb_keys.TARGET_PERSON_PROMPT`` and store
     their pose. Locate-only — it does NOT move the robot.
 
@@ -1056,9 +1114,11 @@ def create_find_person():
     person-scan strategies at each angle and stopping at the first combination
     where a person is seen — so a person off to the side or a different height
     is still found without moving the base. The waving-person specialist only
-    runs when the descriptor mentions waving; otherwise the generalist scans
-    with a prompt built from the descriptor. To stand next to the person, the
-    planner emits ``approach_person`` separately.
+    runs when the descriptor mentions waving; an optional ``extra_specialist``
+    (``{"gate": ..., "prompt": ...}``, from the ``attribute-person-specialist``
+    modification) adds a descriptor-gated attribute branch; otherwise the
+    generalist scans with a prompt built from the descriptor. To stand next to
+    the person, the planner emits ``approach_person`` separately.
     """
     seq = py_trees.composites.Sequence("small/find_person", memory=True)
     seq.add_child(BtNode_BuildPersonPrompt(
@@ -1071,7 +1131,12 @@ def create_find_person():
         message="Looking for a person, please stay still.",
     ))
     seq.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
-    seq.add_child(_pantilt_sweep("find_person", HUMAN_TILT_DEG, _person_scan_strategies))
+    seq.add_child(_pantilt_sweep(
+        "find_person",
+        HUMAN_TILT_DEG if tilt_deg is None else [float(t) for t in tilt_deg],
+        lambda: _person_scan_strategies(extra_specialist),
+        pan_deg=pan_deg,
+    ))
     seq.add_child(BtNode_Announce(
         "announce found person", bb_source=None,
         message="Found a person.",
@@ -1079,7 +1144,7 @@ def create_find_person():
     return seq
 
 
-def create_describe_person():
+def create_describe_person(pan_deg=None, tilt_deg=None):
     """Look at the person in view and speak a description of them.
 
     Closes the "tell me the name / pose / gesture of the person" gap: the
@@ -1088,6 +1153,8 @@ def create_describe_person():
     see HRI/hri.py BtNode_FeatureExtraction + BtNode_Introduce). The planner
     runs ``find_person`` first to locate + approach the person, then this
     tree frames the face, extracts the description, and announces it.
+    ``pan_deg`` / ``tilt_deg`` override the sweep ranges (``pan-tilt-sweep``
+    modifications).
     """
     seq = py_trees.composites.Sequence("small/describe_person", memory=True)
     seq.add_child(BtNode_Announce(
@@ -1099,12 +1166,14 @@ def create_describe_person():
     # lower); extract the description at each angle and stop at the first that
     # succeeds, so a person not squarely in front / a different height is framed.
     seq.add_child(_pantilt_sweep(
-        "describe_person", HUMAN_TILT_DEG,
+        "describe_person",
+        HUMAN_TILT_DEG if tilt_deg is None else [float(t) for t in tilt_deg],
         lambda: BtNode_FeatureExtraction(
             "extract person description",
             bb_dest_key=bb_keys.DESCRIBE_FEATURES,
             bb_image_key=bb_keys.DESCRIBE_IMAGE,
         ),
+        pan_deg=pan_deg,
     ))
     seq.add_child(BtNode_AnnounceFromBB(
         "announce description", bb_keys.DESCRIBE_FEATURES,
@@ -1675,3 +1744,89 @@ ACTION_FACTORIES = {
     "vlm_fallback": create_vlm_fallback,
     "llm_fallback": create_llm_fallback,
 }
+
+
+# ---------------------------------------------------------------------------
+# Modifiable-node audit registry (SMALL_TREE_ROLES)
+# ---------------------------------------------------------------------------
+# Every behavior-specific specialization point inside the small trees. A
+# ``role`` labels a node the lower-layer planner may target with a typed
+# ``modifiable_nodes`` template. Roles are stable strings shared with
+# ``modifiable_nodes.TemplateSpec.applies_to``; the node ids that carry each
+# role are COMPUTED by walking each factory's serialized tree (see
+# ``compute_small_tree_roles``), so a structural edit that renumbers a child
+# index never breaks the registry. Structural only — this registry does not
+# alter behaviour.
+
+def _classify_node_roles(action: str, node: dict) -> list[str]:
+    """Return the roles a serialized node of ``action``'s tree carries."""
+    name = str(node.get("name", ""))
+    node_type = str(node.get("type", ""))
+    node_id = str(node.get("node_id", ""))
+    roles: list[str] = []
+    if "pantilt sweep" in name:
+        if action == "find_person":
+            roles.append("find_person_sweep")
+        elif action == "find_object":
+            roles.append("find_object_sweep")
+        elif action == "describe_person":
+            roles.append("describe_person_sweep")
+    if action == "search_object" and node_id == f"small/{action}/root":
+        roles.append("search_object_sweep")
+    if node_type == "BtNode_VLMQuery":
+        roles.append("vlm_query")
+    if action == "count" and node_type == "BtNode_VLMQuery":
+        roles.append("count_vlm_branch")
+    if node_type == "BtNode_Announce":
+        # Only a literal-message announce (given_msg set at build) is a valid
+        # announce-text target — a bb_source announce reads its text from the
+        # blackboard at runtime and cannot be pinned here.
+        roles.append("announce_leaf")
+    if action == "grasp":
+        if node_id == f"small/{action}/root/0":
+            roles.append("grasp_primary")
+        elif node_id == f"small/{action}/root/1":
+            roles.append("grasp_ex_machina")
+    return roles
+
+
+_ROLES_CACHE: dict[str, tuple[str, ...]] | None = None
+
+
+def compute_small_tree_roles() -> dict[str, tuple[str, ...]]:
+    """Build and cache ``role -> (serialized node ids)`` by walking factories.
+
+    Every factory is constructed and serialized once; the resulting mapping is
+    cached on the module so repeated lookups (planner + checker) are free.
+    Building a small tree has no hardware/mock side effects — nodes only read
+    the blackboard once set up and ticked, never at construction.
+    """
+    from .tree_serialization import serialize_tree
+
+    global _ROLES_CACHE
+    if _ROLES_CACHE is not None:
+        return _ROLES_CACHE
+    by_role: dict[str, list[str]] = {}
+    for action, factory in ACTION_FACTORIES.items():
+        try:
+            tree = factory()
+        except Exception:  # noqa: BLE001 — a role audit must never break import
+            continue
+        try:
+            document = serialize_tree(tree, kind=f"small/{action}")
+        except Exception:  # noqa: BLE001
+            continue
+        for node in document["nodes"]:
+            for role in _classify_node_roles(action, node):
+                by_role.setdefault(role, []).append(node["node_id"])
+    result = {role: tuple(dict.fromkeys(ids)) for role, ids in by_role.items()}
+    _ROLES_CACHE = result
+    return result
+
+
+def get_small_tree_roles() -> dict[str, tuple[str, ...]]:
+    """Cached view of :func:`compute_small_tree_roles`."""
+    return compute_small_tree_roles()
+
+
+SMALL_TREE_ROLES: dict[str, tuple[str, ...]] = {}  # populated on first compute

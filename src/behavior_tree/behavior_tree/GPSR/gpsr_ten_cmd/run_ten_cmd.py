@@ -49,6 +49,13 @@ from behavior_tree.GPSR.planner_validators import validate_plan          # noqa:
 from behavior_tree.GPSR.small_trees import (                             # noqa: E402
     ACTION_FACTORIES, bb_keys, SEARCH_POSE_KEYS,
 )
+from behavior_tree.GPSR.modifiable_nodes import (                        # noqa: E402
+    apply_modifications, diff_trees,
+)
+from behavior_tree.GPSR.plan_checker import (                            # noqa: E402
+    PlanCheck, ScriptedPlanChecker, build_check_context,
+)
+from behavior_tree.GPSR.tree_serialization import serialize_tree         # noqa: E402
 
 DATA_DIR = HERE / "data"
 
@@ -117,6 +124,44 @@ def dump_bb_for_step(action, params):
     written = [(k, _short(v)) for k, v in rec.writes]
     reads = action_reads(action, None)
     return written, reads
+
+
+def report_step_modifications(planner, slot, target_index, step_index, action):
+    """Print the applied modifications + before/after tree diff for one step.
+
+    Rebuilds the step's small tree (the generic one), applies the target's
+    validated modifications, and diffs the two serialized trees so the log
+    pinpoints exactly which nodes changed. Returns the applied (template,
+    node_id, reason) tuples for the checker.
+    """
+    grouped = planner.get_modifications(slot, target_index)
+    mods = grouped.get(step_index, [])
+    if not mods:
+        print("      MODIFICATIONS: (none)")
+        return []
+    factory = ACTION_FACTORIES.get(action)
+    if factory is None:
+        print(f"      MODIFICATIONS: (action {action} unknown — none)")
+        return []
+    before = factory()
+    after, applied = apply_modifications(before, action, mods)
+    print(f"      MODIFICATIONS: {len(applied)} applied")
+    for template, node_id, reason in applied:
+        print(f"        - {template} @ {node_id}: {reason}")
+    diff = diff_trees(before, after, f"small/{action}")
+    added = [r for r in diff if r["reason"] == "added"]
+    changed = [r for r in diff if r["reason"] == "changed"]
+    removed = [r for r in diff if r["reason"] == "removed"]
+    if diff:
+        print(f"      TREE DIFF: +{len(added)} ~{len(changed)} -{len(removed)}")
+        for record in diff[:12]:
+            print(f"        {record['reason']:>8} {record['node_id']}  "
+                  f"({record['type']}: {record.get('name','')})")
+        if len(diff) > 12:
+            print(f"        ... and {len(diff)-12} more")
+    else:
+        print("      TREE DIFF: (structure unchanged — param-only change)")
+    return applied
 
 
 def _short(v):
@@ -278,6 +323,9 @@ def main():
                     help="tee stdout to a labelled log in gpsr_runs/logs")
     ap.add_argument("--label", default="",
                     help="label used in the saved log filename (default: model)")
+    ap.add_argument("--checker", action="store_true",
+                    help="run a ScriptedPlanChecker over every plan's modifications "
+                         "(offline; approves each applied modification)")
     args = ap.parse_args()
 
     # Save-to-file: tee stdout (detailed log) + write a simplified log alongside.
@@ -313,9 +361,15 @@ def main():
 
     planner = GPSRPlanner()
     offline = planner._offline_mock
+    checker = None
+    if args.checker:
+        # Offline deterministic checker: approves every applied modification.
+        checker = ScriptedPlanChecker(default=lambda: PlanCheck.approved(
+            "plan-check", summary="scripted approval"))
     print(f"# generator data: {len(data.rooms)} rooms, {len(data.locations)} "
           f"locations, {len(data.objects)} objects")
-    print(f"# planner offline(mock): {offline}\n")
+    print(f"# planner offline(mock): {offline} | checker: "
+          f"{'scripted' if checker else 'off'}\n")
 
     known_loc = (set(KNOWN_LOCATIONS.keys()) | START_LOCATION_ALIASES) or None
     for slot, cmd in enumerate(commands):
@@ -361,6 +415,24 @@ def main():
                 print(f"    step{k} [{act}] params={params}")
                 print(f"      BB WRITE (by MaterialiseStep): {written}")
                 print(f"      BB READ  (by {act} small tree): {reads}")
+                applied = report_step_modifications(
+                    planner, slot, i, k, act,
+                )
+                if checker and applied:
+                    before = ACTION_FACTORIES[act]()
+                    ctx = build_check_context(
+                        before, apply_modifications(before, act, planner.get_modifications(slot, i).get(k, []))[0],
+                        act, applied,
+                    )
+                    check = checker.check(
+                        command=cmd, desc=desc, applied=applied,
+                        before_tree=ctx["before_tree"], after_tree=ctx["after_tree"],
+                    )
+                    print(f"      CHECKER: approved={check.approved} "
+                          f"({len(check.modified_nodes)} modified nodes) {check.summary}")
+                    for node in check.modified_nodes[:5]:
+                        print(f"        - {node.node_id} [{node.template}] "
+                              f"consistent={node.consistent_with_command}")
             # decision tree
             sub = planner.get_target_subtree(slot, i)
             if sub is not None:
