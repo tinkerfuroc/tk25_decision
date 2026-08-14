@@ -25,6 +25,7 @@ Threading contract:
 
 from __future__ import annotations
 
+import copy
 import json
 import random
 import textwrap
@@ -48,7 +49,8 @@ from .modifiable_nodes import (
     group_modifications_by_step,
     validate_plan_modifications,
 )
-from .planner_validators import validate_plan
+from .planner_validators import validate_plan, validate_dag
+from .validators import apply_fact_transitions, parse_fact
 from .small_trees import (
     ACTION_FACTORIES,
     bb_keys,
@@ -66,6 +68,8 @@ from .orchestrator import (
     BtNode_LogStepResult,
     BtNode_MaterialiseStep,
     BtNode_SupervisorBarrier,
+    BtNode_TargetPreconditionCheck,
+    BtNode_TargetPostconditionCheck,
     _build_planner_user_prompt,
     _clean_plan,
     _extract_json_object,
@@ -89,10 +93,13 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
       "reasoning": "<short explanation of the split>",
       "targets": [
         {
+          "id": "<stable unique target id>",
           "desc": "<standalone NL instruction>",
           "object": "<concrete object noun if this clause names one, else \"\">",
           "location": "<assigned location if this clause names one, else \"\">",
-          "depends_on": <index of the target that must finish first, or -1>
+          "depends_on": ["<prior target id>", ...],
+          "preconditions": ["<closed-vocabulary fact>", ...],
+          "postconditions": ["<closed-vocabulary fact>", ...]
         },
         ...
       ]
@@ -110,13 +117,17 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
        "location" with the location a clause ASSIGNS to it. When a later clause
        refers back to an object/location established earlier (e.g. "take the
        Fanta" after "find a fanta in the office"), resolve that reference here:
-       set object=Fanta, location=office, and depends_on to the index of the
-       earlier target that establishes it. This is how the assigned location
-       survives from the command down to the lower layer.
-    4. Set "depends_on" to the index of the target that must complete BEFORE
-       this one because it establishes something this target needs (the
-       object's assigned location, the person being found, the object being
-       picked up). Use -1 when the target is independent.
+       set object=Fanta, location=office, and include the earlier target's ID in
+       the depends_on LIST. This is how the assigned location survives from the
+       command down to the lower layer.
+    4. Set "depends_on" to a list of earlier target IDs that must complete
+       BEFORE this one because they establish something this target needs.
+       Multiple dependencies are allowed; use [] when independent. Conditions
+       use only this closed vocabulary and exact arity:
+       at_robot(location), object_seen(object), person_found(person),
+       held(object), placed(object,location), delivered(object,recipient),
+       counted(object), answered(question). Validators, not the LLM, determine
+       whether conditions are true. Empty condition lists are allowed.
     5. Keep each target as close to the original wording as possible; do not
        invent actions, locations, or details not present in the command.
     6. Split by DISTINCT EXECUTABLE JOBS, not by sentence connectives. A
@@ -125,13 +136,15 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
        "then"/"and". "Bring Susan the red jacket she left in the office" names
        three jobs with no connective -> ["get the red jacket from the office",
        "find Susan", "deliver the red jacket to Susan"].
-    7. Do NOT split a single job just because it has several phrases or a
-       connective. "Move the plant from the kitchen to the balcony" relocates
-       ONE object -> one target. "Grasp the cup, then put it on the table" is
-       one place-job -> one target. A "then"/"and" separates targets only when
-       it joins distinct work: "grab a coke from the kitchen, then take it to
-       Susan in the living room" has TWO end-states (coke acquired; Susan has
-       the coke) -> two targets, the second with depends_on=0.
+    7. Split executable state transitions even within one relocation job.
+       "Move the plant from the kitchen to the balcony" MUST produce three
+       targets: acquire/grasp with postcondition held(plant); transport/goto
+       balcony depending on that target with precondition held(plant) and
+       postcondition at_robot(balcony); place depending on transport with
+       preconditions held(plant), at_robot(balcony) and postcondition
+       placed(plant,balcony). A "then"/"and" separates targets when it joins
+       distinct work: "grab a coke from the kitchen, then take it to Susan in
+       the living room" has two end-states.
     8. Enumeration of SEVERAL separately-named concrete objects is the one
        intra-verb-phrase case that does split: "grab a coke, some chips and a
        lemonade from the kitchen" -> three fetch targets, each carrying
@@ -139,8 +152,9 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
        "the mail") stays one target.
     9. Never return an empty list. If the command is genuinely one job, return
        a single-element list containing the command itself.
-    10. If a clause cannot be resolved into concrete work, keep it as a target
-       anyway — the lower layer will plan an announcement for it.
+    10. Every postcondition must be meaningful and checkable under the closed
+        vocabulary above. If a clause cannot be resolved into concrete work,
+        keep it as a target anyway — the lower layer will plan an announcement.
 """).strip()
 
 
@@ -166,6 +180,9 @@ LOWER_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
       a prior target already reached, no re-finding/re-grasping an object a
       prior target already obtained (the robot is already holding it), no
       re-finding a person a prior target already located and is standing next to.
+    - Runtime gates enforce target preconditions and postconditions. Plan only
+      the missing state delta. On a pre/postcondition failure, inspect the
+      verified facts below and do not blindly repeat successful earlier work.
     - If a prior target will have already delivered the result to the operator,
       still emit any remaining steps so the plan is complete — but skip the
       repeated fetch/grasp.
@@ -235,56 +252,152 @@ LOWER_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
 # ---------------------------------------------------------------------------
 
 def _normalise_targets(raw: List[Any]) -> List[Dict[str, Any]]:
-    """Coerce the LLM top-layer output into the canonical structured-target shape.
-
-    Accepts either dicts (desc/object/location/depends_on — the expected form)
-    or plain strings (kept for backwards tolerance). Guarantees a ``desc`` and
-    fills ``object``/``location``/``depends_on`` with safe defaults.
-    """
-    targets: List[Dict[str, Any]] = []
-    for i, t in enumerate(raw):
-        if isinstance(t, dict):
-            desc = str(t.get("desc") or "").strip()
+    """Normalize a list of top-layer targets to the canonical schema."""
+    if not isinstance(raw, list):
+        return []
+    retained = []
+    for item in raw or []:
+        if isinstance(item, dict):
+            desc = str(item.get("desc") or "").strip()
             if not desc:
                 continue
-            targets.append({
-                "desc": desc,
-                "object": str(t.get("object") or "").strip(),
-                "location": str(t.get("location") or "").strip(),
-                "depends_on": _norm_depends_on(t.get("depends_on"), i),
-            })
-        elif isinstance(t, str) and t.strip():
-            targets.append({
-                "desc": t.strip(),
-                "object": "",
-                "location": "",
-                "depends_on": i - 1 if i > 0 else -1,
-            })
-    return targets
+            retained.append((item, desc))
+        elif isinstance(item, str) and item.strip():
+            retained.append(({}, item.strip()))
+
+    ids = [
+        (item.get("id").strip() if isinstance(item.get("id"), str) and item.get("id").strip()
+         else f"t{i}")
+        for i, (item, _desc) in enumerate(retained)
+    ]
+
+    def normalize_deps(value: Any) -> list[Any]:
+        if value is None or value == -1:
+            return []
+        values = value if isinstance(value, (list, tuple)) else [value]
+        result = []
+        seen = set()
+        for dep in values:
+            if isinstance(dep, int) and not isinstance(dep, bool):
+                dep_value = ids[dep] if 0 <= dep < len(ids) else dep
+            elif isinstance(dep, str):
+                dep_value = dep.strip()
+            else:
+                dep_value = dep
+            if isinstance(dep_value, str) and dep_value not in seen:
+                seen.add(dep_value)
+            elif isinstance(dep_value, str):
+                continue
+            result.append(dep_value)
+        return result
+
+    def normalize_conditions(value: Any) -> Any:
+        if not isinstance(value, (list, tuple)):
+            return value if value is not None else []
+        result = []
+        for item in value:
+            if isinstance(item, str):
+                item = item.strip()
+                result.append(item)
+            else:
+                result.append(item)
+        return result
+
+    normalized = []
+    for i, (item, desc) in enumerate(retained):
+        normalized.append({
+            "id": ids[i],
+            "desc": desc,
+            "object": str(item.get("object") or "").strip(),
+            "location": str(item.get("location") or "").strip(),
+            "depends_on": normalize_deps(item.get("depends_on")),
+            "preconditions": normalize_conditions(item.get("preconditions")),
+            "postconditions": normalize_conditions(item.get("postconditions")),
+        })
+    return normalized
 
 
-def _norm_depends_on(value: Any, index: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return index - 1 if index > 0 else -1
+def _validate_target_contract(targets: List[Dict[str, Any]]) -> Tuple[bool, Optional[str]]:
+    ok, reason = validate_dag(targets)
+    if not ok:
+        return False, reason
+    for index, target in enumerate(targets):
+        for field in ("preconditions", "postconditions"):
+            conditions = target.get(field)
+            if not isinstance(conditions, list) or any(not isinstance(item, str) for item in conditions):
+                return False, f"target {index} {field} must be a list of strings"
+            for condition in conditions:
+                _fact, error = parse_fact(condition)
+                if error:
+                    return False, f"target {index} {field} invalid fact {condition!r}: {error}"
+    return True, None
+
+
+def _dependency_ancestor_targets(
+    targets: List[Dict[str, Any]], index: int,
+) -> List[Dict[str, Any]]:
+    """Return declared dependency ancestors in stable target-list order."""
+    if index <= 0:
+        return []
+    by_id = {str(target["id"]): target for target in targets[:index]}
+    needed: set[str] = set()
+
+    def visit(target_id: str) -> None:
+        if target_id in needed:
+            return
+        needed.add(target_id)
+        for dependency in by_id[target_id].get("depends_on", []):
+            if dependency in by_id:
+                visit(dependency)
+
+    current = targets[index]
+    for dependency in current.get("depends_on", []):
+        visit(dependency)
+    return [target for target in targets[:index] if target["id"] in needed]
+
+
+def _deterministic_target_intent(target: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Compile metadata into validator-only intent steps without cache reads."""
+    intents: List[Dict[str, Any]] = []
+    desc = str(target.get("desc") or "").lower()
+    postconditions = target.get("postconditions") or []
+    for condition in postconditions:
+        fact, _error = parse_fact(condition)
+        if fact is None:
+            continue
+        params = {"location": fact.args[0]} if fact.predicate == "at_robot" and fact.args else {}
+        action = {
+            "at_robot": "goto",
+            "object_seen": "find_object",
+            "person_found": "find_person",
+            "counted": "count",
+            "answered": "ask_person",
+            "held": "grasp",
+            "placed": "place",
+            "delivered": "deliver",
+        }.get(fact.predicate)
+        if action:
+            intents.append({"action": action, "params": params})
+    if not intents and ("find" in desc and "person" in desc):
+        intents.append({"action": "find_person", "params": {}})
+    return intents
+
+
+def _deterministic_prior_plan(
+    targets: List[Dict[str, Any]], index: int,
+) -> List[Dict[str, Any]]:
+    """Build stable prior intent context from dependency metadata only."""
+    return [
+        step
+        for target in _dependency_ancestor_targets(targets, index)
+        for step in _deterministic_target_intent(target)
+    ]
 
 
 def _flatten_prior_plans(planner, slot: int, index: int) -> List[Dict[str, Any]]:
-    """Concatenate the already-ACCEPTED action-plans of targets < ``index``.
-
-    Seeded into ``validate_plan(prior_plan=...)`` so a later target is not
-    re-rejected for legitimate handoff (e.g. a ``guide()`` after an earlier
-    target already ran ``find_person``). Only targets whose plans have landed in
-    the cache count — a parallel worker that finished before its predecessor
-    simply seeds nothing, which is the safe (conservative) choice.
-    """
-    flat: List[Dict[str, Any]] = []
-    for i in range(max(0, index)):
-        entry = planner.get_action_plan(slot, i)
-        if entry:
-            flat.extend(entry)
-    return flat
+    """Return deterministic dependency intents; never inspect concurrent cache."""
+    targets = planner._get_slot_context(slot).get("targets", [])
+    return _deterministic_prior_plan(targets, index)
 
 
 def _build_lower_layer_user_prompt(
@@ -296,6 +409,7 @@ def _build_lower_layer_user_prompt(
     state_log: List[str],
     failure_msg: Optional[str] = None,
     nonce: Optional[str] = None,
+    verified_facts: Optional[List[str]] = None,
 ) -> str:
     """Build the lower-layer user prompt WITH full-command + prior-target context.
 
@@ -337,6 +451,10 @@ def _build_lower_layer_user_prompt(
         for i, t in enumerate(prior_targets):
             body += f"  T{i} {t.get('desc') or ''}\n"
         body += "\n"
+    facts = list(verified_facts or [])
+    body += "Verified world-state facts\n(established by successful deterministic target gates — treat as true):\n"
+    body += "".join(f"  - {fact}\n" for fact in facts) if facts else "  (none yet)\n"
+    body += "\n"
     body += (
         f"Current date and time: {datetime.now().strftime('%A, %B %d, %Y, %H:%M')}\n"
         f"Known locations: {known_loc}\n"
@@ -394,10 +512,13 @@ def _offline_mock_targets(command: str) -> List[Dict[str, Any]]:
     targets = []
     for i, part in enumerate(parts):
         targets.append({
+            "id": f"t{i}",
             "desc": part,
             "object": "",
             "location": "",
-            "depends_on": i - 1 if i > 0 else -1,
+            "depends_on": [f"t{i - 1}"] if i > 0 else [],
+            "preconditions": [],
+            "postconditions": [],
         })
     return targets
 
@@ -480,6 +601,7 @@ class GPSRPlanner:
         # slot -> {"command": str, "targets": list[dict]} — full-command context
         # for the lower layer, set once per command by request_plan_all.
         self._slot_context: Dict[int, Dict[str, Any]] = {}
+        self._facts: Dict[int, List[str]] = {}
         self._lock = threading.Lock()
 
     # -- client factory ----------------------------------------------------
@@ -533,11 +655,25 @@ class GPSRPlanner:
         targets = self._get_slot_context(slot).get("targets", [])
         return list(targets[:max(0, index)])
 
+    def get_targets(self, slot: int) -> List[Dict[str, Any]]:
+        """Return a deep defensive snapshot of the canonical target context."""
+        return copy.deepcopy(self._get_slot_context(slot).get("targets", []))
+
+    def record_facts(self, slot: int, facts: List[str]) -> None:
+        with self._lock:
+            stored = self._facts.setdefault(int(slot), [])
+            self._facts[int(slot)] = apply_fact_transitions(stored, facts)
+
+    def get_facts(self, slot: int) -> List[str]:
+        with self._lock:
+            return list(self._facts.get(int(slot), []))
+
     def reset(self) -> None:
         """Drop every cached plan/subtree (new command, test teardown)."""
         with self._lock:
             self._cache.clear()
             self._slot_context.clear()
+            self._facts.clear()
 
     # -- top layer ----------------------------------------------------------
 
@@ -565,7 +701,17 @@ class GPSRPlanner:
                 last_reason = err
                 print(f"[split] attempt {attempt+1}/{self._max_attempts} -> {err}")
                 continue
-            targets = _normalise_targets(parsed.get("targets") or [])
+            raw_targets = parsed.get("targets")
+            if not isinstance(raw_targets, list):
+                last_reason = "your targets field must be a list"
+                print(f"[split] attempt {attempt+1}/{self._max_attempts} REJECTED: {last_reason}")
+                continue
+            if any(isinstance(item, dict) and "depends_on" not in item
+                       for item in raw_targets):
+                last_reason = "each structured target must declare depends_on"
+                print(f"[split] attempt {attempt+1}/{self._max_attempts} REJECTED: {last_reason}")
+                continue
+            targets = _normalise_targets(raw_targets)
             if not targets:
                 last_reason = (
                     "you returned an EMPTY targets list. You MUST return a "
@@ -573,6 +719,11 @@ class GPSRPlanner:
                 )
                 print(f"[split] attempt {attempt+1}/{self._max_attempts} REJECTED: "
                       f"{last_reason}")
+                continue
+            ok, reason = _validate_target_contract(targets)
+            if not ok:
+                last_reason = f"your target graph/conditions are invalid: {reason}"
+                print(f"[split] attempt {attempt+1}/{self._max_attempts} REJECTED: {last_reason}")
                 continue
             print(f"[split] accepted on attempt {attempt+1}: "
                   f"{[t['desc'] for t in targets]}")
@@ -655,6 +806,7 @@ class GPSRPlanner:
                 state_log,
                 last_reason,
                 nonce=nonce,
+                verified_facts=self.get_facts(slot),
             )
             parsed, err = _call_llm(
                 client, LOWER_LAYER_SYSTEM_PROMPT, user_prompt, temperature,
@@ -742,12 +894,21 @@ class GPSRPlanner:
         plain strings (kept for the legacy dev-tests / mock paths) — normalised
         here.
         """
-        norm_targets = [
-            t if isinstance(t, dict) else {"desc": str(t), "object": "",
-                                           "location": "", "depends_on": -1}
-            for t in targets
-        ]
+        if not isinstance(targets, list):
+            raise ValueError("targets must be a list")
+        for index, target in enumerate(targets):
+            if isinstance(target, dict) and "depends_on" not in target:
+                raise ValueError(f"target {index} depends_on is required")
+            if isinstance(target, dict) and not isinstance(target.get("depends_on"), list):
+                raise ValueError(f"target {index} depends_on must be a list")
+            if not isinstance(target, (dict, str)):
+                raise ValueError(f"target {index} must be a mapping or plain string")
+        norm_targets = _normalise_targets(targets)
+        ok, reason = _validate_target_contract(norm_targets)
+        if not ok:
+            raise ValueError(reason or "invalid target contract")
         with self._lock:
+            self._facts.pop(int(slot), None)
             self._slot_context[int(slot)] = {
                 "command": command or "",
                 "targets": norm_targets,
@@ -767,7 +928,7 @@ class GPSRPlanner:
                     slot, i, str(t.get("desc") or ""),
                     command or "", str(t.get("object") or ""),
                     str(t.get("location") or ""),
-                    [dict(x) for x in norm_targets[:i]],
+                    [dict(x) for x in _dependency_ancestor_targets(norm_targets, i)],
                 ),
                 daemon=True,
             ).start()
@@ -794,7 +955,7 @@ class GPSRPlanner:
                 slot, index, desc,
                 ctx.get("command") or "", str(t.get("object") or ""),
                 str(t.get("location") or ""),
-                [dict(x) for x in targets[:index]],
+                [dict(x) for x in _dependency_ancestor_targets(targets, index)],
             ),
             kwargs={"failure_reason": reason}, daemon=True,
         ).start()
@@ -805,6 +966,7 @@ class GPSRPlanner:
         index: int,
         plan: List[Dict[str, Any]],
         reason: str = "supervisor global replan",
+        completed_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Install a supervisor-validated remaining plan for one target.
 
@@ -814,7 +976,9 @@ class GPSRPlanner:
         """
         desc = self._get_desc(slot, index) or f"target {index}"
         cleaned, _ = _clean_plan(plan)
-        subtree = self.build_target_subtree(slot, index, cleaned)
+        subtree = self.build_target_subtree(
+            slot, index, cleaned, completed_steps=completed_steps,
+        )
         self._store(slot, index, desc, cleaned, subtree, reason)
 
     # -- polling (executor thread) -------------------------------------------
@@ -866,6 +1030,7 @@ class GPSRPlanner:
         action_plan: List[Dict[str, Any]],
         *,
         modifications: Any = None,
+        completed_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> py_trees.composites.Sequence:
         """Compose the per-target executing subtree for ``action_plan``.
 
@@ -891,6 +1056,15 @@ class GPSRPlanner:
                 ]
         """
         seq = py_trees.composites.Sequence(f"target:{slot}:{index}", memory=True)
+        ctx = self._get_slot_context(slot)
+        targets = ctx.get("targets") or []
+        target = targets[index] if 0 <= index < len(targets) and isinstance(targets[index], dict) else {}
+        preconditions = target.get("preconditions") or []
+        postconditions = target.get("postconditions") or []
+        if preconditions:
+            seq.add_child(BtNode_TargetPreconditionCheck(
+                f"precondition gate:{slot}:{index}", preconditions, index,
+            ))
         seq.add_child(BtNode_AnnounceFromBB(
             f"announce target:{slot}:{index}",
             bb_keys.CURRENT_TARGET,
@@ -925,4 +1099,15 @@ class GPSRPlanner:
                 f"supervisor barrier:{slot}:{index}:{k}",
             ))
             seq.add_child(step_seq)
+        if postconditions:
+            seq.add_child(BtNode_TargetPostconditionCheck(
+                f"postcondition gate:{slot}:{index}",
+                postconditions,
+                index,
+                action_plan,
+                target_object=str(target.get("object") or ""),
+                completed_steps=completed_steps,
+                target_location=str(target.get("location") or ""),
+                facts_writer=lambda facts: self.record_facts(slot, facts),
+            ))
         return seq

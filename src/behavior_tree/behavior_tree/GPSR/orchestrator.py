@@ -19,6 +19,7 @@ Blackboard contract:
         gpsr/last_failure       (str) — feedback text from the failed step
 """
 
+import copy
 import json
 import math
 import os
@@ -28,7 +29,7 @@ import textwrap
 import threading
 import time
 import uuid
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import py_trees
 import rclpy
@@ -48,6 +49,14 @@ from .config import (
 )
 from ..config import is_full_mock_mode
 from .planner_validators import validate_plan
+from .validators import (
+    VerificationContext,
+    Verdict,
+    apply_fact_transitions,
+    canonical_fact,
+    check_all,
+    parse_fact,
+)
 from .small_trees import (
     ACTION_FACTORIES,
     bb_keys,
@@ -1428,6 +1437,187 @@ class BtNode_SupervisorBarrier(Behaviour):
         return Status.FAILURE
 
 
+_TARGET_GATE_EVIDENCE_KEYS = (
+    ("last_nav_location", bb_keys.LAST_NAV_LOCATION),
+    ("object_detection", bb_keys.TARGET_OBJECT_DETECTION),
+    ("person_detection", bb_keys.TARGET_PERSON_DETECTION),
+    ("waving_persons", bb_keys.ALL_WAVING_PERSONS),
+    ("target_person_pose", bb_keys.TARGET_PERSON_POSE),
+    ("target_object_name", bb_keys.TARGET_OBJECT_NAME),
+    ("target_object_prompt", bb_keys.TARGET_OBJECT_PROMPT),
+    ("target_person_prompt", bb_keys.TARGET_PERSON_PROMPT),
+    ("count_value", bb_keys.COUNT_VALUE),
+    ("count_target", bb_keys.TARGET_OBJECT_NAME),
+    ("count_query", bb_keys.TARGET_OBJECT_PROMPT),
+    ("qa_answer", bb_keys.QA_ANSWER),
+    ("person_answer", bb_keys.PERSON_ANSWER),
+    ("llm_answer", bb_keys.LLM_ANSWER),
+    ("vlm_answer", bb_keys.VLM_ANSWER),
+    ("qa_question", bb_keys.QA_QUESTION),
+    ("ask_question", bb_keys.ASK_QUESTION),
+    ("vlm_question", bb_keys.VLM_QUESTION),
+    ("llm_question", bb_keys.LLM_QUESTION),
+)
+
+
+def _target_gate_evidence(bb) -> Dict[str, Any]:
+    evidence: Dict[str, Any] = {}
+    for evidence_key, bb_key in _TARGET_GATE_EVIDENCE_KEYS:
+        try:
+            value = bb.get(bb_key)
+        except (KeyError, AttributeError):
+            continue
+        if value is not None:
+            evidence[evidence_key] = value
+    if evidence.get("count_target") is None and evidence.get("count_query") is not None:
+        evidence["count_target"] = evidence["count_query"]
+    if evidence.get("waving_persons") is not None:
+        evidence["person_provenance"] = "waving_specialist"
+        # The specialist has no named-person identity; expose it through the
+        # common person artifact channel without inventing a name.
+        evidence.setdefault("person_detection", evidence["waving_persons"])
+    return evidence
+
+
+def _target_gate_facts(bb) -> List[str]:
+    try:
+        facts = bb.get(bb_keys.FACTS)
+    except (KeyError, AttributeError):
+        facts = []
+    return list(facts or [])
+
+
+class BtNode_TargetPreconditionCheck(Behaviour):
+    """Verify a target's preconditions at its execution boundary."""
+
+    def __init__(self, name: str, preconditions: List[str], target_index: int):
+        super().__init__(name)
+        self._preconditions = list(preconditions or [])
+        self._target_index = int(target_index)
+        self._bb = None
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(bb_keys.FACTS, access=Access.READ)
+        for _, key in _TARGET_GATE_EVIDENCE_KEYS:
+            self._bb.register_key(key, access=Access.READ)
+
+    def update(self):
+        if not self._preconditions:
+            return Status.SUCCESS
+        context = VerificationContext(
+            phase="precondition",
+            established_facts=frozenset(_target_gate_facts(self._bb)),
+            target_object="",
+            target_location="",
+        )
+        evidence = _target_gate_evidence(self._bb)
+        for source in self._preconditions:
+            try:
+                results, _ = check_all([source], evidence, context)
+                result = results[0]
+            except Exception:
+                result = None
+            if result is None:
+                verdict = Verdict.INVALID
+            else:
+                verdict = result.verdict
+            if verdict is not Verdict.VALID:
+                self.feedback_message = f"precondition unmet: {source} ({verdict.value})"
+                return Status.FAILURE
+        return Status.SUCCESS
+
+
+class BtNode_TargetPostconditionCheck(Behaviour):
+    """Verify and publish target facts under the v1 fact-store contract.
+
+    When ``facts_writer`` is provided it is the authoritative atomic/idempotent
+    planner fact-store commit and receives only newly validated canonical facts.
+    The Blackboard FACTS value is then a repairable mirror. Without a writer,
+    the Blackboard is authoritative and a mirror write failure is fatal.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        postconditions: List[str],
+        target_index: int,
+        action_plan: List[Dict[str, Any]],
+        target_object: str = "",
+        completed_steps: Optional[List[Dict[str, Any]]] = None,
+        target_location: str = "",
+        facts_writer: Optional[Callable[[List[str]], None]] = None,
+    ):
+        super().__init__(name)
+        self._postconditions = list(postconditions or [])
+        self._target_index = int(target_index)
+        self._action_plan = copy.deepcopy(list(completed_steps or []) + list(action_plan or []))
+        self._target_object = target_object
+        self._target_location = target_location
+        self._facts_writer = facts_writer
+        self._bb = None
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(bb_keys.FACTS, access=Access.READ)
+        self._bb.register_key(bb_keys.FACTS, access=Access.WRITE)
+        for _, key in _TARGET_GATE_EVIDENCE_KEYS:
+            self._bb.register_key(key, access=Access.READ)
+
+    def update(self):
+        if not self._postconditions:
+            return Status.SUCCESS
+        context = VerificationContext(
+            phase="postcondition",
+            established_facts=frozenset(_target_gate_facts(self._bb)),
+            completed_steps=tuple(self._action_plan),
+            target_object=self._target_object,
+            target_location=self._target_location,
+        )
+        evidence = _target_gate_evidence(self._bb)
+        parsed_facts = []
+        for source in self._postconditions:
+            try:
+                results, facts = check_all([source], evidence, context)
+                result = results[0]
+            except Exception:
+                result, facts = None, []
+            if result is None:
+                verdict = Verdict.INVALID
+            else:
+                verdict = result.verdict
+            if verdict is not Verdict.VALID:
+                self.feedback_message = f"postcondition unmet: {source} ({verdict.value})"
+                return Status.FAILURE
+            parsed_facts.extend(facts)
+
+        canonical = []
+        seen = set()
+        for fact in parsed_facts:
+            value = canonical_fact(fact)
+            if value not in seen:
+                seen.add(value)
+                canonical.append(value)
+        try:
+            if self._facts_writer is not None:
+                self._facts_writer(canonical)
+        except Exception as exc:
+            self.feedback_message = f"postcondition fact write failed: {exc}"
+            return Status.FAILURE
+
+        current = _target_gate_facts(self._bb)
+        merged = apply_fact_transitions(current, canonical)
+        try:
+            self._bb.set(bb_keys.FACTS, merged, overwrite=True)
+        except Exception as exc:
+            if self._facts_writer is not None:
+                self.feedback_message = f"postcondition fact mirror write failed: {exc}"
+                return Status.SUCCESS
+            self.feedback_message = f"postcondition fact write failed: {exc}"
+            return Status.FAILURE
+        return Status.SUCCESS
+
+
 class BtNode_BumpCorrectionCounter(Behaviour):
     """Increment correction counter; FAIL if it exceeds ``max_corrections``."""
 
@@ -1725,7 +1915,11 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._bb = None
         self._state = "REQUESTING"
         self._index = 0
+        self._active_target_index: Optional[int] = None
         self._num_targets = 0
+        self._target_outcomes: Dict[str, str] = {}
+        self._targets: List[Any] = []
+        self._supervisor_aborted = False
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -1745,8 +1939,13 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._bb.register_key(bb_keys.TARGET_INDEX, access=Access.WRITE)
         self._bb.register_key(bb_keys.CURRENT_TARGET, access=Access.WRITE)
         self._bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.WRITE)
+        self._bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
         self._bb.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
+        self._bb.register_key(bb_keys.FACTS, access=Access.READ)
+        self._bb.register_key(bb_keys.FACTS, access=Access.WRITE)
+        for _, key in _TARGET_GATE_EVIDENCE_KEYS:
+            self._bb.register_key(key, access=Access.WRITE)
         self._bb.register_key(bb_keys.SAVED_TARGETS_PREFIX + str(self._slot),
                               access=Access.READ)
         self._bb.register_key(bb_keys.TARGETS, access=Access.READ)
@@ -1766,6 +1965,24 @@ class DynamicExecutor(py_trees.composites.Composite):
         new_subtree = self._planner.get_target_subtree(self._slot, index)
         if new_subtree is None:
             return None
+        self._bb.set(bb_keys.REPLAN_REQUEST, {}, overwrite=True)
+        self._bb.set(bb_keys.SUPERVISOR_STEP_DISPOSITION, None, overwrite=True)
+        # A swap within the active target is a continuation/replan: retain all
+        # evidence.  Advancing to a new target invalidates target-scoped
+        # perception/answer artifacts, but navigation remains persistent safety
+        # state for subsequent grasp materialisation.
+        if self._active_target_index != index:
+            for evidence_name, key in _TARGET_GATE_EVIDENCE_KEYS:
+                if evidence_name != "last_nav_location":
+                    self._bb.set(key, None, overwrite=True)
+        self._active_target_index = index
+        get_facts = getattr(self._planner, "get_facts", None)
+        if callable(get_facts):
+            self._bb.set(
+                bb_keys.FACTS,
+                list(get_facts(self._slot) or []),
+                overwrite=True,
+            )
         # Keep the blackboard plan slot in sync with both LLM replans and
         # supervisor-supplied replacement plans before materialisation begins.
         get_action_plan = getattr(self._planner, "get_action_plan", None)
@@ -1803,6 +2020,7 @@ class DynamicExecutor(py_trees.composites.Composite):
     # -- per-target event handlers ------------------------------------------
 
     def _on_target_success(self) -> None:
+        self._target_outcomes[self._target_id(self._index)] = "SUCCEEDED"
         self._log(f"target:{self._index}:{self._current_desc()} SUCCEEDED")
         self._bb.set(bb_keys.TARGET_INDEX, self._index + 1, overwrite=True)
         self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
@@ -1828,11 +2046,22 @@ class DynamicExecutor(py_trees.composites.Composite):
                 self._bb.set(
                     bb_keys.TARGET_INDEX, self._num_targets, overwrite=True,
                 )
+                self._supervisor_aborted = True
                 self._state = "DONE"
                 return
             replacement = request.get("replacement_plan") or []
+            preserved = request.get("preserved_completed_steps")
+            if isinstance(preserved, list):
+                completed_steps = copy.deepcopy(preserved)
+            elif isinstance(preserved, int) and not isinstance(preserved, bool) and preserved >= 0:
+                get_action_plan = getattr(self._planner, "get_action_plan", None)
+                original = get_action_plan(self._slot, self._index) if callable(get_action_plan) else []
+                completed_steps = copy.deepcopy(original[:preserved]) if preserved <= len(original) else []
+            else:
+                completed_steps = []
             self._planner.replace_target_plan(
                 self._slot, self._index, replacement, reason,
+                completed_steps=completed_steps,
             )
             self._log(
                 f"target:{self._index}:{self._current_desc()} SUPERVISOR_REPLAN "
@@ -1849,6 +2078,7 @@ class DynamicExecutor(py_trees.composites.Composite):
         if replans > self._max_replans:
             self._announce(f"I could not complete {self._current_desc()} after "
                            f"{self._max_replans} attempts. I will skip it.")
+            self._target_outcomes[self._target_id(self._index)] = "SKIPPED"
             self._log(f"target:{self._index}:{self._current_desc()} SKIPPED "
                       f"(replan budget exceeded)")
             self._bb.set(bb_keys.TARGET_INDEX, self._index + 1, overwrite=True)
@@ -1879,6 +2109,36 @@ class DynamicExecutor(py_trees.composites.Composite):
             return str(cur.get("desc") or "")
         return str(cur)
 
+    def _target_context(self, index: int) -> Dict[str, Any]:
+        target = self._targets[index] if index < len(self._targets) else {}
+        if isinstance(target, dict):
+            return target
+        return {"id": f"t{index}", "desc": str(target), "depends_on": []}
+
+    def _target_id(self, index: int) -> str:
+        return str(self._target_context(index).get("id") or f"t{index}")
+
+    def _blocked_by(self, index: int) -> List[Tuple[str, str]]:
+        blocked = []
+        for dependency in self._target_context(index).get("depends_on", []) or []:
+            dep_id = str(dependency)
+            outcome = self._target_outcomes.get(dep_id)
+            if outcome != "SUCCEEDED":
+                blocked.append((dep_id, outcome or "NOT_RUN"))
+        return blocked
+
+    def _mark_blocked(self, index: int, blocked_by: List[Tuple[str, str]]) -> None:
+        target_id = self._target_id(index)
+        self._target_outcomes[target_id] = "BLOCKED"
+        reason = ", ".join(f"{dep}={outcome}" for dep, outcome in blocked_by)
+        self._log(f"target:{index}:{self._current_desc()} BLOCKED (depends_on: {reason})")
+        self._bb.set(bb_keys.TARGET_INDEX, index + 1, overwrite=True)
+        if index + 1 >= self._num_targets:
+            self._state = "DONE"
+        else:
+            self._state = "REQUESTING"
+            self._index = index + 1
+
     # -- custom tick ---------------------------------------------------------
 
     def tick(self) -> Iterator[py_trees.behaviour.Behaviour]:
@@ -1903,7 +2163,17 @@ class DynamicExecutor(py_trees.composites.Composite):
                     or self._bb.get(bb_keys.TARGETS) or []
             except KeyError:
                 targets = []
-            self._num_targets = len(targets)
+            get_targets = getattr(self._planner, "get_targets", None)
+            if callable(get_targets):
+                self._targets = list(get_targets(self._slot) or [])
+            else:
+                self._targets = list(targets)
+            self._num_targets = len(self._targets)
+            self._target_outcomes = {}
+            self._supervisor_aborted = False
+            self._active_target_index = None
+            if not callable(getattr(self._planner, "get_facts", None)):
+                self._bb.set(bb_keys.FACTS, [], overwrite=True)
             if self._num_targets == 0:
                 self.feedback_message = "no saved targets to execute"
                 self.stop(py_trees.common.Status.SUCCESS)
@@ -1916,6 +2186,16 @@ class DynamicExecutor(py_trees.composites.Composite):
 
         # --- SWAP POINT A: REQUESTING, subtree ready -> swap + fall through ---
         if self._state == "REQUESTING":
+            blocked_by = self._blocked_by(self._index)
+            if blocked_by:
+                self._mark_blocked(self._index, blocked_by)
+                if self._state == "DONE":
+                    self.stop(py_trees.common.Status.FAILURE)
+                    yield self
+                    return
+                self.status = py_trees.common.Status.RUNNING
+                yield self
+                return
             subtree = self._swap_in(self._index)
             if subtree is None:
                 self.feedback_message = (
@@ -1942,7 +2222,16 @@ class DynamicExecutor(py_trees.composites.Composite):
                     else:
                         self._on_target_failure(self._last_child_feedback(node))
                     if self._state == "DONE":
-                        self.stop(py_trees.common.Status.SUCCESS)
+                        terminal_status = (
+                            py_trees.common.Status.SUCCESS
+                            if self._supervisor_aborted
+                            else (
+                                py_trees.common.Status.FAILURE
+                                if any(outcome != "SUCCEEDED" for outcome in self._target_outcomes.values())
+                                else py_trees.common.Status.SUCCESS
+                            )
+                        )
+                        self.stop(terminal_status)
                         yield self
                         return
                     # Next target (or replan): stay RUNNING, swap at point A on
@@ -1959,9 +2248,14 @@ class DynamicExecutor(py_trees.composites.Composite):
     @staticmethod
     def _last_child_feedback(node) -> str:
         try:
-            return str(getattr(node, "feedback_message", "") or node.name)
+            tip = node.tip() if callable(getattr(node, "tip", None)) else None
+            candidate = tip or node
+            return str(getattr(candidate, "feedback_message", "") or candidate.name)
         except Exception:  # noqa: BLE001
-            return node.name
+            try:
+                return node.name
+            except Exception:
+                return "target failed"
 
     def tip(self) -> Optional[py_trees.behaviour.Behaviour]:
         if self.current_child is not None:

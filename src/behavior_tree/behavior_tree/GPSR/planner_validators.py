@@ -88,6 +88,105 @@ DEFAULT_CATEGORY_WORDS = frozenset({
 })
 
 
+def validate_dag(targets: list[dict[str, Any]]) -> tuple[bool, Optional[str]]:
+    """Validate the canonical ordered-DAG representation of GPSR targets.
+
+    Dependencies are intentionally required to point to an earlier target in
+    the supplied order.  This keeps execution index-sequential while allowing
+    a target to depend on multiple completed targets.
+    """
+    from collections.abc import Mapping
+
+    if not isinstance(targets, list):
+        return False, f"targets is not a list: {type(targets).__name__}"
+
+    target_ids: list[str] = []
+    id_indices: dict[str, int] = {}
+    for index, target in enumerate(targets):
+        if not isinstance(target, Mapping):
+            return False, f"target {index} is not a mapping: {target!r}"
+        target_id = target.get("id")
+        if not isinstance(target_id, str) or not target_id.strip():
+            return False, f"target {index}: id must be a non-empty string"
+        if target_id in id_indices:
+            return False, (
+                f"target {index} {target_id!r}: duplicate target id; "
+                f"first seen at target {id_indices[target_id]}"
+            )
+        id_indices[target_id] = index
+        target_ids.append(target_id)
+
+    dependencies: list[list[str]] = []
+    for index, target in enumerate(targets):
+        target_id = target_ids[index]
+        if "depends_on" not in target:
+            return False, f"target {index} {target_id!r}: depends_on is required"
+        depends_on = target["depends_on"]
+        if not isinstance(depends_on, list):
+            return False, (
+                f"target {index} {target_id!r}: depends_on must be a list"
+            )
+
+        seen: set[str] = set()
+        target_dependencies: list[str] = []
+        for dependency_index, dependency in enumerate(depends_on):
+            if not isinstance(dependency, str) or not dependency.strip():
+                return False, (
+                    f"target {index} {target_id!r}: dependency {dependency_index} "
+                    "in depends_on must be a non-empty string target ID"
+                )
+            if dependency in seen:
+                return False, (
+                    f"target {index} {target_id!r}: duplicate dependency ID "
+                    f"{dependency!r}"
+                )
+            seen.add(dependency)
+            if dependency not in id_indices:
+                return False, (
+                    f"target {index} {target_id!r}: unknown dependency id "
+                    f"{dependency!r}"
+                )
+            dependency_target_index = id_indices[dependency]
+            if dependency == target_id:
+                return False, (
+                    f"target {index} {target_id!r}: self-dependency on "
+                    f"{dependency!r} is not allowed"
+                )
+            if dependency_target_index >= index:
+                return False, (
+                    f"target {index} {target_id!r}: dependency {dependency!r} "
+                    "must reference a strictly earlier target"
+                )
+            target_dependencies.append(dependency)
+        dependencies.append(target_dependencies)
+
+    # Defensive topological check.  Earlier-only dependencies make a cycle
+    # impossible, but keep this guard explicit for future representation changes.
+    indegree = [len(deps) for deps in dependencies]
+    dependents: list[list[int]] = [[] for _ in targets]
+    for target_index, deps in enumerate(dependencies):
+        for dependency in deps:
+            dependents[id_indices[dependency]].append(target_index)
+    ready = [index for index, degree in enumerate(indegree) if degree == 0]
+    processed = 0
+    while ready:
+        index = ready.pop(0)
+        processed += 1
+        for dependent in dependents[index]:
+            indegree[dependent] -= 1
+            if indegree[dependent] == 0:
+                ready.append(dependent)
+    if processed != len(targets):
+        cycle_index = next(
+            index for index, degree in enumerate(indegree) if degree > 0
+        )
+        return False, (
+            f"target {cycle_index} {target_ids[cycle_index]!r}: dependency cycle detected"
+        )
+
+    return True, None
+
+
 def _tokenize(text: str) -> List[str]:
     return re.findall(r"[a-zA-Z]+", text.lower())
 

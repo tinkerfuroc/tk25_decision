@@ -176,6 +176,8 @@ class bb_keys:
     # Replan request channel (extension point; trigger logic to be announced).
     REPLAN_REQUEST = "gpsr/replan_request"       # dict {level: "target"|"command", index: int, reason: str}
     TARGET_REPLAN_COUNT = "gpsr/target_replan_count"  # int — per-target replan budget, reset when a target advances
+    FACTS = "gpsr/facts"
+    # list[str] — canonical facts established by successful target postcondition gates for the active command slot.
 
 
 ARM_ACTION_NAME = "joint_move_action"
