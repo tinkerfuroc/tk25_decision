@@ -1617,6 +1617,18 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
       - `bb_key_pictures` (opt) ← list[str] filesystem paths of per-person RGB crops
 
     Succeeds when at least one waving person is detected within `threshold_meters`.
+
+    SUPERSEDED: `detect_waving_persons` is served by tk26_vision only as an
+    ActionServer now (no `.srv` server survives). This class is srv-era and
+    still built on `ServiceHandler`/`DetectWaving.Request`; since
+    `behavior_tree.messages.DetectWaving` now resolves to the `.action` type
+    (see `messages.py`), constructing this node will fail at
+    `DetectWaving.Request()`. Use `BtNode_ScanForWavingPersonNew` in
+    `behavior_tree.GPSR.custom_nodes` instead, which is the ActionHandler
+    conversion of this same call. Left in place rather than deleted/converted
+    — deleting another team's code is outside this task's scope, but failing
+    loudly at construction beats silently calling a service that no longer
+    exists.
     """
 
     def __init__(self,

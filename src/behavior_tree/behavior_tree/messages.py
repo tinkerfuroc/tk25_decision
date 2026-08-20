@@ -9,10 +9,14 @@ _config = get_config()
 
 # Import based on availability
 if _config.has_dependency('tinker_vision_msgs_26'):
-    from tinker_vision_msgs_26.srv import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
+    from tinker_vision_msgs_26.srv import ObjectDetection, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead
     from tinker_vision_msgs_26.srv import ObjectDetectionGeneralist, SeatRecommendBbox, PlacingLocation, GetImage, ReseedTarget
     from tinker_vision_msgs_26.msg import Object, PanTiltCtrl, PanTiltCommand, PanTiltState, BoundingBox
-    from tinker_vision_msgs_26.action import Categorize, FollowHeadAction, HumanFollowing, TrackPerson
+    # FeatureExtraction and DetectWaving are served by tk26_vision only as
+    # ActionServers (feature_extraction_service, detect_waving_persons); the
+    # .srv variants have no server left, so these two are imported from
+    # .action, not .srv.
+    from tinker_vision_msgs_26.action import Categorize, FollowHeadAction, HumanFollowing, TrackPerson, FeatureExtraction, DetectWaving
 else:
     from behavior_tree.mock_messages import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
     from behavior_tree.mock_messages import ObjectDetectionGeneralist, SeatRecommendBbox, PlacingLocation, GetImage, ReseedTarget
