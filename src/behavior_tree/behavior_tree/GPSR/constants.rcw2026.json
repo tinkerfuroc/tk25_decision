@@ -139,13 +139,13 @@
         "_comment": "Where each object USUALLY starts in the rcw2026 arena. Used ONLY when a fetch/find command names no location. Each value is a key in possible_poses.",
         "soup": "kitchen_table",
         "mug": "kitchen_table",
-        "banana": "kitchen_table",
+        "banana": "side_table_02",
         "mustard": "kitchen_table",
         "sugar_box": "shelf",
         "spam": "shelf",
         "cheez_it": "shelf_02",
         "pudding_box": "shelf_02",
-        "bowl": "side_table",
+        "bowl": "shelf_02",
         "bleach": "laundry_desk"
     },
     "search_spots": {
