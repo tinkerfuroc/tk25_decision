@@ -116,8 +116,12 @@ class ObjectDetectionGeneralist(MockService):
             self.detection_source = "none"
 
 
-class FeatureExtraction(MockService):
-    """Mock FeatureExtraction service."""
+class FeatureExtraction(MockService, MockAction):
+    """Mock FeatureExtraction service/action endpoint.
+
+    Migrated from service to action in tk26_vision; mock carries both shapes
+    for backward compatibility with service-era callers and new action nodes.
+    """
     class Response(MockService.Response):
         def __init__(self):
             super().__init__()
@@ -187,8 +191,12 @@ class FollowHead(MockService):
     pass
 
 
-class DetectWaving(MockService):
-    """Mock DetectWaving service."""
+class DetectWaving(MockService, MockAction):
+    """Mock DetectWaving service/action endpoint.
+
+    Migrated from service to action in tk26_vision; mock carries both shapes
+    for backward compatibility with service-era callers and new action nodes.
+    """
     pass
 
 
