@@ -605,7 +605,7 @@ class BtNode_FindObj(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 
-class BtNode_FeatureExtraction(ServiceHandler):
+class BtNode_FeatureExtraction(ActionHandler):
     """
     Extracts visual features for person recognition.
 
@@ -617,11 +617,15 @@ class BtNode_FeatureExtraction(ServiceHandler):
                  name: str,
                  bb_dest_key: str,
                  bb_image_key: str,
-                 service_name : str = "feature_extraction_service",
-                 use_orbbec = True,
+                 service_name: str = "feature_extraction_service",
+                 use_orbbec=True,
                  ):
-        super(BtNode_FeatureExtraction, self).__init__(name, service_name, FeatureExtraction)
-
+        # key=None: this node builds its own goal in send_goal(), it does not
+        # read a goal off the blackboard.
+        super(BtNode_FeatureExtraction, self).__init__(
+            name, FeatureExtraction, service_name, None,
+            wait_for_server_timeout_sec=-3,
+        )
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.key = bb_dest_key
         self.blackboard.register_key(
@@ -634,58 +638,41 @@ class BtNode_FeatureExtraction(ServiceHandler):
             access=pytree.common.Access.WRITE,
             remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_image_key)
         )
-        if use_orbbec:
-            self.camera = "orbbec"
-        else:
-            self.camera = "realsense"
+        self.camera = "orbbec" if use_orbbec else "realsense"
 
-        self.node = None
-
-    def initialise(self):
-        super().initialise()
-
-        # Handle mock mode
+    def send_goal(self):
         if self.mock_mode:
             from sensor_msgs.msg import Image
-            print(f"👁️  MOCK: Feature extraction from {self.camera}")
-            self.feedback_message = f"MOCK: Feature extraction completed"
+            self.feedback_message = "MOCK: Feature extraction completed"
             self.blackboard.features = "[mock features]"
             self.blackboard.comparison_image = Image()
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
             return
+        goal = FeatureExtraction.Goal()
+        goal.camera = self.camera
+        self.send_goal_request(goal)
+        self.feedback_message = "Sent feature extraction goal"
 
-        request = FeatureExtraction.Request()
-        request.camera = self.camera
-        self.response = self.call_service_async(request)
-
-        self.feedback_message = f"Initialized Feature Extraction"
-
-    def update(self) -> Status:
-        # Handle mock mode
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
-
-        # Check if response exists
-        if self.response is None:
-            self.feedback_message = "No response object"
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = f"Feature extraction aborted: {self.result_status_string}"
             return pytree.common.Status.FAILURE
-
-        self.logger.debug(f"Updated FeatureExtraction")
-        if self.response.done():
-            result : FeatureExtraction.Response = self.response.result()
-            if result.status == 0:
-                self.blackboard.features = result.feature
-                self.blackboard.comparison_image = result.comparison_image
-                img = result.comparison_image
-                self.feedback_message = (
-                    f"Features: {result.feature} | image: {img.width}x{img.height}"
-                )
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Feature extration failed with error code {result.status}: {result.error_msg}"
-                return pytree.common.Status.FAILURE
-        else:
-            self.feedback_message = "Still extracting feature..."
-            return pytree.common.Status.RUNNING
+        result = self.result_message.result
+        if result.status != 0:
+            self.feedback_message = (
+                f"Feature extraction failed with error code {result.status}: {result.error_msg}"
+            )
+            return pytree.common.Status.FAILURE
+        self.blackboard.features = result.feature
+        self.blackboard.comparison_image = result.comparison_image
+        img = result.comparison_image
+        self.feedback_message = f"Features: {result.feature} | image: {img.width}x{img.height}"
+        return pytree.common.Status.SUCCESS
 
 
 class BtNode_LoadPersonReference(pytree.behaviour.Behaviour):

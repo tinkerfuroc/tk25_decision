@@ -2,12 +2,14 @@ import asyncio
 import threading
 from behavior_tree.config import is_node_mocked
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
+from behavior_tree.TemplateNodes.ActionBase import ActionHandler
 from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, DetectWaving
 import py_trees
 from py_trees.common import Status, Access
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status, Access
 from py_trees.blackboard import Blackboard
+import action_msgs.msg as action_msgs
 import openai
 import json
 import time
@@ -877,7 +879,7 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
             return py_trees.common.Status.RUNNING
 
 
-class BtNode_ScanForWavingPersonNew(ServiceHandler):
+class BtNode_ScanForWavingPersonNew(ActionHandler):
     def __init__(self,
                  name: str,
                  bb_key_all_persons: str,
@@ -886,7 +888,8 @@ class BtNode_ScanForWavingPersonNew(ServiceHandler):
                  service_name: str = "detect_waving_persons",
                  target_frame: str = "map"
                  ):
-        super().__init__(name, service_name, DetectWaving)
+        super().__init__(name, DetectWaving, service_name, None,
+                         wait_for_server_timeout_sec=-3)
         self.bb_key_all_persons = bb_key_all_persons
         self.bb_key_closest_person = bb_key_closest_person
         self.threshold_meters = threshold_meters
@@ -894,39 +897,44 @@ class BtNode_ScanForWavingPersonNew(ServiceHandler):
         self.bb_write_client = None
 
     def setup(self, **kwargs):
-        ServiceHandler.setup(self, **kwargs)
-        self.bb_write_client = self.attach_blackboard_client(name=f"ScanForWavingPersonNew")
+        ActionHandler.setup(self, **kwargs)
+        self.bb_write_client = self.attach_blackboard_client(name="ScanForWavingPersonNew")
         self.bb_write_client.register_key(self.bb_key_all_persons, access=py_trees.common.Access.WRITE)
         self.bb_write_client.register_key(self.bb_key_closest_person, access=py_trees.common.Access.WRITE)
-        self.logger.debug(f"Setup ScanForWavingPersonNew")
 
-    def initialise(self) -> None:
+    def send_goal(self):
         if self.mock_mode:
+            self.feedback_message = "MOCK: waving scan goal sent"
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
             return
-        request = DetectWaving.Request()
-        request.threshold_meters = self.threshold_meters
-        request.target_frame = self.target_frame
-        self.response = self.client.call_async(request)
-        self.feedback_message = f"Initialized ScanForWavingPersonNew"
+        goal = DetectWaving.Goal()
+        goal.threshold_meters = self.threshold_meters
+        goal.target_frame = self.target_frame
+        self.send_goal_request(goal)
+        self.feedback_message = "Sent waving-person detection goal"
 
-    def update(self):
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
-        self.logger.debug(f"Update ScanForWavingPersonNew")
-        if self.response.done():
-            result = self.response.result()
-            if result.status == 0 and result.waving_persons:
-                self.bb_write_client.set(self.bb_key_all_persons, result.waving_persons)
-                self.bb_write_client.set(self.bb_key_closest_person, result.waving_persons[0])
-                closest_person = result.waving_persons[0]
-                self.feedback_message = f"Found {len(result.waving_persons)} waving person(s). Closest at ({closest_person.point.x:.4f}, {closest_person.point.y:.4f}, {closest_person.point.z:.4f}) in {closest_person.header.frame_id}"
-                return py_trees.common.Status.SUCCESS
-            elif result.status == 0:
-                self.feedback_message = "Service succeeded, but no waving person found."
-                return py_trees.common.Status.FAILURE
-            else:
-                self.feedback_message = f"Service failed with status {result.status}: {result.error_msg}"
-                return py_trees.common.Status.FAILURE
-        else:
-            self.feedback_message = "Still scanning for waving persons..."
-            return py_trees.common.Status.RUNNING
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = f"Waving scan aborted: {self.result_status_string}"
+            return py_trees.common.Status.FAILURE
+        result = self.result_message.result
+        if result.status != 0:
+            self.feedback_message = f"Waving scan failed with status {result.status}: {result.error_msg}"
+            return py_trees.common.Status.FAILURE
+        if not result.waving_persons:
+            self.feedback_message = "Scan succeeded, but no waving person found."
+            return py_trees.common.Status.FAILURE
+        self.bb_write_client.set(self.bb_key_all_persons, result.waving_persons)
+        self.bb_write_client.set(self.bb_key_closest_person, result.waving_persons[0])
+        closest = result.waving_persons[0]
+        self.feedback_message = (
+            f"Found {len(result.waving_persons)} waving person(s). Closest at "
+            f"({closest.point.x:.4f}, {closest.point.y:.4f}, {closest.point.z:.4f}) "
+            f"in {closest.header.frame_id}"
+        )
+        return py_trees.common.Status.SUCCESS
