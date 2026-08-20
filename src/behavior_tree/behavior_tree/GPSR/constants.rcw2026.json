@@ -1,0 +1,187 @@
+{
+    "arm_pos_navigating": [
+        -86.0,
+        -52.0,
+        18.0,
+        2.0,
+        34.0,
+        -73.0,
+        -9.0
+    ],
+    "arm_pos_scan": [
+        0.0,
+        -54.0,
+        -1.0,
+        35.0,
+        0.0,
+        47.0,
+        -1.0
+    ],
+    "possible_poses": {
+        "kitchen_table": {
+            "point": {
+                "x": 3.294,
+                "y": -2.351,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.9238805867638334,
+                "w": 0.38268088716437737
+            }
+        },
+        "laundry_desk": {
+            "point": {
+                "x": -3.237,
+                "y": 3.924,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.5555298041916854,
+                "w": 0.8314966245600446
+            }
+        },
+        "shelf": {
+            "point": {
+                "x": -3.227,
+                "y": 0.769,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.9238805867638334,
+                "w": 0.38268088716437737
+            }
+        },
+        "shelf_02": {
+            "point": {
+                "x": 0.962,
+                "y": -0.57,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.9999999999932537,
+                "w": -3.673205103346574e-06
+            }
+        },
+        "side_table": {
+            "point": {
+                "x": -0.595,
+                "y": -4.444,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.5555298041916854,
+                "w": 0.8314966245600446
+            }
+        },
+        "side_table_02": {
+            "point": {
+                "x": 1.08,
+                "y": 1.755,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.9999999999932537,
+                "w": -3.673205103346574e-06
+            }
+        },
+        "sofa": {
+            "point": {
+                "x": -2.184,
+                "y": -4.089,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.7071080798594735,
+                "w": 0.7071054825112363
+            }
+        },
+        "command_point": {
+            "point": {
+                "x": -2.0,
+                "y": -2.0,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0
+            }
+        }
+    },
+    "possible_objects": {
+        "soup": "red tomato soup can",
+        "mug": "red ceramic mug",
+        "banana": "yellow banana",
+        "mustard": "yellow mustard bottle",
+        "sugar_box": "yellow sugar box",
+        "spam": "blue rectangular spam can",
+        "cheez_it": "red cracker box",
+        "pudding_box": "brown pudding box",
+        "bowl": "red bowl",
+        "bleach": "white bleach cleanser bottle"
+    },
+    "default_locations": {
+        "_comment": "Where each object USUALLY starts in the rcw2026 arena. Used ONLY when a fetch/find command names no location. Each value is a key in possible_poses.",
+        "soup": "kitchen_table",
+        "mug": "kitchen_table",
+        "banana": "kitchen_table",
+        "mustard": "kitchen_table",
+        "sugar_box": "shelf",
+        "spam": "shelf",
+        "cheez_it": "shelf_02",
+        "pudding_box": "shelf_02",
+        "bowl": "side_table",
+        "bleach": "laundry_desk"
+    },
+    "search_spots": {
+        "_comment": "Per-room sweep order for search_object when the in-room spot is unknown. Each entry is an ORDERED list of pose names; every name must be a key in possible_poses. Rooms are a spatial quadrant split of the rcw2026 arena around command_point.",
+        "kitchen": [
+            "kitchen_table",
+            "shelf_02"
+        ],
+        "laundry_room": [
+            "laundry_desk",
+            "shelf"
+        ],
+        "living_room": [
+            "sofa",
+            "side_table"
+        ],
+        "bedroom": [
+            "side_table_02"
+        ]
+    },
+    "arm_pos_orbbec_look": [
+        -86.0,
+        -52.0,
+        18.0,
+        2.0,
+        34.0,
+        -73.0,
+        -9.0
+    ],
+    "arm_pos_scan_original": [
+        0.0,
+        -54.0,
+        -1.0,
+        35.0,
+        0.0,
+        47.0,
+        -1.0
+    ]
+}

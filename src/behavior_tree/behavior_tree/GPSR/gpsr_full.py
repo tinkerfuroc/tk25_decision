@@ -42,9 +42,10 @@ from .orchestrator import (
 from .small_trees import bb_keys
 
 
-CONSTANTS_PATH = (
+CONSTANTS_PATH = os.environ.get(
+    "GPSR_CONSTANTS_PATH",
     "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/"
-    "behavior_tree/GPSR/constants.json"
+    "behavior_tree/GPSR/constants.json",
 )
 ARM_ACTION_NAME = "joint_move_action"
 NUM_COMMANDS = 3
