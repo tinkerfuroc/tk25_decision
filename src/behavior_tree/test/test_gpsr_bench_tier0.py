@@ -58,3 +58,18 @@ def test_tier0_verdicts():
     assert "empty" in results[1].detail
     assert "llm down" in results[4].detail
     assert all(r.tier == 0 for r in results)
+
+
+def test_tier0_builds_a_fresh_planner_per_entry_via_factory():
+    plans = {"go to the sofa": [[{"action": "goto", "params": {"location": "sofa"}}]]}
+    calls = []
+
+    def factory():
+        calls.append(1)
+        return FakePlanner(plans)
+
+    entries = [_entry(i, "go to the sofa") for i in range(3)]
+    results = run_tier0(entries, None, known_actions=KNOWN_ACTIONS,
+                        known_locations=KNOWN_LOCATIONS, timeout_s=0.2, planner_factory=factory)
+    assert len(calls) == 3
+    assert all(r.verdict == "PASS" for r in results)

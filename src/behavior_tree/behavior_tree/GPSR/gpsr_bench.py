@@ -31,7 +31,8 @@ def _make_planner():
 def _knowledge(constants: Path):
     from behavior_tree.GPSR import orchestrator, small_trees
     orchestrator.load_knowledge_from_constants(str(constants))
-    return set(small_trees.ACTION_FACTORIES), set(orchestrator.KNOWN_LOCATIONS)
+    return (set(small_trees.ACTION_FACTORIES),
+            set(orchestrator.KNOWN_LOCATIONS) | set(orchestrator.START_LOCATION_ALIASES))
 
 
 def _filter(entries, only_class: str | None):
@@ -60,7 +61,8 @@ def cmd_tier0(args) -> int:
     entries = _filter(read_jsonl(Path(args.corpus)), args.only_class)
     known_actions, known_locations = _knowledge(Path(args.constants))
     results = run_tier0(entries, _make_planner(), known_actions=known_actions,
-                        known_locations=known_locations, timeout_s=args.timeout)
+                        known_locations=known_locations, timeout_s=args.timeout,
+                        planner_factory=_make_planner)
     return _finish(results, Path(args.out), Path(args.corpus))
 
 
@@ -98,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
         t.add_argument("--out", required=True)
         t.add_argument("--constants", default=str(DEFAULT_CONSTANTS))
         t.add_argument("--only-class", default=None, help="comma-separated feasibility classes, e.g. A,B")
-        t.add_argument("--timeout", type=float, default=90.0 if name == "tier0" else 300.0)
+        t.add_argument("--timeout", type=float, default=180.0 if name == "tier0" else 300.0)
         if name == "tier1":
             t.add_argument("--group-size", type=int, default=3)
             t.add_argument("--mock-config", default=str(DEFAULT_MOCK_CONFIG))

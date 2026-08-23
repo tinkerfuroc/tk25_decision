@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from typing import Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from behavior_tree.GPSR.bench.corpus import CorpusEntry
 from behavior_tree.GPSR.bench.report import BenchResult
@@ -39,15 +39,17 @@ def judge(entry: CorpusEntry, targets, plans, *, known_actions, known_locations,
 
 
 def run_tier0(entries: Sequence[CorpusEntry], planner, *, known_actions: Iterable[str],
-              known_locations: Iterable[str], timeout_s: float = 90.0) -> list[BenchResult]:
+              known_locations: Iterable[str], timeout_s: float = 90.0,
+              planner_factory: Callable[[], Any] | None = None) -> list[BenchResult]:
     known_actions = set(known_actions)
     known_locations = set(known_locations)
     results: list[BenchResult] = []
     for slot, entry in enumerate(entries):
-        planner.reset()
+        active_planner = planner_factory() if planner_factory is not None else planner
+        active_planner.reset()
         started = time.monotonic()
         try:
-            targets, plans = plan_one(planner, slot, entry.text, timeout_s=timeout_s)
+            targets, plans = plan_one(active_planner, slot, entry.text, timeout_s=timeout_s)
         except TimeoutError as exc:
             results.append(BenchResult(entry.id, entry.template, entry.feasibility, 0, "TIMEOUT",
                                        str(exc), time.monotonic() - started))

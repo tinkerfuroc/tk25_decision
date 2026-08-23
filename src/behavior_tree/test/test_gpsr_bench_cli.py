@@ -32,6 +32,12 @@ def test_tier0_uses_injected_runner_and_writes_report(tmp_path, monkeypatch):
     assert (out / "SUMMARY.md").exists() and (out / "report.json").exists()
 
 
+def test_knowledge_includes_start_location_aliases():
+    known_actions, known_locations = gpsr_bench._knowledge(CONSTANTS)
+    assert "start_position" in known_locations
+    assert "goto" in known_actions
+
+
 def test_only_class_filters_entries(tmp_path, monkeypatch):
     corpus = tmp_path / "corpus.jsonl"
     gpsr_bench.main(["gen", "--seed", "1", "--per-template", "1", "--constants", str(CONSTANTS), "--out", str(corpus)])
