@@ -42,7 +42,6 @@ from .config import (
     OPENAI_TEMPERATURE,
     OPENAI_MAX_TOKENS,
 )
-from ..config import is_full_mock_mode
 from .modifiable_nodes import (
     TEMPLATES,
     apply_modifications,
@@ -72,6 +71,7 @@ from .orchestrator import (
     BtNode_TargetPostconditionCheck,
     _build_planner_user_prompt,
     _clean_plan,
+    _offline_planner_enabled,
     _extract_json_object,
     _fallback_plan,
 )
@@ -594,7 +594,7 @@ class GPSRPlanner:
 
     def __init__(self, max_attempts: int = 4):
         self._max_attempts = max(1, int(max_attempts))
-        self._offline_mock = is_full_mock_mode()
+        self._offline_mock = _offline_planner_enabled()
         # (slot, index) -> {"desc": str, "plan": list[dict], "subtree": Behaviour|None,
         #                   "ready": bool, "error": str|None}
         self._cache: Dict[Tuple[int, int], Dict[str, Any]] = {}

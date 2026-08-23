@@ -391,3 +391,18 @@ def test_get_targets_returns_defensive_snapshot_of_slot_context(monkeypatch):
         {"id": "acquire", "desc": "acquire cup", "object": "", "location": "", "depends_on": [], "preconditions": [], "postconditions": []},
         {"id": "place", "desc": "place cup", "object": "", "location": "", "depends_on": ["acquire"], "preconditions": [], "postconditions": []},
     ]
+
+def test_two_layer_planner_honours_offline_planner_override(monkeypatch):
+    import behavior_tree.GPSR.orchestrator as orch
+    import behavior_tree.GPSR.planner as planner_mod
+
+    monkeypatch.setattr(orch, "is_full_mock_mode", lambda: True)
+
+    monkeypatch.delenv("GPSR_OFFLINE_PLANNER", raising=False)
+    assert planner_mod.GPSRPlanner()._offline_mock is True
+
+    monkeypatch.setenv("GPSR_OFFLINE_PLANNER", "0")
+    assert planner_mod.GPSRPlanner()._offline_mock is False
+
+    monkeypatch.setenv("GPSR_OFFLINE_PLANNER", "1")
+    assert planner_mod.GPSRPlanner()._offline_mock is True
