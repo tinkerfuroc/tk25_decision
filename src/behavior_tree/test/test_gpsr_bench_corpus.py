@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -55,10 +56,16 @@ def test_generate_corpus_covers_every_template_k_times():
 def test_corpus_text_stays_inside_arena_vocabulary():
     kb = corpus.build_knowledge(CONSTANTS)
     entries = corpus.generate_corpus(CONSTANTS, seed=5, per_template=1)
-    allowed = set(kb.rooms) | set(kb.locations)
+    allowed = set(kb.rooms) | set(kb.locations) | set(kb.objects)
     for e in entries:
         for word in ("office", "bathroom", "desk_lamp"):
             assert word not in e.text, (e.template, e.text)
+        # Generated text embeds raw underscore-joined identifiers verbatim (e.g.
+        # "kitchen_table"), which the location validator then matches exactly -- assert
+        # every such token actually names a known room/location, not just that three
+        # hardcoded stray words are absent (which wouldn't catch a knowledge-file mix-up).
+        identifiers = set(re.findall(r"[a-z]+(?:_[a-z]+)+", e.text))
+        assert identifiers <= allowed, (e.template, e.text, identifiers - allowed)
 
 
 def test_expand_template_samples_followup_placeholders_independently():

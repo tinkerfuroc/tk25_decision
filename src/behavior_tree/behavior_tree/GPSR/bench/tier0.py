@@ -53,12 +53,17 @@ def plan_one(planner, slot: int, command: str, *, timeout_s: float):
     remaining = max(0.0, timeout_s - (time.monotonic() - started))
     planner.request_plan_all(slot, targets, command=command)
     deadline = time.monotonic() + remaining
-    while time.monotonic() < deadline:
-        if planner.all_targets_ready(slot, len(targets)):
-            break
-        time.sleep(0.05)
-    else:
-        raise TimeoutError(f"planner not ready after {timeout_s:.0f}s")
+    # Check readiness once before the wait loop: if split_command already consumed the
+    # whole budget, `remaining` is 0 and a `while time.monotonic() < deadline` loop would
+    # exit immediately without ever polling, reporting TIMEOUT even when the plans are
+    # already ready (e.g. an offline/mock planner that resolves synchronously).
+    if not planner.all_targets_ready(slot, len(targets)):
+        while time.monotonic() < deadline:
+            if planner.all_targets_ready(slot, len(targets)):
+                break
+            time.sleep(0.05)
+        else:
+            raise TimeoutError(f"planner not ready after {timeout_s:.0f}s")
     plans = [planner.get_action_plan(slot, i) for i in range(len(targets))]
     return targets, plans
 

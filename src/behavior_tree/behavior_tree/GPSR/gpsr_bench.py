@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -70,7 +69,10 @@ def cmd_gen(args) -> int:
 def cmd_tier0(args) -> int:
     entries = _filter(read_jsonl(Path(args.corpus)), args.only_class)
     known_actions, known_locations = _knowledge(Path(args.constants))
-    results = run_tier0(entries, _make_planner(), known_actions=known_actions,
+    # run_tier0 builds a fresh planner per entry via planner_factory and never touches the
+    # `planner` positional argument when one is supplied -- constructing one here too would
+    # be a throwaway (and, when not offline, an unused OpenAI client).
+    results = run_tier0(entries, None, known_actions=known_actions,
                         known_locations=known_locations, timeout_s=args.timeout,
                         planner_factory=_make_planner)
     meta = {"tier": 0, "timeout_s": args.timeout, "only_class": args.only_class,

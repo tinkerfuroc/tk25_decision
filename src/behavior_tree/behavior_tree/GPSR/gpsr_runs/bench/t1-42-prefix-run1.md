@@ -1,3 +1,5 @@
+Superseded first sweep, bench at 6be6745, before fix b9748ce; kept as before/after evidence.
+
 # GPSR bench summary
 
 Corpus: `src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl`

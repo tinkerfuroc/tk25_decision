@@ -132,6 +132,13 @@ def run_group(entries: Sequence[CorpusEntry], *, env: dict[str, str], plan_dir: 
                                        if not (tasks.get(i + 1) and tasks[i + 1].status)), n - 1)
         finally:
             _stop(proc)
+        # The orchestrator may flush its final events during the SIGINT/SIGKILL shutdown
+        # window _stop() just waited through; re-parse once more so a process that reported
+        # everything and exited in that window is not scored TIMEOUT/ERROR despite having a
+        # terminal status already on disk.
+        events = _events_file(plan_dir, started - 1)
+        if events:
+            tasks = parse_events(events)
 
     results: list[BenchResult] = []
     for slot, entry in enumerate(entries):
