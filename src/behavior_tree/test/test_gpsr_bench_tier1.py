@@ -31,6 +31,11 @@ def _fake_orchestrator(tmp_path: Path, behaviour: str) -> list[str]:
                 time.sleep(60)
             if "{behaviour}" == "crash" and slot == 1:
                 sys.exit(3)
+            if "{behaviour}" == "stall" and slot == 1:
+                # Report SOME telemetry (so the slot's per-task clock starts) then hang
+                # forever without ever reaching a terminal status or the next slot.
+                ev("step.finished", slot, {{"action": "goto", "outcome": "succeeded"}})
+                time.sleep(60)
             ev("step.finished", slot, {{"action": "goto", "outcome": "succeeded"}})
             ev("task.finished", slot, {{"status": "failed" if "fail" in c else "succeeded", "reason": "r"}})
         while True:
@@ -94,6 +99,23 @@ def test_tier1_times_out_a_hung_group_and_continues(tmp_path):
                         constants=tmp_path / "c.json", plan_dir=tmp_path / "runs",
                         launcher=_fake_orchestrator(tmp_path, "hang"))
     assert [r.verdict for r in results] == ["PASS", "TIMEOUT", "PASS", "TIMEOUT"]
+
+
+def test_tier1_gives_a_per_task_budget_and_reports_unreached_slots(tmp_path):
+    """F2: timeout_s is a PER-TASK budget, not a per-group one. Slot 0 finishes; slot 1
+    reports some telemetry (its clock starts) then stalls, so it alone times out at
+    ~timeout_s past its own first_seen rather than the group cap (group_size * timeout_s
+    = 9s here); slot 2, never reached because the group is stopped on slot 1, is a
+    different fact (ERROR "not reached") from a slot that actually ran and hung."""
+    entries = [_entry(0, "go to the sofa"), _entry(1, "cmd 1"), _entry(2, "cmd 2")]
+    started = time.monotonic()
+    results = run_tier1(entries, group_size=3, timeout_s=3, mock_config=tmp_path / "m.json",
+                        constants=tmp_path / "c.json", plan_dir=tmp_path / "runs",
+                        launcher=_fake_orchestrator(tmp_path, "stall"))
+    elapsed = time.monotonic() - started
+    assert [r.verdict for r in results] == ["PASS", "TIMEOUT", "ERROR"]
+    assert "not reached: slot 1 timed out" in results[2].detail
+    assert elapsed < 7.0  # well under the 9s group cap -- stopped on slot 1's own budget
 
 
 def test_tier1_reports_a_crashed_process(tmp_path):
