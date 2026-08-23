@@ -66,6 +66,17 @@ def test_bench_env_sets_the_orchestrator_switches(tmp_path):
     assert os.environ.get("PATH", "") == env.get("PATH", "")  # inherits the shell env
 
 
+def test_bench_env_resolves_a_relative_plan_dir_to_absolute():
+    # run_group launches the orchestrator with cwd=plan_dir; a relative BT_GPSR_PLAN_DIR would
+    # have the orchestrator re-resolve it against that same cwd and nest its telemetry under
+    # plan_dir/plan_dir/debug/... instead of plan_dir/debug/..., so _events_file() never finds
+    # it and the group silently times out no matter what it actually did.
+    env = bench_env(mock_config=Path("m.json"), constants=Path("c.json"),
+                    plan_dir=Path("relative/runs/group-000"), commands=["a"], live_llm=True)
+    assert Path(env["BT_GPSR_PLAN_DIR"]).is_absolute()
+    assert env["BT_GPSR_PLAN_DIR"].endswith("relative/runs/group-000")
+
+
 def test_tier1_scores_each_slot_and_stops_the_idle_process(tmp_path):
     entries = [_entry(0, "go to the sofa"), _entry(1, "please fail"), _entry(2, "go to the shelf")]
     results = run_tier1(entries, group_size=3, timeout_s=20, mock_config=tmp_path / "m.json",

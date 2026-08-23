@@ -17,6 +17,11 @@ DEFAULT_LAUNCHER = ["ros2", "run", "behavior_tree", "gpsr-orchestrator"]
 
 def bench_env(*, mock_config: Path, constants: Path, plan_dir: Path, commands: Sequence[str],
               live_llm: bool) -> dict[str, str]:
+    # The orchestrator is launched with cwd=plan_dir (see run_group); if BT_GPSR_PLAN_DIR were
+    # left relative, the orchestrator would re-resolve it against that same cwd and nest its
+    # telemetry under plan_dir/plan_dir/debug/... instead of plan_dir/debug/..., so
+    # _events_file() never finds it and every group silently times out. Always pass it absolute.
+    plan_dir = Path(plan_dir).resolve()
     env = dict(os.environ)
     env.update({
         "BT_GPSR_CMD": "|".join(commands),
@@ -68,7 +73,7 @@ def _stop(proc: subprocess.Popen) -> None:
 
 def run_group(entries: Sequence[CorpusEntry], *, env: dict[str, str], plan_dir: Path,
               launcher: Sequence[str], timeout_s: float, poll_s: float = 1.0) -> list[BenchResult]:
-    plan_dir = Path(plan_dir)
+    plan_dir = Path(plan_dir).resolve()
     plan_dir.mkdir(parents=True, exist_ok=True)
     tasks = {}
     exit_code = None
@@ -119,7 +124,7 @@ def run_tier1(entries: Sequence[CorpusEntry], *, group_size: int, timeout_s: flo
     results: list[BenchResult] = []
     for start in range(0, len(entries), group_size):
         group = list(entries[start:start + group_size])
-        group_dir = Path(plan_dir) / f"group-{start // group_size:03d}"
+        group_dir = (Path(plan_dir) / f"group-{start // group_size:03d}").resolve()
         env = bench_env(mock_config=mock_config, constants=constants, plan_dir=group_dir,
                         commands=[e.text for e in group], live_llm=live_llm)
         results.extend(run_group(group, env=env, plan_dir=group_dir, launcher=launcher, timeout_s=timeout_s))
