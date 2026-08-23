@@ -102,6 +102,29 @@ def test_parse_events_lets_a_real_task_finished_override_node_derived_status(tmp
     assert results[1].reason == "postcondition unmet"
 
 
+def test_parse_events_captures_the_last_precondition_unmet_feedback_from_a_nested_node(tmp_path):
+    """F6: the node-derived fallback status is the only T1 evidence (no step.finished from the
+    production two-layer flow), so its reason should be the real diagnostic, not just a bare
+    'executor node FAILURE'. A real failure's feedback lives on a leaf several levels under its
+    "executor task N" ancestor (verified against a captured t1-42 events.jsonl), not on the
+    top-level node itself, so this must match by id-prefix."""
+    lines = [
+        _tree_generated({"executor/root/7/0/13": "executor task 1"}, at="2026-08-23T00:00:00Z", seq=0),
+        _node_states_changed({"executor/root/7/0/13": "RUNNING"}, at="2026-08-23T00:00:01Z", seq=1),
+        _ev("tree.node_states_changed", None, {"tree_kind": "executor", "nodes": [
+            {"id": "executor/root/7/0/13/0/0", "node_id": "executor/root/7/0/13/0/0",
+             "status": "FAILURE", "feedback": "precondition unmet: at_robot(kitchen) (INVALID)"}]},
+            at="2026-08-23T00:00:02Z", seq=2),
+        _node_states_changed({"executor/root/7/0/13": "FAILURE"}, at="2026-08-23T00:00:03Z", seq=3),
+    ]
+    path = tmp_path / "events.jsonl"
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+
+    results = parse_events(path)
+    assert results[1].status == "failed"
+    assert results[1].reason == "precondition unmet: at_robot(kitchen) (INVALID)"
+
+
 def test_parse_events_ignores_node_states_from_a_non_executor_tree(tmp_path):
     """Only the "executor" tree's node states should be read as task-completion signals."""
     lines = [

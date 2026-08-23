@@ -9,6 +9,11 @@ from pathlib import Path
 _SLOT_RE = re.compile(r"/task-(\d+)$")
 _EXECUTOR_TASK_RE = re.compile(r"^executor task (\d+)$")
 _NODE_STATUS_TO_TASK_STATUS = {"SUCCESS": "succeeded", "FAILURE": "failed"}
+# Node ``feedback`` strings that carry real diagnostic evidence (captured live off a real
+# t1-42 run, e.g. "precondition unmet: at_robot(laundry_desk) (INVALID)" on a leaf several
+# levels under its "executor task N" ancestor) -- vs. routine noise like a "plan-file emit
+# failed (ignored): ..." SUCCESS feedback that should not overwrite it.
+_DIAG_RE = re.compile(r"(precondition unmet|postcondition unmet|error)", re.IGNORECASE)
 
 
 @dataclass
@@ -27,6 +32,22 @@ def slot_of(task_id: str | None) -> int | None:
         return None
     match = _SLOT_RE.search(task_id)
     return int(match.group(1)) if match else None
+
+
+def _slot_for_node(node_id: str | None, executor_slot_by_id: dict[str, int]) -> int | None:
+    """Which slot a (possibly nested) executor node belongs to.
+
+    ``executor_slot_by_id`` only maps the TOP-level "executor task N" node ids (from
+    ``tree.generated``); a real failure's diagnostic lives on a leaf several levels under
+    that ancestor (e.g. "executor/root/7/2/0/13/0/0" under "executor/root/7/2/0/13"), so
+    match by id-prefix, not exact id.
+    """
+    if not node_id:
+        return None
+    for eid, slot in executor_slot_by_id.items():
+        if node_id == eid or node_id.startswith(eid + "/"):
+            return slot
+    return None
 
 
 def parse_events(path: Path) -> dict[int, TaskResult]:
@@ -48,10 +69,18 @@ def parse_events(path: Path) -> dict[int, TaskResult]:
     A terminal status is derived from SUCCESS/FAILURE there; RUNNING/INVALID are transient and
     ignored. A genuine ``task.finished`` event always wins over a node-derived status, in
     either order.
+
+    When falling back to a node-derived status, ``TaskResult.reason`` is more than
+    "executor node SUCCESS/FAILURE": any node under a task's subtree (not just the
+    top-level "executor task N" node itself) whose ``feedback`` names a precondition/
+    postcondition/error diagnostic (e.g. "precondition unmet: at_robot(laundry_desk)
+    (INVALID)", captured off a real t1-42 run) is remembered per slot, and the LAST one
+    seen replaces the bare status string -- real evidence instead of "it failed".
     """
     results: dict[int, TaskResult] = {}
     finalized: set[int] = set()
     executor_slot_by_id: dict[str, int] = {}
+    diag_by_slot: dict[int, str] = {}
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
@@ -75,6 +104,11 @@ def parse_events(path: Path) -> dict[int, TaskResult]:
         if kind == "tree.node_states_changed" and payload.get("tree_kind") == "executor":
             for node in payload.get("nodes", []):
                 node_id = node.get("id") or node.get("node_id")
+                feedback = node.get("feedback")
+                if isinstance(feedback, str) and feedback and _DIAG_RE.search(feedback):
+                    diag_slot = _slot_for_node(node_id, executor_slot_by_id)
+                    if diag_slot is not None:
+                        diag_by_slot[diag_slot] = feedback
                 slot = executor_slot_by_id.get(node_id)
                 if slot is None:
                     continue
@@ -87,7 +121,7 @@ def parse_events(path: Path) -> dict[int, TaskResult]:
                 if task_status is None:  # RUNNING / INVALID — not terminal yet
                     continue
                 result.status = task_status
-                result.reason = f"executor node {node.get('status')}"
+                result.reason = diag_by_slot.get(slot) or f"executor node {node.get('status')}"
                 result.finished_at = event.get("occurred_at")
             continue
 
