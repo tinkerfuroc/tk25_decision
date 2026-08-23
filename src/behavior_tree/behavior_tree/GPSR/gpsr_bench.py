@@ -42,8 +42,18 @@ def _filter(entries, only_class: str | None):
     return [e for e in entries if e.feasibility in allowed]
 
 
-def _finish(results, out: Path, corpus: Path) -> int:
-    summary = write_report(results, out, corpus_path=corpus)
+def _corpus_seed(entries):
+    """The `gpsr-bench gen --seed` value isn't stored anywhere but each generated entry's
+    own `seed` field (edge commands are hand-written and carry seed=-1); use the first
+    non-edge entry's, or None for an edge-only / empty selection."""
+    for e in entries:
+        if e.template != "edge":
+            return e.seed
+    return None
+
+
+def _finish(results, out: Path, corpus: Path, *, meta: dict | None = None) -> int:
+    summary = write_report(results, out, corpus_path=corpus, meta=meta)
     print(summary.read_text())
     return 0 if results and all(r.verdict == "PASS" for r in results) else 1
 
@@ -63,7 +73,9 @@ def cmd_tier0(args) -> int:
     results = run_tier0(entries, _make_planner(), known_actions=known_actions,
                         known_locations=known_locations, timeout_s=args.timeout,
                         planner_factory=_make_planner)
-    return _finish(results, Path(args.out), Path(args.corpus))
+    meta = {"tier": 0, "timeout_s": args.timeout, "only_class": args.only_class,
+            "seed": _corpus_seed(entries)}
+    return _finish(results, Path(args.out), Path(args.corpus), meta=meta)
 
 
 def cmd_tier1(args) -> int:
@@ -71,14 +83,17 @@ def cmd_tier1(args) -> int:
     results = run_tier1(entries, group_size=args.group_size, timeout_s=args.timeout,
                         mock_config=Path(args.mock_config), constants=Path(args.constants),
                         plan_dir=Path(args.out) / "runs", live_llm=not args.offline_planner)
-    return _finish(results, Path(args.out), Path(args.corpus))
+    meta = {"tier": 1, "group_size": args.group_size, "timeout_s": args.timeout,
+            "live_llm": not args.offline_planner, "only_class": args.only_class,
+            "seed": _corpus_seed(entries)}
+    return _finish(results, Path(args.out), Path(args.corpus), meta=meta)
 
 
 def cmd_report(args) -> int:
     data = json.loads((Path(args.out) / "report.json").read_text(encoding="utf-8"))
     results = [BenchResult(**r) for r in data["results"]]
     corpus = Path(data["corpus"]) if data.get("corpus") else None
-    print(write_report(results, Path(args.out), corpus_path=corpus).read_text())
+    print(write_report(results, Path(args.out), corpus_path=corpus, meta=data.get("meta")).read_text())
     return 0
 
 
