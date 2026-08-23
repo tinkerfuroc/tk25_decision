@@ -1,10 +1,22 @@
 {
   "corpus": "src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl",
+  "meta": {
+    "tier": 1,
+    "group_size": 3,
+    "timeout_s": 300.0,
+    "live_llm": true,
+    "only_class": null,
+    "seed": 42,
+    "timestamp": "2026-08-23T16:19:20.193623+00:00",
+    "commit": "f1fac8a15992521a75a6812b9a3c82a4aeec7446",
+    "corpus": "src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl"
+  },
   "totals": {
     "1": {
-      "PASS": 14,
-      "FAIL": 23,
-      "TIMEOUT": 36
+      "PASS": 58,
+      "FAIL": 6,
+      "TIMEOUT": 5,
+      "ERROR": 4
     }
   },
   "results": [
@@ -15,7 +27,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 293.3470709323883,
+      "seconds": 805.9696862697601,
       "plan": []
     },
     {
@@ -25,7 +37,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 293.3470997810364,
+      "seconds": 805.9697000980377,
       "plan": []
     },
     {
@@ -34,8 +46,8 @@
       "feasibility": "B",
       "tier": 1,
       "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 293.34711050987244,
+      "detail": "postcondition unmet: person_found(user) (UNKNOWN)",
+      "seconds": 805.9697041511536,
       "plan": []
     },
     {
@@ -44,8 +56,8 @@
       "feasibility": "C",
       "tier": 1,
       "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 300.58083987236023,
+      "detail": "precondition unmet: at_robot(laundry_room) (INVALID)",
+      "seconds": 901.5299501419067,
       "plan": []
     },
     {
@@ -54,8 +66,8 @@
       "feasibility": "C",
       "tier": 1,
       "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.58085775375366,
+      "detail": "slot 1 timed out after 300s",
+      "seconds": 901.5299842357635,
       "plan": []
     },
     {
@@ -63,9 +75,9 @@
       "template": "countClothPrsInRoom",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.5808651447296,
+      "verdict": "ERROR",
+      "detail": "not reached: slot 1 timed out",
+      "seconds": 901.5300047397614,
       "plan": []
     },
     {
@@ -73,9 +85,9 @@
       "template": "countObjOnPlcmt",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.50115418434143,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 901.1737418174744,
       "plan": []
     },
     {
@@ -83,9 +95,9 @@
       "template": "countObjOnPlcmt",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.501172542572,
+      "verdict": "FAIL",
+      "detail": "postcondition unmet: answered(how many drinks there are on the kitchen_table) (UNKNOWN)",
+      "seconds": 901.1737742424011,
       "plan": []
     },
     {
@@ -94,8 +106,8 @@
       "feasibility": "A",
       "tier": 1,
       "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.50118041038513,
+      "detail": "slot 2 timed out after 300s",
+      "seconds": 901.1737821102142,
       "plan": []
     },
     {
@@ -104,8 +116,8 @@
       "feasibility": "A",
       "tier": 1,
       "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.1649384498596,
+      "detail": "precondition unmet: at_robot(bedroom) (INVALID)",
+      "seconds": 901.6140706539154,
       "plan": []
     },
     {
@@ -113,9 +125,9 @@
       "template": "countPrsInRoom",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.1649580001831,
+      "verdict": "TIMEOUT",
+      "detail": "slot 1 timed out after 300s",
+      "seconds": 901.6140820980072,
       "plan": []
     },
     {
@@ -123,9 +135,9 @@
       "template": "countPrsInRoom",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 2",
-      "seconds": 301.1649634838104,
+      "verdict": "ERROR",
+      "detail": "not reached: slot 1 timed out",
+      "seconds": 901.6140949726105,
       "plan": []
     },
     {
@@ -134,8 +146,8 @@
       "feasibility": "C",
       "tier": 1,
       "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 300.7789704799652,
+      "detail": "postcondition unmet: object_seen(kitchen item) (UNKNOWN)",
+      "seconds": 901.1256017684937,
       "plan": []
     },
     {
@@ -144,8 +156,8 @@
       "feasibility": "B",
       "tier": 1,
       "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.7789878845215,
+      "detail": "slot 1 timed out after 300s",
+      "seconds": 901.1256477832794,
       "plan": []
     },
     {
@@ -153,9 +165,9 @@
       "template": "findObjInRoom",
       "feasibility": "B",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.7789945602417,
+      "verdict": "ERROR",
+      "detail": "not reached: slot 1 timed out",
+      "seconds": 901.1256642341614,
       "plan": []
     },
     {
@@ -164,8 +176,8 @@
       "feasibility": "C",
       "tier": 1,
       "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 300.57206559181213,
+      "detail": "postcondition unmet: person_found(sitting person) (UNKNOWN)",
+      "seconds": 901.1062476634979,
       "plan": []
     },
     {
@@ -174,8 +186,8 @@
       "feasibility": "C",
       "tier": 1,
       "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.57208490371704,
+      "detail": "slot 1 timed out after 300s",
+      "seconds": 901.1062605381012,
       "plan": []
     },
     {
@@ -183,9 +195,9 @@
       "template": "findPrsInRoom",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.57209277153015,
+      "verdict": "ERROR",
+      "detail": "not reached: slot 1 timed out",
+      "seconds": 901.1062836647034,
       "plan": []
     },
     {
@@ -195,7 +207,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 122.52629065513611,
+      "seconds": 480.40851974487305,
       "plan": []
     },
     {
@@ -205,7 +217,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 122.52630758285522,
+      "seconds": 480.40853118896484,
       "plan": []
     },
     {
@@ -213,9 +225,9 @@
       "template": "followNameFromBeacToRoom",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 122.52631378173828,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 480.4085340499878,
       "plan": []
     },
     {
@@ -225,7 +237,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 93.71719026565552,
+      "seconds": 36.061893939971924,
       "plan": []
     },
     {
@@ -235,7 +247,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 93.71720743179321,
+      "seconds": 36.061917781829834,
       "plan": []
     },
     {
@@ -245,7 +257,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 93.71721339225769,
+      "seconds": 36.0619261264801,
       "plan": []
     },
     {
@@ -253,9 +265,9 @@
       "template": "goToLoc",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.13963079452515,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.054861545562744,
       "plan": []
     },
     {
@@ -263,9 +275,9 @@
       "template": "goToLoc",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.13965129852295,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.05487585067749,
       "plan": []
     },
     {
@@ -273,9 +285,9 @@
       "template": "goToLoc",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.1396596431732,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.05488085746765,
       "plan": []
     },
     {
@@ -283,9 +295,9 @@
       "template": "greetClothDscInRm",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 300.9772777557373,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.031447887420654,
       "plan": []
     },
     {
@@ -293,9 +305,9 @@
       "template": "greetClothDscInRm",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.97730469703674,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.03146171569824,
       "plan": []
     },
     {
@@ -303,9 +315,9 @@
       "template": "greetClothDscInRm",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.9773163795471,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.0314667224884,
       "plan": []
     },
     {
@@ -313,9 +325,9 @@
       "template": "greetNameInRm",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.0359842777252,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.103392124176025,
       "plan": []
     },
     {
@@ -323,9 +335,9 @@
       "template": "greetNameInRm",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.036007642746,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.10340452194214,
       "plan": []
     },
     {
@@ -333,9 +345,9 @@
       "template": "greetNameInRm",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.0360174179077,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.10340857505798,
       "plan": []
     },
     {
@@ -343,9 +355,9 @@
       "template": "guideClothPrsFromBeacToBeac",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.46007442474365,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.03001594543457,
       "plan": []
     },
     {
@@ -353,9 +365,9 @@
       "template": "guideClothPrsFromBeacToBeac",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.46011447906494,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.03002572059631,
       "plan": []
     },
     {
@@ -363,9 +375,9 @@
       "template": "guideClothPrsFromBeacToBeac",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.46012330055237,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.03002858161926,
       "plan": []
     },
     {
@@ -373,9 +385,9 @@
       "template": "guideNameFromBeacToBeac",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 300.8707528114319,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.11779975891113,
       "plan": []
     },
     {
@@ -383,9 +395,9 @@
       "template": "guideNameFromBeacToBeac",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.8707706928253,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.117810010910034,
       "plan": []
     },
     {
@@ -393,9 +405,9 @@
       "template": "guideNameFromBeacToBeac",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.87077832221985,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.11781287193298,
       "plan": []
     },
     {
@@ -403,9 +415,9 @@
       "template": "guidePrsFromBeacToBeac",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.3355178833008,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.09110999107361,
       "plan": []
     },
     {
@@ -413,9 +425,9 @@
       "template": "guidePrsFromBeacToBeac",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.3355357646942,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.09112524986267,
       "plan": []
     },
     {
@@ -423,9 +435,9 @@
       "template": "guidePrsFromBeacToBeac",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.3355436325073,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.091129779815674,
       "plan": []
     },
     {
@@ -433,9 +445,9 @@
       "template": "meetNameAtLocThenFindInRm",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.6209969520569,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.00164031982422,
       "plan": []
     },
     {
@@ -443,9 +455,9 @@
       "template": "meetNameAtLocThenFindInRm",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.6210150718689,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.0016713142395,
       "plan": []
     },
     {
@@ -453,9 +465,9 @@
       "template": "meetNameAtLocThenFindInRm",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.6210231781006,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.001675844192505,
       "plan": []
     },
     {
@@ -463,9 +475,9 @@
       "template": "meetPrsAtBeac",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.25346207618713,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.079888343811035,
       "plan": []
     },
     {
@@ -473,9 +485,9 @@
       "template": "meetPrsAtBeac",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.253484249115,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.07991552352905,
       "plan": []
     },
     {
@@ -483,9 +495,9 @@
       "template": "meetPrsAtBeac",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.25349378585815,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.07991886138916,
       "plan": []
     },
     {
@@ -495,7 +507,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 300.92540645599365,
+      "seconds": 36.03306722640991,
       "plan": []
     },
     {
@@ -503,9 +515,9 @@
       "template": "takeObjFromPlcmt",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 300.9254238605499,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.033087968826294,
       "plan": []
     },
     {
@@ -513,9 +525,9 @@
       "template": "takeObjFromPlcmt",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 2",
-      "seconds": 300.9254310131073,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.033095598220825,
       "plan": []
     },
     {
@@ -523,9 +535,9 @@
       "template": "talkInfoToGestPrsInRoom",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 300.5553238391876,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.04945230484009,
       "plan": []
     },
     {
@@ -533,9 +545,9 @@
       "template": "talkInfoToGestPrsInRoom",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.5553388595581,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.049474239349365,
       "plan": []
     },
     {
@@ -543,9 +555,9 @@
       "template": "talkInfoToGestPrsInRoom",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.555344581604,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.04948163032532,
       "plan": []
     },
     {
@@ -555,7 +567,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 167.72930455207825,
+      "seconds": 36.11462950706482,
       "plan": []
     },
     {
@@ -565,7 +577,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 167.72931838035583,
+      "seconds": 36.1146445274353,
       "plan": []
     },
     {
@@ -575,7 +587,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 167.7293221950531,
+      "seconds": 36.114649534225464,
       "plan": []
     },
     {
@@ -585,7 +597,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 134.65206599235535,
+      "seconds": 37.04365253448486,
       "plan": []
     },
     {
@@ -595,7 +607,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 134.65209102630615,
+      "seconds": 37.04366397857666,
       "plan": []
     },
     {
@@ -603,9 +615,9 @@
       "template": "tellObjPropOnPlcmt",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 134.65209865570068,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.04366707801819,
       "plan": []
     },
     {
@@ -613,9 +625,9 @@
       "template": "tellPrsInfoAtLocToPrsAtLoc",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 300.8057961463928,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.04930233955383,
       "plan": []
     },
     {
@@ -623,9 +635,9 @@
       "template": "tellPrsInfoAtLocToPrsAtLoc",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.80581855773926,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.04935050010681,
       "plan": []
     },
     {
@@ -633,9 +645,9 @@
       "template": "tellPrsInfoAtLocToPrsAtLoc",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 300.8058304786682,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.04935956001282,
       "plan": []
     },
     {
@@ -643,9 +655,9 @@
       "template": "tellPrsInfoInLoc",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.4582555294037,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.99164295196533,
       "plan": []
     },
     {
@@ -653,9 +665,9 @@
       "template": "tellPrsInfoInLoc",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.45827412605286,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.991652965545654,
       "plan": []
     },
     {
@@ -663,9 +675,9 @@
       "template": "tellPrsInfoInLoc",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.4582829475403,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.991655588150024,
       "plan": []
     },
     {
@@ -673,9 +685,9 @@
       "template": "edge",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.62500262260437,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.0135760307312,
       "plan": []
     },
     {
@@ -683,9 +695,9 @@
       "template": "edge",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.6250195503235,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.01359176635742,
       "plan": []
     },
     {
@@ -693,9 +705,9 @@
       "template": "edge",
       "feasibility": "B",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.6250264644623,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.013596296310425,
       "plan": []
     },
     {
@@ -703,9 +715,9 @@
       "template": "edge",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "FAIL",
-      "detail": "executor node FAILURE",
-      "seconds": 301.1202816963196,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.11463141441345,
       "plan": []
     },
     {
@@ -713,9 +725,9 @@
       "template": "edge",
       "feasibility": "C",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.1202971935272,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.11464524269104,
       "plan": []
     },
     {
@@ -723,9 +735,9 @@
       "template": "edge",
       "feasibility": "A",
       "tier": 1,
-      "verdict": "TIMEOUT",
-      "detail": "group timed out at slot 1",
-      "seconds": 301.12030363082886,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.114649295806885,
       "plan": []
     },
     {
@@ -735,7 +747,7 @@
       "tier": 1,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 38.99585700035095,
+      "seconds": 19.65259289741516,
       "plan": []
     }
   ]

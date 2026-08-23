@@ -2,94 +2,67 @@
 
 Corpus: `src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl`
 
+Run: tier=1, group_size=3, timeout_s=300.0, live_llm=True, seed=42, timestamp=2026-08-23T16:19:20.193623+00:00, commit=f1fac8a15992521a75a6812b9a3c82a4aeec7446, corpus=src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl
+
 | template | class | T1 |
 |---|---|---|
-| countObjOnPlcmt | A | 0/3 |
+| countObjOnPlcmt | A | 1/3 |
 | countPrsInRoom | A | 0/3 |
-| edge | A | 1/7 |
-| findPrsInRoom | A | 0/3 |
-| goToLoc | A | 0/3 |
-| meetNameAtLocThenFindInRm | A | 0/3 |
-| meetPrsAtBeac | A | 0/3 |
-| talkInfoToGestPrsInRoom | A | 0/3 |
+| edge | A | 5/5 |
+| findPrsInRoom | A | 0/1 |
+| goToLoc | A | 1/1 |
+| meetNameAtLocThenFindInRm | A | 3/3 |
+| meetPrsAtBeac | A | 2/2 |
+| talkInfoToGestPrsInRoom | A | 3/3 |
 | tellCatPropOnPlcmt | A | 3/3 |
-| tellObjPropOnPlcmt | A | 2/3 |
+| tellObjPropOnPlcmt | A | 3/3 |
 | bringMeObjFromPlcmt | B | 2/3 |
-| findObjInRoom | B | 0/3 |
+| edge | B | 1/1 |
+| findObjInRoom | B | 0/2 |
+| takeObjFromPlcmt | B | 1/1 |
 | countClothPrsInRoom | C | 0/3 |
-| followNameFromBeacToRoom | C | 2/3 |
+| edge | C | 1/1 |
+| findObjInRoom | C | 0/1 |
+| findPrsInRoom | C | 0/2 |
+| followNameFromBeacToRoom | C | 3/3 |
 | followPrsAtLoc | C | 3/3 |
-| greetClothDscInRm | C | 0/3 |
-| greetNameInRm | C | 0/3 |
-| guideClothPrsFromBeacToBeac | C | 0/3 |
-| guideNameFromBeacToBeac | C | 0/3 |
-| guidePrsFromBeacToBeac | C | 0/3 |
-| takeObjFromPlcmt | C | 1/3 |
-| tellPrsInfoAtLocToPrsAtLoc | C | 0/3 |
-| tellPrsInfoInLoc | C | 0/3 |
+| goToLoc | C | 2/2 |
+| greetClothDscInRm | C | 3/3 |
+| greetNameInRm | C | 3/3 |
+| guideClothPrsFromBeacToBeac | C | 3/3 |
+| guideNameFromBeacToBeac | C | 3/3 |
+| guidePrsFromBeacToBeac | C | 3/3 |
+| meetPrsAtBeac | C | 1/1 |
+| takeObjFromPlcmt | C | 2/2 |
+| tellPrsInfoAtLocToPrsAtLoc | C | 3/3 |
+| tellPrsInfoInLoc | C | 3/3 |
 
 ## Totals
 
-- T1: PASS 14, FAIL 23, TIMEOUT 36, ERROR 0
+- T1: PASS 58, FAIL 6, TIMEOUT 5, ERROR 4
+
+## Totals by class
+
+T1:
+- class A: 21/27
+- class B: 4/7
+- class C: 33/39
+- Class A+B pass rate: 25/34 (74 %)
 
 ## Failures
 
-- T1 `c002-bringMeObjFromPlcmt` **FAIL** — executor node FAILURE
-- T1 `c003-countClothPrsInRoom` **FAIL** — executor node FAILURE
-- T1 `c004-countClothPrsInRoom` **TIMEOUT** — group timed out at slot 1
-- T1 `c005-countClothPrsInRoom` **TIMEOUT** — group timed out at slot 1
-- T1 `c006-countObjOnPlcmt` **FAIL** — executor node FAILURE
-- T1 `c007-countObjOnPlcmt` **TIMEOUT** — group timed out at slot 1
-- T1 `c008-countObjOnPlcmt` **TIMEOUT** — group timed out at slot 1
-- T1 `c009-countPrsInRoom` **FAIL** — executor node FAILURE
-- T1 `c010-countPrsInRoom` **FAIL** — executor node FAILURE
-- T1 `c011-countPrsInRoom` **TIMEOUT** — group timed out at slot 2
-- T1 `c012-findObjInRoom-takeObj-putObjInTrash` **FAIL** — executor node FAILURE
-- T1 `c013-findObjInRoom-takeObj-deliverObjToMe` **TIMEOUT** — group timed out at slot 1
-- T1 `c014-findObjInRoom-takeObj-deliverObjToPrsInRoom` **TIMEOUT** — group timed out at slot 1
-- T1 `c015-findPrsInRoom-followPrsToRoom` **FAIL** — executor node FAILURE
-- T1 `c016-findPrsInRoom-followPrsToRoom` **TIMEOUT** — group timed out at slot 1
-- T1 `c017-findPrsInRoom-talkInfo` **TIMEOUT** — group timed out at slot 1
-- T1 `c020-followNameFromBeacToRoom` **FAIL** — executor node FAILURE
-- T1 `c024-goToLoc-findPrs-guidePrsToBeacon` **FAIL** — executor node FAILURE
-- T1 `c025-goToLoc-meetName-guidePrsToBeacon` **TIMEOUT** — group timed out at slot 1
-- T1 `c026-goToLoc-findPrs-talkInfo` **TIMEOUT** — group timed out at slot 1
-- T1 `c027-greetClothDscInRm-guidePrsToBeacon` **FAIL** — executor node FAILURE
-- T1 `c028-greetClothDscInRm-talkInfo` **TIMEOUT** — group timed out at slot 1
-- T1 `c029-greetClothDscInRm-talkInfo` **TIMEOUT** — group timed out at slot 1
-- T1 `c030-greetNameInRm-followPrs` **FAIL** — executor node FAILURE
-- T1 `c031-greetNameInRm-guidePrsToBeacon` **TIMEOUT** — group timed out at slot 1
-- T1 `c032-greetNameInRm-followPrs` **TIMEOUT** — group timed out at slot 1
-- T1 `c033-guideClothPrsFromBeacToBeac` **FAIL** — executor node FAILURE
-- T1 `c034-guideClothPrsFromBeacToBeac` **TIMEOUT** — group timed out at slot 1
-- T1 `c035-guideClothPrsFromBeacToBeac` **TIMEOUT** — group timed out at slot 1
-- T1 `c036-guideNameFromBeacToBeac` **FAIL** — executor node FAILURE
-- T1 `c037-guideNameFromBeacToBeac` **TIMEOUT** — group timed out at slot 1
-- T1 `c038-guideNameFromBeacToBeac` **TIMEOUT** — group timed out at slot 1
-- T1 `c039-guidePrsFromBeacToBeac` **FAIL** — executor node FAILURE
-- T1 `c040-guidePrsFromBeacToBeac` **TIMEOUT** — group timed out at slot 1
-- T1 `c041-guidePrsFromBeacToBeac` **TIMEOUT** — group timed out at slot 1
-- T1 `c042-meetNameAtLocThenFindInRm` **FAIL** — executor node FAILURE
-- T1 `c043-meetNameAtLocThenFindInRm` **TIMEOUT** — group timed out at slot 1
-- T1 `c044-meetNameAtLocThenFindInRm` **TIMEOUT** — group timed out at slot 1
-- T1 `c045-meetPrsAtBeac-talkInfo` **FAIL** — executor node FAILURE
-- T1 `c046-meetPrsAtBeac-followPrsToRoom` **TIMEOUT** — group timed out at slot 1
-- T1 `c047-meetPrsAtBeac-talkInfo` **TIMEOUT** — group timed out at slot 1
-- T1 `c049-takeObjFromPlcmt-putObjInTrash` **FAIL** — executor node FAILURE
-- T1 `c050-takeObjFromPlcmt-placeObjOnPlcmt` **TIMEOUT** — group timed out at slot 2
-- T1 `c051-talkInfoToGestPrsInRoom` **FAIL** — executor node FAILURE
-- T1 `c052-talkInfoToGestPrsInRoom` **TIMEOUT** — group timed out at slot 1
-- T1 `c053-talkInfoToGestPrsInRoom` **TIMEOUT** — group timed out at slot 1
-- T1 `c059-tellObjPropOnPlcmt` **FAIL** — executor node FAILURE
-- T1 `c060-tellPrsInfoAtLocToPrsAtLoc` **FAIL** — executor node FAILURE
-- T1 `c061-tellPrsInfoAtLocToPrsAtLoc` **TIMEOUT** — group timed out at slot 1
-- T1 `c062-tellPrsInfoAtLocToPrsAtLoc` **TIMEOUT** — group timed out at slot 1
-- T1 `c063-tellPrsInfoInLoc` **FAIL** — executor node FAILURE
-- T1 `c064-tellPrsInfoInLoc` **TIMEOUT** — group timed out at slot 1
-- T1 `c065-tellPrsInfoInLoc` **TIMEOUT** — group timed out at slot 1
-- T1 `e00` **FAIL** — executor node FAILURE
-- T1 `e01` **TIMEOUT** — group timed out at slot 1
-- T1 `e02` **TIMEOUT** — group timed out at slot 1
-- T1 `e03` **FAIL** — executor node FAILURE
-- T1 `e04` **TIMEOUT** — group timed out at slot 1
-- T1 `e05` **TIMEOUT** — group timed out at slot 1
+- T1 `c002-bringMeObjFromPlcmt` **FAIL** — postcondition unmet: person_found(user) (UNKNOWN)
+- T1 `c003-countClothPrsInRoom` **FAIL** — precondition unmet: at_robot(laundry_room) (INVALID)
+- T1 `c004-countClothPrsInRoom` **TIMEOUT** — slot 1 timed out after 300s
+- T1 `c005-countClothPrsInRoom` **ERROR** — not reached: slot 1 timed out
+- T1 `c007-countObjOnPlcmt` **FAIL** — postcondition unmet: answered(how many drinks there are on the kitchen_table) (UNKNOWN)
+- T1 `c008-countObjOnPlcmt` **TIMEOUT** — slot 2 timed out after 300s
+- T1 `c009-countPrsInRoom` **FAIL** — precondition unmet: at_robot(bedroom) (INVALID)
+- T1 `c010-countPrsInRoom` **TIMEOUT** — slot 1 timed out after 300s
+- T1 `c011-countPrsInRoom` **ERROR** — not reached: slot 1 timed out
+- T1 `c012-findObjInRoom-takeObj-putObjInTrash` **FAIL** — postcondition unmet: object_seen(kitchen item) (UNKNOWN)
+- T1 `c013-findObjInRoom-takeObj-deliverObjToMe` **TIMEOUT** — slot 1 timed out after 300s
+- T1 `c014-findObjInRoom-takeObj-deliverObjToPrsInRoom` **ERROR** — not reached: slot 1 timed out
+- T1 `c015-findPrsInRoom-followPrsToRoom` **FAIL** — postcondition unmet: person_found(sitting person) (UNKNOWN)
+- T1 `c016-findPrsInRoom-followPrsToRoom` **TIMEOUT** — slot 1 timed out after 300s
+- T1 `c017-findPrsInRoom-talkInfo` **ERROR** — not reached: slot 1 timed out

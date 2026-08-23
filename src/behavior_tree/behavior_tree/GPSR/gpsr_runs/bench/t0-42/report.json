@@ -1,10 +1,18 @@
 {
   "corpus": "src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl",
+  "meta": {
+    "tier": 0,
+    "timeout_s": 180.0,
+    "only_class": null,
+    "seed": 42,
+    "timestamp": "2026-08-23T15:55:50.270704+00:00",
+    "commit": "f1fac8a15992521a75a6812b9a3c82a4aeec7446",
+    "corpus": "src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl"
+  },
   "totals": {
     "0": {
-      "PASS": 42,
-      "FAIL": 10,
-      "TIMEOUT": 21
+      "PASS": 50,
+      "TIMEOUT": 23
     }
   },
   "results": [
@@ -15,7 +23,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 11.690456094918773,
+      "seconds": 10.182158879004419,
       "plan": [
         "goto",
         "grasp",
@@ -30,7 +38,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 13.20431570801884,
+      "seconds": 10.968675264157355,
       "plan": [
         "goto",
         "grasp",
@@ -45,11 +53,11 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 21.682930380105972,
+      "seconds": 10.275445480830967,
       "plan": [
         "goto",
         "grasp",
-        "find_person",
+        "deliver",
         "deliver"
       ]
     },
@@ -60,7 +68,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 10.963517192984,
+      "seconds": 16.024758226936683,
       "plan": [
         "record_position",
         "goto",
@@ -74,32 +82,20 @@
       "template": "countClothPrsInRoom",
       "feasibility": "C",
       "tier": 0,
-      "verdict": "PASS",
-      "detail": "",
-      "seconds": 12.240495059872046,
-      "plan": [
-        "record_position",
-        "goto",
-        "count",
-        "goto",
-        "announce"
-      ]
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.05057525006123,
+      "plan": []
     },
     {
       "entry_id": "c005-countClothPrsInRoom",
       "template": "countClothPrsInRoom",
       "feasibility": "C",
       "tier": 0,
-      "verdict": "PASS",
-      "detail": "",
-      "seconds": 17.53652412793599,
-      "plan": [
-        "record_position",
-        "goto",
-        "count",
-        "goto",
-        "announce"
-      ]
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.0498763739597,
+      "plan": []
     },
     {
       "entry_id": "c006-countObjOnPlcmt",
@@ -108,7 +104,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 9.321899054106325,
+      "seconds": 10.7201978280209,
       "plan": [
         "goto",
         "count",
@@ -123,7 +119,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 9.789241852937266,
+      "seconds": 11.01099780621007,
       "plan": [
         "goto",
         "count",
@@ -138,7 +134,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 8.478279897011817,
+      "seconds": 7.812975686043501,
       "plan": [
         "goto",
         "count",
@@ -153,7 +149,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 13.390670641791075,
+      "seconds": 16.223062835866585,
       "plan": [
         "record_position",
         "goto",
@@ -167,9 +163,25 @@
       "template": "countPrsInRoom",
       "feasibility": "A",
       "tier": 0,
-      "verdict": "FAIL",
-      "detail": "target 1: step 1: announce() with no text reports the last gathered result, but no count/describe_person/ask_person/vlm_fallback ran before it. Either give announce a literal text=..., or do the gathering action first (then goto start_position, then the text-less announce).",
-      "seconds": 14.575015387032181,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 11.491646718932316,
+      "plan": [
+        "record_position",
+        "goto",
+        "count",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c011-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 28.468045843066648,
       "plan": [
         "record_position",
         "goto",
@@ -181,30 +193,18 @@
       ]
     },
     {
-      "entry_id": "c011-countPrsInRoom",
-      "template": "countPrsInRoom",
-      "feasibility": "A",
-      "tier": 0,
-      "verdict": "TIMEOUT",
-      "detail": "planner not ready after 180s",
-      "seconds": 180.02231386303902,
-      "plan": []
-    },
-    {
       "entry_id": "c012-findObjInRoom-takeObj-putObjInTrash",
       "template": "findObjInRoom",
       "feasibility": "C",
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 18.97981727705337,
+      "seconds": 17.75977224414237,
       "plan": [
         "record_position",
         "goto",
         "find_object",
         "grasp",
-        "record_position",
-        "place",
         "record_position",
         "place"
       ]
@@ -216,7 +216,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 22.06676890514791,
+      "seconds": 15.251911234110594,
       "plan": [
         "record_position",
         "goto",
@@ -232,7 +232,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.0228880099021,
+      "seconds": 180.0046906650532,
       "plan": []
     },
     {
@@ -242,7 +242,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.01879609096795,
+      "seconds": 180.0038569390308,
       "plan": []
     },
     {
@@ -252,7 +252,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.0429500369355,
+      "seconds": 180.02731149294414,
       "plan": []
     },
     {
@@ -262,7 +262,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.03149499604478,
+      "seconds": 180.03023629402742,
       "plan": []
     },
     {
@@ -270,9 +270,9 @@
       "template": "followNameFromBeacToRoom",
       "feasibility": "C",
       "tier": 0,
-      "verdict": "FAIL",
-      "detail": "target 0: command mentions 'follow ... to the kitchen' but no goto(location='kitchen') step was emitted. Append a goto after the follow so the robot can reach the destination.",
-      "seconds": 25.308325979160145,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 17.022776698926464,
       "plan": [
         "goto",
         "find_person",
@@ -287,9 +287,9 @@
       "template": "followNameFromBeacToRoom",
       "feasibility": "C",
       "tier": 0,
-      "verdict": "FAIL",
-      "detail": "target 0: command mentions 'follow ... to the kitchen' but no goto(location='kitchen') step was emitted. Append a goto after the follow so the robot can reach the destination.",
-      "seconds": 20.069560718955472,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 20.544060891028494,
       "plan": [
         "goto",
         "find_person",
@@ -306,7 +306,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 22.741895552026108,
+      "seconds": 13.332431874936447,
       "plan": [
         "goto",
         "find_person",
@@ -323,7 +323,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.02537926798686,
+      "seconds": 180.04538321495056,
       "plan": []
     },
     {
@@ -333,7 +333,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.05156809207983,
+      "seconds": 180.029183489969,
       "plan": []
     },
     {
@@ -343,7 +343,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.02774039306678,
+      "seconds": 180.02665750309825,
       "plan": []
     },
     {
@@ -353,7 +353,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.0152837948408,
+      "seconds": 180.02889349102043,
       "plan": []
     },
     {
@@ -361,9 +361,9 @@
       "template": "goToLoc",
       "feasibility": "C",
       "tier": 0,
-      "verdict": "FAIL",
-      "detail": "target 2: step 1: guide() used without a prior find_person() \u2014 guide is for leading a person, not for moving the robot. Use goto() to move the robot.",
-      "seconds": 39.87140397308394,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 57.91221632505767,
       "plan": [
         "record_position",
         "goto",
@@ -378,14 +378,10 @@
       "template": "goToLoc",
       "feasibility": "A",
       "tier": 0,
-      "verdict": "PASS",
-      "detail": "",
-      "seconds": 11.445187320932746,
-      "plan": [
-        "goto",
-        "find_person",
-        "announce"
-      ]
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.0487934409175,
+      "plan": []
     },
     {
       "entry_id": "c027-greetClothDscInRm-guidePrsToBeacon",
@@ -394,7 +390,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.0269828501623,
+      "seconds": 180.04020007909276,
       "plan": []
     },
     {
@@ -404,7 +400,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.03870435920544,
+      "seconds": 180.03811375587247,
       "plan": []
     },
     {
@@ -414,7 +410,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.01926741702482,
+      "seconds": 180.01106217177585,
       "plan": []
     },
     {
@@ -424,7 +420,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 24.161688926862553,
+      "seconds": 14.689615779789165,
       "plan": [
         "record_position",
         "goto",
@@ -439,9 +435,9 @@
       "template": "greetNameInRm",
       "feasibility": "C",
       "tier": 0,
-      "verdict": "FAIL",
-      "detail": "target 1: step 1: guide() used without a prior find_person() \u2014 guide is for leading a person, not for moving the robot. Use goto() to move the robot.",
-      "seconds": 33.51251532603055,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 48.41539830295369,
       "plan": [
         "record_position",
         "goto",
@@ -459,7 +455,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 11.548895452870056,
+      "seconds": 13.95207796804607,
       "plan": [
         "record_position",
         "goto",
@@ -476,7 +472,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.02111142897047,
+      "seconds": 180.04277341882698,
       "plan": []
     },
     {
@@ -486,7 +482,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.0211996610742,
+      "seconds": 180.02002689405344,
       "plan": []
     },
     {
@@ -496,7 +492,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.01018112595193,
+      "seconds": 180.05192853300832,
       "plan": []
     },
     {
@@ -504,12 +500,14 @@
       "template": "guideNameFromBeacToBeac",
       "feasibility": "C",
       "tier": 0,
-      "verdict": "FAIL",
-      "detail": "target 1: step 0: guide() used without a prior find_person() \u2014 guide is for leading a person, not for moving the robot. Use goto() to move the robot.",
-      "seconds": 19.78182425000705,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 16.174235346959904,
       "plan": [
         "goto",
         "find_person",
+        "find_person",
+        "approach_person",
         "guide"
       ]
     },
@@ -520,10 +518,9 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 12.015331227099523,
+      "seconds": 16.28983194893226,
       "plan": [
         "goto",
-        "find_person",
         "find_person",
         "approach_person",
         "guide"
@@ -534,9 +531,9 @@
       "template": "guideNameFromBeacToBeac",
       "feasibility": "C",
       "tier": 0,
-      "verdict": "FAIL",
-      "detail": "target 1: step 2: guide() used without a prior find_person() \u2014 guide is for leading a person, not for moving the robot. Use goto() to move the robot.",
-      "seconds": 33.71878577116877,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 43.953816107008606,
       "plan": [
         "goto",
         "find_person",
@@ -552,7 +549,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.00837027095258,
+      "seconds": 180.0182396459859,
       "plan": []
     },
     {
@@ -562,7 +559,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.0024153420236,
+      "seconds": 180.0122221331112,
       "plan": []
     },
     {
@@ -572,7 +569,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.00817029899918,
+      "seconds": 180.03433980909176,
       "plan": []
     },
     {
@@ -582,7 +579,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 15.624268911080435,
+      "seconds": 21.141435123980045,
       "plan": [
         "goto",
         "find_person",
@@ -599,7 +596,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 17.05468605691567,
+      "seconds": 20.812943094875664,
       "plan": [
         "goto",
         "find_person",
@@ -615,13 +612,14 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 26.219081138959154,
+      "seconds": 26.876471702940762,
       "plan": [
         "goto",
         "find_person",
         "approach_person",
         "record_position",
-        "goto"
+        "goto",
+        "find_person"
       ]
     },
     {
@@ -631,7 +629,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 12.148185848025605,
+      "seconds": 13.387549984967336,
       "plan": [
         "record_position",
         "goto",
@@ -645,9 +643,9 @@
       "template": "meetPrsAtBeac",
       "feasibility": "C",
       "tier": 0,
-      "verdict": "FAIL",
-      "detail": "target 0: command mentions 'follow ... to the bedroom' but no goto(location='bedroom') step was emitted. Append a goto after the follow so the robot can reach the destination.",
-      "seconds": 10.668952986132354,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 12.652759927790612,
       "plan": [
         "record_position",
         "goto",
@@ -665,7 +663,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 12.273446621838957,
+      "seconds": 9.887980315135792,
       "plan": [
         "record_position",
         "goto",
@@ -681,7 +679,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 10.385088464943692,
+      "seconds": 12.61802676715888,
       "plan": [
         "goto",
         "grasp",
@@ -695,7 +693,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 17.139845199882984,
+      "seconds": 23.743402500869706,
       "plan": [
         "goto",
         "grasp",
@@ -712,7 +710,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 8.958723235875368,
+      "seconds": 10.691292219096795,
       "plan": [
         "goto",
         "grasp",
@@ -727,7 +725,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.041956609115,
+      "seconds": 180.00543052796274,
       "plan": []
     },
     {
@@ -737,7 +735,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.01828498905525,
+      "seconds": 180.03377197589725,
       "plan": []
     },
     {
@@ -747,7 +745,7 @@
       "tier": 0,
       "verdict": "TIMEOUT",
       "detail": "planner not ready after 180s",
-      "seconds": 180.0084468559362,
+      "seconds": 180.01122292596847,
       "plan": []
     },
     {
@@ -757,7 +755,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 8.954226560192183,
+      "seconds": 9.658871519146487,
       "plan": [
         "goto",
         "vlm_fallback",
@@ -772,7 +770,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 6.957381294108927,
+      "seconds": 8.692347031086683,
       "plan": [
         "goto",
         "vlm_fallback",
@@ -787,7 +785,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 10.561432542977855,
+      "seconds": 8.34518474387005,
       "plan": [
         "goto",
         "vlm_fallback",
@@ -802,7 +800,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 9.306746828835458,
+      "seconds": 8.281455151969567,
       "plan": [
         "goto",
         "vlm_fallback",
@@ -817,7 +815,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 11.359428364783525,
+      "seconds": 7.773113681934774,
       "plan": [
         "goto",
         "vlm_fallback",
@@ -832,7 +830,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 7.8378155489917845,
+      "seconds": 9.403146241093054,
       "plan": [
         "goto",
         "vlm_fallback",
@@ -847,16 +845,16 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 23.126608531922102,
+      "seconds": 72.55554339080118,
       "plan": [
         "goto",
         "find_person",
         "goto",
         "find_person",
-        "goto",
+        "find_person",
         "approach_person",
         "ask_person",
-        "goto",
+        "find_person",
         "approach_person",
         "announce"
       ]
@@ -866,17 +864,18 @@
       "template": "tellPrsInfoAtLocToPrsAtLoc",
       "feasibility": "C",
       "tier": 0,
-      "verdict": "FAIL",
-      "detail": "target 3: step 1: announce() with no text reports the last gathered result, but no count/describe_person/ask_person/vlm_fallback ran before it. Either give announce a literal text=..., or do the gathering action first (then goto start_position, then the text-less announce).",
-      "seconds": 15.200843174941838,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 41.25071931886487,
       "plan": [
         "goto",
         "find_person",
         "goto",
         "find_person",
-        "approach_person",
+        "goto",
         "describe_person",
         "goto",
+        "approach_person",
         "announce"
       ]
     },
@@ -887,15 +886,13 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 24.683572955895215,
+      "seconds": 14.52428869297728,
       "plan": [
         "goto",
         "find_person",
-        "goto",
-        "find_person",
-        "find_person",
         "approach_person",
         "describe_person",
+        "goto",
         "find_person",
         "approach_person",
         "announce"
@@ -908,7 +905,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 7.782682218123227,
+      "seconds": 8.754006667993963,
       "plan": [
         "goto",
         "find_person",
@@ -925,14 +922,13 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 34.94222469790839,
+      "seconds": 10.094052426982671,
       "plan": [
         "goto",
         "find_person",
         "approach_person",
         "describe_person",
         "goto",
-        "announce",
         "announce"
       ]
     },
@@ -943,7 +939,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 10.941098889801651,
+      "seconds": 15.82813211902976,
       "plan": [
         "goto",
         "find_person",
@@ -960,7 +956,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 8.893473290838301,
+      "seconds": 8.666656224988401,
       "plan": [
         "goto",
         "find_person"
@@ -973,7 +969,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 8.98328904202208,
+      "seconds": 10.592121090041474,
       "plan": [
         "goto",
         "vlm_fallback",
@@ -988,7 +984,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 13.987032600911334,
+      "seconds": 17.814793067984283,
       "plan": [
         "goto",
         "grasp",
@@ -1004,7 +1000,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 6.593696949072182,
+      "seconds": 22.81856599007733,
       "plan": [
         "record_position",
         "goto",
@@ -1016,16 +1012,16 @@
       "template": "edge",
       "feasibility": "C",
       "tier": 0,
-      "verdict": "FAIL",
-      "detail": "target 2: step 0: guide() used without a prior find_person() \u2014 guide is for leading a person, not for moving the robot. Use goto() to move the robot.",
-      "seconds": 61.66248059109785,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 46.64591257018037,
       "plan": [
         "record_position",
         "goto",
         "find_person",
+        "record_position",
         "find_person",
         "approach_person",
-        "record_position",
         "guide",
         "guide"
       ]
@@ -1037,7 +1033,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 9.1331469360739,
+      "seconds": 8.421064577065408,
       "plan": [
         "goto",
         "count",
@@ -1052,7 +1048,7 @@
       "tier": 0,
       "verdict": "PASS",
       "detail": "",
-      "seconds": 8.836785827064887,
+      "seconds": 11.252430026885122,
       "plan": [
         "goto",
         "goto",
