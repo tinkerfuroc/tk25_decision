@@ -79,6 +79,23 @@ def make_generator(kb: Knowledge, *, seed: int) -> CommandGenerator:
     return CommandGenerator(kb)
 
 
+def _expand_followup(gen: CommandGenerator, name: str, category: str, followups: list[str]) -> str:
+    """Expand one follow-up template, resolving its own nested FOLLOWUP markers first, then
+    filling its own placeholders in isolation -- mirroring the vendored _generate_followup,
+    which fills each follow-up's placeholders before it is spliced into its parent, so repeated
+    bare placeholders (e.g. {art}) at different nesting levels are sampled independently."""
+    text = gen.followup_templates[name]
+    while True:
+        match = _FOLLOWUP_RE.search(text)
+        if not match:
+            break
+        sub_name = gen._sample_followup(match.group(1), category)
+        followups.append(sub_name)
+        expanded = _expand_followup(gen, sub_name, category, followups)
+        text = text.replace(match.group(0), expanded, 1)
+    return gen.insert_all_placeholders(text)
+
+
 def expand_template(gen: CommandGenerator, template: str, category: str) -> tuple[str, tuple[str, ...]]:
     """Expand one named template exactly as generate_command_start does, recording follow-up names."""
     text = gen.templates[template]
@@ -89,7 +106,7 @@ def expand_template(gen: CommandGenerator, template: str, category: str) -> tupl
             break
         name = gen._sample_followup(match.group(1), category)
         followups.append(name)
-        expanded = gen.followup_templates[name]
+        expanded = _expand_followup(gen, name, category, followups)
         text = text.replace(match.group(0), expanded, 1)
     text = gen.insert_all_placeholders(text)
     text = gen._resolve_duplicates(text)

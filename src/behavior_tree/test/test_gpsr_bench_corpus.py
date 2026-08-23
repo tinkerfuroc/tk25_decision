@@ -61,6 +61,26 @@ def test_corpus_text_stays_inside_arena_vocabulary():
             assert word not in e.text, (e.template, e.text)
 
 
+def test_expand_template_samples_followup_placeholders_independently():
+    kb = corpus.build_knowledge(CONSTANTS)
+    gen = corpus.make_generator(kb, seed=0)
+    gen.templates["x"] = "{art} {FOLLOWUP:atLoc}"
+    gen.followup_templates["findObj"] = "{art} thing"
+    gen.followup_people["atLoc"] = ["findObj"]
+    seen = []
+
+    def fake_insert_placeholders(ph):
+        seen.append(ph)
+        return f"a{len(seen)}"
+
+    gen.insert_placeholders = fake_insert_placeholders
+
+    text, followups = corpus.expand_template(gen, "x", "people")
+
+    assert "a1" in text and "a2" in text
+    assert followups == ("findObj",)
+
+
 def test_jsonl_roundtrip(tmp_path):
     entries = corpus.generate_corpus(CONSTANTS, seed=2, per_template=1)
     path = tmp_path / "corpus.jsonl"
