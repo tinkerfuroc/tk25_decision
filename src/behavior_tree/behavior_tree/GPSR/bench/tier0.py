@@ -63,6 +63,20 @@ def plan_one(planner, slot: int, command: str, *, timeout_s: float):
     return targets, plans
 
 
+def _target_error(planner, slot: int, index: int):
+    """Read the per-target planner error recorded on total-attempt exhaustion.
+
+    ``GPSRPlanner`` has no public accessor for this (only ``_cache[(slot, index)]["error"]``,
+    set at planner.py:877 alongside the ``_fallback_plan`` it stores) so this reads the private
+    cache directly, tolerating planners (fakes) that don't have one at all.
+    """
+    cache = getattr(planner, "_cache", None)
+    if not cache:
+        return None
+    entry = cache.get((slot, index))
+    return entry.get("error") if entry else None
+
+
 def judge(entry: CorpusEntry, targets, plans, planner, slot: int, *, known_actions,
           known_locations, seconds) -> BenchResult:
     actions = [str(step.get("action")) for plan in plans for step in plan]
@@ -84,6 +98,14 @@ def judge(entry: CorpusEntry, targets, plans, planner, slot: int, *, known_actio
                                     known_locations=known_locations, prior_plan=prior_plan)
         if not ok:
             return BenchResult(verdict="FAIL", detail=f"target {i}: {message}", **base)
+    # A target whose planner attempts were all exhausted stores a guaranteed-valid
+    # fallback acknowledgement plan (orchestrator.py:606 _fallback_plan) alongside the
+    # error that caused it (planner.py:872-877) -- that plan passes validate_plan above
+    # but is not a real answer, so score it FAIL using the recorded reason.
+    for i in range(len(targets)):
+        err = _target_error(planner, slot, i)
+        if err:
+            return BenchResult(verdict="FAIL", detail=f"planner exhausted attempts: {err}", **base)
     return BenchResult(verdict="PASS", **base)
 
 

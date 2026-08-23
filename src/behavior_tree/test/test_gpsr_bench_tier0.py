@@ -114,6 +114,26 @@ def test_tier0_judge_seeds_prior_plan_across_targets_like_production():
     assert "guide" in results_alone[0].detail
 
 
+def test_tier0_scores_a_fallback_plan_as_fail():
+    """F3: a target whose planner attempts were all exhausted stores a guaranteed-valid
+    fallback acknowledgement plan (orchestrator.py:606 _fallback_plan) alongside the error
+    that caused it -- that plan passes validate_plan, but it is not a real answer."""
+    command = "impossible command"
+    fallback_text = ("I heard your command but could not work out a complete plan for it. "
+                     "I will skip it for now.")
+    plans = {command: [[{"action": "announce", "params": {"text": fallback_text}}]]}
+
+    class FallbackPlanner(FakePlanner):
+        def request_plan_all(self, slot, targets, command=None):
+            super().request_plan_all(slot, targets, command=command)
+            self._cache = {(slot, 0): {"error": "all 4 attempts failed (last reason: invalid json)"}}
+
+    results = run_tier0([_entry(0, command)], FallbackPlanner(plans), known_actions=KNOWN_ACTIONS,
+                        known_locations=KNOWN_LOCATIONS, timeout_s=0.2)
+    assert results[0].verdict == "FAIL"
+    assert "planner exhausted attempts" in results[0].detail
+
+
 class HangingSplitPlanner:
     """A planner whose split_command never returns, like a stuck network call."""
 
