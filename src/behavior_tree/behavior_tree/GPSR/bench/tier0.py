@@ -7,6 +7,10 @@ from typing import Any, Callable, Iterable, Sequence
 
 from behavior_tree.GPSR.bench.corpus import CorpusEntry
 from behavior_tree.GPSR.bench.report import BenchResult
+# _flatten_prior_plans is production's own cross-target validation context builder
+# (planner.py:397); ported here (not re-implemented) so tier 0 mirrors exactly what
+# plan_target validates against at planner.py:836-841.
+from behavior_tree.GPSR.planner import _flatten_prior_plans
 from behavior_tree.GPSR.planner_validators import validate_plan
 
 
@@ -59,7 +63,8 @@ def plan_one(planner, slot: int, command: str, *, timeout_s: float):
     return targets, plans
 
 
-def judge(entry: CorpusEntry, targets, plans, *, known_actions, known_locations, seconds) -> BenchResult:
+def judge(entry: CorpusEntry, targets, plans, planner, slot: int, *, known_actions,
+          known_locations, seconds) -> BenchResult:
     actions = [str(step.get("action")) for plan in plans for step in plan]
     base = dict(entry_id=entry.id, template=entry.template, feasibility=entry.feasibility,
                 tier=0, seconds=seconds, plan=actions)
@@ -68,7 +73,15 @@ def judge(entry: CorpusEntry, targets, plans, *, known_actions, known_locations,
     for i, plan in enumerate(plans):
         if not plan:
             return BenchResult(verdict="FAIL", detail=f"empty plan for target {i}", **base)
-        ok, message = validate_plan(plan, entry.text, known_actions, known_locations=known_locations)
+        target = targets[i] if i < len(targets) else {}
+        desc = target.get("desc") if isinstance(target, dict) else str(target)
+        # Mirror planner.py:836-841 exactly: validate THIS target's own description (not
+        # the whole command) with the earlier targets' flattened intent seeded as prior_plan,
+        # so a guide() after an earlier find_person() is not re-rejected across a target
+        # boundary (planner_validators.validate_plan's own contract for prior_plan).
+        prior_plan = _flatten_prior_plans(planner, slot, i)
+        ok, message = validate_plan(plan, desc or "", known_actions,
+                                    known_locations=known_locations, prior_plan=prior_plan)
         if not ok:
             return BenchResult(verdict="FAIL", detail=f"target {i}: {message}", **base)
     return BenchResult(verdict="PASS", **base)
@@ -94,6 +107,6 @@ def run_tier0(entries: Sequence[CorpusEntry], planner, *, known_actions: Iterabl
             results.append(BenchResult(entry.id, entry.template, entry.feasibility, 0, "ERROR",
                                        f"{type(exc).__name__}: {exc}", time.monotonic() - started))
             continue
-        results.append(judge(entry, targets, plans, known_actions=known_actions,
+        results.append(judge(entry, targets, plans, active_planner, slot, known_actions=known_actions,
                              known_locations=known_locations, seconds=time.monotonic() - started))
     return results

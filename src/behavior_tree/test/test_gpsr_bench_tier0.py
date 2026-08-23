@@ -6,7 +6,7 @@ import time
 from behavior_tree.GPSR.bench.corpus import CorpusEntry
 from behavior_tree.GPSR.bench.tier0 import run_tier0
 
-KNOWN_ACTIONS = {"goto", "find_person", "announce", "count", "find_object"}
+KNOWN_ACTIONS = {"goto", "find_person", "announce", "count", "find_object", "guide"}
 KNOWN_LOCATIONS = {"kitchen_table", "sofa", "kitchen"}
 
 
@@ -16,9 +16,11 @@ class FakePlanner:
         self.raise_for = set(raise_for)
         self.never_ready = set(never_ready)
         self._slots = {}
+        self._slot_context = {}
 
     def reset(self):
         self._slots.clear()
+        self._slot_context.clear()
 
     def split_command(self, command):
         if command in self.raise_for:
@@ -27,6 +29,12 @@ class FakePlanner:
 
     def request_plan_all(self, slot, targets, command=None):
         self._slots[slot] = command
+        # Mirrors GPSRPlanner.request_plan_all storing the slot's target list (planner.py:912)
+        # so _flatten_prior_plans (planner.py:397, ported into tier0.judge) has something to read.
+        self._slot_context[slot] = {"command": command, "targets": targets}
+
+    def _get_slot_context(self, slot):
+        return self._slot_context.get(slot, {})
 
     def all_targets_ready(self, slot, n):
         return self._slots[slot] not in self.never_ready
@@ -75,6 +83,35 @@ def test_tier0_builds_a_fresh_planner_per_entry_via_factory():
                         known_locations=KNOWN_LOCATIONS, timeout_s=0.2, planner_factory=factory)
     assert len(calls) == 3
     assert all(r.verdict == "PASS" for r in results)
+
+
+def test_tier0_judge_seeds_prior_plan_across_targets_like_production():
+    """F1: judge must validate each target against ITS OWN desc with the earlier targets'
+    flattened intent as prior_plan (mirrors planner.py:836-841), not the whole command with
+    no prior_plan at all -- otherwise a legitimate guide() after an earlier find_person() is
+    rejected across the target boundary."""
+    two_targets = [
+        {"id": "t0", "desc": "find the person in the kitchen", "depends_on": []},
+        {"id": "t1", "desc": "guide them to the sofa", "depends_on": ["t0"]},
+    ]
+    command = "find the person in the kitchen then guide them to the sofa"
+    two_target_plans = {command: [[{"action": "find_person", "params": {}}],
+                                  [{"action": "guide", "params": {}}]]}
+
+    class TwoTargetPlanner(FakePlanner):
+        def split_command(self, command):
+            return two_targets
+
+    results = run_tier0([_entry(0, command)], TwoTargetPlanner(two_target_plans),
+                        known_actions=KNOWN_ACTIONS, known_locations=KNOWN_LOCATIONS, timeout_s=0.2)
+    assert results[0].verdict == "PASS"
+
+    guide_alone = "guide them to the sofa"
+    guide_alone_plans = {guide_alone: [[{"action": "guide", "params": {}}]]}
+    results_alone = run_tier0([_entry(1, guide_alone)], FakePlanner(guide_alone_plans),
+                              known_actions=KNOWN_ACTIONS, known_locations=KNOWN_LOCATIONS, timeout_s=0.2)
+    assert results_alone[0].verdict == "FAIL"
+    assert "guide" in results_alone[0].detail
 
 
 class HangingSplitPlanner:
