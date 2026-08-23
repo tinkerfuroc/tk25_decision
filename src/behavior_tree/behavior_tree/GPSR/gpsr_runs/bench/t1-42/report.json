@@ -1,0 +1,740 @@
+{
+  "corpus": "src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl",
+  "totals": {
+    "1": {
+      "TIMEOUT": 73
+    }
+  },
+  "results": [
+    {
+      "entry_id": "c000-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9890389442444,
+      "plan": []
+    },
+    {
+      "entry_id": "c001-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9890580177307,
+      "plan": []
+    },
+    {
+      "entry_id": "c002-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.98906230926514,
+      "plan": []
+    },
+    {
+      "entry_id": "c003-countClothPrsInRoom",
+      "template": "countClothPrsInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.08212327957153,
+      "plan": []
+    },
+    {
+      "entry_id": "c004-countClothPrsInRoom",
+      "template": "countClothPrsInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0821359157562,
+      "plan": []
+    },
+    {
+      "entry_id": "c005-countClothPrsInRoom",
+      "template": "countClothPrsInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.08213925361633,
+      "plan": []
+    },
+    {
+      "entry_id": "c006-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9916546344757,
+      "plan": []
+    },
+    {
+      "entry_id": "c007-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.99167680740356,
+      "plan": []
+    },
+    {
+      "entry_id": "c008-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9916832447052,
+      "plan": []
+    },
+    {
+      "entry_id": "c009-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9837040901184,
+      "plan": []
+    },
+    {
+      "entry_id": "c010-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9837248325348,
+      "plan": []
+    },
+    {
+      "entry_id": "c011-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9837312698364,
+      "plan": []
+    },
+    {
+      "entry_id": "c012-findObjInRoom-takeObj-putObjInTrash",
+      "template": "findObjInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0112307071686,
+      "plan": []
+    },
+    {
+      "entry_id": "c013-findObjInRoom-takeObj-deliverObjToMe",
+      "template": "findObjInRoom",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.01124477386475,
+      "plan": []
+    },
+    {
+      "entry_id": "c014-findObjInRoom-takeObj-deliverObjToPrsInRoom",
+      "template": "findObjInRoom",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.01124835014343,
+      "plan": []
+    },
+    {
+      "entry_id": "c015-findPrsInRoom-followPrsToRoom",
+      "template": "findPrsInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.97401213645935,
+      "plan": []
+    },
+    {
+      "entry_id": "c016-findPrsInRoom-followPrsToRoom",
+      "template": "findPrsInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9740250110626,
+      "plan": []
+    },
+    {
+      "entry_id": "c017-findPrsInRoom-talkInfo",
+      "template": "findPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.97402811050415,
+      "plan": []
+    },
+    {
+      "entry_id": "c018-followNameFromBeacToRoom",
+      "template": "followNameFromBeacToRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.1512999534607,
+      "plan": []
+    },
+    {
+      "entry_id": "c019-followNameFromBeacToRoom",
+      "template": "followNameFromBeacToRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.15132665634155,
+      "plan": []
+    },
+    {
+      "entry_id": "c020-followNameFromBeacToRoom",
+      "template": "followNameFromBeacToRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.1513342857361,
+      "plan": []
+    },
+    {
+      "entry_id": "c021-followPrsAtLoc",
+      "template": "followPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9724576473236,
+      "plan": []
+    },
+    {
+      "entry_id": "c022-followPrsAtLoc",
+      "template": "followPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9724802970886,
+      "plan": []
+    },
+    {
+      "entry_id": "c023-followPrsAtLoc",
+      "template": "followPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.97248697280884,
+      "plan": []
+    },
+    {
+      "entry_id": "c024-goToLoc-findPrs-guidePrsToBeacon",
+      "template": "goToLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.04427552223206,
+      "plan": []
+    },
+    {
+      "entry_id": "c025-goToLoc-meetName-guidePrsToBeacon",
+      "template": "goToLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0442924499512,
+      "plan": []
+    },
+    {
+      "entry_id": "c026-goToLoc-findPrs-talkInfo",
+      "template": "goToLoc",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.04429721832275,
+      "plan": []
+    },
+    {
+      "entry_id": "c027-greetClothDscInRm-guidePrsToBeacon",
+      "template": "greetClothDscInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0408866405487,
+      "plan": []
+    },
+    {
+      "entry_id": "c028-greetClothDscInRm-talkInfo",
+      "template": "greetClothDscInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0409097671509,
+      "plan": []
+    },
+    {
+      "entry_id": "c029-greetClothDscInRm-talkInfo",
+      "template": "greetClothDscInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.04091572761536,
+      "plan": []
+    },
+    {
+      "entry_id": "c030-greetNameInRm-followPrs",
+      "template": "greetNameInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.07779574394226,
+      "plan": []
+    },
+    {
+      "entry_id": "c031-greetNameInRm-guidePrsToBeacon",
+      "template": "greetNameInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0778169631958,
+      "plan": []
+    },
+    {
+      "entry_id": "c032-greetNameInRm-followPrs",
+      "template": "greetNameInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0778229236603,
+      "plan": []
+    },
+    {
+      "entry_id": "c033-guideClothPrsFromBeacToBeac",
+      "template": "guideClothPrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.07693314552307,
+      "plan": []
+    },
+    {
+      "entry_id": "c034-guideClothPrsFromBeacToBeac",
+      "template": "guideClothPrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.07696080207825,
+      "plan": []
+    },
+    {
+      "entry_id": "c035-guideClothPrsFromBeacToBeac",
+      "template": "guideClothPrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0769684314728,
+      "plan": []
+    },
+    {
+      "entry_id": "c036-guideNameFromBeacToBeac",
+      "template": "guideNameFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0224313735962,
+      "plan": []
+    },
+    {
+      "entry_id": "c037-guideNameFromBeacToBeac",
+      "template": "guideNameFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0224485397339,
+      "plan": []
+    },
+    {
+      "entry_id": "c038-guideNameFromBeacToBeac",
+      "template": "guideNameFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0224530696869,
+      "plan": []
+    },
+    {
+      "entry_id": "c039-guidePrsFromBeacToBeac",
+      "template": "guidePrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0227394104004,
+      "plan": []
+    },
+    {
+      "entry_id": "c040-guidePrsFromBeacToBeac",
+      "template": "guidePrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0227563381195,
+      "plan": []
+    },
+    {
+      "entry_id": "c041-guidePrsFromBeacToBeac",
+      "template": "guidePrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0227618217468,
+      "plan": []
+    },
+    {
+      "entry_id": "c042-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.03358483314514,
+      "plan": []
+    },
+    {
+      "entry_id": "c043-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0335977077484,
+      "plan": []
+    },
+    {
+      "entry_id": "c044-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0336015224457,
+      "plan": []
+    },
+    {
+      "entry_id": "c045-meetPrsAtBeac-talkInfo",
+      "template": "meetPrsAtBeac",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.98411321640015,
+      "plan": []
+    },
+    {
+      "entry_id": "c046-meetPrsAtBeac-followPrsToRoom",
+      "template": "meetPrsAtBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.98413825035095,
+      "plan": []
+    },
+    {
+      "entry_id": "c047-meetPrsAtBeac-talkInfo",
+      "template": "meetPrsAtBeac",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.98414754867554,
+      "plan": []
+    },
+    {
+      "entry_id": "c048-takeObjFromPlcmt-deliverObjToMe",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.028933763504,
+      "plan": []
+    },
+    {
+      "entry_id": "c049-takeObjFromPlcmt-putObjInTrash",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.02894735336304,
+      "plan": []
+    },
+    {
+      "entry_id": "c050-takeObjFromPlcmt-placeObjOnPlcmt",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0289511680603,
+      "plan": []
+    },
+    {
+      "entry_id": "c051-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.02738976478577,
+      "plan": []
+    },
+    {
+      "entry_id": "c052-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.02740597724915,
+      "plan": []
+    },
+    {
+      "entry_id": "c053-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.02741146087646,
+      "plan": []
+    },
+    {
+      "entry_id": "c054-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.01863980293274,
+      "plan": []
+    },
+    {
+      "entry_id": "c055-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.01865220069885,
+      "plan": []
+    },
+    {
+      "entry_id": "c056-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0186550617218,
+      "plan": []
+    },
+    {
+      "entry_id": "c057-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.03111362457275,
+      "plan": []
+    },
+    {
+      "entry_id": "c058-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.03112626075745,
+      "plan": []
+    },
+    {
+      "entry_id": "c059-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.03112959861755,
+      "plan": []
+    },
+    {
+      "entry_id": "c060-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.07156586647034,
+      "plan": []
+    },
+    {
+      "entry_id": "c061-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0715835094452,
+      "plan": []
+    },
+    {
+      "entry_id": "c062-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0715892314911,
+      "plan": []
+    },
+    {
+      "entry_id": "c063-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0618851184845,
+      "plan": []
+    },
+    {
+      "entry_id": "c064-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.061909198761,
+      "plan": []
+    },
+    {
+      "entry_id": "c065-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 301.0619173049927,
+      "plan": []
+    },
+    {
+      "entry_id": "e00",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9971868991852,
+      "plan": []
+    },
+    {
+      "entry_id": "e01",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.99720335006714,
+      "plan": []
+    },
+    {
+      "entry_id": "e02",
+      "template": "edge",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.99720788002014,
+      "plan": []
+    },
+    {
+      "entry_id": "e03",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.99369835853577,
+      "plan": []
+    },
+    {
+      "entry_id": "e04",
+      "template": "edge",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9937107563019,
+      "plan": []
+    },
+    {
+      "entry_id": "e05",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9937160015106,
+      "plan": []
+    },
+    {
+      "entry_id": "e06",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "group timed out at slot 0",
+      "seconds": 300.9826011657715,
+      "plan": []
+    }
+  ]
+}
