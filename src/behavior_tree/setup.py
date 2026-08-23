@@ -12,9 +12,9 @@ setup(
         ('share/' + package_name, ['package.xml']),
     ],
     package_data={
-        "behavior_tree": ["mock_config.json"],
+        "behavior_tree": ["mock_config.json", "mock_config.bench.json"],
         "behavior_tree.DoingLaundry": ["constants.json"],
-        "behavior_tree.GPSR": ["constants.json"],
+        "behavior_tree.GPSR": ["constants.json", "constants.rcw2026.json"],
         "behavior_tree.GPSR.supervision": ["fixtures/*", "fixtures/scenarios/*"],
         "behavior_tree.HelpMeCarry": ["constants.json"],
         "behavior_tree.HRI": ["constants.json"],
