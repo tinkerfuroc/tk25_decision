@@ -1,6 +1,8 @@
 import os
 os.environ.setdefault("BT_MOCK_MODE", "true")
 
+import time
+
 from behavior_tree.GPSR.bench.corpus import CorpusEntry
 from behavior_tree.GPSR.bench.tier0 import run_tier0
 
@@ -73,3 +75,25 @@ def test_tier0_builds_a_fresh_planner_per_entry_via_factory():
                         known_locations=KNOWN_LOCATIONS, timeout_s=0.2, planner_factory=factory)
     assert len(calls) == 3
     assert all(r.verdict == "PASS" for r in results)
+
+
+class HangingSplitPlanner:
+    """A planner whose split_command never returns, like a stuck network call."""
+
+    def reset(self):
+        pass
+
+    def split_command(self, command):
+        time.sleep(60)
+        raise AssertionError("should never get here in a bounded test")
+
+
+def test_tier0_bounds_a_stuck_split_command():
+    started = time.monotonic()
+    entries = [_entry(0, "go to the sofa")]
+    results = run_tier0(entries, HangingSplitPlanner(), known_actions=KNOWN_ACTIONS,
+                        known_locations=KNOWN_LOCATIONS, timeout_s=0.2)
+    elapsed = time.monotonic() - started
+    assert results[0].verdict == "TIMEOUT"
+    assert "split_command" in results[0].detail
+    assert elapsed < 5.0

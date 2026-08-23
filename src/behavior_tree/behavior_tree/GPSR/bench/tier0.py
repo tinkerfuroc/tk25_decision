@@ -1,6 +1,7 @@
 """Tier 0: run corpus commands through the two-layer planner only (no ROS, no execution)."""
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any, Callable, Iterable, Sequence
 
@@ -9,10 +10,45 @@ from behavior_tree.GPSR.bench.report import BenchResult
 from behavior_tree.GPSR.planner_validators import validate_plan
 
 
+def _call_with_timeout(fn: Callable[[], Any], timeout_s: float):
+    """Run ``fn()`` on a daemon thread and enforce a hard wall-clock bound.
+
+    ``GPSRPlanner.split_command`` is a synchronous LLM round-trip with no
+    timeout of its own (the openai SDK's default is ~600s per attempt, up to
+    ``max_attempts`` retries). Calling it directly on the bench's control
+    thread means one slow/stuck request can stall the whole tier-0 run
+    indefinitely. Running it here bounds the wait to ``timeout_s``; on
+    timeout the worker thread is abandoned (never joined) rather than killed,
+    matching the existing tolerance elsewhere in this bench for orphaned
+    planner threads outliving a timed-out entry.
+    """
+    box: dict[str, Any] = {}
+
+    def _target():
+        try:
+            box["value"] = fn()
+        except Exception as exc:  # noqa: BLE001 - re-raised on the caller's thread
+            box["error"] = exc
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout_s)
+    if thread.is_alive():
+        raise TimeoutError(f"timed out after {timeout_s:.0f}s")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
 def plan_one(planner, slot: int, command: str, *, timeout_s: float):
-    targets = planner.split_command(command)
+    started = time.monotonic()
+    try:
+        targets = _call_with_timeout(lambda: planner.split_command(command), timeout_s)
+    except TimeoutError:
+        raise TimeoutError(f"split_command timed out after {timeout_s:.0f}s")
+    remaining = max(0.0, timeout_s - (time.monotonic() - started))
     planner.request_plan_all(slot, targets, command=command)
-    deadline = time.monotonic() + timeout_s
+    deadline = time.monotonic() + remaining
     while time.monotonic() < deadline:
         if planner.all_targets_ready(slot, len(targets)):
             break
