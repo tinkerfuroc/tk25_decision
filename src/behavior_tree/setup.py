@@ -59,6 +59,7 @@ setup(
             'gpsr-demo = behavior_tree.GPSR.gpsr_2ndcall:main',
             'gpsr-full = behavior_tree.GPSR.gpsr_full:main',
             'gpsr-orchestrator = behavior_tree.GPSR.gpsr_orchestrator:main',
+            'gpsr-bench = behavior_tree.GPSR.gpsr_bench:main',
             'gpsr-dryrun = behavior_tree.GPSR.gpsr_dryrun:main',
             'EGPSR = behavior_tree.GPSR.egpsr:main',
             # GPSR small-tree dev tests (one per atomic action)
