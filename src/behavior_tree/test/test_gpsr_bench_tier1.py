@@ -3,7 +3,10 @@ import os
 import stat
 import sys
 import textwrap
+import time
 from pathlib import Path
+
+import pytest
 
 from behavior_tree.GPSR.bench.corpus import CorpusEntry
 from behavior_tree.GPSR.bench.tier1 import bench_env, run_tier1
@@ -34,6 +37,21 @@ def _fake_orchestrator(tmp_path: Path, behaviour: str) -> list[str]:
             time.sleep(1)
     """))
     return [sys.executable, str(script)]
+
+
+def _fake_wrapper_orchestrator(tmp_path: Path, pidfile: Path) -> list[str]:
+    """A stand-in for `ros2 run ...`: a wrapper that Popen's the real orchestrator as a
+    grandchild, mirroring how the real launcher forks `gpsr-orchestrator` beneath itself."""
+    inner = _fake_orchestrator(tmp_path, "ok")
+    wrapper = tmp_path / "fake_wrapper.py"
+    wrapper.write_text(textwrap.dedent(f"""
+        import subprocess, sys
+        p = subprocess.Popen({inner!r})
+        with open({str(pidfile)!r}, "w") as f:
+            f.write(str(p.pid))
+        p.wait()
+    """))
+    return [sys.executable, str(wrapper)]
 
 
 def test_bench_env_sets_the_orchestrator_switches(tmp_path):
@@ -74,3 +92,28 @@ def test_tier1_reports_a_crashed_process(tmp_path):
                         launcher=_fake_orchestrator(tmp_path, "crash"))
     assert [r.verdict for r in results] == ["PASS", "ERROR"]
     assert "exit code 3" in results[1].detail
+
+
+def test_tier1_stops_the_whole_process_group(tmp_path):
+    """`ros2 run ...` is a wrapper that Popen's the real orchestrator as a grandchild; stopping
+    the group must reach that grandchild too, not just the direct child we launched."""
+    pidfile = tmp_path / "grandchild.pid"
+    entries = [_entry(0, "go to the sofa")]
+    results = run_tier1(entries, group_size=1, timeout_s=20, mock_config=tmp_path / "m.json",
+                        constants=tmp_path / "c.json", plan_dir=tmp_path / "runs",
+                        launcher=_fake_wrapper_orchestrator(tmp_path, pidfile))
+    assert results[0].verdict == "PASS"
+    grandchild_pid = int(pidfile.read_text().strip())
+
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        try:
+            os.kill(grandchild_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail(f"grandchild pid {grandchild_pid} was still alive after the group stopped")
+
+    with pytest.raises(ProcessLookupError):
+        os.kill(grandchild_pid, 0)

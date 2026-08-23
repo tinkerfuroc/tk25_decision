@@ -42,13 +42,27 @@ def _events_file(plan_dir: Path, since: float) -> Path | None:
 
 
 def _stop(proc: subprocess.Popen) -> None:
+    """Stop the whole process group, not just the direct child.
+
+    DEFAULT_LAUNCHER (`ros2 run ...`) is a wrapper that Popen's the real `gpsr-orchestrator`
+    as a grandchild; signalling only `proc` would orphan it. `run_group` launches with
+    `start_new_session=True` so `proc`'s pid is also its process group id, letting us signal
+    the whole group here.
+    """
     if proc.poll() is not None:
         return
-    proc.send_signal(signal.SIGINT)
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGINT)
+    except ProcessLookupError:
+        return
     try:
         proc.wait(timeout=15)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         proc.wait()
 
 
@@ -56,28 +70,28 @@ def run_group(entries: Sequence[CorpusEntry], *, env: dict[str, str], plan_dir: 
               launcher: Sequence[str], timeout_s: float, poll_s: float = 1.0) -> list[BenchResult]:
     plan_dir = Path(plan_dir)
     plan_dir.mkdir(parents=True, exist_ok=True)
-    log = (plan_dir / "bench-orchestrator.log").open("a", encoding="utf-8")
-    started = time.time()
-    proc = subprocess.Popen(list(launcher), env=env, stdout=log, stderr=subprocess.STDOUT, cwd=str(plan_dir))
     tasks = {}
     exit_code = None
-    try:
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            events = _events_file(plan_dir, started - 1)
-            if events:
-                tasks = parse_events(events)
-                # Task ids are 1-based (orchestrator.py:2584 telemetry.task_id(slot + 1); see
-                # orchestrator.py _task_identity), so slot N's result lives at tasks[N + 1].
-                if all(tasks.get(i + 1) and tasks[i + 1].status for i in range(len(entries))):
+    with (plan_dir / "bench-orchestrator.log").open("a", encoding="utf-8") as log:
+        started = time.time()
+        proc = subprocess.Popen(list(launcher), env=env, stdout=log, stderr=subprocess.STDOUT,
+                                cwd=str(plan_dir), start_new_session=True)
+        try:
+            deadline = time.monotonic() + timeout_s
+            while time.monotonic() < deadline:
+                events = _events_file(plan_dir, started - 1)
+                if events:
+                    tasks = parse_events(events)
+                    # Task ids are 1-based (orchestrator.py:2584 telemetry.task_id(slot + 1); see
+                    # orchestrator.py _task_identity), so slot N's result lives at tasks[N + 1].
+                    if all(tasks.get(i + 1) and tasks[i + 1].status for i in range(len(entries))):
+                        break
+                exit_code = proc.poll()
+                if exit_code is not None:
                     break
-            exit_code = proc.poll()
-            if exit_code is not None:
-                break
-            time.sleep(poll_s)
-    finally:
-        _stop(proc)
-        log.close()
+                time.sleep(poll_s)
+        finally:
+            _stop(proc)
 
     results: list[BenchResult] = []
     timed_out_at = None
