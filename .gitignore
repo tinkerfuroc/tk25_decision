@@ -204,3 +204,4 @@ COLCON_IGNORE
 AMENT_IGNORE
 
 # End of https://www.toptal.com/developers/gitignore/api/ros2,python
+src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/*/runs/
