@@ -3,8 +3,10 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from unittest import mock
 
 from behavior_tree.GPSR.bench.corpus import CorpusEntry
+from behavior_tree.GPSR.bench import tier2
 from behavior_tree.GPSR.bench.tier2 import run_tier2
 
 
@@ -121,23 +123,34 @@ def test_tier2_substitutes_run_dir_as_an_absolute_path(tmp_path):
 
 
 def test_tier2_unexecutable_launcher_stops_recorder_and_scores_error(tmp_path):
-    stop_marker = tmp_path / "recorder-stopped"
-    recorder_cmd = ["sh", "-c",
-                    f"trap 'touch {stop_marker}; exit 0' INT TERM; while true; do sleep 1; done"]
     entries = [_entry(0, "go to the sofa")]
-    # Launcher path is unexecutable, will raise OSError in Popen inside _run_orchestrator.
-    results = run_tier2(entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
-                        out_dir=tmp_path / "out", timeout_s=20,
-                        launcher=["/nonexistent/path/to/orchestrator"],
-                        reset_cmd=["true"], recorder_cmd=recorder_cmd, settle_s=0)
-    assert results[0].verdict == "ERROR"
-    assert "exception:" in results[0].detail
 
-    # Verify recorder was stopped despite the exception.
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline and not stop_marker.exists():
-        time.sleep(0.1)
-    assert stop_marker.exists()
+    # Monkeypatch tier2._stop to record which Popen objects were stopped and call the real implementation.
+    stopped_procs = []
+    real_stop = tier2._stop
+
+    def patched_stop(proc):
+        stopped_procs.append(proc)
+        real_stop(proc)
+
+    # Launcher path is unexecutable, will raise OSError in Popen.
+    with mock.patch.object(tier2, "_stop", side_effect=patched_stop):
+        results = run_tier2(entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+                            out_dir=tmp_path / "out", timeout_s=20,
+                            launcher=["/nonexistent/path/to/orchestrator"],
+                            reset_cmd=["true"], recorder_cmd=["sh", "-c", "while true; do sleep 1; done"],
+                            settle_s=0)
+
+    # Assert (a) the recorder's Popen is among the stopped processes
+    assert len(stopped_procs) == 1, f"Expected 1 process stopped, got {len(stopped_procs)}"
+    recorder_proc = stopped_procs[0]
+
+    # Assert (b) the recorder process is no longer alive after run_tier2 returns
+    assert recorder_proc.poll() is not None, "Recorder process should not be alive after _stop"
+
+    # Assert (c) the entry's verdict is ERROR with detail starting "exception:"
+    assert results[0].verdict == "ERROR", f"Expected verdict ERROR, got {results[0].verdict}"
+    assert results[0].detail.startswith("exception:"), f"Expected detail to start with 'exception:', got {results[0].detail}"
 
 
 def test_tier2_sheet_failure_doesnt_change_verdict(tmp_path):
