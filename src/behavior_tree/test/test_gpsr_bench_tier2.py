@@ -118,3 +118,37 @@ def test_tier2_substitutes_run_dir_as_an_absolute_path(tmp_path):
     written = captured.read_text().strip()
     assert Path(written).is_absolute()
     assert written == str((tmp_path / "out" / "runs" / "c0").resolve())
+
+
+def test_tier2_unexecutable_launcher_stops_recorder_and_scores_error(tmp_path):
+    stop_marker = tmp_path / "recorder-stopped"
+    recorder_cmd = ["sh", "-c",
+                    f"trap 'touch {stop_marker}; exit 0' INT TERM; while true; do sleep 1; done"]
+    entries = [_entry(0, "go to the sofa")]
+    # Launcher path is unexecutable, will raise OSError in Popen inside _run_orchestrator.
+    results = run_tier2(entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+                        out_dir=tmp_path / "out", timeout_s=20,
+                        launcher=["/nonexistent/path/to/orchestrator"],
+                        reset_cmd=["true"], recorder_cmd=recorder_cmd, settle_s=0)
+    assert results[0].verdict == "ERROR"
+    assert "exception:" in results[0].detail
+
+    # Verify recorder was stopped despite the exception.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and not stop_marker.exists():
+        time.sleep(0.1)
+    assert stop_marker.exists()
+
+
+def test_tier2_sheet_failure_doesnt_change_verdict(tmp_path):
+    entries = [_entry(0, "go to the sofa")]
+    # sheet_cmd exits with code 1, which should leave verdict unchanged and append "; sheet failed".
+    sheet_cmd = ["sh", "-c", "exit 1"]
+    results = run_tier2(entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+                        out_dir=tmp_path / "out", timeout_s=20,
+                        launcher=_fake_orchestrator(tmp_path),
+                        reset_cmd=["true"], sheet_cmd=sheet_cmd, settle_s=0)
+    assert results[0].verdict == "PASS"
+    # The detail should NOT contain the " | sheet=" suffix for failed sheet, only "; sheet failed".
+    assert "; sheet failed" in results[0].detail
+    assert " | sheet=" not in results[0].detail

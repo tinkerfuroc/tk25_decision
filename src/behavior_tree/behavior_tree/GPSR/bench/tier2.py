@@ -155,21 +155,28 @@ def run_tier2(entries: Sequence[CorpusEntry], *, mock_config: Path, constants: P
 
         recorder_proc = None
         recorder_log = None
-        if recorder_cmd:
-            cmd = _substitute(recorder_cmd, {"run_dir": str(run_dir)})
-            recorder_log = (run_dir / "recorder.log").open("a", encoding="utf-8")
-            recorder_proc = subprocess.Popen(cmd, stdout=recorder_log, stderr=subprocess.STDOUT,
-                                             start_new_session=True)
+        try:
+            if recorder_cmd:
+                cmd = _substitute(recorder_cmd, {"run_dir": str(run_dir)})
+                recorder_log = (run_dir / "recorder.log").open("a", encoding="utf-8")
+                recorder_proc = subprocess.Popen(cmd, stdout=recorder_log, stderr=subprocess.STDOUT,
+                                                 start_new_session=True)
 
-        env = bench_env(mock_config=mock_config, constants=constants, plan_dir=run_dir,
-                        commands=[entry.text], live_llm=live_llm)
-        verdict, detail, seconds, plan = _run_orchestrator(
-            env=env, run_dir=run_dir, launcher=launcher, timeout_s=timeout_s)
-
-        if recorder_proc is not None:
-            _stop(recorder_proc)
-        if recorder_log is not None:
-            recorder_log.close()
+            env = bench_env(mock_config=mock_config, constants=constants, plan_dir=run_dir,
+                            commands=[entry.text], live_llm=live_llm)
+            verdict, detail, seconds, plan = _run_orchestrator(
+                env=env, run_dir=run_dir, launcher=launcher, timeout_s=timeout_s)
+        except Exception as exc:
+            # Unexpected exception in a single run: score as ERROR with detail, continue batch.
+            # This exception source is typically Popen(launcher) raising OSError for unexecutable
+            # binary (which occurs outside _run_orchestrator's own try/finally), but guards all
+            # unexpected exceptions in this span.
+            verdict, detail, seconds, plan = "ERROR", f"exception: {exc!r}", 0.0, []
+        finally:
+            if recorder_proc is not None:
+                _stop(recorder_proc)
+            if recorder_log is not None:
+                recorder_log.close()
 
         result = BenchResult(entry.id, entry.template, entry.feasibility, TIER, verdict, detail,
                              seconds, plan)
