@@ -34,6 +34,14 @@ FEASIBILITY: dict[str, str] = {
 }
 _RANK = {"A": 0, "B": 1, "C": 2}
 
+# Templates/follow-ups the sim-hybrid bench (manipulation real, everything else mocked) cannot
+# execute: moving-actor following/guiding, clothing description, and the trash-bin placement.
+SIM_INFEASIBLE: frozenset[str] = frozenset({
+    "followNameFromBeacToRoom", "followPrsAtLoc", "followPrs", "followPrsToRoom",
+    "guideNameFromBeacToBeac", "guidePrsFromBeacToBeac", "guideClothPrsFromBeacToBeac",
+    "guidePrsToBeacon", "greetClothDscInRm", "countClothPrsInRoom", "putObjInTrash",
+})
+
 
 @dataclass(frozen=True)
 class Knowledge:
@@ -144,8 +152,13 @@ def generate_corpus(
     return entries
 
 
-def write_jsonl(entries: Iterable[CorpusEntry], path: Path) -> None:
+def write_jsonl(entries: Iterable[CorpusEntry], path: Path, *, header: dict | None = None) -> None:
+    """Write entries as one JSON object per line. If `header` is given, it is written first as
+    its own line (its keys are expected to start with "_" so `read_jsonl` can recognise and
+    skip it as metadata rather than a CorpusEntry)."""
     with Path(path).open("w", encoding="utf-8") as fh:
+        if header is not None:
+            fh.write(json.dumps(header, ensure_ascii=False) + "\n")
         for entry in entries:
             fh.write(json.dumps(asdict(entry), ensure_ascii=False) + "\n")
 
@@ -153,11 +166,67 @@ def write_jsonl(entries: Iterable[CorpusEntry], path: Path) -> None:
 def read_jsonl(path: Path) -> list[CorpusEntry]:
     entries = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            raw = json.loads(line)
-            raw["followups"] = tuple(raw["followups"])
-            entries.append(CorpusEntry(**raw))
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith('{"_'):
+            # Header/metadata line (e.g. written by `write_jsonl(..., header=...)`), not a
+            # CorpusEntry -- skip it.
+            continue
+        raw = json.loads(line)
+        raw["followups"] = tuple(raw["followups"])
+        entries.append(CorpusEntry(**raw))
     return entries
+
+
+def generate_sim_corpus(
+    constants_path: Path, *, seed: int, count: int, templates: Sequence[str] | None = None
+) -> tuple[list[CorpusEntry], dict[str, int]]:
+    """Like `generate_corpus`, but round-robins templates and skips any expansion whose
+    template or follow-ups intersect `SIM_INFEASIBLE`, re-drawing (advancing to the next
+    template in rotation) until `count` sim-feasible entries have been produced.
+
+    Returns `(entries, skipped)` where `skipped` maps the specific SIM_INFEASIBLE name that
+    triggered each skip to how many times it did.
+    """
+    kb = build_knowledge(constants_path)
+    gen = make_generator(kb, seed=seed)
+    people = [name for name, _ in gen.person_cmd_list]
+    objects = [name for name, _ in gen.object_cmd_list]
+    chosen = list(templates) if templates else sorted(set(people) | set(objects))
+    if not chosen:
+        raise ValueError("generate_sim_corpus: no templates to draw from")
+
+    entries: list[CorpusEntry] = []
+    skipped: dict[str, int] = {}
+    draw = 0
+    max_draws = max(count * 50, 1000)
+    while len(entries) < count:
+        if draw >= max_draws:
+            raise RuntimeError(
+                f"generate_sim_corpus: could not reach count={count} sim-feasible entries "
+                f"after {draw} draws (skipped={skipped}); the templates filter may exclude "
+                "every sim-feasible command"
+            )
+        template = chosen[draw % len(chosen)]
+        category = "objects" if template in objects and template not in people else "people"
+        if template in people and template in objects:
+            category = random.choice(["people", "objects"])
+        text, followups = expand_template(gen, template, category)
+        draw += 1
+
+        trigger = template if template in SIM_INFEASIBLE else next(
+            (f for f in followups if f in SIM_INFEASIBLE), None)
+        if trigger is not None:
+            skipped[trigger] = skipped.get(trigger, 0) + 1
+            continue
+
+        entry_id = f"s{seed}-{len(entries):03d}-{template}"
+        entries.append(CorpusEntry(
+            id=entry_id, seed=seed, template=template, followups=followups,
+            category=category, text=text, feasibility=_feasibility(template, followups),
+        ))
+    return entries, skipped
 
 
 def _edge(i: int, text: str, feasibility: str) -> CorpusEntry:

@@ -12,7 +12,9 @@ import json
 import sys
 from pathlib import Path
 
-from behavior_tree.GPSR.bench.corpus import EDGE_COMMANDS, generate_corpus, read_jsonl, write_jsonl
+from behavior_tree.GPSR.bench.corpus import (
+    EDGE_COMMANDS, generate_corpus, generate_sim_corpus, read_jsonl, write_jsonl,
+)
 from behavior_tree.GPSR.bench.report import BenchResult, write_report
 from behavior_tree.GPSR.bench.tier0 import run_tier0
 from behavior_tree.GPSR.bench.tier1 import run_tier1
@@ -58,6 +60,16 @@ def _finish(results, out: Path, corpus: Path, *, meta: dict | None = None) -> in
 
 
 def cmd_gen(args) -> int:
+    if args.sim_feasible:
+        if args.edge:
+            raise SystemExit("gpsr-bench gen: --edge is not supported with --sim-feasible")
+        templates = [t.strip() for t in args.templates.split(",")] if args.templates else None
+        entries, skipped = generate_sim_corpus(Path(args.constants), seed=args.seed,
+                                               count=args.count, templates=templates)
+        header = {"_skipped": skipped, "_seed": args.seed, "_mode": "sim-feasible"}
+        write_jsonl(entries, Path(args.out), header=header)
+        print(f"wrote {len(entries)} sim-feasible commands to {args.out} (skipped={skipped})")
+        return 0
     entries = generate_corpus(Path(args.constants), seed=args.seed, per_template=args.per_template)
     if args.edge:
         entries = entries + list(EDGE_COMMANDS)
@@ -108,6 +120,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--per-template", type=int, default=3)
     g.add_argument("--constants", default=str(DEFAULT_CONSTANTS))
     g.add_argument("--edge", action="store_true", help="append the hand-written edge commands")
+    g.add_argument("--sim-feasible", action="store_true",
+                    help="generate a corpus excluding SIM_INFEASIBLE templates/followups")
+    g.add_argument("--count", type=int, default=40, help="entry count (--sim-feasible only)")
+    g.add_argument("--templates", default=None,
+                    help="comma-separated template names to draw from (--sim-feasible only)")
     g.add_argument("--out", required=True)
     g.set_defaults(func=cmd_gen)
 
