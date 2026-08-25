@@ -3,12 +3,14 @@
     gpsr-bench gen   --seed 42 --per-template 3 --edge --out corpus-42.jsonl
     gpsr-bench tier0 --corpus corpus-42.jsonl --out gpsr_runs/bench/t0-42
     gpsr-bench tier1 --corpus corpus-42.jsonl --out gpsr_runs/bench/t1-42 --group-size 3
+    gpsr-bench tier2 --corpus corpus-42.jsonl --out gpsr_runs/bench/t2-42 --mock-config M --timeout 600
     gpsr-bench report --out gpsr_runs/bench/t1-42
 """
 from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from behavior_tree.GPSR.bench.corpus import (
 from behavior_tree.GPSR.bench.report import BenchResult, write_report
 from behavior_tree.GPSR.bench.tier0 import run_tier0
 from behavior_tree.GPSR.bench.tier1 import run_tier1
+from behavior_tree.GPSR.bench.tier2 import DEFAULT_RESET_CMD, run_tier2
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CONSTANTS = HERE / "constants.rcw2026.json"
@@ -103,6 +106,25 @@ def cmd_tier1(args) -> int:
     return _finish(results, Path(args.out), Path(args.corpus), meta=meta)
 
 
+def cmd_tier2(args) -> int:
+    entries = _filter(read_jsonl(Path(args.corpus)), args.only_class)
+    if args.start:
+        entries = entries[args.start:]
+    if args.limit is not None:
+        entries = entries[:args.limit]
+    reset_cmd = shlex.split(args.reset_cmd) if args.reset_cmd else DEFAULT_RESET_CMD
+    recorder_cmd = shlex.split(args.recorder_cmd) if args.recorder_cmd else None
+    sheet_cmd = shlex.split(args.sheet_cmd) if args.sheet_cmd else None
+    results = run_tier2(entries, mock_config=Path(args.mock_config), constants=Path(args.constants),
+                        out_dir=Path(args.out), timeout_s=args.timeout, tier_label=args.tier_label,
+                        reset_cmd=reset_cmd, recorder_cmd=recorder_cmd, sheet_cmd=sheet_cmd,
+                        settle_s=args.settle, live_llm=not args.offline_planner)
+    meta = {"tier": args.tier_label, "timeout_s": args.timeout, "settle_s": args.settle,
+            "only_class": args.only_class, "live_llm": not args.offline_planner,
+            "seed": _corpus_seed(entries)}
+    return _finish(results, Path(args.out), Path(args.corpus), meta=meta)
+
+
 def cmd_report(args) -> int:
     data = json.loads((Path(args.out) / "report.json").read_text(encoding="utf-8"))
     results = [BenchResult(**r) for r in data["results"]]
@@ -128,17 +150,26 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--out", required=True)
     g.set_defaults(func=cmd_gen)
 
-    for name, func in (("tier0", cmd_tier0), ("tier1", cmd_tier1)):
+    for name, func in (("tier0", cmd_tier0), ("tier1", cmd_tier1), ("tier2", cmd_tier2)):
         t = sub.add_parser(name)
         t.add_argument("--corpus", required=True)
         t.add_argument("--out", required=True)
         t.add_argument("--constants", default=str(DEFAULT_CONSTANTS))
         t.add_argument("--only-class", default=None, help="comma-separated feasibility classes, e.g. A,B")
-        t.add_argument("--timeout", type=float, default=180.0 if name == "tier0" else 300.0)
-        if name == "tier1":
-            t.add_argument("--group-size", type=int, default=3)
+        t.add_argument("--timeout", type=float, default={"tier0": 180.0, "tier1": 300.0}.get(name, 600.0))
+        if name in ("tier1", "tier2"):
             t.add_argument("--mock-config", default=str(DEFAULT_MOCK_CONFIG))
             t.add_argument("--offline-planner", action="store_true", help="GPSR_OFFLINE_PLANNER=1 (no LLM)")
+        if name == "tier1":
+            t.add_argument("--group-size", type=int, default=3)
+        if name == "tier2":
+            t.add_argument("--tier-label", default="T2", help="label stored in meta.tier and run.json")
+            t.add_argument("--reset-cmd", default=None, help="shell-split reset command (default: ros2 service call /reset_simulation)")
+            t.add_argument("--recorder-cmd", default=None, help="shell-split frame recorder command; {run_dir} is substituted")
+            t.add_argument("--sheet-cmd", default=None, help="shell-split contact-sheet command; {run_dir}/{run_json}/{out} are substituted")
+            t.add_argument("--settle", type=float, default=10.0, help="seconds to sleep after a successful reset")
+            t.add_argument("--limit", type=int, default=None, help="only run this many entries (after --start)")
+            t.add_argument("--start", type=int, default=0, help="skip this many entries before running")
         t.set_defaults(func=func)
 
     r = sub.add_parser("report", help="re-render SUMMARY.md from report.json")

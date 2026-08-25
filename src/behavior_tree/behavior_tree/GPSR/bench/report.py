@@ -71,6 +71,25 @@ def _git_commit() -> str | None:
         return None
 
 
+def runs_section(results: Iterable[BenchResult]) -> str:
+    """Render the per-run listing for SUMMARY.md.
+
+    tier2 stores its contact sheet's relative path inside ``BenchResult.detail`` as a
+    ``| sheet=<relpath>`` suffix (no schema change); when present it is rendered as a
+    markdown link, otherwise the bullet is just the id and verdict.
+    """
+    lines = ["## Runs", ""]
+    for r in results:
+        sheet = None
+        if " | sheet=" in r.detail:
+            _, sheet = r.detail.rsplit(" | sheet=", 1)
+        bullet = f"- {r.entry_id} **{r.verdict}**"
+        if sheet:
+            bullet += f" — [sheet]({sheet})"
+        lines.append(bullet)
+    return "\n".join(lines) + "\n"
+
+
 def write_report(results: Iterable[BenchResult], out_dir: Path, *, corpus_path: Path | None = None,
                  meta: dict[str, Any] | None = None) -> Path:
     results = list(results)
@@ -119,6 +138,7 @@ def write_report(results: Iterable[BenchResult], out_dir: Path, *, corpus_path: 
     for r in results:
         if r.verdict != "PASS":
             lines.append(f"- T{r.tier} `{r.entry_id}` **{r.verdict}** — {r.detail}")
+    lines += ["", runs_section(results).rstrip("\n")]
     summary = out_dir / "SUMMARY.md"
     summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return summary
