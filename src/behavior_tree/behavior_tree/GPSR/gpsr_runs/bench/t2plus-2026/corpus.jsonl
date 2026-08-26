@@ -1,0 +1,11 @@
+{"_skipped": {"putObjInTrash": 2}, "_seed": 2027, "_mode": "sim-feasible"}
+{"id": "s2027-000-bringMeObjFromPlcmt", "seed": 2027, "template": "bringMeObjFromPlcmt", "followups": [], "category": "objects", "text": "bring me a cheez_it from the shelf", "feasibility": "B"}
+{"id": "s2027-001-findObjInRoom", "seed": 2027, "template": "findObjInRoom", "followups": ["takeObj", "deliverObjToMe"], "category": "objects", "text": "look for a drink in the living_room then take it and give it to me", "feasibility": "B"}
+{"id": "s2027-002-takeObjFromPlcmt", "seed": 2027, "template": "takeObjFromPlcmt", "followups": ["deliverObjToMe"], "category": "objects", "text": "get a spam from the laundry_desk and give it to me", "feasibility": "B"}
+{"id": "s2027-003-bringMeObjFromPlcmt", "seed": 2027, "template": "bringMeObjFromPlcmt", "followups": [], "category": "objects", "text": "give me a pudding_box from the laundry_desk", "feasibility": "B"}
+{"id": "s2027-004-findObjInRoom", "seed": 2027, "template": "findObjInRoom", "followups": ["takeObj", "deliverObjToMe"], "category": "objects", "text": "look for a mustard in the living_room then grasp it and deliver it to me", "feasibility": "B"}
+{"id": "s2027-005-takeObjFromPlcmt", "seed": 2027, "template": "takeObjFromPlcmt", "followups": ["deliverObjToPrsInRoom"], "category": "objects", "text": "get a kitchen item from the kitchen_table and give it to the standing person in the kitchen", "feasibility": "B"}
+{"id": "s2027-006-bringMeObjFromPlcmt", "seed": 2027, "template": "bringMeObjFromPlcmt", "followups": [], "category": "objects", "text": "give me a mug from the laundry_desk", "feasibility": "B"}
+{"id": "s2027-007-takeObjFromPlcmt", "seed": 2027, "template": "takeObjFromPlcmt", "followups": ["deliverObjToNameAtBeac"], "category": "objects", "text": "take a spam from the side_table and bring it to Emma in the laundry_room", "feasibility": "B"}
+{"id": "s2027-008-bringMeObjFromPlcmt", "seed": 2027, "template": "bringMeObjFromPlcmt", "followups": [], "category": "objects", "text": "give me a bowl from the shelf_02", "feasibility": "B"}
+{"id": "s2027-009-findObjInRoom", "seed": 2027, "template": "findObjInRoom", "followups": ["takeObj", "placeObjOnPlcmt"], "category": "objects", "text": "locate a food in the bedroom then get it and place it on the side_table_02", "feasibility": "C"}

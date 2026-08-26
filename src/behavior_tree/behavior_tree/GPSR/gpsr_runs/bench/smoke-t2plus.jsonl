@@ -1,0 +1,2 @@
+{"_skipped": {"putObjInTrash": 1}, "_seed": 2026, "_mode": "sim-feasible"}
+{"id": "s2026-000-takeObjFromPlcmt", "seed": 2026, "template": "takeObjFromPlcmt", "followups": ["deliverObjToNameAtBeac"], "category": "objects", "text": "take a mug from the kitchen_table and deliver it to Liam in the laundry_room", "feasibility": "B"}

@@ -1,0 +1,41 @@
+{
+  "corpus": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/smoke-t2.jsonl",
+  "meta": {
+    "tier": "T2",
+    "timeout_s": 600.0,
+    "settle_s": 10.0,
+    "only_class": null,
+    "live_llm": true,
+    "seed": 2026,
+    "timestamp": "2026-08-26T15:16:35.861764+00:00",
+    "commit": "03fe889c8426e002e12cae526ce8988e0b0b048d",
+    "corpus": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/smoke-t2.jsonl"
+  },
+  "totals": {
+    "2": {
+      "PASS": 2
+    }
+  },
+  "results": [
+    {
+      "entry_id": "s2026-000-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-000-bringMeObjFromPlcmt/sheet.jpg",
+      "seconds": 21.803706169128418,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-001-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-001-countObjOnPlcmt/sheet.jpg",
+      "seconds": 20.75005054473877,
+      "plan": []
+    }
+  ]
+}

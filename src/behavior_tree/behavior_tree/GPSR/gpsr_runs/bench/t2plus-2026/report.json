@@ -1,0 +1,122 @@
+{
+  "corpus": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/t2plus-2026/corpus.jsonl",
+  "meta": {
+    "tier": "T2+",
+    "timeout_s": 900.0,
+    "settle_s": 10.0,
+    "only_class": null,
+    "live_llm": true,
+    "seed": 2027,
+    "timestamp": "2026-08-26T21:21:37.143239+00:00",
+    "commit": "03fe889c8426e002e12cae526ce8988e0b0b048d",
+    "corpus": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/t2plus-2026/corpus.jsonl"
+  },
+  "totals": {
+    "2": {
+      "TIMEOUT": 9,
+      "ERROR": 1
+    }
+  },
+  "results": [
+    {
+      "entry_id": "s2027-000-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "TIMEOUT",
+      "detail": "timed out after 900s | sheet=runs/s2027-000-bringMeObjFromPlcmt/sheet.jpg",
+      "seconds": 902.1476354598999,
+      "plan": []
+    },
+    {
+      "entry_id": "s2027-001-findObjInRoom",
+      "template": "findObjInRoom",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "TIMEOUT",
+      "detail": "timed out after 900s | sheet=runs/s2027-001-findObjInRoom/sheet.jpg",
+      "seconds": 902.012775182724,
+      "plan": []
+    },
+    {
+      "entry_id": "s2027-002-takeObjFromPlcmt",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "TIMEOUT",
+      "detail": "timed out after 900s | sheet=runs/s2027-002-takeObjFromPlcmt/sheet.jpg",
+      "seconds": 901.448611497879,
+      "plan": []
+    },
+    {
+      "entry_id": "s2027-003-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "TIMEOUT",
+      "detail": "timed out after 900s | sheet=runs/s2027-003-bringMeObjFromPlcmt/sheet.jpg",
+      "seconds": 900.8570230007172,
+      "plan": []
+    },
+    {
+      "entry_id": "s2027-004-findObjInRoom",
+      "template": "findObjInRoom",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "TIMEOUT",
+      "detail": "timed out after 900s | sheet=runs/s2027-004-findObjInRoom/sheet.jpg",
+      "seconds": 901.6235089302063,
+      "plan": []
+    },
+    {
+      "entry_id": "s2027-005-takeObjFromPlcmt",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "TIMEOUT",
+      "detail": "timed out after 900s | sheet=runs/s2027-005-takeObjFromPlcmt/sheet.jpg",
+      "seconds": 901.0713057518005,
+      "plan": []
+    },
+    {
+      "entry_id": "s2027-006-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "TIMEOUT",
+      "detail": "timed out after 900s | sheet=runs/s2027-006-bringMeObjFromPlcmt/sheet.jpg",
+      "seconds": 900.9653537273407,
+      "plan": []
+    },
+    {
+      "entry_id": "s2027-007-takeObjFromPlcmt",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "TIMEOUT",
+      "detail": "timed out after 900s | sheet=runs/s2027-007-takeObjFromPlcmt/sheet.jpg",
+      "seconds": 900.8505449295044,
+      "plan": []
+    },
+    {
+      "entry_id": "s2027-008-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "TIMEOUT",
+      "detail": "timed out after 900s | sheet=runs/s2027-008-bringMeObjFromPlcmt/sheet.jpg",
+      "seconds": 901.4453237056732,
+      "plan": []
+    },
+    {
+      "entry_id": "s2027-009-findObjInRoom",
+      "template": "findObjInRoom",
+      "feasibility": "C",
+      "tier": 2,
+      "verdict": "ERROR",
+      "detail": "reset failed: timed out after 60s",
+      "seconds": 0.0,
+      "plan": []
+    }
+  ]
+}

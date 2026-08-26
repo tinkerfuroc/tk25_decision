@@ -1,0 +1,423 @@
+{
+  "corpus": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/t2-2026/corpus.jsonl",
+  "meta": {
+    "tier": "T2",
+    "timeout_s": 600.0,
+    "settle_s": 10.0,
+    "only_class": null,
+    "live_llm": true,
+    "seed": 2026,
+    "timestamp": "2026-08-26T18:51:53.769355+00:00",
+    "commit": "03fe889c8426e002e12cae526ce8988e0b0b048d",
+    "corpus": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/t2-2026/corpus.jsonl"
+  },
+  "totals": {
+    "2": {
+      "PASS": 36,
+      "ERROR": 2,
+      "TIMEOUT": 2
+    }
+  },
+  "results": [
+    {
+      "entry_id": "s2026-000-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-000-bringMeObjFromPlcmt/sheet.jpg",
+      "seconds": 38.290273666381836,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-001-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-001-countObjOnPlcmt/sheet.jpg",
+      "seconds": 52.510292530059814,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-002-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-002-countPrsInRoom/sheet.jpg",
+      "seconds": 65.61663508415222,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-003-findObjInRoom",
+      "template": "findObjInRoom",
+      "feasibility": "C",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-003-findObjInRoom/sheet.jpg",
+      "seconds": 78.07099652290344,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-004-goToLoc",
+      "template": "goToLoc",
+      "feasibility": "C",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-004-goToLoc/sheet.jpg",
+      "seconds": 91.64860677719116,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-005-greetNameInRm",
+      "template": "greetNameInRm",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-005-greetNameInRm/sheet.jpg",
+      "seconds": 109.18191123008728,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-006-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-006-meetNameAtLocThenFindInRm/sheet.jpg",
+      "seconds": 125.49315619468689,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-007-meetPrsAtBeac",
+      "template": "meetPrsAtBeac",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-007-meetPrsAtBeac/sheet.jpg",
+      "seconds": 138.78571128845215,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-008-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-008-talkInfoToGestPrsInRoom/sheet.jpg",
+      "seconds": 174.53690481185913,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-009-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-009-tellCatPropOnPlcmt/sheet.jpg",
+      "seconds": 167.90413665771484,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-010-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-010-tellObjPropOnPlcmt/sheet.jpg",
+      "seconds": 182.16220021247864,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-011-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-011-tellPrsInfoAtLocToPrsAtLoc/sheet.jpg",
+      "seconds": 182.570476770401,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-012-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-012-tellPrsInfoInLoc/sheet.jpg",
+      "seconds": 193.0835292339325,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-013-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-013-bringMeObjFromPlcmt/sheet.jpg",
+      "seconds": 214.73298287391663,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-014-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-014-countObjOnPlcmt/sheet.jpg",
+      "seconds": 220.66984391212463,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-015-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-015-countPrsInRoom/sheet.jpg",
+      "seconds": 233.58655762672424,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-016-findObjInRoom",
+      "template": "findObjInRoom",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-016-findObjInRoom/sheet.jpg",
+      "seconds": 251.59937167167664,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-017-greetNameInRm",
+      "template": "greetNameInRm",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-017-greetNameInRm/sheet.jpg",
+      "seconds": 256.9219617843628,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-018-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-018-meetNameAtLocThenFindInRm/sheet.jpg",
+      "seconds": 430.41528034210205,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-019-takeObjFromPlcmt",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-019-takeObjFromPlcmt/sheet.jpg",
+      "seconds": 448.9075837135315,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-020-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-020-talkInfoToGestPrsInRoom/sheet.jpg",
+      "seconds": 443.3557324409485,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-021-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-021-tellCatPropOnPlcmt/sheet.jpg",
+      "seconds": 305.9304802417755,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-022-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-022-tellObjPropOnPlcmt/sheet.jpg",
+      "seconds": 315.36913681030273,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-023-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-023-tellPrsInfoAtLocToPrsAtLoc/sheet.jpg",
+      "seconds": 331.3035626411438,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-024-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-024-tellPrsInfoInLoc/sheet.jpg",
+      "seconds": 344.6421604156494,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-025-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-025-bringMeObjFromPlcmt/sheet.jpg",
+      "seconds": 356.1564507484436,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-026-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-026-countObjOnPlcmt/sheet.jpg",
+      "seconds": 372.54190015792847,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-027-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-027-countPrsInRoom/sheet.jpg",
+      "seconds": 386.7212474346161,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-028-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "ERROR",
+      "detail": "reset failed: timed out after 60s",
+      "seconds": 0.0,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-029-takeObjFromPlcmt",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-029-takeObjFromPlcmt/sheet.jpg",
+      "seconds": 397.92239332199097,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-030-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "ERROR",
+      "detail": "reset failed: timed out after 60s",
+      "seconds": 0.0,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-031-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-031-tellCatPropOnPlcmt/sheet.jpg",
+      "seconds": 409.7612826824188,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-032-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-032-tellObjPropOnPlcmt/sheet.jpg",
+      "seconds": 426.2476313114166,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-033-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-033-tellPrsInfoAtLocToPrsAtLoc/sheet.jpg",
+      "seconds": 439.51795291900635,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-034-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-034-tellPrsInfoInLoc/sheet.jpg",
+      "seconds": 452.9014208316803,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-035-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-035-bringMeObjFromPlcmt/sheet.jpg",
+      "seconds": 465.1692316532135,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-036-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-036-countObjOnPlcmt/sheet.jpg",
+      "seconds": 482.8556091785431,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-037-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-037-countPrsInRoom/sheet.jpg",
+      "seconds": 497.8553102016449,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-038-findObjInRoom",
+      "template": "findObjInRoom",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "TIMEOUT",
+      "detail": "timed out after 600s | sheet=runs/s2026-038-findObjInRoom/sheet.jpg",
+      "seconds": 600.9792559146881,
+      "plan": []
+    },
+    {
+      "entry_id": "s2026-039-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 2,
+      "verdict": "TIMEOUT",
+      "detail": "timed out after 600s | sheet=runs/s2026-039-meetNameAtLocThenFindInRm/sheet.jpg",
+      "seconds": 601.6915845870972,
+      "plan": []
+    }
+  ]
+}
