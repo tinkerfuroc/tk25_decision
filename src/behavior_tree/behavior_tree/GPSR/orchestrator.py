@@ -207,6 +207,23 @@ def load_knowledge_from_constants(constants_path: str) -> None:
             continue
         if isinstance(value, list) and value:
             ROOM_SEARCH_SPOTS[str(key).lower()] = [str(v) for v in value]
+    # Rooms as first-class navigable locations: alias each search_spots
+    # room (that has no pose of its own) to its first spot's pose. This
+    # puts rooms in the planner prompt's known-location list and in the
+    # validators, and makes resolve_pose hit them BEFORE the dynamic-
+    # location registry. Without this the 2026-08-27 battery's LLM plans
+    # worked around the missing rooms with record_position(label=room) at
+    # the START pose — registering e.g. 'bedroom' at the robot's feet —
+    # and every goto(room) navigated to the spot the robot already stood
+    # on (zero movement in all four room-targeted runs).
+    for room, spots in ROOM_SEARCH_SPOTS.items():
+        if room in KNOWN_LOCATIONS:
+            continue  # an explicit possible_poses/egpsr_rooms entry wins
+        for spot in spots:
+            pose = KNOWN_LOCATIONS.get(spot)
+            if pose is not None:
+                KNOWN_LOCATIONS[room] = pose
+                break
     # No-grasp furniture (grasp there -> ask referee). Config-driven; defaults to
     # shelf / cabinet / coat_rack when the key is absent.
     ng = constants.get("no_grasp_locations")

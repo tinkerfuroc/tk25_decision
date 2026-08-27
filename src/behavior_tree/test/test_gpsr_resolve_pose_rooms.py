@@ -58,3 +58,51 @@ def test_placement_resolution_unchanged(_rcw2026_locations):
 
 def test_unknown_location_still_none(_rcw2026_locations):
     assert orch.resolve_pose(_EmptyBB(), "garage") is None
+
+
+class _PoisonedBB:
+    """Registry stub with a room label registered at the robot's feet —
+    the exact workaround the 2026-08-27 LLM plans emitted
+    (record_position(label='bedroom') at the start pose)."""
+
+    def __init__(self, registry):
+        self._registry = registry
+
+    def get(self, key):
+        from behavior_tree.GPSR import bb_keys
+        if key == bb_keys.DYNAMIC_LOCATIONS:
+            return self._registry
+        raise KeyError(key)
+
+
+def test_known_room_outranks_poisoned_dynamic_registration(_rcw2026_locations, monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch_mod
+    # Room aliased into KNOWN_LOCATIONS (as the loader now does).
+    monkeypatch.setitem(orch_mod.KNOWN_LOCATIONS, "living_room",
+                        _rcw2026_locations["sofa"])
+    poisoned = object()
+    bb = _PoisonedBB({"living_room": poisoned})
+    assert orch_mod.resolve_pose(bb, "living_room") is _rcw2026_locations["sofa"]
+
+
+def test_loader_aliases_rcw2026_rooms_to_search_spot_poses():
+    from pathlib import Path
+    from behavior_tree.GPSR import orchestrator as orch_mod
+    constants = (
+        Path(orch_mod.__file__).parent / "constants.rcw2026.json"
+    )
+    orch_mod.load_knowledge_from_constants(str(constants))
+    try:
+        for room in ("kitchen", "living_room", "bedroom", "laundry_room"):
+            assert room in orch_mod.KNOWN_LOCATIONS, room
+        # Aliased to the first search spot's pose object.
+        assert (
+            orch_mod.KNOWN_LOCATIONS["living_room"]
+            is orch_mod.KNOWN_LOCATIONS["sofa"]
+        )
+        assert (
+            orch_mod.KNOWN_LOCATIONS["kitchen"]
+            is orch_mod.KNOWN_LOCATIONS["kitchen_table"]
+        )
+    finally:
+        orch_mod.load_knowledge_from_constants(str(constants))
