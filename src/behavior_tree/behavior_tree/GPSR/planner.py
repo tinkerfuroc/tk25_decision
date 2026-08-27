@@ -49,7 +49,7 @@ from .modifiable_nodes import (
     validate_plan_modifications,
 )
 from .planner_validators import validate_plan, validate_dag
-from .validators import apply_fact_transitions, parse_fact
+from .validators import apply_fact_transitions, canonical_fact, parse_fact
 from .small_trees import (
     ACTION_FACTORIES,
     bb_keys,
@@ -314,6 +314,44 @@ def _normalise_targets(raw: List[Any]) -> List[Dict[str, Any]]:
             "preconditions": normalize_conditions(item.get("preconditions")),
             "postconditions": normalize_conditions(item.get("postconditions")),
         })
+
+    # Per the split prompt contract, a target precondition is only meaningful
+    # as cross-target sequencing: it must be established by an EARLIER
+    # target's postconditions (written to the ledger when that target
+    # completes). A precondition no earlier target establishes can never be
+    # satisfied by the runtime gate (which runs before the target's own
+    # steps), so it must be dropped here. Unparseable conditions are left
+    # alone -- ``_validate_target_contract`` rejects those with a retry.
+    established: set[str] = set()
+    for i, target in enumerate(normalized):
+        preconditions = target.get("preconditions")
+        if isinstance(preconditions, list):
+            kept: list[Any] = []
+            dropped: list[Any] = []
+            for condition in preconditions:
+                fact = None
+                if isinstance(condition, str):
+                    fact, _error = parse_fact(condition)
+                if fact is None:
+                    kept.append(condition)
+                    continue
+                if canonical_fact(fact) in established:
+                    kept.append(condition)
+                else:
+                    dropped.append(condition)
+            if dropped:
+                print(f"[split] target {i}: dropped unestablishable precondition(s): {dropped}")
+            target["preconditions"] = kept
+
+        postconditions = target.get("postconditions")
+        if isinstance(postconditions, list):
+            for condition in postconditions:
+                if not isinstance(condition, str):
+                    continue
+                fact, _error = parse_fact(condition)
+                if fact is not None:
+                    established.add(canonical_fact(fact))
+
     return normalized
 
 

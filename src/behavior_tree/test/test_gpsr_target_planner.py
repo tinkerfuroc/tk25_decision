@@ -83,6 +83,23 @@ def test_normalise_targets_strips_explicit_ids_before_dag_validation():
     assert "duplicate" in (validate_dag(targets)[1] or "")
 
 
+def test_normalise_targets_drops_preconditions_no_earlier_target_establishes():
+    targets = _normalise_targets([
+        {
+            "desc": "Get a spam from the laundry_desk",
+            "preconditions": ["at_robot(laundry_desk)"],
+            "postconditions": ["held(spam)"],
+        },
+        {
+            "desc": "Deliver the spam to me",
+            "preconditions": ["held(spam)", "at_robot(start_position)"],
+            "postconditions": ["delivered(spam,me)"],
+        },
+    ])
+    assert targets[0]["preconditions"] == []
+    assert targets[1]["preconditions"] == ["held(spam)"]
+
+
 def test_fact_store_applies_transitions_and_returns_defensive_copies():
     planner = GPSRPlanner()
     planner.record_facts(2, ["held(cup)", "at_robot(kitchen)", "held(cup)"])
