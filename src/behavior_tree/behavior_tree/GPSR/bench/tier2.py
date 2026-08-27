@@ -115,9 +115,9 @@ def _substitute(cmd: Sequence[str], mapping: dict[str, str]) -> list[str]:
 def _reset(reset_cmd: Sequence[str]) -> str | None:
     """Run the reset command; return an error detail string, or None on success."""
     try:
-        result = subprocess.run(list(reset_cmd), timeout=60, capture_output=True, text=True)
+        result = subprocess.run(list(reset_cmd), timeout=180, capture_output=True, text=True)
     except subprocess.TimeoutExpired:
-        return "reset failed: timed out after 60s"
+        return "reset failed: timed out after 180s"
     except OSError as exc:
         return f"reset failed: {exc}"
     if result.returncode != 0:
