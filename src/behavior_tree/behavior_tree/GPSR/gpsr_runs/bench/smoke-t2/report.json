@@ -1,5 +1,5 @@
 {
-  "corpus": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/smoke-t2.jsonl",
+  "corpus": null,
   "meta": {
     "tier": "T2",
     "timeout_s": 600.0,
@@ -9,11 +9,12 @@
     "seed": 2026,
     "timestamp": "2026-08-26T15:16:35.861764+00:00",
     "commit": "03fe889c8426e002e12cae526ce8988e0b0b048d",
-    "corpus": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/smoke-t2.jsonl"
+    "corpus": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/smoke-t2.jsonl",
+    "invalidated": "2026-08-27: OPENROUTER key over monthly quota during the battery; all plans were LLM-planner fallbacks. Verdicts re-scored; rerun required."
   },
   "totals": {
     "2": {
-      "PASS": 2
+      "FAIL": 2
     }
   },
   "results": [
@@ -22,8 +23,8 @@
       "template": "bringMeObjFromPlcmt",
       "feasibility": "B",
       "tier": 2,
-      "verdict": "PASS",
-      "detail": "sheet=runs/s2026-000-bringMeObjFromPlcmt/sheet.jpg",
+      "verdict": "FAIL",
+      "detail": "planner exhausted attempts (fallback plan executed); re-scored 2026-08-27 after LLM-key-quota postmortem | sheet=runs/s2026-000-bringMeObjFromPlcmt/sheet.jpg",
       "seconds": 21.803706169128418,
       "plan": []
     },
@@ -32,8 +33,8 @@
       "template": "countObjOnPlcmt",
       "feasibility": "A",
       "tier": 2,
-      "verdict": "PASS",
-      "detail": "sheet=runs/s2026-001-countObjOnPlcmt/sheet.jpg",
+      "verdict": "FAIL",
+      "detail": "planner exhausted attempts (fallback plan executed); re-scored 2026-08-27 after LLM-key-quota postmortem | sheet=runs/s2026-001-countObjOnPlcmt/sheet.jpg",
       "seconds": 20.75005054473877,
       "plan": []
     }

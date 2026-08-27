@@ -1,8 +1,6 @@
 # GPSR bench summary
 
-Corpus: `/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/t2plus-2026/corpus.jsonl`
-
-Run: tier=T2+, timeout_s=900.0, settle_s=10.0, live_llm=True, seed=2027, timestamp=2026-08-26T21:21:37.143239+00:00, commit=03fe889c8426e002e12cae526ce8988e0b0b048d, corpus=/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/t2plus-2026/corpus.jsonl
+Run: tier=T2+, timeout_s=900.0, settle_s=10.0, live_llm=True, seed=2027, timestamp=2026-08-26T21:21:37.143239+00:00, commit=03fe889c8426e002e12cae526ce8988e0b0b048d, corpus=/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/t2plus-2026/corpus.jsonl, invalidated=2026-08-27: OPENROUTER key over monthly quota during the battery; all plans were LLM-planner fallbacks. Verdicts re-scored; rerun required.
 
 | template | class | T2 |
 |---|---|---|
