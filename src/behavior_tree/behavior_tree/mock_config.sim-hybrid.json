@@ -6,6 +6,12 @@
       "mode": "TELEOP",
       "subsystem": "mock_controls",
       "announce_movement": false
+    },
+    "BtNode_DoorDetection": {
+      "mode": "IMMEDIATE",
+      "subsystem": "vision",
+      "announce_movement": false,
+      "_why": "Sim defect 2026-08-27: the sim's head depth stream freezes on an early boot frame (arm at 0.5m), so the depth-based door check reads closed forever. The arena-door wait models a human opening the door - a formality, not task skill; every other vision node stays real."
     }
   },
   "mock_mode": {
