@@ -118,10 +118,11 @@ def cmd_tier2(args) -> int:
     results = run_tier2(entries, mock_config=Path(args.mock_config), constants=Path(args.constants),
                         out_dir=Path(args.out), timeout_s=args.timeout, tier_label=args.tier_label,
                         reset_cmd=reset_cmd, recorder_cmd=recorder_cmd, sheet_cmd=sheet_cmd,
-                        settle_s=args.settle, live_llm=not args.offline_planner)
+                        settle_s=args.settle, live_llm=not args.offline_planner,
+                        llm_check=not args.skip_llm_check)
     meta = {"tier": args.tier_label, "timeout_s": args.timeout, "settle_s": args.settle,
             "only_class": args.only_class, "live_llm": not args.offline_planner,
-            "seed": _corpus_seed(entries)}
+            "llm_check": not args.skip_llm_check, "seed": _corpus_seed(entries)}
     return _finish(results, Path(args.out), Path(args.corpus), meta=meta)
 
 
@@ -170,6 +171,8 @@ def build_parser() -> argparse.ArgumentParser:
             t.add_argument("--settle", type=float, default=10.0, help="seconds to sleep after a successful reset")
             t.add_argument("--limit", type=int, default=None, help="only run this many entries (after --start)")
             t.add_argument("--start", type=int, default=0, help="skip this many entries before running")
+            t.add_argument("--skip-llm-check", action="store_true",
+                            help="skip the one-shot OpenRouter LLM preflight probe before the first entry")
         t.set_defaults(func=func)
 
     r = sub.add_parser("report", help="re-render SUMMARY.md from report.json")

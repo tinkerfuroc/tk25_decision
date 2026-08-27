@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -23,6 +24,83 @@ DEFAULT_RESET_CMD = ["ros2", "service", "call", "/reset_simulation",
                      "simulation_interfaces/srv/ResetSimulation", "{}"]
 
 TIER = 2
+
+# Post-run verdict guard: evidence that the planner exhausted its retries and the
+# orchestrator executed (or announced) the acknowledgement-only fallback plan instead of a
+# real one. A `[plan:...] all N attempts failed` line, or the fallback plan's own announce
+# text, means the run's task.finished "succeeded" was really just the fallback plan
+# succeeding trivially -- a hollow PASS. A `[split] all N attempts failed` line alone does
+# NOT mean this: the deterministic split fallback can still be planned normally, so it is
+# recorded as a detail annotation only.
+_PLAN_ATTEMPTS_EXHAUSTED_RE = re.compile(r"all \d+ attempts failed")
+_FALLBACK_PLAN_MARKER = "could not work out a complete plan"
+PLANNER_EXHAUSTED_DETAIL = "planner exhausted attempts (fallback plan executed)"
+
+
+def _scan_planner_exhaustion(log_path: Path, max_bytes: int = 5_000_000) -> tuple[bool, bool]:
+    """Bounded scan of an orchestrator.log for planner-fallback evidence.
+
+    Returns ``(exhausted, split_fell_back)``. Reads at most the last ``max_bytes`` of the
+    file (a stuck/looping run's log can't blow up scoring). Missing/unreadable files score
+    as ``(False, False)`` -- absence of evidence is not evidence of exhaustion.
+    """
+    if not log_path.is_file():
+        return False, False
+    try:
+        size = log_path.stat().st_size
+        with log_path.open("r", encoding="utf-8", errors="replace") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+            text = f.read()
+    except OSError:
+        return False, False
+
+    exhausted = _FALLBACK_PLAN_MARKER in text
+    split_fell_back = False
+    for line in text.splitlines():
+        if not _PLAN_ATTEMPTS_EXHAUSTED_RE.search(line):
+            continue
+        if "[split]" in line:
+            split_fell_back = True
+        elif "[plan:" in line:
+            exhausted = True
+    return exhausted, split_fell_back
+
+
+def llm_preflight(env: dict[str, str]) -> tuple[bool, str]:
+    """One minimal chat completion through the SAME client construction the planner uses.
+
+    Catches an exhausted/invalid OpenRouter key BEFORE a whole tier-2 battery burns through
+    every entry as fallback-plan runs that would otherwise each score a hollow PASS.
+
+    ``env`` is the environment the orchestrator subprocesses will run under (normally
+    ``dict(os.environ)``); an ``OPENROUTER_API_KEY``/``OPENAI_API_KEY`` there overrides the
+    planner's own resolved key, mirroring what the subprocess would actually see.
+
+    Never raises (catches everything -- a preflight probe must not itself crash the
+    battery) and never returns/logs the key itself, only the provider's error text with the
+    key value scrubbed out if it somehow appears there.
+    """
+    try:
+        import openai
+        from behavior_tree.GPSR.planner import OPENAI_API_KEY as _default_key, OPENAI_MODEL
+    except Exception as exc:  # pragma: no cover - import machinery
+        return False, f"preflight import error: {exc!r}"
+
+    api_key = env.get("OPENROUTER_API_KEY") or env.get("OPENAI_API_KEY") or _default_key
+    try:
+        client = openai.OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1", timeout=30.0)
+        client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=1,
+        )
+    except Exception as exc:  # noqa: BLE001 - catch everything, never crash the battery
+        msg = repr(exc)
+        if api_key and api_key in msg:
+            msg = msg.replace(api_key, "***")
+        return False, msg
+    return True, ""
 
 
 def _substitute(cmd: Sequence[str], mapping: dict[str, str]) -> list[str]:
@@ -132,10 +210,18 @@ def run_tier2(entries: Sequence[CorpusEntry], *, mock_config: Path, constants: P
               recorder_cmd: list[str] | None = None,
               sheet_cmd: list[str] | None = None,
               settle_s: float = 10.0, halt_after_errors: int = 3,
-              live_llm: bool = True) -> list[BenchResult]:
+              live_llm: bool = True, llm_check: bool = True) -> list[BenchResult]:
     out_dir = Path(out_dir)
     runs_root = out_dir / "runs"
     results: list[BenchResult] = []
+
+    if llm_check and live_llm:
+        ok, preflight_detail = llm_preflight(dict(os.environ))
+        if not ok:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "HALTED").write_text(
+                f"LLM preflight failed: {preflight_detail}\n", encoding="utf-8")
+            return []
 
     for entry in entries:
         run_dir = (runs_root / entry.id).resolve()
@@ -177,6 +263,13 @@ def run_tier2(entries: Sequence[CorpusEntry], *, mock_config: Path, constants: P
                 _stop(recorder_proc)
             if recorder_log is not None:
                 recorder_log.close()
+
+        if verdict == "PASS":
+            exhausted, split_fell_back = _scan_planner_exhaustion(run_dir / "orchestrator.log")
+            if exhausted:
+                verdict, detail = "FAIL", PLANNER_EXHAUSTED_DETAIL
+            if split_fell_back:
+                detail = detail + " | split fell back"
 
         result = BenchResult(entry.id, entry.template, entry.feasibility, TIER, verdict, detail,
                              seconds, plan)

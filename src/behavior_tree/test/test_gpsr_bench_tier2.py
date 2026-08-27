@@ -5,14 +5,48 @@ import time
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from behavior_tree.GPSR.bench.corpus import CorpusEntry
 from behavior_tree.GPSR.bench import tier2
 from behavior_tree.GPSR.bench.tier2 import run_tier2
 
 
+@pytest.fixture(autouse=True)
+def _fake_llm_preflight_ok(monkeypatch):
+    """Every test in this file drives a fake orchestrator launcher and must never touch the
+    network; stub the LLM preflight to "ok" so run_tier2's default llm_check=True doesn't
+    attempt a real OpenRouter call. Tests that specifically exercise the preflight (or its
+    --skip-llm-check bypass) override this patch themselves."""
+    monkeypatch.setattr(tier2, "llm_preflight", lambda env: (True, ""))
+
+
 def _entry(i, text):
     return CorpusEntry(id=f"c{i}", seed=1, template="goToLoc", followups=(), category="people",
                        text=text, feasibility="A")
+
+
+def _fake_orchestrator_with_log_lines(tmp_path: Path, log_lines: list[str] = (),
+                                      status: str = "succeeded") -> list[str]:
+    """A stand-in orchestrator that prints `log_lines` to stdout -- captured verbatim into
+    orchestrator.log by tier2._run_orchestrator -- before writing task-1 telemetry with the
+    given status, then idles. Used to synthesize planner-fallback evidence for the post-run
+    verdict guard without needing a real (or previously-recorded) orchestrator run."""
+    script = tmp_path / "fake_orch_guard.py"
+    script.write_text(textwrap.dedent(f"""
+        import json, os, time
+        for line in {list(log_lines)!r}:
+            print(line, flush=True)
+        d = os.path.join(os.environ["BT_GPSR_PLAN_DIR"], "debug", "traj-1"); os.makedirs(d, exist_ok=True)
+        f = open(os.path.join(d, "events.jsonl"), "a", buffering=1)
+        def ev(t, payload):
+            f.write(json.dumps({{"event_type": t, "task_id": "traj-1/task-1", "payload": payload, "occurred_at": "x"}}) + "\\n")
+        ev("step.finished", {{"action": "announce", "outcome": "succeeded"}})
+        ev("task.finished", {{"status": {status!r}, "reason": "r"}})
+        while True:
+            time.sleep(1)
+    """))
+    return [sys.executable, str(script)]
 
 
 def _fake_orchestrator(tmp_path: Path, marker: Path | None = None) -> list[str]:
@@ -165,3 +199,152 @@ def test_tier2_sheet_failure_doesnt_change_verdict(tmp_path):
     # The detail should NOT contain the " | sheet=" suffix for failed sheet, only "; sheet failed".
     assert "; sheet failed" in results[0].detail
     assert " | sheet=" not in results[0].detail
+
+
+# -- post-run verdict guard: reject hollow PASSes from an exhausted planner --------------
+
+_EXHAUSTED_LOG_LINES = [
+    "[plan:0:0] attempt 1/4 -> LLM call error: PermissionDeniedError(\"Error code: 403\")",
+    "[plan:0:0] attempt 2/4 -> LLM call error: PermissionDeniedError(\"Error code: 403\")",
+    "[plan:0:0] attempt 3/4 -> LLM call error: PermissionDeniedError(\"Error code: 403\")",
+    "[plan:0:0] attempt 4/4 -> LLM call error: PermissionDeniedError(\"Error code: 403\")",
+    "[plan:0:0] all 4 attempts failed (last reason: LLM call error: PermissionDeniedError) "
+    "-> fallback acknowledgement plan",
+]
+
+_TRANSIENT_LOG_LINES = [
+    "[plan:0:0] attempt 1/4 -> LLM call error: APIConnectionError(\"timeout\")",
+    "[plan:0:0] accepted on attempt 2: ['goto target']",
+]
+
+
+def test_tier2_pass_overridden_to_fail_when_planner_exhausted_attempts(tmp_path):
+    entries = [_entry(0, "bring me a spam from the laundry desk")]
+    results = run_tier2(
+        entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+        out_dir=tmp_path / "out", timeout_s=20,
+        launcher=_fake_orchestrator_with_log_lines(tmp_path, _EXHAUSTED_LOG_LINES),
+        reset_cmd=["true"], settle_s=0)
+
+    assert results[0].verdict == "FAIL"
+    assert results[0].detail == "planner exhausted attempts (fallback plan executed)"
+
+    run_json = json.loads((tmp_path / "out" / "runs" / "c0" / "run.json").read_text())
+    assert run_json["verdict"] == "FAIL"
+
+
+def test_tier2_pass_overridden_to_fail_on_fallback_plan_announce_text_alone(tmp_path):
+    """Even without the `all N attempts failed` line making it into the (possibly
+    truncated/rotated) log, the fallback plan's own announce text is independently
+    sufficient evidence that a real plan never ran."""
+    entries = [_entry(0, "bring me a spam from the laundry desk")]
+    log_lines = ["step 0: announce({'text': 'I heard your command but could not work out a "
+                "complete plan for it. I will skip it for now.'})"]
+    results = run_tier2(
+        entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+        out_dir=tmp_path / "out", timeout_s=20,
+        launcher=_fake_orchestrator_with_log_lines(tmp_path, log_lines),
+        reset_cmd=["true"], settle_s=0)
+
+    assert results[0].verdict == "FAIL"
+    assert results[0].detail == "planner exhausted attempts (fallback plan executed)"
+
+
+def test_tier2_pass_survives_transient_llm_errors_that_recovered(tmp_path):
+    entries = [_entry(0, "go to the sofa")]
+    results = run_tier2(
+        entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+        out_dir=tmp_path / "out", timeout_s=20,
+        launcher=_fake_orchestrator_with_log_lines(tmp_path, _TRANSIENT_LOG_LINES),
+        reset_cmd=["true"], settle_s=0)
+
+    assert results[0].verdict == "PASS"
+    assert results[0].detail == ""
+
+
+def test_tier2_split_stage_fallback_alone_annotates_detail_but_stays_pass(tmp_path):
+    """A deterministic split fallback (`[split] all N attempts failed`) does NOT by itself
+    mean planning failed -- the deterministic split can still be planned normally -- so it
+    must not flip the verdict, only annotate the detail."""
+    entries = [_entry(0, "go to the sofa")]
+    log_lines = ["[split] all 4 attempts failed -> deterministic fallback split"]
+    results = run_tier2(
+        entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+        out_dir=tmp_path / "out", timeout_s=20,
+        launcher=_fake_orchestrator_with_log_lines(tmp_path, log_lines),
+        reset_cmd=["true"], settle_s=0)
+
+    assert results[0].verdict == "PASS"
+    assert "split fell back" in results[0].detail
+
+
+def test_tier2_non_pass_verdict_is_not_touched_by_the_guard(tmp_path):
+    """A FAIL from the orchestrator itself is scored on its own merits; the guard only
+    ever downgrades a PASS, never re-labels an already-failing run's detail."""
+    entries = [_entry(0, "please fail this run")]
+    results = run_tier2(
+        entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+        out_dir=tmp_path / "out", timeout_s=20,
+        launcher=_fake_orchestrator_with_log_lines(tmp_path, _EXHAUSTED_LOG_LINES, status="failed"),
+        reset_cmd=["true"], settle_s=0)
+
+    assert results[0].verdict == "FAIL"
+    assert results[0].detail == "r"
+
+
+# -- LLM preflight ------------------------------------------------------------------------
+
+def test_tier2_llm_preflight_failure_halts_before_any_entry_runs(tmp_path, monkeypatch):
+    marker = tmp_path / "orchestrator-marker"
+    monkeypatch.setattr(tier2, "llm_preflight",
+                        lambda env: (False, "PermissionDeniedError('Key limit exceeded')"))
+    entries = [_entry(0, "go to the sofa")]
+
+    results = run_tier2(
+        entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+        out_dir=tmp_path / "out", timeout_s=20,
+        launcher=_fake_orchestrator(tmp_path, marker=marker),
+        reset_cmd=["true"], settle_s=0)
+
+    assert results == []
+    assert not marker.exists()
+    halted = tmp_path / "out" / "HALTED"
+    assert halted.exists()
+    assert "PermissionDeniedError" in halted.read_text()
+    assert not (tmp_path / "out" / "runs").exists()
+
+
+def test_tier2_skip_llm_check_bypasses_the_preflight(tmp_path, monkeypatch):
+    def _boom(env):
+        raise AssertionError("llm_preflight must not be called when llm_check=False")
+
+    monkeypatch.setattr(tier2, "llm_preflight", _boom)
+    entries = [_entry(0, "go to the sofa")]
+
+    results = run_tier2(
+        entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+        out_dir=tmp_path / "out", timeout_s=20,
+        launcher=_fake_orchestrator(tmp_path),
+        reset_cmd=["true"], settle_s=0, llm_check=False)
+
+    assert results[0].verdict == "PASS"
+    assert not (tmp_path / "out" / "HALTED").exists()
+
+
+def test_tier2_offline_planner_skips_the_preflight_even_with_llm_check_true(tmp_path, monkeypatch):
+    """live_llm=False (--offline-planner) means no LLM is ever called, so the preflight
+    would be pure overhead (or a false negative if the key really is dead); llm_check's
+    default of True must not force a probe when live_llm is False."""
+    def _boom(env):
+        raise AssertionError("llm_preflight must not be called when live_llm=False")
+
+    monkeypatch.setattr(tier2, "llm_preflight", _boom)
+    entries = [_entry(0, "go to the sofa")]
+
+    results = run_tier2(
+        entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+        out_dir=tmp_path / "out", timeout_s=20,
+        launcher=_fake_orchestrator(tmp_path),
+        reset_cmd=["true"], settle_s=0, live_llm=False)
+
+    assert results[0].verdict == "PASS"
