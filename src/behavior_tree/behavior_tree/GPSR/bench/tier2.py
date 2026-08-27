@@ -167,6 +167,8 @@ def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[
         if events:
             tasks = parse_events(events)
 
+    _write_announcements(run_dir)
+
     task = tasks.get(1)
     plan = [a for a, _ in task.steps] if task else []
     seconds = time.time() - started
@@ -182,6 +184,40 @@ def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[
         # Defensive fallback; not a normal path (mirrors run_group's own fallback branch).
         verdict, detail = "TIMEOUT", f"timed out after {timeout_s:.0f}s"
     return verdict, detail, seconds, plan
+
+
+_ANNOUNCE_RE = re.compile(r"Finished announcing (.+?)(?:\.\s*)?$")
+
+
+def _write_announcements(run_dir: Path) -> None:
+    """Extract everything the robot announced into ``announcements.txt``.
+
+    The user-facing record of Tinker's spoken responses for human
+    verification: one line per announcement, in log order, deduplicated
+    only when the same text repeats consecutively (the BT re-logs a
+    finished announce on several ticks). Sourced from orchestrator.log;
+    best-effort — a missing/unreadable log writes nothing.
+    """
+    log = run_dir / "orchestrator.log"
+    if not log.is_file():
+        return
+    lines: list[str] = []
+    last = None
+    try:
+        with log.open(encoding="utf-8", errors="ignore") as fh:
+            for raw in fh:
+                m = _ANNOUNCE_RE.search(raw.rstrip())
+                if not m:
+                    continue
+                text = m.group(1).strip()
+                if text and text != last:
+                    lines.append(text)
+                    last = text
+    except OSError:
+        return
+    if lines:
+        (run_dir / "announcements.txt").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _write_run_json(run_dir: Path, entry: CorpusEntry, tier_label: str, result: BenchResult) -> None:
