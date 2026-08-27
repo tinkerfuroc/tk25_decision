@@ -985,7 +985,22 @@ def resolve_pose(bb_client, name: Any) -> Optional[PoseStamped]:
         registry = bb_client.get(bb_keys.DYNAMIC_LOCATIONS) or {}
     except KeyError:
         registry = {}
-    return registry.get(key)
+    hit = registry.get(key)
+    if hit is not None:
+        return hit
+    # Room fallback: a ROOM name with no mapped pose of its own (rcw2026
+    # ships placements in possible_poses but no egpsr_rooms) resolves to
+    # the room's first search spot that has a pose. Without this, every
+    # goto(room) left TARGET_POSE untouched and the robot "navigated" to
+    # its own current pose — zero movement across the whole 2026-08-27
+    # battery for all four room-targeted commands (goals within 10 cm of
+    # spawn, drifting with AMCL, vs the real kitchen_table waypoint in the
+    # one placement-targeted run).
+    for spot in ROOM_SEARCH_SPOTS.get(key, ()):  # ordered sweep list
+        pose = KNOWN_LOCATIONS.get(spot)
+        if pose is not None:
+            return pose
+    return None
 
 
 def materialise_params(bb_client, action: str, params: Dict[str, Any]) -> None:
@@ -1003,6 +1018,16 @@ def materialise_params(bb_client, action: str, params: Dict[str, Any]) -> None:
         pose = resolve_pose(bb_client, loc_name)
         if pose is not None:
             bb_client.set(bb_keys.TARGET_POSE, pose, overwrite=True)
+        else:
+            # Leaving the previous TARGET_POSE in place makes the next goto
+            # a silent navigate-to-self (see resolve_pose's room fallback
+            # note). Say so loudly — an unresolvable location is a data bug
+            # in constants.json, not a runtime condition to paper over.
+            print(
+                f"[gpsr] WARNING: location {loc_name!r} resolved to NO pose; "
+                "the previous TARGET_POSE (if any) will be reused. Add the "
+                "location to possible_poses/egpsr_rooms or search_spots."
+            )
 
     # Track where the robot navigates so a following grasp can tell it is a
     # shelf grasp (the fetch flow is goto(location) -> grasp(object)).
