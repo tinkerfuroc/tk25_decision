@@ -23,7 +23,7 @@ Every task's requirements implicitly include this section.
 - **`run.finished.status` is `"incomplete"` in all 105 runs, including the PASS run.** Never display it as an outcome. The verdict is `run.json`'s `verdict` field.
 - **Attempt identity is the directory name**, not `run.json`'s `id` — all 11 attempt dirs of `s2026-002-countPrsInRoom` carry the same `id`.
 - **Unit tests must be hermetic.** The corpus is being actively appended to and archived by a running battery, so no unit test may assert against it. Corpus-dependent tests are marked `@pytest.mark.corpus` and skip when the corpus is absent.
-- **Run tests from `tools/`:** `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest`.
+- **Run tests from `tools/`:** `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest`.
 - All Python is typed with `from __future__ import annotations` and passes `python -m compileall`.
 
 ## File Structure
@@ -129,7 +129,7 @@ def test_state_dir_is_never_inside_the_corpus(monkeypatch, tmp_path):
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_config.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_config.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'gpsr_ui.config'`
 
 - [ ] **Step 4: Write the implementation**
@@ -191,7 +191,7 @@ markers =
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_config.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_config.py -v`
 Expected: 3 passed
 
 - [ ] **Step 6: Write the fixture builder**
@@ -403,9 +403,9 @@ Then `chmod +x tools/gpsr-ui`.
 
 - [ ] **Step 8: Verify the whole suite and the vendored import**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v`
 Expected: 3 passed
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -c "from gpsr_ui.vendor import sheet_events; print(sheet_events.load_run_telemetry.__doc__.splitlines()[0])"`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -c "from gpsr_ui.vendor import sheet_events; print(sheet_events.load_run_telemetry.__doc__.splitlines()[0])"`
 Expected: prints `Extract milestone/judge events and run meta from a GPSR run's telemetry.`
 
 - [ ] **Step 9: Commit**
@@ -506,7 +506,7 @@ def test_real_corpus_groups_the_known_attempt_history(corpus_root):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_corpus.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_corpus.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'gpsr_ui.corpus'`
 
 - [ ] **Step 3: Write the implementation**
@@ -668,7 +668,7 @@ def find_run(bench_root: Path, tier: str, dir_name: str) -> Path | None:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_corpus.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_corpus.py -v`
 Expected: 6 passed
 
 - [ ] **Step 5: Commit**
@@ -788,7 +788,7 @@ def test_index_jsonl_wins_over_recorder_meta(make_run):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_clock.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_clock.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'gpsr_ui.clock'`
 
 - [ ] **Step 3: Write the implementation**
@@ -1016,7 +1016,7 @@ def load_clock(run_dir: Path) -> Clock:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_clock.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_clock.py -v`
 Expected: 6 passed
 
 - [ ] **Step 5: Commit**
@@ -1189,7 +1189,7 @@ def test_real_run_has_the_normal_epoch_pair_and_no_regeneration(corpus_root):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_telemetry.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_telemetry.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'gpsr_ui.telemetry'`
 
 - [ ] **Step 3: Write the implementation**
@@ -1444,7 +1444,7 @@ def load_run_model(run_dir: Path) -> RunModel:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_telemetry.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_telemetry.py -v`
 Expected: 10 passed (the `corpus` test passes or skips)
 
 - [ ] **Step 5: Commit**
@@ -1545,7 +1545,7 @@ def test_indexing_the_real_corpus_mutates_nothing(corpus_root, tmp_path):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_cache.py tests/test_read_only.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_cache.py tests/test_read_only.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'gpsr_ui.cache'`
 
 - [ ] **Step 3: Write the implementation**
@@ -1618,7 +1618,7 @@ def snapshot_mtimes(root: Path) -> dict[Path, float]:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_cache.py tests/test_read_only.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_cache.py tests/test_read_only.py -v`
 Expected: 3 passed, 1 passed-or-skipped
 
 - [ ] **Step 5: Commit**
@@ -1718,7 +1718,7 @@ def test_index_page_renders_the_entry(make_run, tmp_path):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_app.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_app.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'gpsr_ui.app'`
 
 - [ ] **Step 3: Write the implementation**
@@ -1939,7 +1939,7 @@ ul { margin: 4px 0; padding-left: 18px; }
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_app.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_app.py -v`
 Expected: 6 passed
 
 - [ ] **Step 5: Smoke-test against the real corpus**
@@ -2017,7 +2017,7 @@ def test_frame_path_refuses_traversal(make_run):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_frames.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_frames.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'gpsr_ui.frames'`
 
 - [ ] **Step 3: Write the implementation**
@@ -2120,7 +2120,7 @@ from .frames import frame_path, list_frames
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_frames.py tests/test_app.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_frames.py tests/test_app.py -v`
 Expected: 11 passed
 
 - [ ] **Step 5: Commit**
@@ -2497,7 +2497,7 @@ Append to `app.css`:
 
 Run: `cd tools && node --test tests/js/`
 Expected: 6 passing
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v`
 Expected: all passing
 
 - [ ] **Step 5: Verify the page renders against a real run**
@@ -3106,7 +3106,7 @@ def test_live_summary_reports_regenerations_and_elapsed(make_run):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_live.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_live.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'gpsr_ui.live'`
 
 - [ ] **Step 3: Write the implementation**
@@ -3413,12 +3413,12 @@ Add a link to the live page in `base.html`'s topbar:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_live.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_live.py -v`
 Expected: 6 passed
 
 - [ ] **Step 5: Verify the full suite and the live page**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v && node --test tests/js/`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v && node --test tests/js/`
 Expected: everything passing
 Run: `cd tools && ./gpsr-ui &`, open `/live`.
 Expected: "no run in flight" when idle; a card with an advancing elapsed bar while a battery is running. Stop the server afterwards.
@@ -3494,7 +3494,7 @@ inside the corpus.
 ## Tests
 
     cd tools
-    /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest
+    PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest
     node --test tests/js/
 
 Tests marked `corpus` read the real bench tree and skip when it is absent.
@@ -3504,16 +3504,16 @@ battery is running.
 
 - [ ] **Step 2: Run the complete suite**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v`
 Expected: all passing
 Run: `cd tools && node --test tests/js/`
 Expected: all passing
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m compileall -q gpsr_ui`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m compileall -q gpsr_ui`
 Expected: no output
 
 - [ ] **Step 3: Confirm the read-only guarantee against the live corpus**
 
-Run: `cd tools && /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_read_only.py -v`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest tests/test_read_only.py -v`
 Expected: passed (or skipped if the corpus is absent)
 
 - [ ] **Step 4: Commit**
