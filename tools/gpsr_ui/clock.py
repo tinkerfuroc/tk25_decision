@@ -154,11 +154,27 @@ def _scan_frames(run_dir: Path) -> dict[str, list[tuple[float, str]]]:
 
 
 def _load_exact(run_dir: Path, clock: Clock) -> bool:
+    """Load frames/index.jsonl into `clock`, returning True whenever the
+    file itself EXISTS -- independent of whether any of its lines parsed
+    into a usable row.
+
+    The bench reuses a run directory in place on a re-run without
+    archiving the previous occupant, so a fresh index.jsonl can exist
+    (created, possibly truncated to zero bytes) for a window before its
+    first line is flushed -- exactly the moment a live dashboard is most
+    likely to be looking. Treating "index exists but has zero valid
+    rows" the same as "no index file at all" would fall through to an
+    unfiltered directory scan and leak the previous occupant's orphan
+    frames. So an existing-but-empty (or all-garbage) index must still
+    flip mode to "exact", just with empty per-label rows -- `indexed_files`
+    then correctly reports "no indexed frames yet" for every label,
+    rather than "no way to tell, show everything on disk".
+    """
     path = run_dir / "frames" / "index.jsonl"
     try:
         text = path.read_text()
     except OSError:
-        return False
+        return False  # no index file at all: caller may fall back
 
     rows: dict[str, list[tuple[float, float, str]]] = {}
     for line in text.splitlines():
@@ -183,8 +199,8 @@ def _load_exact(run_dir: Path, clock: Clock) -> bool:
         rows.setdefault(label, []).append(
             (float(stamp), wall, Path(file).name))
 
-    if not rows:
-        return False
+    # The file existing (even empty, even all-garbage) is itself the
+    # signal that this run has an exact index and is not pre-index-era.
     for label, items in rows.items():
         items.sort()
         clock._stamps[label] = [i[0] for i in items]

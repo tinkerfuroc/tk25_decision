@@ -146,6 +146,22 @@ def test_list_frames_without_an_index_still_lists_everything_on_disk(
     assert len(frames["arena"]) == 2
 
 
+def test_an_empty_index_jsonl_shows_nothing_not_the_unfiltered_scan(make_run):
+    """A re-run has just started in a reused directory: index.jsonl has
+    been created (truncated to zero bytes) but no line has been flushed
+    yet. That must NOT be treated the same as "no index file at all" --
+    falling back to an unfiltered directory scan here would leak the
+    previous occupant's orphan frames onto a live dashboard watching this
+    run. Showing no frames for a second is correct; showing a different
+    run's frames is not."""
+    run = make_run(
+        name="s9999-059-x",
+        frames={"head": [(50, 1000), (51, 1200)]},  # orphans only, no index
+        index_lines=[],  # the file exists but has zero valid rows
+    )
+    assert list_frames(run) == {}
+
+
 @pytest.mark.corpus
 def test_indexed_runs_never_list_more_frames_than_their_index(corpus_root):
     """For every run in the corpus that has frames/index.jsonl, list_frames
