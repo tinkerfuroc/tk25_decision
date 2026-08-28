@@ -87,3 +87,17 @@ ul { margin: 4px 0; padding-left: 18px; }
 .node-detail { grid-column: 2; grid-row: 1 / 3; background: #0f1114; border: 1px solid var(--line);
   padding: 8px; margin: 0; font-size: 11px; white-space: pre-wrap;
   overflow: auto; max-height: 60vh; }
+
+.muted { color: var(--dim); }
+.frames-panel { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px;
+  align-items: flex-start; }
+.frames-panel figure { margin: 0; }
+.frames-panel img { max-width: 46vw; border: 1px solid var(--line);
+  background: #000; display: block; }
+.frames-panel figcaption { color: var(--dim); font-size: 11px;
+  padding-top: 4px; }
+.frames-note { width: 100%; margin: 0; }
+.frame-controls { display: flex; gap: 8px; align-items: center; width: 100%; }
+.frame-controls button, .frame-controls select {
+  background: #1b1f26; color: var(--fg); border: 1px solid var(--line);
+  padding: 3px 10px; font: inherit; cursor: pointer; }

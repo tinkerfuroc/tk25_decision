@@ -10,6 +10,9 @@ import {
   activeAncestorIds, edgesFor, historyFor, isBookkeeping, isHiddenBookkeeping,
   layoutTree, statusAt,
 } from "./tree.js";
+import {
+  createPlayer, frameAt, frameAtFraction, hasNoWallTimes, preloadWindow,
+} from "./frames.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const LANE_HEIGHT = 18;
@@ -29,15 +32,33 @@ function el(tag, attrs) {
   return node;
 }
 
-// Builds the /api/run/... URL for a tier[/suffix]/dir_name path. `tier`
-// may itself contain an embedded slash (real corpus fact: pseudo-tiers
-// like "t2-2026/invalidated-20260826" sit alongside a plain "t2-2026/runs"
-// dir) -- encodeURIComponent on the whole tier would turn that slash into
-// a literal "%2F" segment and break the {path:path} route match, so each
-// segment is encoded individually and rejoined.
+// Shared by every URL builder below (run API, frames API, frame image):
+// `tier` may itself contain an embedded slash (real corpus fact:
+// pseudo-tiers like "t2-2026/invalidated-20260826" sit alongside a plain
+// "t2-2026/runs" dir) -- encodeURIComponent on the whole tier would turn
+// that slash into a literal "%2F" segment and break the server's
+// {path:path} route match, so each segment (tier's own parts, dir_name,
+// and anything else) is encoded individually and rejoined. Task 8 found
+// and fixed exactly this bug for the run API; the frame routes need the
+// same treatment, not a fresh bare encodeURIComponent(tier).
+function pathSegments(tier, dirName, ...rest) {
+  return [...tier.split("/"), dirName, ...rest].map(encodeURIComponent).join("/");
+}
+
 function apiRunUrl(tier, dirName) {
-  const segments = [...tier.split("/"), dirName].map(encodeURIComponent);
-  return `/api/run/${segments.join("/")}`;
+  return `/api/run/${pathSegments(tier, dirName)}`;
+}
+
+// The frames listing and frame-image routes live under their OWN
+// top-level prefixes (/api/frames/..., /frame/...), not nested under
+// /api/run/..., precisely so a greedy {path:path} match on /api/run/...
+// can never swallow them first (see app.py's module docstring).
+function apiFramesUrl(tier, dirName) {
+  return `/api/frames/${pathSegments(tier, dirName)}`;
+}
+
+function frameUrl(tier, dirName, label, file) {
+  return `/frame/${pathSegments(tier, dirName, label, file)}`;
 }
 
 function runBounds(model) {
@@ -305,6 +326,135 @@ function mountTree(container, model, playhead) {
   playhead.subscribe(draw);
 }
 
+// The stop-motion camera viewer: one <img>+<figcaption> track per camera
+// label (a run may have only one -- the real s2026-003-findObjInRoom has
+// `head` but no `arena`), all driven off the shared playhead so a click
+// on a ribbon mark jumps the tree panel AND every camera image to that
+// same moment at once. That linked jump is the actual point of this
+// tool, so this function's whole job is: never show a blank/broken image
+// when a frame genuinely exists, and never show a frame from later than
+// the moment being inspected.
+function fractionOf(wall, bounds) {
+  const span = bounds.end - bounds.start;
+  if (!(span > 0)) return 0;
+  return (wall - bounds.start) / span;
+}
+
+async function mountFrames(container, tier, dirName, playhead, bounds) {
+  const payload = await (await fetch(apiFramesUrl(tier, dirName))).json();
+  const labelRefs = payload.labels || {};
+  const labels = Object.keys(labelRefs);
+  const panel = document.createElement("div");
+  panel.className = "frames-panel";
+
+  if (labels.length === 0) {
+    panel.innerHTML = "<p class='muted'>no frames recorded for this run</p>";
+    container.appendChild(panel);
+    return;
+  }
+
+  // clock_mode "none": not one frame in this run has a wall time to join
+  // against (a real example lives in t2plus-2026). Rather than silently
+  // showing no image at all (frameAt() would return null for every
+  // track, forever), fall back to scrubbing by the playhead's fractional
+  // position in the run's own timeline via frameAtFraction, and say so.
+  const unaligned = hasNoWallTimes(labelRefs);
+  if (unaligned) {
+    const note = document.createElement("p");
+    note.className = "muted frames-note";
+    note.textContent = "no clock metadata for this run — frames are not "
+      + "time-aligned; scrubbing by position only.";
+    panel.appendChild(note);
+  }
+
+  const pick = (refs, wall) => (unaligned
+    ? frameAtFraction(refs, fractionOf(wall, bounds))
+    : frameAt(refs, wall));
+
+  const tracks = labels.map((label) => {
+    const refs = labelRefs[label];
+    const wrap = document.createElement("figure");
+    const img = document.createElement("img");
+    img.loading = "eager";
+    img.alt = `${label} camera`;
+    const cap = document.createElement("figcaption");
+    wrap.append(img, cap);
+    panel.appendChild(wrap);
+    return { label, refs, img, cap };
+  });
+
+  const controls = document.createElement("div");
+  controls.className = "frame-controls";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "play";
+  const speed = document.createElement("select");
+  for (const fps of [2, 5, 10, 20, 40]) {
+    const option = document.createElement("option");
+    option.value = String(fps);
+    option.textContent = `${fps} fps`;
+    if (fps === 10) option.selected = true;
+    speed.appendChild(option);
+  }
+  controls.append(button, speed);
+  panel.appendChild(controls);
+  container.appendChild(panel);
+
+  const render = (wall) => {
+    for (const track of tracks) {
+      const ref = pick(track.refs, wall);
+      if (!ref) continue; // empty label: nothing to show, nothing to break
+      const url = frameUrl(tier, dirName, track.label, ref.file);
+      if (track.img.getAttribute("src") !== url) track.img.src = url;
+      track.cap.textContent =
+        `${track.label} · frame ${ref.index} · sim ${ref.stamp_s.toFixed(3)}s`;
+      const idx = track.refs.indexOf(ref);
+      preloadWindow(
+        track.refs, idx, 4,
+        (r) => frameUrl(tier, dirName, track.label, r.file),
+        () => new Image());
+    }
+  };
+  render(playhead.get());
+  playhead.subscribe(render);
+
+  // Frames are one per sim-second, so playback advances by frame INDEX
+  // at the chosen fps, not by wall-clock rate (see frames.js). Stepping
+  // moves the shared playhead itself -- not just the primary image --
+  // so the tree/ribbon stay in lockstep with both cameras while playing.
+  const primary = tracks[0];
+  const player = createPlayer({
+    onTick: () => {
+      const ref = pick(primary.refs, playhead.get());
+      const idx = ref ? primary.refs.indexOf(ref) : -1;
+      const next = primary.refs[idx + 1];
+      if (!next) {
+        player.pause();
+        button.textContent = "play";
+        return;
+      }
+      if (unaligned) {
+        const frac = primary.refs.length > 1 ? (idx + 1) / (primary.refs.length - 1) : 0;
+        playhead.set(bounds.start + frac * (bounds.end - bounds.start));
+      } else if (next.wall === null || next.wall === undefined) {
+        player.pause();
+        button.textContent = "play";
+      } else {
+        playhead.set(next.wall);
+      }
+    },
+  });
+  button.addEventListener("click", () => {
+    if (player.isPlaying()) {
+      player.pause();
+      button.textContent = "play";
+    } else {
+      player.play(Number(speed.value));
+      button.textContent = "pause";
+    }
+  });
+}
+
 export async function boot({ tier, dirName }) {
   const base = apiRunUrl(tier, dirName);
   const model = await (await fetch(base)).json();
@@ -331,6 +481,8 @@ export async function boot({ tier, dirName }) {
     document.getElementById("ribbon"), buildLanes(model), bounds, playhead);
 
   mountTree(document.getElementById("panels"), model, playhead);
+  await mountFrames(
+    document.getElementById("panels"), tier, dirName, playhead, bounds);
 
   window.__gpsr = { model, playhead, bounds, base };
   return window.__gpsr;
