@@ -6,6 +6,10 @@
 // import they need must be added up here too, never inline further down.
 import { createPlayhead } from "./playhead.js";
 import { buildLanes, collapseLaneItems, parseWall, xOf } from "./timeline.js";
+import {
+  activeAncestorIds, edgesFor, historyFor, isBookkeeping, layoutTree,
+  statusAt,
+} from "./tree.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const LANE_HEIGHT = 18;
@@ -117,6 +121,172 @@ function renderRibbon(svg, lanes, bounds, playhead) {
   });
 }
 
+// Renders the behaviour tree as it stood at the playhead's moment and
+// lets a click show a node's blackboard access and full feedback
+// history. "The tree" is whichever epoch is latest at-or-before the
+// playhead -- normally exactly two (a startup skeleton, then the
+// executor's materialised plan), so the panel must redraw the whole
+// tree (not just recolour it) whenever the epoch changes shape. Layout,
+// status-at-time and bookkeeping classification are pure functions from
+// tree.js so they're covered by node:test; only DOM wiring lives here.
+function renderNodeDetail(detail, epoch, nodeId, transitions, wall) {
+  if (!nodeId) {
+    detail.textContent = "click a node";
+    return;
+  }
+  const byId = new Map(epoch.nodes.map((n) => [n.id, n]));
+  const node = byId.get(nodeId);
+  if (!node) {
+    // The tree changed shape (epoch switch) and this id isn't in the new
+    // one -- say so rather than showing stale or blank detail.
+    detail.textContent = `(node ${nodeId} is not present in epoch ${epoch.ordinal})`;
+    return;
+  }
+  const current = statusAt(transitions, wall).get(nodeId);
+  const history = historyFor(transitions, nodeId);
+  const lines = [
+    `id      : ${node.id}`,
+    `name    : ${node.name}`,
+    `type    : ${node.type}`,
+    `class   : ${node.node_class}`,
+    `reads   : ${(node.reads || []).join(", ") || "-"}`,
+    `writes  : ${(node.writes || []).join(", ") || "-"}`,
+    "",
+    `status @ playhead : ${current ? current.status : "(not yet ticked)"}`,
+    `feedback          : ${current ? current.feedback || "-" : "-"}`,
+    "",
+    `full history (${history.length} tick${history.length === 1 ? "" : "s"}):`,
+  ];
+  if (history.length === 0) {
+    lines.push("  (never ticked)");
+  } else {
+    for (const t of history) {
+      lines.push(`  tick ${t.tick} @ ${t.wall} : ${t.status}  ${t.feedback || ""}`);
+    }
+  }
+  detail.textContent = lines.join("\n");
+}
+
+function mountTree(container, model, playhead) {
+  const panel = document.createElement("div");
+  panel.className = "tree-panel";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "tree-toolbar";
+  const hideLabel = document.createElement("label");
+  const hideInput = document.createElement("input");
+  hideInput.type = "checkbox";
+  hideInput.checked = true;
+  hideLabel.append(hideInput, document.createTextNode(" hide bookkeeping nodes"));
+  toolbar.appendChild(hideLabel);
+
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "tree");
+  const detail = document.createElement("pre");
+  detail.className = "node-detail";
+  detail.textContent = "click a node";
+  panel.append(toolbar, svg, detail);
+  container.appendChild(panel);
+
+  const applyHideToggle = () => svg.classList.toggle("hide-bookkeeping", hideInput.checked);
+  hideInput.addEventListener("change", applyHideToggle);
+  applyHideToggle();
+
+  let currentEpoch = null;
+  let selectedNodeId = null;
+
+  const draw = (wall) => {
+    // The tree shown is the latest epoch at or before the playhead.
+    let epoch = null;
+    for (const e of model.epochs) {
+      if (e.wall !== null && e.wall <= wall) epoch = e;
+    }
+    if (epoch === null) epoch = model.epochs[0];
+    if (!epoch) return;
+
+    if (epoch !== currentEpoch) {
+      currentEpoch = epoch;
+      svg.replaceChildren();
+      const { positions, width, height } = layoutTree(epoch.nodes, epoch.root_id);
+      svg.setAttribute("width", width + 220);
+      svg.setAttribute("height", height + 20);
+
+      const byId = new Map(epoch.nodes.map((n) => [n.id, n]));
+
+      const edgesLayer = el("g", { class: "edges" });
+      svg.appendChild(edgesLayer);
+      for (const edge of edgesFor(epoch.nodes, positions)) {
+        const childBk = isBookkeeping(byId.get(edge.id));
+        const path = el("path", {
+          class: `edge${childBk ? " bookkeeping-edge" : ""}`,
+          d: `M ${edge.from.x} ${edge.from.y + 10} `
+            + `V ${edge.to.y + 10} H ${edge.to.x}`,
+        });
+        path.dataset.nodeId = edge.id;
+        edgesLayer.appendChild(path);
+      }
+
+      for (const [id, pos] of positions) {
+        const node = byId.get(id);
+        const g = document.createElementNS(SVG_NS, "g");
+        g.setAttribute("class",
+          `node ${isBookkeeping(node) ? "bookkeeping" : ""}`);
+        g.setAttribute("transform", `translate(${pos.x},${pos.y + 10})`);
+        g.dataset.nodeId = id;
+        if (id === selectedNodeId) g.classList.add("selected");
+
+        const dot = document.createElementNS(SVG_NS, "circle");
+        dot.setAttribute("r", 3.5);
+        dot.setAttribute("class", "node-dot");
+        const text = document.createElementNS(SVG_NS, "text");
+        text.setAttribute("x", 8);
+        text.setAttribute("y", 3);
+        text.textContent = node.name;
+        g.append(dot, text);
+
+        g.addEventListener("click", () => {
+          selectedNodeId = id;
+          for (const other of svg.querySelectorAll("g.node.selected")) {
+            other.classList.remove("selected");
+          }
+          g.classList.add("selected");
+          renderNodeDetail(detail, epoch, id, model.transitions, playhead.get());
+        });
+        svg.appendChild(g);
+      }
+      const header = document.createElementNS(SVG_NS, "text");
+      header.setAttribute("class", "epoch-label");
+      header.setAttribute("x", 0);
+      header.setAttribute("y", 8);
+      header.textContent =
+        `epoch ${epoch.ordinal} — ${epoch.nodes.length} nodes`;
+      svg.appendChild(header);
+    }
+
+    const states = statusAt(model.transitions, wall);
+    // "The path to the active node should be visible" -- every RUNNING
+    // node's ancestor chain gets an on-path highlight distinct from the
+    // bookkeeping dimming, so triage can trace what's currently ticking.
+    const onPath = activeAncestorIds(epoch.nodes, states);
+    for (const g of svg.querySelectorAll("g.node")) {
+      const id = g.dataset.nodeId;
+      const st = states.get(id);
+      g.setAttribute("data-status", st ? st.status : "NONE");
+      g.classList.toggle("on-path", onPath.has(id));
+    }
+    for (const path of svg.querySelectorAll("path.edge")) {
+      path.classList.toggle("on-path", onPath.has(path.dataset.nodeId));
+    }
+
+    if (selectedNodeId) {
+      renderNodeDetail(detail, epoch, selectedNodeId, model.transitions, wall);
+    }
+  };
+
+  draw(playhead.get());
+  playhead.subscribe(draw);
+}
+
 export async function boot({ tier, dirName }) {
   const base = apiRunUrl(tier, dirName);
   const model = await (await fetch(base)).json();
@@ -141,6 +311,8 @@ export async function boot({ tier, dirName }) {
   const playhead = createPlayhead(bounds);
   renderRibbon(
     document.getElementById("ribbon"), buildLanes(model), bounds, playhead);
+
+  mountTree(document.getElementById("panels"), model, playhead);
 
   window.__gpsr = { model, playhead, bounds, base };
   return window.__gpsr;

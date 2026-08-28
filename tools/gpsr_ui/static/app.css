@@ -35,3 +35,49 @@ ul { margin: 4px 0; padding-left: 18px; }
 .mark.ok { fill: var(--pass); } .mark.bad { fill: var(--fail); }
 .mark.run { fill: var(--dim); }
 .cursor { stroke: #6cb6ff; stroke-width: 1; }
+
+/* Every child gets BOTH axes pinned (grid-column AND grid-row). Grid
+   auto-placement treats "definite row, auto column" and "definite
+   column, auto row" as different placement passes -- leaving either
+   axis auto on more than one item lets the engine seat them in an order
+   that doesn't match the visual layout intended here (the detail pane,
+   the only item with a definite row and nothing else, would otherwise
+   claim column 1's top rows before the toolbar/tree are placed at all,
+   shoving them below it instead of beside it). */
+.tree-panel { display: grid; grid-template-columns: 1fr 320px;
+  grid-template-rows: auto 1fr; gap: 6px 12px; margin-top: 12px; }
+.tree-toolbar { grid-column: 1; grid-row: 1; color: var(--dim); font-size: 11px; }
+.tree-toolbar label { cursor: pointer; }
+/* Two overrides needed together, or the grid blows out past the
+   viewport and shoves the detail pane off-screen instead of scrolling
+   inside this box:
+     - min-width: 0 overrides the grid item's default min-width:auto,
+       which otherwise equals the SVG's own intrinsic `width` attribute
+       (one column per tree depth -- a keepalive/retry subtree can run a
+       dozen levels deep even with bookkeeping merely dimmed, not
+       hidden) and would floor the column track at that width.
+     - max-width: 100% then caps the <svg> element's own rendered box at
+       the track's width. The SVG has no viewBox, so this doesn't scale
+       the drawing -- it clips it, and overflow:auto turns that clipped
+       remainder into scrollbars, the same as it already does vertically
+       via max-height. */
+.tree { grid-column: 1; grid-row: 2; min-width: 0; max-width: 100%;
+  background: #0f1114; border: 1px solid var(--line); overflow: auto;
+  max-height: 60vh; }
+.tree text { fill: var(--fg); font-size: 10px; }
+.epoch-label { fill: var(--dim) !important; }
+.edge { fill: none; stroke: var(--line); stroke-width: 1; }
+.edge.on-path { stroke: #6cb6ff; stroke-width: 1.5; }
+.tree.hide-bookkeeping .edge.bookkeeping-edge { display: none; }
+.node { cursor: pointer; }
+.node.bookkeeping { opacity: 0.35; }
+.tree.hide-bookkeeping .node.bookkeeping { display: none; }
+.node.on-path text { fill: #6cb6ff; }
+.node.selected .node-dot { stroke: #fff; stroke-width: 1.5; }
+.node-dot { fill: var(--none); }
+.node[data-status="SUCCESS"] .node-dot { fill: var(--pass); }
+.node[data-status="FAILURE"] .node-dot { fill: var(--fail); }
+.node[data-status="RUNNING"] .node-dot { fill: #6cb6ff; }
+.node-detail { grid-column: 2; grid-row: 1 / 3; background: #0f1114; border: 1px solid var(--line);
+  padding: 8px; margin: 0; font-size: 11px; white-space: pre-wrap;
+  overflow: auto; max-height: 60vh; }
