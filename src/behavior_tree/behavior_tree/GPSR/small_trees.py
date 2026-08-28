@@ -48,6 +48,7 @@ from behavior_tree.PickAndPlace.custom_nodes import BtNode_GetImage
 from .custom_nodes import (
     BtNode_ScanForWavingPersonNew,
     BtNode_VLMQuery,
+    BtNode_ParseCountFromAnswer,
     BtNode_LLMQuery,
 )
 
@@ -1583,6 +1584,15 @@ def create_count():
             "spoken sentence that starts with the number."
         ),
         bb_fill_key=bb_keys.TARGET_OBJECT_PROMPT,
+    ))
+    vlm_fallback.add_child(BtNode_ParseCountFromAnswer(
+        # The target postcondition gate verifies counted(X) against the
+        # COUNT_VALUE artifact; without this the VLM path answers correctly
+        # and then fails its gate with "counted(...) (UNKNOWN)", replanning
+        # the whole target in a loop until the run times out.
+        "parse vlm count",
+        bb_answer_src=bb_keys.VLM_ANSWER,
+        bb_count_dst=bb_keys.COUNT_VALUE,
     ))
     vlm_fallback.add_child(BtNode_AnnounceFromBB(
         "announce vlm count", bb_keys.VLM_ANSWER, prefix=""

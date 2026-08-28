@@ -12,6 +12,7 @@ from py_trees.blackboard import Blackboard
 import action_msgs.msg as action_msgs
 import openai
 import json
+import re
 import time
 import textwrap
 from .config import (
@@ -543,7 +544,16 @@ class BtNode_VLMQuery(Behaviour):
                     temperature=OPENAI_TEMPERATURE,
                     max_tokens=max(OPENAI_MAX_TOKENS, 256),
                 )
-                self._answer = resp.choices[0].message.content.strip()
+                content = resp.choices[0].message.content
+                if content is None or not content.strip():
+                    # OpenRouter occasionally returns a completion with no
+                    # content (observed intermittently in battery runs as
+                    # AttributeError: 'NoneType' object has no attribute
+                    # 'strip'). Surface it as a normal query failure so the
+                    # retry/replan machinery handles it.
+                    self._error = "VLM returned an empty completion"
+                else:
+                    self._answer = content.strip()
             except Exception as exc:  # noqa: BLE001 — surface anything
                 self._error = repr(exc)
 
@@ -563,6 +573,62 @@ class BtNode_VLMQuery(Behaviour):
 
     def terminate(self, new_status):
         self._thread = None
+
+
+class BtNode_ParseCountFromAnswer(Behaviour):
+    """Extract the count from a VLM answer and store it as the count artifact.
+
+    The target postcondition gate verifies ``counted(X)`` against the
+    ``count_value`` evidence key (``bb_keys.COUNT_VALUE``) — which only the
+    detector path wrote. A run whose count came from the VLM fallback
+    answered correctly, then failed its postcondition with
+    "counted(...) (UNKNOWN)" and replanned the whole target in a loop until
+    the battery timeout (s2026-002, 2026-08-28). The VLM question template
+    demands an answer that starts with the number; parse it (digits first,
+    then number words) and store it so the gate sees the same artifact the
+    detector path produces.
+    """
+
+    _WORD_NUMBERS = {
+        "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+        "eleven": 11, "twelve": 12, "no": 0, "none": 0,
+    }
+
+    def __init__(self, name: str, bb_answer_src: str, bb_count_dst: str):
+        super().__init__(name)
+        self._src = bb_answer_src
+        self._dst = bb_count_dst
+        self._bb = None
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(self._src, access=Access.READ)
+        self._bb.register_key(self._dst, access=Access.WRITE)
+
+    @classmethod
+    def parse_count(cls, answer) -> "int | None":
+        text = str(answer or "")
+        m = re.search(r"\d+", text)
+        if m:
+            return int(m.group())
+        for word in re.findall(r"[a-zA-Z]+", text.lower()):
+            if word in cls._WORD_NUMBERS:
+                return cls._WORD_NUMBERS[word]
+        return None
+
+    def update(self):
+        try:
+            answer = self._bb.get(self._src)
+        except Exception:
+            answer = None
+        count = self.parse_count(answer)
+        if count is None:
+            self.feedback_message = f"no count found in answer: {str(answer)[:60]!r}"
+            return Status.FAILURE
+        self._bb.set(self._dst, count, overwrite=True)
+        self.feedback_message = f"parsed count={count} from VLM answer"
+        return Status.SUCCESS
 
 
 class BtNode_LLMQuery(Behaviour):
