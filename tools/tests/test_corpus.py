@@ -1,6 +1,8 @@
 # tools/tests/test_corpus.py
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from gpsr_ui.corpus import Attempt, list_tiers, split_dir_name
@@ -53,6 +55,43 @@ def test_missing_run_json_yields_none_verdict_not_a_crash(make_run):
 
 def test_empty_bench_root_yields_no_tiers(tmp_path):
     assert list_tiers(tmp_path) == []
+
+
+def test_vanished_run_dir_is_skipped_not_fatal(make_run, monkeypatch):
+    """A battery archiving/renaming a run dir between iterdir() and stat()
+    must not take down discovery for every other tier and entry."""
+    alive = make_run(name="s9999-003-alive", verdict="PASS")
+    make_run(name="s9999-004-vanishing", verdict="PASS")
+    bench_root = alive.parents[2]
+
+    real_stat = Path.stat
+    calls = {"n": 0}
+
+    def flaky_stat(self, *args, **kwargs):
+        if self.name == "s9999-004-vanishing":
+            calls["n"] += 1
+            if calls["n"] > 1:
+                # Simulate the directory vanishing after it passed the
+                # is_dir() filter (1st stat) but before _attempt()'s
+                # explicit mtime stat (2nd).
+                raise FileNotFoundError(self)
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+
+    tiers = list_tiers(bench_root)
+    entry_ids = {e.entry_id for t in tiers for e in t.entries}
+    assert "s9999-003-alive" in entry_ids
+    assert "s9999-004-vanishing" not in entry_ids
+
+
+def test_run_json_bare_list_yields_none_verdict_not_a_crash(make_run):
+    """A truncated/garbage run.json can parse as a non-dict JSON value."""
+    run = make_run(name="s9999-006-x", verdict=None)
+    (run / "run.json").write_text("[1, 2, 3]")
+    tiers = list_tiers(run.parents[2])
+    attempt = tiers[0].entries[0].attempts[0]
+    assert attempt.verdict is None
 
 
 @pytest.mark.corpus

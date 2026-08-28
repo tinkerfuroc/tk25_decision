@@ -47,9 +47,12 @@ def split_dir_name(name: str) -> tuple[str, str | None]:
 
 def _read_run_json(run_dir: Path) -> dict:
     try:
-        return json.loads((run_dir / "run.json").read_text())
+        data = json.loads((run_dir / "run.json").read_text())
     except (OSError, ValueError):
         return {}
+    # A truncated/garbage run.json can parse successfully as a bare list or
+    # scalar; only a dict is a usable record.
+    return data if isinstance(data, dict) else {}
 
 
 def _attempt(run_dir: Path) -> Attempt:
@@ -92,8 +95,18 @@ def _corpus_metadata(tier_dir: Path) -> dict[str, dict]:
 
 def _build_tier(name: str, runs_dir: Path, meta: dict[str, dict]) -> Tier:
     by_entry: dict[str, Entry] = {}
-    for run_dir in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
-        attempt = _attempt(run_dir)
+    for run_dir in sorted(
+        p for p in runs_dir.iterdir()
+        if p.is_dir() and not p.name.startswith(".")
+    ):
+        try:
+            attempt = _attempt(run_dir)
+        except OSError:
+            # A bench battery archives/renames/deletes attempt directories
+            # concurrently with discovery; a directory that vanished between
+            # this iterdir() snapshot and _attempt()'s stat() is skipped
+            # rather than taking down every other tier and entry.
+            continue
         entry = by_entry.get(attempt.entry_id)
         if entry is None:
             rec = meta.get(attempt.entry_id, {})
@@ -126,10 +139,16 @@ def list_tiers(bench_root: Path) -> list[Tier]:
 
     for tier_dir in tier_dirs:
         meta = _corpus_metadata(tier_dir)
-        for runs_dir in sorted(
-            p for p in tier_dir.iterdir()
-            if p.is_dir() and p.name.startswith(_RUNS_PREFIX)
-        ):
+        try:
+            runs_dirs = sorted(
+                p for p in tier_dir.iterdir()
+                if p.is_dir() and p.name.startswith(_RUNS_PREFIX)
+            )
+        except OSError:
+            # tier_dir vanished/renamed since the outer iterdir() snapshot;
+            # skip it rather than aborting discovery for every other tier.
+            continue
+        for runs_dir in runs_dirs:
             suffix = runs_dir.name[len(_RUNS_PREFIX):].lstrip("-")
             name = tier_dir.name if not suffix else f"{tier_dir.name}/{suffix}"
             tier = _build_tier(name, runs_dir, meta)
