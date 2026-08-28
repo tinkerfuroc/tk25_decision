@@ -1,6 +1,11 @@
 # tools/tests/test_frames.py
 from __future__ import annotations
 
+import os
+
+import pytest
+
+from gpsr_ui.corpus import list_tiers
 from gpsr_ui.frames import frame_path, list_frames
 
 
@@ -41,3 +46,52 @@ def test_frame_path_refuses_traversal(make_run):
     assert frame_path(run, "head", "../../run.json") is None
     assert frame_path(run, "../head", "0000_1000.jpg") is None
     assert frame_path(run, "head", "nope.jpg") is None
+
+
+def test_list_frames_skips_a_symlinked_label_dir_and_a_symlinked_file(
+    make_run, tmp_path
+):
+    """Round-1 review finding: list_frames must apply the same positive
+    validation frame_path does, or a symlink -- introduced by a recording
+    bug or a bad archive extraction, since we do not control what writes
+    the corpus -- leaks names through a listing that would then refuse to
+    serve them. Three leaks were demonstrated: a symlinked label dir
+    pointing outside the run, one pointing at ANOTHER run's frames/head
+    (exposing that run's real frame names and stamps), and a symlinked
+    file inside a genuine label dir. Cover all three here."""
+    run = make_run(name="s9999-057-x", frames={"head": [(0, 1000)]})
+    other_run = make_run(name="s9999-058-y", frames={"head": [(0, 2000)]})
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    # 1. symlinked label dir pointing entirely outside any run.
+    os.symlink(outside, run / "frames" / "escaped_label")
+    # 2. symlinked label dir pointing at ANOTHER run's real frames/head.
+    os.symlink(other_run / "frames" / "head", run / "frames" / "borrowed_label")
+    # 3. symlinked file inside the genuine "head" label dir.
+    real_elsewhere = tmp_path / "9999_9999.jpg"
+    real_elsewhere.write_bytes(b"\xff\xd8\xff\xd9")
+    os.symlink(real_elsewhere, run / "frames" / "head" / "9999_9999.jpg")
+
+    frames = list_frames(run)
+    assert list(frames) == ["head"], "no symlinked label should be listed"
+    assert [f.file for f in frames["head"]] == ["0000_1000.jpg"], (
+        "the symlinked file must not be listed alongside the genuine one"
+    )
+
+
+@pytest.mark.corpus
+def test_real_single_camera_run_lists_only_head(corpus_root):
+    """s2026-003-findObjInRoom in the real corpus has frames/head but no
+    frames/arena -- confirm list_frames reflects that against the actual
+    bench, not just a synthetic fixture."""
+    tiers = {t.name: t for t in list_tiers(corpus_root)}
+    entries = {e.entry_id: e for e in tiers["t2-2026"].entries}
+    attempt = entries["s2026-003-findObjInRoom"].attempts[0]
+    assert attempt.is_current
+
+    frames = list_frames(attempt.path)
+    assert list(frames) == ["head"]
+    # A live battery may re-run this entry and change its frame count;
+    # assert a floor, not equality.
+    assert len(frames["head"]) >= 1
