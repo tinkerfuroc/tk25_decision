@@ -50,11 +50,19 @@ session. They drive most of the design.
    289 `tree.generated` events, `tree_revision` is `0` in every one; all 105
    `run.finished` events report `incomplete`, including the run whose
    `run.json` says `PASS`. Two consequences, both load-bearing:
-   - **Replans must be counted as `tree.generated` epochs**, not revision
-     bumps. `group-000` in `t1-42` has 24 epochs. The vendored classifier
-     emits its `REPLAN` judge event only when `tree_revision > 0`, so that
-     lane would be **silently empty on every run in the corpus** if we relied
-     on it. `telemetry.py` derives replans itself.
+   - **Tree regeneration must be counted from `tree.generated` epochs**, not
+     revision bumps — but two epochs is the *normal* pair, not a replan: a
+     skeleton tree at startup, then the `DynamicExecutor` materialising the
+     plan. Regenerations are therefore `max(0, epochs - 2)`. `group-000` in
+     `t1-42` has 24 epochs; every t2-2026 run has exactly 2.
+   - **Tree regeneration is not the same phenomenon as an executor replan.**
+     The `DynamicExecutor`'s internal replanning does not regenerate the
+     tree: `s2026-002.attempt11`, which replan-looped for the full 900 s
+     timeout, still emits only 2 `tree.generated` events. So epoch count
+     *undercounts* replans on t2 runs and must never be labelled "replans".
+     The replan-adjacent signal on those runs is PRECONDITION/POSTCONDITION
+     `FAILURE` judge events together with repeated "I am planning"
+     announcements, and that is what the UI surfaces for them.
    - **`run.finished.status` is never displayed as an outcome.** The verdict
      is `run.json`'s `verdict` field.
 8. **Scale.** 40 corpus entries per tier, plus attempt archives. 150–900 frames
@@ -146,12 +154,17 @@ is deliberate rather than a problem to solve.
 
 `sheet_events.py` is pure stdlib (`ast`, `json`, `re`, `dataclasses`,
 `pathlib`, `typing`) and about 250 lines. It is copied to
-`vendor/sheet_events.py` with the source commit `07497b0` recorded in a header
+`vendor/sheet_events.py` with the source commit `9072c6e` recorded in a header
 comment. `load_run_telemetry(run_dir)` returns `MilestoneEvent` and
 `JudgeEvent` lists already carrying NAV/VISION/AUDIO/MANIP classification,
-keepalive and bookkeeping exclusion, and `plan-step N action: params` context.
-Reimplementing that classification would guarantee drift from the contact
-sheets and bench verdicts.
+keepalive and bookkeeping exclusion, and `plan-step N action: params` context,
+plus a meta dict whose `tree_generations` is the epoch count. Reimplementing
+that classification would guarantee drift from the contact sheets and bench
+verdicts.
+
+`9072c6e` is the upstream fix for the `tree_revision` defect this design
+surfaced: the classifier now emits REPLAN when `tree_generations >= 3` rather
+than when `tree_revision > 0`, so the judge lane is no longer silently empty.
 
 `GPSR_UI_SHEET_EVENTS` overrides the vendored copy with a live path, for
 checking against upstream changes. The producing session has committed to
@@ -195,9 +208,11 @@ A single pass over `events.jsonl` produces:
   158 nodes at sequence 257, the difference being the `DynamicExecutor`
   materialising the plan. **Both report `tree_revision: 0`** — see constraint
   7 — so epochs are identified by ordinal, and the tree shown at a playhead is
-  the latest epoch at or before it. Epochs after the first are **replans** and
-  are first-class events in the UI, not silent redraws. Epoch count per run
-  ranges from 1 to 24 across the corpus.
+  the latest epoch at or before it. Epoch count per run ranges from 1 to 24
+  across the corpus; the first two are the normal skeleton-then-materialise
+  pair, and only epochs beyond them are **tree regenerations**. Those are
+  first-class events in the UI, not silent redraws — but they are reported as
+  regenerations, never as replans, per constraint 7.
 - **Node status timeline.** From `tree.node_states_changed`: per node, an
   ordered list of (tick, wall, status, feedback). Node status at any playhead
   position is the last transition at or before it.
@@ -233,9 +248,11 @@ event log.
 
 - *Timeline ribbon.* Wall-clock x-axis with lanes for plan steps, milestones
   (NAV/VISION/AUDIO/MANIP, red on FAILURE), judge events (precondition,
-  postcondition, supervisor, correction), replan markers at each
-  `tree.generated` epoch after the first, and frame coverage density. A budget
-  bar shows elapsed against the 6-minute target and the 900 s timeout.
+  postcondition, supervisor, correction, and the classifier's own replan
+  events) and frame coverage density. A budget bar shows elapsed against the
+  6-minute target and the 900 s timeout. Since the vendored classifier now
+  emits REPLAN judge events itself for genuine regenerations, the ribbon has
+  no separate replan lane — that would double-count.
 - *Tree panel.* SVG hierarchical layout of the current tree revision,
   time-travelled to the playhead. Keepalive and bookkeeping subtrees collapsed
   by default; the path to the active node auto-expanded. Clicking a node opens

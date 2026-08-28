@@ -17,7 +17,9 @@ Every task's requirements implicitly include this section.
 - **Never write inside `gpsr_runs/`.** Open every corpus file read-only. All derived state goes under `GPSR_UI_STATE_DIR` (default `~/.cache/gpsr-ui/`).
 - **Interpreter:** `/home/tinker/tinker-sim/6.0.1/.venv/bin/python` (Python 3.12.13). It already has fastapi, uvicorn, jinja2, pydantic and Pillow. **Install nothing.** If a task seems to need a new package, stop and report instead.
 - **`events.jsonl` is the only telemetry source.** Never parse `orchestrator.log` or `bt_visualization_logs/`.
-- **`tree_revision` is `0` in all 289 `tree.generated` events across all 105 runs in the corpus.** Replans are counted as `tree.generated` epochs beyond the first, never from `tree_revision`.
+- **`tree_revision` is `0` in all 289 `tree.generated` events across all 105 runs in the corpus.** Never read it.
+- **Two `tree.generated` epochs is the NORMAL pair** — a skeleton tree at startup, then the `DynamicExecutor` materialising the plan. Tree regenerations are `max(0, epochs - 2)`. Every t2-2026 run has exactly 2; `t1-42/group-000` has 24.
+- **Tree regeneration is not an executor replan.** The `DynamicExecutor` replans internally without regenerating the tree: `s2026-002.attempt11` replan-looped for the full 900 s timeout with only 2 epochs. Never label the epoch count "replans". On t2 runs the replan-adjacent signal is PRECONDITION/POSTCONDITION `FAILURE` judge events, exposed as `gate_failures`.
 - **`run.finished.status` is `"incomplete"` in all 105 runs, including the PASS run.** Never display it as an outcome. The verdict is `run.json`'s `verdict` field.
 - **Attempt identity is the directory name**, not `run.json`'s `id` — all 11 attempt dirs of `s2026-002-countPrsInRoom` carry the same `id`.
 - **Unit tests must be hermetic.** The corpus is being actively appended to and archived by a running battery, so no unit test may assert against it. Corpus-dependent tests are marked `@pytest.mark.corpus` and skip when the corpus is absent.
@@ -32,12 +34,12 @@ Every task's requirements implicitly include this section.
 | `tools/gpsr_ui/config.py` | Environment-derived settings (bench root, state dir, classifier override) |
 | `tools/gpsr_ui/corpus.py` | Tier/run discovery, attempt grouping, verdict summary |
 | `tools/gpsr_ui/clock.py` | Sim↔wall mapping, exact and approximate |
-| `tools/gpsr_ui/telemetry.py` | `events.jsonl` → derived run model (epochs, status timeline, replans) |
+| `tools/gpsr_ui/telemetry.py` | `events.jsonl` → derived run model (epochs, status timeline, regenerations) |
 | `tools/gpsr_ui/frames.py` | Frame discovery, thumbnails, mp4 export |
 | `tools/gpsr_ui/cache.py` | Derived-model cache keyed by (path, mtime, size) |
 | `tools/gpsr_ui/live.py` | In-flight detection, byte-offset tail, SSE generator |
 | `tools/gpsr_ui/app.py` | FastAPI routes, composition root |
-| `tools/gpsr_ui/vendor/sheet_events.py` | Vendored classifier, pinned at `07497b0` |
+| `tools/gpsr_ui/vendor/sheet_events.py` | Vendored classifier, pinned at `9072c6e` |
 | `tools/gpsr_ui/static/*.js` | Frontend modules, no build step |
 | `tools/gpsr_ui/templates/*.html` | Jinja2 page shells |
 | `tools/tests/` | pytest suite plus hermetic fixture builders |
@@ -73,16 +75,16 @@ printf '' > tools/gpsr_ui/vendor/__init__.py
 Then prepend this header to `tools/gpsr_ui/vendor/sheet_events.py`, above its existing docstring:
 
 ```python
-# VENDORED from tinker-sim tools/sheet_events.py at commit 07497b0.
+# VENDORED from tinker-sim tools/sheet_events.py at commit 9072c6e.
 # Do not edit. To refresh, re-copy and update this commit hash.
 # The upstream owner (session "gpsr command testing robustness") has
 # committed to messaging before changing the public surface:
 #   load_run_telemetry(run_dir) -> (list[MilestoneEvent], list[JudgeEvent], dict)
 #   MilestoneEvent(wall, kind, name, status, info)
 #   JudgeEvent(wall, kind, name, status, info)
-# NOTE: this module emits a REPLAN JudgeEvent only when tree_revision > 0,
-# which never happens in the corpus. gpsr_ui.telemetry derives replans from
-# tree.generated epoch count instead. Do not "fix" that here.
+#   meta["tree_generations"] -> int, the tree.generated epoch count
+# This module emits REPLAN JudgeEvents itself when tree_generations >= 3.
+# gpsr_ui.telemetry must NOT emit its own replan events on top of these.
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -1038,7 +1040,7 @@ git commit -m "feat: sim/wall clock mapping with exact and approximate modes"
   - `TreeNode` dataclass: `id`, `name`, `type`, `parent_id`, `children: list[str]`, `node_class`, `reads: list[str]`, `writes: list[str]`.
   - `Epoch` dataclass: `ordinal: int`, `wall: float | None`, `sequence: int`, `root_id: str`, `nodes: dict[str, TreeNode]`.
   - `Transition` dataclass: `wall: float | None`, `tick: int`, `node_id: str`, `status: str`, `feedback: str`.
-  - `RunModel` dataclass: `trajectory_id`, `epochs: list[Epoch]`, `transitions: list[Transition]`, `milestones`, `judge_events`, `replan_count: int`, `started_wall`, `finished_wall`, `announcements: list[str]`.
+  - `RunModel` dataclass: `trajectory_id`, `epochs: list[Epoch]`, `transitions: list[Transition]`, `milestones`, `judge_events`, `tree_regenerations: int`, `gate_failures: int`, `started_wall`, `finished_wall`, `announcements: list[str]`.
   - `RunModel.epoch_at(wall) -> Epoch | None`, `RunModel.status_at(wall) -> dict[str, Transition]`
   - `load_run_model(run_dir: Path) -> RunModel`
   - `newest_events_file(run_dir: Path) -> Path | None`
@@ -1060,8 +1062,10 @@ def _t(sec: int) -> str:
     return f"2026-08-28T10:0{sec // 60}:{sec % 60:02d}.000000Z"
 
 
-def test_each_tree_generated_is_an_epoch_and_extras_are_replans(make_run):
-    """tree_revision is 0 corpus-wide, so epochs are counted, not read."""
+def test_epochs_beyond_the_normal_pair_are_regenerations(make_run):
+    """tree_revision is 0 corpus-wide, so epochs are counted, not read.
+    Two epochs is the NORMAL pair (skeleton, then plan materialisation),
+    so only the third onward is a genuine regeneration."""
     run = make_run(
         name="s9999-020-x",
         epochs=[["a"], ["a", "b"], ["a", "b", "c"]],
@@ -1069,12 +1073,20 @@ def test_each_tree_generated_is_an_epoch_and_extras_are_replans(make_run):
     model = load_run_model(run)
     assert [e.ordinal for e in model.epochs] == [0, 1, 2]
     assert [len(e.nodes) for e in model.epochs] == [2, 3, 4]  # +1 for root
-    assert model.replan_count == 2
+    assert model.tree_regenerations == 1
 
 
-def test_single_epoch_means_no_replan(make_run):
-    run = make_run(name="s9999-021-x", epochs=[["a"]])
-    assert load_run_model(run).replan_count == 0
+def test_the_normal_two_epoch_pair_is_not_a_regeneration(make_run):
+    """Every t2-2026 run has exactly 2 epochs, including the one that
+    replan-looped for the full 900s timeout. Reporting 1 here would put a
+    phantom regeneration on every healthy run."""
+    run = make_run(name="s9999-021-x", epochs=[["a"], ["a", "b"]])
+    assert load_run_model(run).tree_regenerations == 0
+
+
+def test_a_single_epoch_run_is_not_negative(make_run):
+    run = make_run(name="s9999-021b-x", epochs=[["a"]])
+    assert load_run_model(run).tree_regenerations == 0
 
 
 def test_epoch_at_returns_the_latest_epoch_at_or_before_a_playhead(make_run):
@@ -1137,6 +1149,7 @@ def test_corrupt_and_truncated_lines_are_skipped_not_fatal(make_run):
         fh.write('{"event_type": "tree.gen')  # torn final line, no newline
     model = load_run_model(run)
     assert len(model.epochs) == 1
+    assert model.tree_regenerations == 0
 
 
 def test_missing_events_file_yields_an_empty_model(tmp_path):
@@ -1144,7 +1157,7 @@ def test_missing_events_file_yields_an_empty_model(tmp_path):
     empty.mkdir(parents=True)
     model = load_run_model(empty)
     assert model.epochs == []
-    assert model.replan_count == 0
+    assert model.tree_regenerations == 0
     assert model.trajectory_id is None
 
 
@@ -1162,14 +1175,14 @@ def test_announcements_are_deduped_in_the_model(make_run):
 
 
 @pytest.mark.corpus
-def test_real_run_has_two_epochs_and_one_replan(corpus_root):
+def test_real_run_has_the_normal_epoch_pair_and_no_regeneration(corpus_root):
     run = corpus_root / "t2-2026" / "runs" / "s2026-002-countPrsInRoom"
     if not run.is_dir():
         pytest.skip("reference run has been re-run and archived")
     model = load_run_model(run)
     assert len(model.epochs) == 2
     assert [len(e.nodes) for e in model.epochs] == [84, 158]
-    assert model.replan_count == 1
+    assert model.tree_regenerations == 0
     # 7967 raw announcement lines collapse to 11 distinct utterances.
     assert len(model.announcements) == 11
 ```
@@ -1246,7 +1259,8 @@ class RunModel:
     transitions: list[Transition] = field(default_factory=list)
     milestones: list = field(default_factory=list)
     judge_events: list = field(default_factory=list)
-    replan_count: int = 0
+    tree_regenerations: int = 0
+    gate_failures: int = 0
     started_wall: float | None = None
     finished_wall: float | None = None
     announcements: list[str] = field(default_factory=list)
@@ -1405,7 +1419,15 @@ def load_run_model(run_dir: Path) -> RunModel:
                         feedback=raw.get("feedback") or "",
                     ))
 
-    model.replan_count = max(0, len(model.epochs) - 1)
+    # Two epochs is the NORMAL pair: skeleton at startup, then the
+    # DynamicExecutor materialising the plan. Only beyond that is the
+    # tree genuinely regenerated.
+    model.tree_regenerations = max(0, len(model.epochs) - 2)
+    model.gate_failures = sum(
+        1 for j in judge_events
+        if j.status == "FAILURE"
+        and j.kind in ("PRECONDITION", "POSTCONDITION")
+    )
 
     milestones, judge_events, _meta = sheet_events.load_run_telemetry(run_dir)
     model.milestones = milestones
@@ -1429,7 +1451,7 @@ Expected: 10 passed (the `corpus` test passes or skips)
 
 ```bash
 git add tools/gpsr_ui/telemetry.py tools/tests/test_telemetry.py
-git commit -m "feat: derive run model from events.jsonl with epoch-based replans"
+git commit -m "feat: derive run model from events.jsonl with epoch-based regenerations"
 ```
 
 ---
@@ -1469,7 +1491,7 @@ def test_cached_model_matches_a_fresh_one(make_run, tmp_path):
     state = tmp_path / "state"
     once = cached_run_model(run, state)
     twice = cached_run_model(run, state)
-    assert once.replan_count == twice.replan_count == 1
+    assert once.tree_regenerations == twice.tree_regenerations == 0
     assert len(once.epochs) == len(twice.epochs) == 2
 
 
@@ -1663,12 +1685,12 @@ def test_tiers_api_groups_attempts(make_run, tmp_path):
     assert entries[0]["attempts"][0]["is_current"] is True
 
 
-def test_run_api_returns_epochs_and_replan_count(make_run, tmp_path):
+def test_run_api_returns_epochs_and_regeneration_count(make_run, tmp_path):
     run = make_run(name="s9999-042-x", epochs=[["a"], ["a", "b"]])
     client = _client(run.parents[2], tmp_path)
 
     body = client.get("/api/run/t9-test/s9999-042-x").json()
-    assert body["replan_count"] == 1
+    assert body["tree_regenerations"] == 0
     assert len(body["epochs"]) == 2
     assert body["verdict"] == "PASS"
     assert body["clock_mode"] == "none"
@@ -1736,7 +1758,8 @@ def _run_json(run_dir: Path, model, clock, attempt) -> dict:
         "detail": attempt.detail if attempt else "",
         "started_wall": model.started_wall,
         "finished_wall": model.finished_wall,
-        "replan_count": model.replan_count,
+        "tree_regenerations": model.tree_regenerations,
+        "gate_failures": model.gate_failures,
         "clock_mode": clock.mode,
         "clock_labels": clock.labels,
         "announcements": model.announcements,
@@ -2170,7 +2193,10 @@ test("xOf is stable when the run has zero duration", () => {
   assert.equal(xOf(100, 100, 100, 500), 0);
 });
 
-test("buildLanes emits a replan lane from epochs beyond the first", () => {
+test("buildLanes has no separate replan lane", () => {
+  // The vendored classifier emits REPLAN as a judge event once a run has
+  // 3+ tree generations. A second lane built from epochs would double-count,
+  // and would also mislabel the normal 2-epoch pair as a replan.
   const model = {
     started_wall: 0,
     finished_wall: 100,
@@ -2179,9 +2205,20 @@ test("buildLanes emits a replan lane from epochs beyond the first", () => {
     milestones: [], judge_events: [],
   };
   const lanes = buildLanes(model);
-  const replan = lanes.find((l) => l.id === "replan");
-  assert.equal(replan.items.length, 2, "first epoch is not a replan");
-  assert.deepEqual(replan.items.map((i) => i.wall), [40, 70]);
+  assert.equal(lanes.find((l) => l.id === "replan"), undefined);
+});
+
+test("buildLanes surfaces classifier REPLAN events in the judge lane", () => {
+  const model = {
+    started_wall: 0, finished_wall: 100, epochs: [], milestones: [],
+    judge_events: [
+      { wall: "1970-01-01T00:00:40Z", kind: "REPLAN", status: "SUCCESS",
+        name: "replan", info: "tree regenerated #1 (230 nodes)" },
+    ],
+  };
+  const judge = buildLanes(model).find((l) => l.id === "judge");
+  assert.equal(judge.items.length, 1);
+  assert.equal(judge.items[0].kind, "REPLAN");
 });
 
 test("buildLanes separates milestones by kind and marks failures", () => {
@@ -2260,8 +2297,8 @@ export function xOf(wall, start, end, width) {
   return ((wall - start) / (end - start)) * width;
 }
 
-// Replans are extra tree.generated epochs. tree_revision is 0 everywhere in
-// the corpus, so it is never consulted.
+// tree_revision is 0 everywhere in the corpus, so it is never consulted.
+// Replan events arrive already classified in model.judge_events.
 export function buildLanes(model) {
   const lanes = [];
 
@@ -2290,19 +2327,9 @@ export function buildLanes(model) {
       .filter((j) => j.wall !== null),
   });
 
-  lanes.push({
-    id: "replan",
-    label: "replan",
-    items: (model.epochs || [])
-      .slice(1)
-      .map((e) => ({
-        wall: parseWall(e.wall), kind: "REPLAN", status: "SUCCESS",
-        name: `epoch ${e.ordinal}`,
-        info: `tree regenerated (${e.nodes ? e.nodes.length : "?"} nodes)`,
-      }))
-      .filter((e) => e.wall !== null),
-  });
-
+  // No replan lane: the vendored classifier already emits REPLAN as a judge
+  // event when a run has 3+ tree generations. Two generations is the normal
+  // skeleton-then-materialise pair, not a replan.
   return lanes;
 }
 ```
@@ -2398,7 +2425,8 @@ export async function boot({ tier, dirName }) {
       ? "Frames joined to wall time via frames/index.jsonl."
       : "No frame/wall mapping available for this run.";
 
-  document.getElementById("replan-count").textContent = model.replan_count;
+  document.getElementById("regen-count").textContent = model.tree_regenerations;
+  document.getElementById("gate-failures").textContent = model.gate_failures;
   document.getElementById("verdict").textContent = model.verdict || "in flight";
   document.getElementById("verdict").className =
     `verdict v-${(model.verdict || "none").toLowerCase()}`;
@@ -2422,7 +2450,8 @@ export async function boot({ tier, dirName }) {
 <div class="run-meta">
   <span id="verdict">…</span>
   <span id="clock-badge" class="badge">clock: …</span>
-  <span>replans: <b id="replan-count">…</b></span>
+  <span>tree regens: <b id="regen-count">…</b></span>
+  <span>gate failures: <b id="gate-failures">…</b></span>
 </div>
 <svg id="ribbon" class="ribbon" width="100%"></svg>
 <div id="panels"></div>
@@ -2474,7 +2503,7 @@ Expected: all passing
 - [ ] **Step 5: Verify the page renders against a real run**
 
 Run: `cd tools && ./gpsr-ui &`, then open `http://localhost:8770/run/t2-2026/s2026-002-countPrsInRoom`.
-Expected: verdict `PASS`, clock badge reads `approximate` in amber, replans `1`, and the ribbon shows NAV/VISION/AUDIO/MANIP/judge/replan lanes with clickable marks. Stop the server afterwards.
+Expected: verdict `PASS`, clock badge reads `approximate` in amber, tree regens `0` (two epochs is the normal pair), and the ribbon shows NAV/VISION/AUDIO/MANIP/judge lanes with clickable marks. Stop the server afterwards.
 
 - [ ] **Step 6: Commit**
 
@@ -3062,15 +3091,15 @@ def test_tail_events_does_not_consume_a_torn_final_line(make_run):
     assert complete[0]["event_type"] == "tree.generated"
 
 
-def test_live_summary_reports_replans_and_elapsed(make_run):
+def test_live_summary_reports_regenerations_and_elapsed(make_run):
     run = make_run(
         name="s9999-065-x", verdict=None, finished=False,
-        epochs=[["a"], ["a", "b"]],
+        epochs=[["a"], ["a", "b"], ["a", "b", "c"]],
         transitions=[("2026-08-28T10:00:30.000000Z", "executor/root/0",
                       "FAILURE", "goto target failed")],
     )
     summary = live_summary(run)
-    assert summary["replan_count"] == 1
+    assert summary["tree_regenerations"] == 1
     assert summary["elapsed_s"] is not None
     assert summary["last_failure"]["feedback"] == "goto target failed"
 ```
@@ -3213,7 +3242,8 @@ def live_summary(run_dir: Path) -> dict:
     return {
         "dir_name": Path(run_dir).name,
         "trajectory_id": model.trajectory_id,
-        "replan_count": model.replan_count,
+        "tree_regenerations": model.tree_regenerations,
+        "gate_failures": model.gate_failures,
         "epoch_count": len(model.epochs),
         "elapsed_s": elapsed,
         "budget_s": 360.0,     # the 6-minute target
@@ -3328,7 +3358,9 @@ function card(item) {
         <dt>plan step</dt><dd>${s.plan_step || "-"}</dd>
         <dt>last nav</dt><dd>${
           s.last_nav ? `${s.last_nav.name} — ${s.last_nav.status}` : "-"}</dd>
-        <dt>replans</dt><dd>${s.replan_count}</dd>
+        <dt>tree regens</dt><dd>${s.tree_regenerations}</dd>
+        <dt>gate failures</dt><dd class="${
+          s.gate_failures ? "bad" : ""}">${s.gate_failures}</dd>
         <dt>last failure</dt><dd class="bad">${
           s.last_failure ? s.last_failure.feedback : "none"}</dd>
       </dl>
@@ -3438,10 +3470,15 @@ inside the corpus.
 ## Things about the data that surprised us
 
 * **`tree_revision` is `0` everywhere** — all 289 `tree.generated` events
-  across all 105 runs. Replans are counted as extra `tree.generated`
-  epochs. The vendored `sheet_events` emits its `REPLAN` judge event only
-  when `tree_revision > 0`, so that lane is always empty; we derive replans
-  ourselves in `telemetry.py`.
+  across all 105 runs. We surfaced this; upstream `sheet_events` was fixed
+  in `9072c6e` to key REPLAN on generation count instead, and we vendor that.
+* **Two tree generations is normal, not a replan.** A skeleton tree, then the
+  plan materialised. `tree_regenerations` is `max(0, epochs - 2)`.
+* **Tree regeneration and executor replan are different phenomena.** The
+  `DynamicExecutor` replans without regenerating the tree, so epoch count
+  *undercounts* replans on t2 runs — `s2026-002.attempt11` replan-looped for
+  900 s with only 2 epochs. For those runs, watch `gate_failures`
+  (PRECONDITION/POSTCONDITION failures) instead.
 * **`run.finished.status` is `"incomplete"` everywhere**, including the run
   that passed. The verdict lives in `run.json`.
 * **Sim and wall clocks are not proportional.** RTF varies 0.2–0.5 within a
