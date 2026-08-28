@@ -2,7 +2,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  activeAncestorIds, edgesFor, historyFor, isBookkeeping, layoutTree, statusAt,
+  activeAncestorIds, edgesFor, historyFor, isBookkeeping, isHiddenBookkeeping,
+  layoutTree, statusAt,
 } from "../../gpsr_ui/static/tree.js";
 
 const NODES = [
@@ -138,4 +139,25 @@ test("activeAncestorIds tolerates a cycle without hanging", () => {
   const ids = activeAncestorIds(cyclic, statuses);
   assert.equal(ids.has("x"), true);
   assert.equal(ids.has("y"), true);
+});
+
+// A bookkeeping node normally disappears when the hide toggle is on --
+// but never one that is currently FAILURE. The hide-bookkeeping toggle
+// defaults to on, and the bookkeeping regex now matches ~a quarter of
+// every real tree, so this exemption is the one thing standing between
+// "noisy nodes are decluttered" and "a real failure silently vanishes".
+test("isHiddenBookkeeping hides a bookkeeping node in any state except FAILURE", () => {
+  const node = { name: "reset plan_index" };
+  assert.equal(isHiddenBookkeeping(node, undefined), true, "never ticked");
+  assert.equal(isHiddenBookkeeping(node, { status: "SUCCESS" }), true);
+  assert.equal(isHiddenBookkeeping(node, { status: "RUNNING" }), true);
+  assert.equal(isHiddenBookkeeping(node, { status: "FAILURE" }), false,
+    "a bookkeeping node currently FAILURE must stay visible");
+});
+
+test("isHiddenBookkeeping never hides a non-bookkeeping node, regardless of status", () => {
+  const node = { name: "goto target" };
+  assert.equal(isHiddenBookkeeping(node, undefined), false);
+  assert.equal(isHiddenBookkeeping(node, { status: "FAILURE" }), false);
+  assert.equal(isHiddenBookkeeping(node, { status: "SUCCESS" }), false);
 });

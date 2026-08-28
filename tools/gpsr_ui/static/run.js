@@ -7,8 +7,8 @@
 import { createPlayhead } from "./playhead.js";
 import { buildLanes, collapseLaneItems, parseWall, xOf } from "./timeline.js";
 import {
-  activeAncestorIds, edgesFor, historyFor, isBookkeeping, layoutTree,
-  statusAt,
+  activeAncestorIds, edgesFor, historyFor, isBookkeeping, isHiddenBookkeeping,
+  layoutTree, statusAt,
 } from "./tree.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -194,6 +194,13 @@ function mountTree(container, model, playhead) {
 
   let currentEpoch = null;
   let selectedNodeId = null;
+  // Set whenever the epoch (re)draws below; reused every tick so the
+  // colour/hide pass doesn't need to rebuild a lookup map on every
+  // playhead move.
+  let nodesById = new Map();
+  // Vertical clearance for the "epoch N -- M nodes" label so it doesn't
+  // sit on top of the root node's own dot/text at row 0, column 0.
+  const TOP_MARGIN = 14;
 
   const draw = (wall) => {
     // The tree shown is the latest epoch at or before the playhead.
@@ -209,29 +216,28 @@ function mountTree(container, model, playhead) {
       svg.replaceChildren();
       const { positions, width, height } = layoutTree(epoch.nodes, epoch.root_id);
       svg.setAttribute("width", width + 220);
-      svg.setAttribute("height", height + 20);
+      svg.setAttribute("height", height + 20 + TOP_MARGIN);
 
-      const byId = new Map(epoch.nodes.map((n) => [n.id, n]));
+      nodesById = new Map(epoch.nodes.map((n) => [n.id, n]));
 
       const edgesLayer = el("g", { class: "edges" });
       svg.appendChild(edgesLayer);
       for (const edge of edgesFor(epoch.nodes, positions)) {
-        const childBk = isBookkeeping(byId.get(edge.id));
         const path = el("path", {
-          class: `edge${childBk ? " bookkeeping-edge" : ""}`,
-          d: `M ${edge.from.x} ${edge.from.y + 10} `
-            + `V ${edge.to.y + 10} H ${edge.to.x}`,
+          class: "edge",
+          d: `M ${edge.from.x} ${edge.from.y + 10 + TOP_MARGIN} `
+            + `V ${edge.to.y + 10 + TOP_MARGIN} H ${edge.to.x}`,
         });
         path.dataset.nodeId = edge.id;
         edgesLayer.appendChild(path);
       }
 
       for (const [id, pos] of positions) {
-        const node = byId.get(id);
+        const node = nodesById.get(id);
         const g = document.createElementNS(SVG_NS, "g");
         g.setAttribute("class",
           `node ${isBookkeeping(node) ? "bookkeeping" : ""}`);
-        g.setAttribute("transform", `translate(${pos.x},${pos.y + 10})`);
+        g.setAttribute("transform", `translate(${pos.x},${pos.y + 10 + TOP_MARGIN})`);
         g.dataset.nodeId = id;
         if (id === selectedNodeId) g.classList.add("selected");
 
@@ -273,9 +279,21 @@ function mountTree(container, model, playhead) {
       const st = states.get(id);
       g.setAttribute("data-status", st ? st.status : "NONE");
       g.classList.toggle("on-path", onPath.has(id));
+      // Recomputed every tick (not just on redraw): a node that ticks
+      // FAILURE while hide-bookkeeping is on must become visible right
+      // then, and re-hide if it later moves off FAILURE. isHiddenBookkeeping
+      // is the single source of truth for this -- see tree.js.
+      g.classList.toggle("hide-eligible", isHiddenBookkeeping(nodesById.get(id), st));
     }
     for (const path of svg.querySelectorAll("path.edge")) {
-      path.classList.toggle("on-path", onPath.has(path.dataset.nodeId));
+      // An edge's own "status" is its child node's status: the edge
+      // leading to a FAILURE node must stay drawn along with that node,
+      // or the node would render as a dot floating with no visible
+      // connection to the rest of the tree.
+      const id = path.dataset.nodeId;
+      const st = states.get(id);
+      path.classList.toggle("on-path", onPath.has(id));
+      path.classList.toggle("hide-eligible", isHiddenBookkeeping(nodesById.get(id), st));
     }
 
     if (selectedNodeId) {

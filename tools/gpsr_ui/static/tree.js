@@ -103,6 +103,24 @@ export function edgesFor(nodes, positions) {
   return edges;
 }
 
+// Whether a node (or the edge leading to it) should actually disappear
+// when the "hide bookkeeping nodes" toggle is on. A FAILURE-status node
+// is exempt regardless of its bookkeeping classification: this panel
+// exists to find failures, and a bookkeeping regex wide enough to catch
+// a quarter of every tree, combined with fully hiding (not just dimming)
+// matched nodes, and defaulting that hiding to on, is exactly the
+// mechanism that could otherwise make a real failure disappear rather
+// than merely dim. (Today's corpus has zero FAILURE transitions landing
+// on a bookkeeping-classified node, so this exemption never currently
+// fires -- but it must exist regardless of what today's data shows.)
+// Single source of truth for the hide decision so it's covered by
+// node:test rather than living only as a CSS selector a future edit
+// could quietly break.
+export function isHiddenBookkeeping(node, status) {
+  if (!isBookkeeping(node)) return false;
+  return !status || status.status !== "FAILURE";
+}
+
 // Ids of every node that is currently RUNNING, plus all of its ancestors
 // up to the root -- "the path to the active node" the domain notes call
 // for, computed once per redraw so the DOM layer can add a highlight

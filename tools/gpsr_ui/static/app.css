@@ -68,10 +68,16 @@ ul { margin: 4px 0; padding-left: 18px; }
 .epoch-label { fill: var(--dim) !important; }
 .edge { fill: none; stroke: var(--line); stroke-width: 1; }
 .edge.on-path { stroke: #6cb6ff; stroke-width: 1.5; }
-.tree.hide-bookkeeping .edge.bookkeeping-edge { display: none; }
 .node { cursor: pointer; }
 .node.bookkeeping { opacity: 0.35; }
-.tree.hide-bookkeeping .node.bookkeeping { display: none; }
+/* .hide-eligible is recomputed every playhead tick from
+   isHiddenBookkeeping() (tree.js) -- true for a bookkeeping node/edge
+   UNLESS its current status is FAILURE. A red dot at 0.35 opacity (the
+   rule above) is still visibly red, but display:none would erase a real
+   failure outright, which this toggle -- on by default, and matching a
+   quarter of every real tree -- must never be able to do. */
+.tree.hide-bookkeeping .node.hide-eligible { display: none; }
+.tree.hide-bookkeeping .edge.hide-eligible { display: none; }
 .node.on-path text { fill: #6cb6ff; }
 .node.selected .node-dot { stroke: #fff; stroke-width: 1.5; }
 .node-dot { fill: var(--none); }
