@@ -2,8 +2,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  boundsWithFrames, createPlayer, frameAt, frameAtFraction, hasNoWallTimes,
-  makeFrameTick, preloadWindow,
+  boundsWithFrames, createPlayer, fetchRunAndFrames, frameAt, frameAtFraction,
+  hasNoWallTimes, makeFrameTick, preloadWindow,
 } from "../../gpsr_ui/static/frames.js";
 
 const REFS = [
@@ -190,6 +190,58 @@ test("a player whose next frame lies beyond the bounds pauses rather than spinni
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(value, valueAtStop, "no further changes once paused");
   assert.equal(player.isPlaying(), false, "still not playing after the extra wait");
+});
+
+// Regression test for the round-2 review finding: boot() awaited the run
+// model and the frames listing SEQUENTIALLY after the Task 10 fix, which
+// serialized two independent round trips (no dependency between them
+// until their results are combined into bounds) -- negligible on a small
+// run, but ~0.6-0.8s of needless added latency before first paint on the
+// corpus's largest run (3253 frames). fetchRunAndFrames must issue both
+// before awaiting either.
+test("fetchRunAndFrames issues both requests before either resolves", async () => {
+  const order = [];
+  const fetchRun = () => {
+    order.push("run:issued");
+    return new Promise((resolve) => {
+      setTimeout(() => { order.push("run:resolved"); resolve({ ok: "run" }); }, 20);
+    });
+  };
+  const fetchFrames = () => {
+    order.push("frames:issued");
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        order.push("frames:resolved");
+        resolve({ labels: { head: [] } });
+      }, 5);
+    });
+  };
+  const result = await fetchRunAndFrames(fetchRun, fetchFrames);
+  assert.deepEqual(order, ["run:issued", "frames:issued", "frames:resolved", "run:resolved"],
+    "both must be ISSUED (synchronously, back to back) before either RESOLVES");
+  assert.deepEqual(result.model, { ok: "run" });
+  assert.deepEqual(result.framesPayload, { labels: { head: [] } });
+});
+
+// The whole page must not die because the frames listing alone failed --
+// the ribbon/tree render from the run model with no dependency on frames
+// at all, so a rejected fetchFrames must fall back to an empty payload
+// rather than reject the pair via Promise.all.
+test("fetchRunAndFrames falls back to an empty frames payload when the frames request fails", async () => {
+  const fetchRun = () => Promise.resolve({ ok: "run" });
+  const fetchFrames = () => Promise.reject(new Error("network error"));
+  const result = await fetchRunAndFrames(fetchRun, fetchFrames);
+  assert.deepEqual(result.model, { ok: "run" });
+  assert.deepEqual(result.framesPayload, { labels: {} });
+});
+
+// A failed run-model fetch, by contrast, is NOT caught -- the whole page
+// is meaningless without it, so that failure must still propagate.
+test("fetchRunAndFrames still rejects when the run model fetch fails", async () => {
+  const fetchRun = () => Promise.reject(new Error("run fetch failed"));
+  const fetchFrames = () => Promise.resolve({ labels: {} });
+  await assert.rejects(
+    () => fetchRunAndFrames(fetchRun, fetchFrames), /run fetch failed/);
 });
 
 // Confirms the player actually fires on a real timer and, critically,

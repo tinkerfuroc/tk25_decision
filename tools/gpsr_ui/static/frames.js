@@ -163,6 +163,39 @@ export function makeFrameTick({ refs, playhead, bounds, unaligned, onStop }) {
   };
 }
 
+// Fetches the run model and frames listing CONCURRENTLY. There is no
+// dependency between them until their results are combined into bounds
+// (see boundsWithFrames), so awaiting them sequentially -- issue one,
+// wait for it, THEN issue the other -- needlessly serializes two
+// independent round trips. On the corpus's largest run (3253 frames),
+// the frames listing alone measured ~0.6-0.8s; serial awaiting added
+// that on top of the model fetch instead of overlapping it, delaying
+// first paint of the ribbon/tree, which never depended on frames at all.
+//
+// Takes the two fetches as injected functions (not `fetch` + a URL) --
+// same DI pattern preloadWindow already uses for `makeImage` -- so this
+// is node:test-coverable with fake promises whose call/resolution order
+// can be recorded and asserted on, no real network or DOM required.
+//
+// A failed frames listing must not take down the whole page: the
+// ribbon/tree render from the run model alone, so `fetchFrames`'s
+// rejection is caught HERE (not passed into Promise.all, which would
+// reject the whole pair on the first failure) and replaced with an
+// empty payload -- mountFrames already renders that as "no frames
+// recorded for this run" (identical to a real run with an empty
+// frames/ dir). A failed `fetchRun`, by contrast, is NOT caught: the
+// page is meaningless without the run model, so that failure still
+// propagates to the caller exactly as it did before this change.
+export async function fetchRunAndFrames(fetchRun, fetchFrames) {
+  const modelPromise = fetchRun();
+  const framesPromise = fetchFrames().catch((err) => {
+    console.error("frames listing failed; rendering without it", err);
+    return { labels: {} };
+  });
+  const [model, framesPayload] = await Promise.all([modelPromise, framesPromise]);
+  return { model, framesPayload };
+}
+
 // Frames are one per SIMULATOR second; playing them back at wall-clock
 // speed would be a slideshow (a 900-frame run would take 900 real
 // seconds). The player instead just ticks at a chosen fps and leaves it

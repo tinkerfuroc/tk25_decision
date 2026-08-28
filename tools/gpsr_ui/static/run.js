@@ -11,8 +11,8 @@ import {
   layoutTree, statusAt,
 } from "./tree.js";
 import {
-  boundsWithFrames, createPlayer, fractionOf, frameAt, frameAtFraction,
-  hasNoWallTimes, makeFrameTick, preloadWindow,
+  boundsWithFrames, createPlayer, fetchRunAndFrames, fractionOf, frameAt,
+  frameAtFraction, hasNoWallTimes, makeFrameTick, preloadWindow,
 } from "./frames.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -453,15 +453,21 @@ function mountFrames(container, tier, dirName, playhead, bounds, payload) {
 
 export async function boot({ tier, dirName }) {
   const base = apiRunUrl(tier, dirName);
-  const model = await (await fetch(base)).json();
-  // Fetched here, BEFORE the playhead/bounds are built (not inside
-  // mountFrames, and not fetched a second time there): the run's bounds
-  // must cover its frames' wall times, or the recorder's post-finish
-  // trailing frames become permanently unreachable and playback's own
-  // `next` lookup can stall forever right at the end of the run (see
-  // boundsWithFrames / makeFrameTick in frames.js). That means knowing
-  // the frame listing before bounds can be computed at all.
-  const framesPayload = await (await fetch(apiFramesUrl(tier, dirName))).json();
+  // The run model and frames listing are fetched CONCURRENTLY (see
+  // fetchRunAndFrames in frames.js) -- both are needed before the
+  // playhead/bounds can be built (the run's bounds must cover its
+  // frames' wall times, or the recorder's post-finish trailing frames
+  // become permanently unreachable and playback can stall right at the
+  // end of the run -- see boundsWithFrames / makeFrameTick), but neither
+  // fetch depends on the other's RESULT, only on both being combined
+  // afterward. Awaiting them one-after-another here would needlessly
+  // delay first paint of the ribbon/tree (which only need the model) by
+  // the frames listing's full round trip -- up to ~0.8s on the corpus's
+  // largest run. A failed frames listing falls back to an empty payload
+  // inside fetchRunAndFrames rather than taking down the whole page.
+  const { model, framesPayload } = await fetchRunAndFrames(
+    () => fetch(base).then((r) => r.json()),
+    () => fetch(apiFramesUrl(tier, dirName)).then((r) => r.json()));
 
   const badge = document.getElementById("clock-badge");
   badge.textContent = `clock: ${model.clock_mode}`;
