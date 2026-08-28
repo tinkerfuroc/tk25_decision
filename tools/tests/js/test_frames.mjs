@@ -2,7 +2,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  createPlayer, frameAt, frameAtFraction, hasNoWallTimes, preloadWindow,
+  boundsWithFrames, createPlayer, frameAt, frameAtFraction, hasNoWallTimes,
+  makeFrameTick, preloadWindow,
 } from "../../gpsr_ui/static/frames.js";
 
 const REFS = [
@@ -119,6 +120,76 @@ test("pause() before any play() is a harmless no-op", () => {
   const player = createPlayer({ onTick: () => {} });
   assert.doesNotThrow(() => player.pause());
   assert.equal(player.isPlaying(), false);
+});
+
+// Regression test for the Task 10 review bug: bounds built from run
+// events alone (started_wall/finished_wall/epoch/milestone/judge walls)
+// fell short of the recorder's actual last frame on a real corpus run
+// (finished_wall = 1787914730.807, last frame wall = 1787914731.755).
+// boundsWithFrames must widen the bounds to cover every frame's wall so
+// that tail is reachable, both by playback and by direct scrubbing.
+test("boundsWithFrames widens bounds to cover frame walls extending past finished_wall", () => {
+  const eventBounds = { start: 1787914700.0, end: 1787914730.807 }; // ~ finished_wall
+  const labelRefs = {
+    head: [
+      { wall: 1787914700.5 },
+      { wall: 1787914731.755 }, // 0.948s past finished_wall -- the real measurement
+    ],
+    arena: [
+      { wall: 1787914700.5 },
+      { wall: 1787914731.755 },
+    ],
+  };
+  const bounds = boundsWithFrames(eventBounds, labelRefs);
+  assert.equal(bounds.start, 1787914700.0, "start unaffected: no frame precedes it");
+  assert.equal(bounds.end, 1787914731.755, "end widened to the last frame's wall");
+});
+
+test("boundsWithFrames leaves bounds untouched when every frame wall is null (clock_mode 'none')", () => {
+  const eventBounds = { start: 0, end: 10 };
+  const bounds = boundsWithFrames(eventBounds, { head: [{ wall: null }, { wall: null }] });
+  assert.deepEqual(bounds, { start: 0, end: 10 });
+});
+
+// Regression test for the Task 10 review bug's user-visible symptom:
+// playback hangs forever, `isPlaying()` never returns false, because
+// `playhead.set` clamps to a value equal to the playhead's current value
+// (bounds.end sits short of the run's real last frame) and playhead.js
+// only notifies subscribers when the clamped value actually differs.
+// makeFrameTick's defensive check (compare playhead value before/after
+// `set`) must catch this and stop playback even when bounds are wrong,
+// as a backstop independent of the boundsWithFrames fix above.
+test("a player whose next frame lies beyond the bounds pauses rather than spinning", async () => {
+  const bounds = { start: 100, end: 105 }; // stops short of the run's real last frame
+  const refs = [
+    { index: 0, file: "a.jpg", wall: 100, stamp_s: 1 },
+    { index: 1, file: "b.jpg", wall: 105, stamp_s: 2 }, // sits at bounds.end
+    { index: 2, file: "c.jpg", wall: 112, stamp_s: 3 }, // beyond bounds.end: unreachable
+  ];
+  let value = 105; // already at bounds.end, as playback would have advanced it to
+  const playhead = {
+    get: () => value,
+    set: (v) => { value = Math.min(bounds.end, Math.max(bounds.start, v)); },
+  };
+  let stopCalls = 0;
+  // onStop must itself call player.pause() -- createPlayer has no notion
+  // of "stop" on its own, exactly as in run.js's real wiring (mountFrames
+  // calls player.pause() from the onStop callback it hands to
+  // makeFrameTick).
+  const player = createPlayer({
+    onTick: makeFrameTick({
+      refs, playhead, bounds, unaligned: false,
+      onStop: () => { stopCalls += 1; player.pause(); },
+    }),
+  });
+  player.play(200); // ~5ms period: fast, so the assertions below resolve quickly
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(player.isPlaying(), false, "must pause instead of spinning forever");
+  assert.equal(stopCalls, 1, "onStop should fire exactly once, not once per tick");
+  const valueAtStop = value;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(value, valueAtStop, "no further changes once paused");
+  assert.equal(player.isPlaying(), false, "still not playing after the extra wait");
 });
 
 // Confirms the player actually fires on a real timer and, critically,

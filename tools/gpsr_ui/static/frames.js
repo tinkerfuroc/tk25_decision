@@ -81,6 +81,88 @@ export function preloadWindow(refs, index, radius, urlFor, makeImage) {
   return images;
 }
 
+// Maps a wall time onto its 0..1 fractional position within `bounds`,
+// clamped. Used both to render an unaligned (clock_mode "none") run's
+// current frame from the shared playhead, and by makeFrameTick below to
+// step playback the same way.
+export function fractionOf(wall, bounds) {
+  const span = bounds.end - bounds.start;
+  if (!(span > 0)) return 0;
+  return (wall - bounds.start) / span;
+}
+
+// Extends event-derived run bounds ({start, end}, from started_wall/
+// finished_wall/epoch/milestone/judge walls) to also cover every frame's
+// wall time. The recorder keeps capturing briefly after the run's own
+// finish/judge events are logged (measured on a real corpus run:
+// finished_wall = 1787914730.807, last frame wall = 1787914731.755, ~0.95s
+// later) -- bounds built from events alone leave those trailing frames
+// permanently unreachable, by playback (nothing beyond `end` can ever be
+// scrubbed to) or by direct scrubbing (xOf/fractionOf never reach that
+// wall). Refs with no wall time (clock_mode "none") don't contribute,
+// matching frameAt's own null-handling -- there's nothing usable to fold
+// in from a run with no clock join at all.
+export function boundsWithFrames(bounds, labelRefs) {
+  let { start, end } = bounds;
+  for (const refs of Object.values(labelRefs)) {
+    for (const ref of refs) {
+      if (ref.wall === null || ref.wall === undefined) continue;
+      if (ref.wall < start) start = ref.wall;
+      if (ref.wall > end) end = ref.wall;
+    }
+  }
+  return { start, end };
+}
+
+// Builds the onTick callback used by the stop-motion player: advances
+// `playhead` to the next frame (by wall time when the run has one, or by
+// index-fraction for an unaligned run), and reports the outcome via
+// `onStop` if playback should stop. Lives here (not inline in run.js) so
+// it is exercisable by node:test against a fake `{ get, set }` playhead
+// -- no DOM required.
+//
+// Stops (calls `onStop`, does not move the playhead further) when:
+//   - there is no next frame ref at all, OR
+//   - the run has a clock but the next ref carries no wall time, OR
+//   - (the defensive case) `playhead.set` was called but the playhead's
+//     value did not actually change -- e.g. because `bounds` does not
+//     yet cover this frame's wall. `playhead.set` is trusted to clamp,
+//     but a clamp-to-the-current-value is indistinguishable from "did
+//     nothing" to a caller that doesn't check; this is exactly the bug
+//     that let the Task 10 review catch playback hanging forever on a
+//     real run (bounds.end fell ~0.95s short of the last frame, so `set`
+//     kept clamping to a value equal to itself, never notifying
+//     subscribers, while `isPlaying()` stayed true for the life of the
+//     page). Even once bounds correctly cover every frame (see
+//     `boundsWithFrames`), this guard stays as a defensive backstop: a
+//     future bounds change must not be able to resurrect an unkillable
+//     interval.
+export function makeFrameTick({ refs, playhead, bounds, unaligned, onStop }) {
+  return () => {
+    const before = playhead.get();
+    const ref = unaligned
+      ? frameAtFraction(refs, fractionOf(before, bounds))
+      : frameAt(refs, before);
+    const idx = ref ? refs.indexOf(ref) : -1;
+    const next = refs[idx + 1];
+    const hasUsableNext = next
+      && (unaligned || (next.wall !== null && next.wall !== undefined));
+    if (!hasUsableNext) {
+      onStop();
+      return;
+    }
+    if (unaligned) {
+      const frac = refs.length > 1 ? (idx + 1) / (refs.length - 1) : 0;
+      playhead.set(bounds.start + frac * (bounds.end - bounds.start));
+    } else {
+      playhead.set(next.wall);
+    }
+    if (playhead.get() === before) {
+      onStop();
+    }
+  };
+}
+
 // Frames are one per SIMULATOR second; playing them back at wall-clock
 // speed would be a slideshow (a 900-frame run would take 900 real
 // seconds). The player instead just ticks at a chosen fps and leaves it

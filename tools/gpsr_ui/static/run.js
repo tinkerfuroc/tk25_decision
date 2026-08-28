@@ -11,7 +11,8 @@ import {
   layoutTree, statusAt,
 } from "./tree.js";
 import {
-  createPlayer, frameAt, frameAtFraction, hasNoWallTimes, preloadWindow,
+  boundsWithFrames, createPlayer, fractionOf, frameAt, frameAtFraction,
+  hasNoWallTimes, makeFrameTick, preloadWindow,
 } from "./frames.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -334,14 +335,13 @@ function mountTree(container, model, playhead) {
 // tool, so this function's whole job is: never show a blank/broken image
 // when a frame genuinely exists, and never show a frame from later than
 // the moment being inspected.
-function fractionOf(wall, bounds) {
-  const span = bounds.end - bounds.start;
-  if (!(span > 0)) return 0;
-  return (wall - bounds.start) / span;
-}
-
-async function mountFrames(container, tier, dirName, playhead, bounds) {
-  const payload = await (await fetch(apiFramesUrl(tier, dirName))).json();
+//
+// `payload` (the /api/frames response) is fetched once, by boot(), BEFORE
+// the playhead/bounds even exist -- see the comment on boot() for why:
+// the run's bounds must cover its frames, which means knowing the frames
+// before building bounds. Passing it in here (rather than fetching again)
+// keeps that a single request.
+function mountFrames(container, tier, dirName, playhead, bounds, payload) {
   const labelRefs = payload.labels || {};
   const labels = Object.keys(labelRefs);
   const panel = document.createElement("div");
@@ -422,27 +422,23 @@ async function mountFrames(container, tier, dirName, playhead, bounds) {
   // at the chosen fps, not by wall-clock rate (see frames.js). Stepping
   // moves the shared playhead itself -- not just the primary image --
   // so the tree/ribbon stay in lockstep with both cameras while playing.
+  // The actual advance-or-stop decision lives in makeFrameTick (frames.js)
+  // so it's node:test-covered directly, including the defensive stop when
+  // `playhead.set` genuinely fails to move the value -- see that
+  // function's comment for why that check exists even after bounds are
+  // fixed to cover every frame's wall time.
   const primary = tracks[0];
   const player = createPlayer({
-    onTick: () => {
-      const ref = pick(primary.refs, playhead.get());
-      const idx = ref ? primary.refs.indexOf(ref) : -1;
-      const next = primary.refs[idx + 1];
-      if (!next) {
+    onTick: makeFrameTick({
+      refs: primary.refs,
+      playhead,
+      bounds,
+      unaligned,
+      onStop: () => {
         player.pause();
         button.textContent = "play";
-        return;
-      }
-      if (unaligned) {
-        const frac = primary.refs.length > 1 ? (idx + 1) / (primary.refs.length - 1) : 0;
-        playhead.set(bounds.start + frac * (bounds.end - bounds.start));
-      } else if (next.wall === null || next.wall === undefined) {
-        player.pause();
-        button.textContent = "play";
-      } else {
-        playhead.set(next.wall);
-      }
-    },
+      },
+    }),
   });
   button.addEventListener("click", () => {
     if (player.isPlaying()) {
@@ -458,6 +454,14 @@ async function mountFrames(container, tier, dirName, playhead, bounds) {
 export async function boot({ tier, dirName }) {
   const base = apiRunUrl(tier, dirName);
   const model = await (await fetch(base)).json();
+  // Fetched here, BEFORE the playhead/bounds are built (not inside
+  // mountFrames, and not fetched a second time there): the run's bounds
+  // must cover its frames' wall times, or the recorder's post-finish
+  // trailing frames become permanently unreachable and playback's own
+  // `next` lookup can stall forever right at the end of the run (see
+  // boundsWithFrames / makeFrameTick in frames.js). That means knowing
+  // the frame listing before bounds can be computed at all.
+  const framesPayload = await (await fetch(apiFramesUrl(tier, dirName))).json();
 
   const badge = document.getElementById("clock-badge");
   badge.textContent = `clock: ${model.clock_mode}`;
@@ -475,14 +479,15 @@ export async function boot({ tier, dirName }) {
   document.getElementById("verdict").className =
     `verdict v-${(model.verdict || "none").toLowerCase()}`;
 
-  const bounds = runBounds(model);
+  const bounds = boundsWithFrames(runBounds(model), framesPayload.labels || {});
   const playhead = createPlayhead(bounds);
   renderRibbon(
     document.getElementById("ribbon"), buildLanes(model), bounds, playhead);
 
   mountTree(document.getElementById("panels"), model, playhead);
-  await mountFrames(
-    document.getElementById("panels"), tier, dirName, playhead, bounds);
+  mountFrames(
+    document.getElementById("panels"), tier, dirName, playhead, bounds,
+    framesPayload);
 
   window.__gpsr = { model, playhead, bounds, base };
   return window.__gpsr;
