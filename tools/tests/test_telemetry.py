@@ -123,14 +123,71 @@ def test_announcements_are_deduped_in_the_model(make_run):
     assert load_run_model(run).announcements == ["a", "b", "c"]
 
 
+def test_gate_failures_counts_only_failed_precondition_and_postcondition_gates(make_run):
+    """gate_failures must count only FAILURE judge events whose kind is
+    PRECONDITION or POSTCONDITION -- not a FAILURE of a different judge
+    kind (e.g. SUPERVISOR), and not a SUCCESS of a matching kind.
+
+    Node names are chosen to match vendor/sheet_events.py's
+    `_classify_judge` prefixes ("precondition gate", "postcondition gate",
+    "supervisor barrier") while avoiding `_classify_milestone`'s substrings
+    (e.g. "arm", "grasp", "place") so the classifier doesn't mistake them
+    for robot-action milestones first.
+    """
+    run = make_run(
+        name="s9999-028-x",
+        epochs=[[
+            "precondition gate room",
+            "postcondition gate room",
+            "supervisor barrier room",
+            "precondition gate other",
+        ]],
+        transitions=[
+            # PRECONDITION FAILURE -> counts
+            (_t(10), "executor/root/0", "FAILURE", "not ready"),
+            # POSTCONDITION FAILURE -> counts
+            (_t(20), "executor/root/1", "FAILURE", "not done"),
+            # SUPERVISOR FAILURE -> different kind, must not count
+            (_t(30), "executor/root/2", "FAILURE", "blocked"),
+            # PRECONDITION SUCCESS -> matching kind but not a failure
+            (_t(40), "executor/root/3", "SUCCESS", "ready"),
+        ],
+    )
+    model = load_run_model(run)
+    kinds = {(j.kind, j.status) for j in model.judge_events}
+    # Sanity: the vendored classifier did produce all four judge events
+    # under the expected kinds, so the gate_failures count below is
+    # actually exercising the discrimination it claims to.
+    assert ("PRECONDITION", "FAILURE") in kinds
+    assert ("POSTCONDITION", "FAILURE") in kinds
+    assert ("SUPERVISOR", "FAILURE") in kinds
+    assert ("PRECONDITION", "SUCCESS") in kinds
+    assert model.gate_failures == 2
+
+
 @pytest.mark.corpus
 def test_real_run_has_the_normal_epoch_pair_and_no_regeneration(corpus_root):
+    """A live battery re-runs and archives entries under this same
+    directory name, so this asserts invariants rather than the specimen's
+    exact numbers (corpus-marked tests assert floors, not exact counts).
+
+    Observed shape as of 2026-08-28 (informational only, not asserted):
+    2 epochs with [84, 158] nodes; 7967 raw announcement lines collapsing
+    to 11 distinct utterances.
+    """
     run = corpus_root / "t2-2026" / "runs" / "s2026-002-countPrsInRoom"
     if not run.is_dir():
         pytest.skip("reference run has been re-run and archived")
     model = load_run_model(run)
-    assert len(model.epochs) == 2
-    assert [len(e.nodes) for e in model.epochs] == [84, 158]
-    assert model.tree_regenerations == 0
-    # 7967 raw announcement lines collapse to 11 distinct utterances.
-    assert len(model.announcements) == 11
+    # A run that reached plan materialisation has at least the normal
+    # skeleton+materialisation pair.
+    assert len(model.epochs) >= 2
+    # Self-consistency is the property actually worth pinning here.
+    assert model.tree_regenerations == max(0, len(model.epochs) - 2)
+    raw_lines = [
+        line for line in (run / "announcements.txt").read_text().splitlines()
+        if line.strip()
+    ]
+    # The dedupe must genuinely collapse repeats, not just pass them through.
+    assert len(model.announcements) >= 1
+    assert len(model.announcements) < len(raw_lines)

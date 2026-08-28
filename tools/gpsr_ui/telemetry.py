@@ -159,22 +159,28 @@ def _node(raw: dict) -> TreeNode | None:
 
 def _iter_events(path: Path) -> Iterable[dict]:
     """Yield parsed events, skipping blank, corrupt and torn lines. A live
-    run's final line is routinely incomplete; that is not an error."""
+    run's final line is routinely incomplete; that is not an error. The
+    corpus is written concurrently, so the file itself can also vanish or
+    become unreadable mid-iteration (not just at open time) -- degrade to
+    "stop yielding" rather than let an OSError propagate out of here."""
     try:
         handle = path.open("r")
     except OSError:
         return
-    with handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(event, dict):
-                yield event
+    try:
+        with handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict):
+                    yield event
+    except OSError:
+        return
 
 
 def load_run_model(run_dir: Path) -> RunModel:
