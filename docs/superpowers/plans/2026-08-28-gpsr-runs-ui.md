@@ -737,8 +737,10 @@ def test_exact_mode_when_index_jsonl_present(make_run):
     # Exact join: 1 sim-second maps to 5 wall-seconds here (RTF 0.2).
     assert clock.sim_to_wall("head", 2.0) == parse_wall(
         "2026-08-28T10:00:05.000000Z")
+    # At-or-BEFORE, never nearest: frame 1 is stamped 10:00:05, one second
+    # after this query, and returning it would show a frame from the future.
     assert clock.wall_to_frame(
-        "head", parse_wall("2026-08-28T10:00:04.000000Z")) == "0001_2000.jpg"
+        "head", parse_wall("2026-08-28T10:00:04.000000Z")) == "0000_1000.jpg"
 
 
 def test_approximate_mode_interpolates_from_recorder_meta(make_run):
