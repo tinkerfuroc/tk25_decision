@@ -88,3 +88,40 @@ def test_success_stores_response_and_succeeds():
     node.bb_write_client.set.assert_called_once_with(
         "gpsr/target_object_detection", result, overwrite=True
     )
+
+
+class _FakeObject:
+    def __init__(self, cls):
+        self.cls = cls
+
+
+def test_success_feedback_reports_count_and_classes():
+    """Success feedback must carry the count + class names for the run's
+    contact sheets, not just the bb key it stored to (battery run
+    s2026-002, 2026-08-28 needed this to tell what a scan actually saw from
+    the log alone)."""
+    result = _FakeResult(status=0)
+    result.objects = [_FakeObject("person"), _FakeObject("chair"), _FakeObject("cup")]
+    node = _make_scan_node(result)
+
+    node.update()
+
+    assert "found 3" in node.feedback_message
+    assert "person" in node.feedback_message
+    assert "chair" in node.feedback_message
+    assert "cup" in node.feedback_message
+    assert "source=vlm_sam" in node.feedback_message
+
+
+def test_success_feedback_caps_at_five_classes():
+    result = _FakeResult(status=0)
+    result.objects = [_FakeObject(f"obj{i}") for i in range(7)]
+    node = _make_scan_node(result)
+
+    node.update()
+
+    assert "found 7" in node.feedback_message
+    assert "obj0" in node.feedback_message
+    assert "obj4" in node.feedback_message
+    assert "obj5" not in node.feedback_message
+    assert "obj6" not in node.feedback_message

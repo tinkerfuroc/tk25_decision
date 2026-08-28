@@ -2626,6 +2626,118 @@ def _task_identity(slot: int) -> str:
     return telemetry.task_id(slot + 1) if telemetry is not None else f"task-{slot + 1}"
 
 
+# --------------------------------------------------------------------------- #
+# "Here's what I'm about to do": a short spoken summary of the materialized
+# plan, announced right after "Starting task N now." (before execution touches
+# anything). Distinct from describe_step/build_plan_speech above, which speak
+# a longer step-by-step rehearsal during the PLANNING phase — this is a terse
+# one-liner spoken at the START of EXECUTION, from the slot's already-saved
+# plan (see create_announce_task_plan).
+# --------------------------------------------------------------------------- #
+
+_PLAN_STEP_PHRASES = {
+    "announce": lambda p: "report the result",
+    "ask_person": lambda p: "ask the person",
+    "describe_person": lambda p: "describe the person",
+    "deliver": lambda p: "hand it over",
+    "follow": lambda p: "follow the person",
+    "guide": lambda p: "guide the person",
+    "vlm_fallback": lambda p: "look and answer",
+    "record_position": lambda p: "remember this spot",
+    "goto": lambda p: (
+        f"go to the {p['location']}" if p.get("location") else "go to the destination"
+    ),
+    "count": lambda p: (
+        f"count the {p['object']}" if p.get("object") else "count the objects"
+    ),
+    "find_person": lambda p: (
+        f"find {p['person']}" if p.get("person") else "find the person"
+    ),
+    "grasp": lambda p: (
+        f"pick up the {p['object']}" if p.get("object") else "pick up the object"
+    ),
+}
+
+
+def _describe_plan_step(action: Any, params: Any) -> str:
+    """One short clause for a single materialized plan step. Never raises."""
+    try:
+        template = _PLAN_STEP_PHRASES.get(action)
+        p = params if isinstance(params, dict) else {}
+        if template is not None:
+            return template(p)
+        return str(action or "").replace("_", " ") or "do something"
+    except Exception:
+        return "do something"
+
+
+def describe_plan(steps: Optional[List[Dict[str, Any]]]) -> str:
+    """Turn a materialized action plan into one short spoken sentence.
+
+    ``steps`` is the same ordered list of ``{action, params}`` dicts that
+    reaches ``materialise_params`` / ``BtNode_TargetPostconditionCheck``'s
+    ``action_plan`` — the concrete, already-planned steps for one task. Pure
+    and best-effort: malformed steps are skipped/summarized rather than
+    raising, so a corrupt saved plan can never crash the announce.
+    """
+    phrases = []
+    for step in (steps or []):
+        if not isinstance(step, dict):
+            continue
+        action = step.get("action")
+        params = step.get("params")
+        phrases.append(_describe_plan_step(action, params))
+    if not phrases:
+        return "My plan is ready."
+    truncated = len(phrases) > 8
+    phrases = phrases[:8]
+    body = ", then ".join(phrases)
+    return f"My plan: {body}, and more." if truncated else f"My plan: {body}."
+
+
+class BtNode_BuildTaskPlanSpeech(Behaviour):
+    """Read one batch slot's SAVED plan and write describe_plan's summary to
+    PLAN_SPEECH.
+
+    Unlike BtNode_BuildPlanSpeech (reads the live PLAN key during planning),
+    this runs at the START of the EXECUTE phase, right after "announce start
+    task N" and before the restore/reset leaves pull the slot's saved plan
+    back onto PLAN — so it reads the stable SAVED_PLAN_PREFIX+slot copy
+    directly. The batch tree is built (in Python) before any command is even
+    heard, so the plan text can't be a build-time constant; it's recomputed
+    here, once, right before it's spoken. Always SUCCESS.
+    """
+
+    def __init__(self, slot: int, name: Optional[str] = None):
+        super().__init__(name or f"build task {slot + 1} plan speech")
+        self._slot = int(slot)
+        self._bb = None
+
+    def setup(self, **kwargs):
+        self._bb = self.attach_blackboard_client(name=self.name)
+        self._bb.register_key(f"{bb_keys.SAVED_PLAN_PREFIX}{self._slot}", access=Access.READ)
+        self._bb.register_key(bb_keys.PLAN_SPEECH, access=Access.WRITE)
+
+    def update(self):
+        try:
+            steps = self._bb.get(f"{bb_keys.SAVED_PLAN_PREFIX}{self._slot}") or []
+        except KeyError:
+            steps = []
+        speech = describe_plan(steps)
+        self._bb.set(bb_keys.PLAN_SPEECH, speech, overwrite=True)
+        self.feedback_message = speech
+        return Status.SUCCESS
+
+
+def create_announce_task_plan(slot: int) -> py_trees.composites.Sequence:
+    """Speak batch slot ``slot``'s materialized plan aloud right as its task
+    starts executing (build text, then announce)."""
+    seq = py_trees.composites.Sequence(f"announce plan {slot + 1}", memory=True)
+    seq.add_child(BtNode_BuildTaskPlanSpeech(slot))
+    seq.add_child(BtNode_AnnounceFromBB(f"announce plan {slot + 1} (speak)", bb_keys.PLAN_SPEECH))
+    return seq
+
+
 def create_execute_loop(
     max_steps: int = 25, max_corrections: int = 3,
 ) -> py_trees.behaviour.Behaviour:
@@ -2763,6 +2875,7 @@ def _create_execute_slot(slot: int, max_steps: int = 25,
         f"announce start task {slot + 1}", bb_source=None,
         message=f"Starting task {slot + 1} now.",
     ))
+    seq.add_child(create_announce_task_plan(slot))
     # Restore this task's command (so a mid-task self-correction re-plans the
     # right command) and its pre-made plan.
     seq.add_child(BtNode_BlackboardCopy(
@@ -2937,6 +3050,7 @@ def _create_execute_slot_new(
         f"announce start task {slot + 1}", bb_source=None,
         message=f"Starting task {slot + 1} now.",
     ))
+    seq.add_child(create_announce_task_plan(slot))
     seq.add_child(BtNode_BlackboardCopy(
         f"restore command {slot}", f"{bb_keys.SAVED_COMMAND_PREFIX}{slot}", bb_keys.COMMAND))
     seq.add_child(BtNode_BlackboardCopy(

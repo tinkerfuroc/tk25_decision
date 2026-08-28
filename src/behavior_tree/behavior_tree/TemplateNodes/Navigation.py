@@ -107,6 +107,10 @@ class BtNode_GotoAction(ActionHandler):
             wait_for_server_timeout_sec,
             action_timeout_ticks,
         )
+        # ActionHandler doesn't remember the bb key it was given (only uses it
+        # to remap the "goal" read) — keep it so a successful goto can report
+        # what it actually reached (see _target_label / process_result).
+        self._key = key
 
     def initialise(self):
         # self.tf_buffer = Buffer()
@@ -199,12 +203,34 @@ class BtNode_GotoAction(ActionHandler):
         except KeyError:
             self.node.get_logger().warn("Send goal failed!")
 
+    def _target_label(self) -> str:
+        """Best-effort human-meaningful label for the goal this node reached.
+
+        Prefers the resolved goal pose's position (what was actually sent to
+        Nav2 — read live off the blackboard, so it works whether or not
+        ``send_goal`` stashed a copy, e.g. in mock mode); falls back to the
+        blackboard key the goal came from when no pose is available.
+        """
+        goal = None
+        try:
+            goal = self.blackboard.goal
+        except Exception:
+            goal = None
+        if isinstance(goal, PoseStamped):
+            p = goal.pose.position
+            return f"{p.x:.2f}, {p.y:.2f}"
+        if isinstance(goal, PointStamped):
+            p = goal.point
+            return f"{p.x:.2f}, {p.y:.2f}"
+        return self._key or "target"
+
     def process_result(self):
         # for navigation only, where the action can return all sorts of results while it's at it
         if self.result_status == action_msgs.GoalStatus.STATUS_ABORTED:  # noqa
             self.feedback_message = "action aborted"
             return py_trees.common.Status.FAILURE
         else:
+            self.feedback_message = f"reached '{self._target_label()}'"
             return py_trees.common.Status.SUCCESS
 
     def feedback_callback(self, msg):

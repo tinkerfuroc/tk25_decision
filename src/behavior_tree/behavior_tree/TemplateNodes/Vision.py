@@ -329,7 +329,11 @@ class BtNode_ScanForGeneralist(ServiceHandler):
                 print(f"[VISION/{cam}/generalist] DETECTED {n_obj} object(s) for "
                       f"'{self.object}': {classes} (source={result.detection_source})",
                       flush=True)
-                self.feedback_message = f"Generalist found objects, stored to {self.bb_key} (source={result.detection_source})"
+                shown = ", ".join(str(c) for c in classes[:5])
+                summary = f"found {n_obj}"
+                if shown:
+                    summary += f": {shown}"
+                self.feedback_message = f"{summary} (source={result.detection_source})"
                 return pytree.common.Status.SUCCESS
             print(f"[VISION/{cam}/generalist] NO DETECTION for '{self.object}' "
                   f"(status={result.status}, objects={n_obj}, err={result.error_msg!r})",
