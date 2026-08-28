@@ -80,6 +80,116 @@ def test_list_frames_skips_a_symlinked_label_dir_and_a_symlinked_file(
     )
 
 
+def test_list_frames_excludes_orphans_from_a_reused_run_directory(make_run):
+    """The bench reuses a run directory in place when it re-runs a corpus
+    entry, without archiving the previous occupant first. Frame filenames
+    encode the simulator clock, so the previous occupant's frames are not
+    overwritten -- they are interleaved on disk alongside the current
+    run's. `index.jsonl` is the current run's own record of which files
+    are really its own; anything else on disk is an orphan.
+
+    The orphans here are given MUCH earlier stamps than the indexed
+    frames, mirroring the real contamination measured on
+    s2026-003-findObjInRoom (orphan sim-ms ~1.2M vs. current run's
+    ~5.8M) -- so a naive fix that merely truncates to the index's
+    *length* or sorts before slicing would still pass a same-shaped test
+    with interleaved-but-close stamps, but must fail here: an implementation
+    that took (say) the two earliest or two latest on-disk frames instead
+    of the two the index actually names would get caught by asserting the
+    exact returned filenames, not just a count.
+    """
+    run = make_run(
+        name="s9999-060-x",
+        frames={
+            "head": [
+                # Current run's real frames (indexed).
+                (0, 5000), (1, 6000),
+                # Orphans from a previous occupancy: much earlier stamps,
+                # so they would sort to the front of a naive merge.
+                (50, 1000), (51, 1200),
+            ],
+        },
+        index_lines=[
+            {"label": "head", "file": "frames/head/0000_5000.jpg",
+             "stamp_s": 5.0, "wall": "2026-08-28T10:00:05.000000Z"},
+            {"label": "head", "file": "frames/head/0001_6000.jpg",
+             "stamp_s": 6.0, "wall": "2026-08-28T10:00:06.000000Z"},
+        ],
+    )
+    frames = list_frames(run)
+    assert [f.file for f in frames["head"]] == [
+        "0000_5000.jpg", "0001_6000.jpg",
+    ], "only the indexed frames should be listed, in index order"
+    assert [f.stamp_s for f in frames["head"]] == [5.0, 6.0], (
+        "the orphans' much-earlier stamps must not appear at all"
+    )
+
+
+def test_list_frames_without_an_index_still_lists_everything_on_disk(
+        make_run):
+    """Runs that predate frames/index.jsonl have no way to distinguish an
+    orphan from a real frame -- list_frames must not regress to filtering
+    (or erroring) on them, even when the on-disk stamps are shaped just
+    like the contaminated case (some much earlier than others)."""
+    run = make_run(
+        name="s9999-061-x",
+        frames={
+            "head": [(0, 5000), (1, 6000), (50, 1000), (51, 1200)],
+            "arena": [(0, 5000), (1, 6000)],
+        },
+    )
+    frames = list_frames(run)
+    assert sorted(frames) == ["arena", "head"]
+    assert [f.file for f in frames["head"]] == [
+        "0050_1000.jpg", "0051_1200.jpg", "0000_5000.jpg", "0001_6000.jpg",
+    ]
+    assert len(frames["arena"]) == 2
+
+
+@pytest.mark.corpus
+def test_indexed_runs_never_list_more_frames_than_their_index(corpus_root):
+    """For every run in the corpus that has frames/index.jsonl, list_frames
+    must return no more frames, per label, than the index actually names --
+    a floor/ceiling relationship, not an exact count, since a live battery
+    can be adding to the index concurrently."""
+    import json as _json
+
+    checked = 0
+    for tier in list_tiers(corpus_root):
+        for entry in tier.entries:
+            for attempt in entry.attempts:
+                index_path = attempt.path / "frames" / "index.jsonl"
+                try:
+                    lines = index_path.read_text().splitlines()
+                except OSError:
+                    continue
+                per_label: dict[str, int] = {}
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = _json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(rec, dict) and isinstance(
+                            rec.get("label"), str):
+                        per_label[rec["label"]] = (
+                            per_label.get(rec["label"], 0) + 1)
+
+                frames = list_frames(attempt.path)
+                checked += 1
+                for label, refs in frames.items():
+                    assert len(refs) <= per_label.get(label, 0), (
+                        f"{attempt.dir_name}/{label}: list_frames returned "
+                        f"{len(refs)} frames but index.jsonl names only "
+                        f"{per_label.get(label, 0)} -- orphans are leaking "
+                        f"through"
+                    )
+    if checked == 0:
+        pytest.skip("no run in the corpus currently has frames/index.jsonl")
+
+
 @pytest.mark.corpus
 def test_real_single_camera_run_lists_only_head(corpus_root):
     """A run with exactly one camera should list correctly, without ever

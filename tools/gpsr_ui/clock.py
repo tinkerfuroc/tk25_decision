@@ -79,6 +79,18 @@ class Clock:
             return started + frac * (ended - started)
         return None
 
+    def indexed_files(self, label: str) -> frozenset[str] | None:
+        """Bare filenames `index.jsonl` lists for `label`, or None if
+        there is no exact index for this run (mode != "exact") -- i.e.
+        there is no way to tell an indexed frame from an orphan left by
+        a previous occupancy of this run directory. When the index
+        exists but has no rows at all for `label`, returns an empty
+        frozenset: every on-disk file under that label is an orphan.
+        """
+        if self.mode != "exact":
+            return None
+        return frozenset(self._files.get(label, ()))
+
     def wall_to_frame(self, label: str, wall: float | None) -> str | None:
         """Filename of the frame whose wall time is nearest at-or-before."""
         if wall is None:
@@ -165,7 +177,11 @@ def _load_exact(run_dir: Path, clock: Clock) -> bool:
             continue
         if not isinstance(stamp, (int, float)) or wall is None:
             continue
-        rows.setdefault(label, []).append((float(stamp), wall, file))
+        # `file` is a run-relative path (e.g. "frames/head/0000_1.jpg"),
+        # not a bare filename -- frames.py and Clock.wall_to_frame both
+        # deal in bare filenames, so normalize here, once, at the source.
+        rows.setdefault(label, []).append(
+            (float(stamp), wall, Path(file).name))
 
     if not rows:
         return False

@@ -89,6 +89,19 @@ def list_frames(run_dir: Path) -> dict[str, list[FrameRef]]:
     frame file -- wherever it points, including at another run's
     `frames/` tree -- is silently skipped rather than listed, matching
     what `frame_path` would (refuse to) serve.
+
+    The bench reuses a run directory in place when it re-runs a corpus
+    entry, and does not archive the old occupant first. Frame filenames
+    encode the SIMULATOR clock, not wall time, so a re-run does not
+    overwrite the previous occupant's frame files -- it interleaves new
+    ones alongside them on disk. `frames/index.jsonl`, when present, is
+    the current run's own record of exactly which files belong to it; a
+    directory listing is not. So when the index exists, only files it
+    names are returned -- everything else on disk under that label is an
+    orphan from a previous occupancy and is silently excluded. When no
+    index exists (a run from before the index was introduced), there is
+    no way to distinguish an orphan from a real frame, so every
+    parseable file on disk is returned, same as before.
     """
     run_dir = Path(run_dir)
     frames_dir = run_dir / "frames"
@@ -115,8 +128,17 @@ def list_frames(run_dir: Path) -> dict[str, list[FrameRef]]:
         except OSError:
             continue
 
+        # When the current run has an exact index, it is the sole
+        # source of truth for which on-disk files are this run's own --
+        # anything else is an orphan from a previous occupancy of this
+        # directory. No index means no way to tell, so keep every
+        # parseable file (the pre-index behaviour for older runs).
+        indexed = clock.indexed_files(label)
+
         refs: list[FrameRef] = []
         for name in file_names:
+            if indexed is not None and name not in indexed:
+                continue
             parsed = parse_frame_name(name)
             if parsed is None:
                 continue

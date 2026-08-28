@@ -44,6 +44,33 @@ def test_exact_mode_when_index_jsonl_present(make_run):
         "head", parse_wall("2026-08-28T10:00:04.000000Z")) == "0000_1000.jpg"
 
 
+def test_wall_to_frame_returns_a_bare_filename_not_a_run_relative_path(
+        make_run):
+    """index.jsonl's "file" field is a run-relative path
+    (e.g. "frames/head/0000_1000.jpg"), matching what the real bench
+    writes -- not a bare filename. frames.py deals exclusively in bare
+    filenames (FrameRef.file, frame_path()'s `file` parameter), so
+    Clock.wall_to_frame must agree and also return a bare filename, or a
+    future caller passing its result to frame_path() would get handed a
+    path where a name was expected."""
+    run = make_run(
+        name="s9999-016-x",
+        frames={"head": [(0, 1000), (1, 2000)]},
+        index_lines=[
+            {"label": "head", "file": "frames/head/0000_1000.jpg",
+             "stamp_s": 1.0, "wall": "2026-08-28T10:00:00.000000Z"},
+            {"label": "head", "file": "frames/head/0001_2000.jpg",
+             "stamp_s": 2.0, "wall": "2026-08-28T10:00:05.000000Z"},
+        ],
+    )
+    clock = load_clock(run)
+    assert clock.mode == "exact"
+    frame = clock.wall_to_frame(
+        "head", parse_wall("2026-08-28T10:00:05.000000Z"))
+    assert frame == "0001_2000.jpg"
+    assert "/" not in frame
+
+
 def test_approximate_mode_interpolates_from_recorder_meta(make_run):
     run = make_run(
         name="s9999-011-x",
