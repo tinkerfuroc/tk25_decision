@@ -25,3 +25,25 @@ test("set clamps out-of-range values", () => {
   p.set(99);
   assert.equal(p.get(), 10);
 });
+
+test("a throwing subscriber does not starve later subscribers or escape set()", () => {
+  // Task 9 (tree panel) and Task 10 (camera viewer) will each subscribe
+  // alongside the ribbon's own cursor. A bug in one of them must not stop
+  // the others from updating, and must not throw out of set() into
+  // whatever triggered it -- a click handler or a slider drag.
+  const p = createPlayhead({ start: 0, end: 10 });
+  const seen = [];
+  const realConsoleError = console.error;
+  console.error = () => {}; // expected error report; keep test output quiet
+  try {
+    p.subscribe(() => {
+      throw new Error("boom");
+    });
+    p.subscribe((v) => seen.push(v));
+
+    assert.doesNotThrow(() => p.set(5));
+    assert.deepEqual(seen, [5]);
+  } finally {
+    console.error = realConsoleError;
+  }
+});

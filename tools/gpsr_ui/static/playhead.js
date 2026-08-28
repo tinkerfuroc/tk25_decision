@@ -19,7 +19,20 @@ export function createPlayhead({ start, end }) {
       const clamped = clamp(next);
       if (clamped === value) return;
       value = clamped;
-      for (const fn of subscribers) fn(value);
+      // Task 9/10 each subscribe their own panel (tree, camera viewer)
+      // alongside the ribbon's own cursor. A bug in one panel's callback
+      // must not stop the others from updating, and must not escape set()
+      // to whatever triggered it (a click handler, a slider drag) -- that
+      // would look like the whole page broke instead of one panel.
+      for (const fn of subscribers) {
+        try {
+          fn(value);
+        } catch (err) {
+          console.error(
+            "playhead subscriber threw; other subscribers still ran",
+            fn, err);
+        }
+      }
     },
     subscribe(fn) {
       subscribers.push(fn);

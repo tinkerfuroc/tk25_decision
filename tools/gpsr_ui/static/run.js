@@ -5,11 +5,19 @@
 // appending more function bodies and call sites to boot() -- any new
 // import they need must be added up here too, never inline further down.
 import { createPlayhead } from "./playhead.js";
-import { buildLanes, parseWall, xOf } from "./timeline.js";
+import { buildLanes, collapseLaneItems, parseWall, xOf } from "./timeline.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const LANE_HEIGHT = 18;
+const MARK_RADIUS = 4;
 const STATUS_CLASS = { SUCCESS: "ok", FAILURE: "bad", RUNNING: "run" };
+// collapseLaneItems' own default threshold (3px) is a floor for the pure
+// function, not what draws the ribbon: two marks whose CENTRES are 3-8px
+// apart still visually overlap once each is drawn as an r=4 (8px
+// diameter) circle, which is exactly the "solid bar" this collapsing
+// exists to fix. Cluster at (at least) the mark's own diameter plus a
+// small gap so surviving marks are actually visually discrete.
+const CLUSTER_PX = MARK_RADIUS * 2 + 2;
 
 function el(tag, attrs) {
   const node = document.createElementNS(SVG_NS, tag);
@@ -30,8 +38,10 @@ function apiRunUrl(tier, dirName) {
 
 function runBounds(model) {
   const walls = [];
-  if (model.started_wall) walls.push(model.started_wall);
-  if (model.finished_wall) walls.push(model.finished_wall);
+  // `!= null` on purpose: a wall time of exactly 0 (epoch) is a real,
+  // meaningful timestamp and must not be dropped by a truthy check.
+  if (model.started_wall != null) walls.push(model.started_wall);
+  if (model.finished_wall != null) walls.push(model.finished_wall);
   for (const e of model.epochs || []) {
     const w = parseWall(e.wall);
     if (w !== null) walls.push(w);
@@ -62,14 +72,23 @@ function renderRibbon(svg, lanes, bounds, playhead) {
     label.textContent = lane.label;
     svg.appendChild(label);
 
-    for (const item of lane.items) {
+    // Collapsing is a draw-time-only decision: buildLanes() above still
+    // returns every event untouched, so nothing downstream (Task 9/10, or
+    // this lane's own item count) loses data -- only what gets a circle
+    // on the ribbon is reduced when marks would land within a few pixels
+    // of each other. A FAILURE is never merged away; see timeline.js.
+    const collapsed = collapseLaneItems(
+      lane.items, bounds.start, bounds.end, width, CLUSTER_PX);
+    for (const item of collapsed) {
       const mark = el("circle", {
         cx: xOf(item.wall, bounds.start, bounds.end, width),
-        cy: y, r: 4,
+        cy: y, r: MARK_RADIUS,
         class: `mark ${STATUS_CLASS[item.status] || "run"}`,
       });
       const title = el("title", {});
-      title.textContent = `${item.name}\n${item.info || ""}`;
+      const collapsedNote = item.collapsed
+        ? `\n(+${item.count - 1} more nearby)` : "";
+      title.textContent = `${item.name}\n${item.info || ""}${collapsedNote}`;
       mark.appendChild(title);
       mark.addEventListener("click", () => playhead.set(item.wall));
       svg.appendChild(mark);

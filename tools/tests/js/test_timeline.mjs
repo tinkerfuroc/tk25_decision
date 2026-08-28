@@ -1,7 +1,7 @@
 // tools/tests/js/test_timeline.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLanes, xOf } from "../../gpsr_ui/static/timeline.js";
+import { buildLanes, collapseLaneItems, xOf } from "../../gpsr_ui/static/timeline.js";
 
 test("xOf maps wall time onto pixel width", () => {
   assert.equal(xOf(100, 100, 200, 500), 0);
@@ -56,4 +56,54 @@ test("buildLanes separates milestones by kind and marks failures", () => {
   const nav = lanes.find((l) => l.id === "NAV");
   assert.equal(nav.items.length, 1);
   assert.equal(nav.items[0].status, "FAILURE");
+});
+
+test("collapseLaneItems renders a FAILURE individually inside a dense cluster", () => {
+  // Real corpus fact: a saturated lane (1281 milestones in one run) must
+  // still let a user click the one FAILURE among a wall of SUCCESS marks.
+  const items = [
+    { wall: 100.0, kind: "MANIP", status: "SUCCESS", name: "a", info: "" },
+    { wall: 100.0005, kind: "MANIP", status: "FAILURE", name: "b", info: "boom" },
+    { wall: 100.001, kind: "MANIP", status: "SUCCESS", name: "c", info: "" },
+  ];
+  const rendered = collapseLaneItems(items, 0, 200, 900);
+  const failureMark = rendered.find((m) => m.status === "FAILURE");
+  assert.ok(failureMark, "the FAILURE must survive as its own mark");
+  assert.equal(failureMark.name, "b");
+  assert.equal(failureMark.info, "boom");
+});
+
+test("collapseLaneItems collapses a dense run of SUCCESS marks", () => {
+  const items = [];
+  for (let i = 0; i < 50; i++) {
+    items.push({
+      wall: 100 + i * 0.001, kind: "AUDIO", status: "SUCCESS",
+      name: `s${i}`, info: "",
+    });
+  }
+  const rendered = collapseLaneItems(items, 0, 200, 900);
+  assert.ok(rendered.length < items.length);
+  assert.ok(rendered.some((m) => m.collapsed && m.count > 1));
+});
+
+test("collapseLaneItems accounts for every input event across rendered marks", () => {
+  const items = [
+    { wall: 10, status: "SUCCESS", kind: "NAV", name: "a", info: "" },
+    { wall: 10.001, status: "SUCCESS", kind: "NAV", name: "b", info: "" },
+    { wall: 50, status: "FAILURE", kind: "NAV", name: "c", info: "" },
+    { wall: 90, status: "SUCCESS", kind: "NAV", name: "d", info: "" },
+  ];
+  const rendered = collapseLaneItems(items, 0, 100, 900);
+  const total = rendered.reduce((sum, m) => sum + m.count, 0);
+  assert.equal(total, items.length);
+});
+
+test("collapseLaneItems never merges two FAILUREs into one mark", () => {
+  const items = [
+    { wall: 10.0, status: "FAILURE", kind: "NAV", name: "fail-1", info: "" },
+    { wall: 10.0005, status: "FAILURE", kind: "NAV", name: "fail-2", info: "" },
+  ];
+  const rendered = collapseLaneItems(items, 0, 200, 900);
+  assert.equal(rendered.filter((m) => m.status === "FAILURE").length, 2);
+  assert.equal(rendered.reduce((sum, m) => sum + m.count, 0), 2);
 });
