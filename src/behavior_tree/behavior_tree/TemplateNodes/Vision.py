@@ -334,6 +334,13 @@ class BtNode_ScanForGeneralist(ServiceHandler):
             print(f"[VISION/{cam}/generalist] NO DETECTION for '{self.object}' "
                   f"(status={result.status}, objects={n_obj}, err={result.error_msg!r})",
                   flush=True)
+            # A no-match response still carries the captured frame when the
+            # request asked for it (the service attaches rgb_image regardless
+            # of status). Store the response anyway so image-consuming
+            # fallbacks (e.g. count's BtNode_VLMQuery) can look at the same
+            # frame the detector saw; without this the fallback dies with
+            # "no usable rgb_image" and the whole count subtree fails.
+            self.bb_write_client.set(self.bb_key, result, overwrite=True)
             self.feedback_message = (
                 f"ScanForGeneralist for {self.object} failed status={result.status}: {result.error_msg}"
             )
