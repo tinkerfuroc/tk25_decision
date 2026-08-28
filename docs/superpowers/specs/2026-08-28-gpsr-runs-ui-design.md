@@ -45,7 +45,19 @@ session. They drive most of the design.
 6. **`run.json`'s `id` is the corpus entry, not the attempt.** All 11 attempt
    directories report `id: s2026-002-countPrsInRoom`. Attempt identity is the
    directory name.
-7. **Scale.** 40 corpus entries per tier, plus attempt archives. 150–900 frames
+7. **`tree_revision` is always 0, and `run.finished.status` is always
+   `incomplete`.** Measured across the whole corpus: 105 `events.jsonl` files,
+   289 `tree.generated` events, `tree_revision` is `0` in every one; all 105
+   `run.finished` events report `incomplete`, including the run whose
+   `run.json` says `PASS`. Two consequences, both load-bearing:
+   - **Replans must be counted as `tree.generated` epochs**, not revision
+     bumps. `group-000` in `t1-42` has 24 epochs. The vendored classifier
+     emits its `REPLAN` judge event only when `tree_revision > 0`, so that
+     lane would be **silently empty on every run in the corpus** if we relied
+     on it. `telemetry.py` derives replans itself.
+   - **`run.finished.status` is never displayed as an outcome.** The verdict
+     is `run.json`'s `verdict` field.
+8. **Scale.** 40 corpus entries per tier, plus attempt archives. 150–900 frames
    per camera per run (1 frame per sim-second, 900 s cap, two cameras). Whole
    bench corpus is currently 2.4 GB. Plain disk reads are adequate; no manifest
    step is needed.
@@ -177,23 +189,31 @@ could see when a node failed.
 
 A single pass over `events.jsonl` produces:
 
-- **Tree revisions.** Each `tree.generated` payload, with node id, name, type,
-  parent, children, semantics and blackboard access. Revision 0 of the inspected
-  run has 84 nodes; a second revision at tick 257 has 158, the difference being
-  the `DynamicExecutor` materialising the plan. A revision bump is a **replan**
-  and is a first-class event in the UI, not a silent redraw.
+- **Tree epochs.** Each `tree.generated` payload is one epoch, in arrival
+  order, carrying node id, name, type, parent, children, semantics and
+  blackboard access. The inspected run has two: 84 nodes at sequence 3, then
+  158 nodes at sequence 257, the difference being the `DynamicExecutor`
+  materialising the plan. **Both report `tree_revision: 0`** — see constraint
+  7 — so epochs are identified by ordinal, and the tree shown at a playhead is
+  the latest epoch at or before it. Epochs after the first are **replans** and
+  are first-class events in the UI, not silent redraws. Epoch count per run
+  ranges from 1 to 24 across the corpus.
 - **Node status timeline.** From `tree.node_states_changed`: per node, an
   ordered list of (tick, wall, status, feedback). Node status at any playhead
   position is the last transition at or before it.
 - **Milestones and judge events**, from the vendored classifier.
 - **Plan steps**, from step context stamped on feedback, anchored by the spoken
   `My plan: ...` announcement that new runs emit early in each task.
-- **Run outcome**, from `run.started` / `run.configured` / `run.finished` and
-  `run.json`.
+- **Run outcome**, from `run.json`'s `verdict`, `detail` and `seconds`.
+  `run.started` and `run.configured` supply start time and mode;
+  `run.finished` supplies only its wall time, never its `status` (constraint
+  7).
 
-`tree.tick_observed` (754 events in the inspected run) largely duplicates
-`tree.node_states_changed` (168) and is **not** used to build the model. It is
-read only for `counter_deltas`, `retry_repeat_deltas` and
+`tree.tick_observed` is **not** used to build the model. In the inspected run
+it carries 754 events against 168 `tree.node_states_changed`, mostly restating
+node status the latter already reports; in other runs the two counts are equal.
+Either way the status timeline comes from `node_states_changed`.
+`tick_observed` is read only for `counter_deltas`, `retry_repeat_deltas` and
 `active_action_context`, which appear nowhere else.
 
 The model is cached under `--state-dir` keyed by (path, mtime, size), so a
@@ -213,9 +233,9 @@ event log.
 
 - *Timeline ribbon.* Wall-clock x-axis with lanes for plan steps, milestones
   (NAV/VISION/AUDIO/MANIP, red on FAILURE), judge events (precondition,
-  postcondition, supervisor, replan, correction), tree-revision replan markers,
-  and frame coverage density. A budget bar shows elapsed against the 6-minute
-  target and the 900 s timeout.
+  postcondition, supervisor, correction), replan markers at each
+  `tree.generated` epoch after the first, and frame coverage density. A budget
+  bar shows elapsed against the 6-minute target and the 900 s timeout.
 - *Tree panel.* SVG hierarchical layout of the current tree revision,
   time-travelled to the playhead. Keepalive and bookkeeping subtrees collapsed
   by default; the path to the active node auto-expanded. Clicking a node opens
@@ -244,8 +264,8 @@ for 60 s means dead, not live.
 
 Updates are pushed over SSE, with the backend tailing `events.jsonl` by byte
 offset. The dashboard shows the active plan step, the last nav goal and its
-outcome, replan count, gate failures, elapsed against budget, and the newest
-frame from each camera, auto-advancing.
+outcome, replan count (epochs beyond the first), gate failures, elapsed against
+budget, and the newest frame from each camera, auto-advancing.
 
 Two pieces of context that live outside the run directory:
 
@@ -290,7 +310,7 @@ normal case and each missing piece disables exactly one panel:
   tests pin the derived model for a small number of named runs.
 - **A synthetic minimal run fixture** for edge cases the corpus lacks: empty
   event log, truncated final line, missing recorder metadata, a run with three
-  tree revisions.
+  tree epochs.
 - **Clock mapping is tested directly**, both implementations, including the
   assertion that exact and approximate disagree on a real run — which
   documents why the badge exists.
