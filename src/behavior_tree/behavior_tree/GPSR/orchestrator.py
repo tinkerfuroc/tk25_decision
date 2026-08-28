@@ -2641,7 +2641,10 @@ _PLAN_STEP_PHRASES = {
     "describe_person": lambda p: "describe the person",
     "deliver": lambda p: "hand it over",
     "follow": lambda p: "follow the person",
-    "guide": lambda p: "guide the person",
+    "guide": lambda p: (
+        f"guide the person to the {p['location']}" if p.get("location")
+        else "guide the person"
+    ),
     "vlm_fallback": lambda p: "look and answer",
     "record_position": lambda p: "remember this spot",
     "goto": lambda p: (
@@ -2651,7 +2654,9 @@ _PLAN_STEP_PHRASES = {
         f"count the {p['object']}" if p.get("object") else "count the objects"
     ),
     "find_person": lambda p: (
-        f"find {p['person']}" if p.get("person") else "find the person"
+        f"find {p.get('descriptor') or p.get('person') or p.get('recipient')}"
+        if (p.get("descriptor") or p.get("person") or p.get("recipient"))
+        else "find the person"
     ),
     "grasp": lambda p: (
         f"pick up the {p['object']}" if p.get("object") else "pick up the object"

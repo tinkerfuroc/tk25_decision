@@ -61,7 +61,7 @@ def test_missing_param_drops_the_article_phrase():
 
 def test_all_named_action_templates():
     steps = [
-        {"action": "find_person", "params": {"person": "the man in red"}},
+        {"action": "find_person", "params": {"descriptor": "the man in red"}},
         {"action": "ask_person", "params": {}},
         {"action": "describe_person", "params": {}},
         {"action": "grasp", "params": {"object": "cup"}},
@@ -74,6 +74,29 @@ def test_all_named_action_templates():
         "My plan: find the man in red, then ask the person, then describe the person, "
         "then pick up the cup, then hand it over, then follow the person, "
         "then guide the person, then remember this spot."
+    )
+
+
+def test_find_person_falls_back_through_person_then_recipient():
+    # descriptor is the real key materialise_params/describe_step read first;
+    # person/recipient are the fallbacks, in that order.
+    assert describe_plan([{"action": "find_person", "params": {"person": "Alice"}}]) == (
+        "My plan: find Alice."
+    )
+    assert describe_plan([{"action": "find_person", "params": {"recipient": "Bob"}}]) == (
+        "My plan: find Bob."
+    )
+    assert describe_plan([{"action": "find_person", "params": {
+        "descriptor": "the man in red", "person": "Alice",
+    }}]) == "My plan: find the man in red."
+
+
+def test_guide_names_the_destination_when_given():
+    assert describe_plan([{"action": "guide", "params": {"location": "kitchen"}}]) == (
+        "My plan: guide the person to the kitchen."
+    )
+    assert describe_plan([{"action": "guide", "params": {}}]) == (
+        "My plan: guide the person."
     )
 
 
@@ -100,3 +123,21 @@ def test_never_crashes_on_malformed_steps():
     result = describe_plan(steps)
     assert isinstance(result, str)
     assert result.startswith("My plan")
+
+
+def test_build_task_plan_speech_missing_key_falls_back_to_ready():
+    """The execute-phase build node reads SAVED_PLAN_PREFIX+slot directly
+    (see create_announce_task_plan) — a slot whose plan was never saved
+    (e.g. a fresh/unused slot number) must not crash the announce, just
+    speak the same "My plan is ready." fallback describe_plan([]) gives."""
+    import py_trees as pytree
+
+    from behavior_tree.GPSR.orchestrator import BtNode_BuildTaskPlanSpeech
+
+    node = BtNode_BuildTaskPlanSpeech(slot=999)
+    node.setup()
+
+    status = node.update()
+
+    assert status == pytree.common.Status.SUCCESS
+    assert node.feedback_message == "My plan is ready."
