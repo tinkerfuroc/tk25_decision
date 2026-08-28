@@ -1,0 +1,14 @@
+<!-- tools/gpsr_ui/templates/base.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}GPSR Bench{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar"><a href="/">GPSR Bench Run Viewer</a></header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

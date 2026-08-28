@@ -1,0 +1,22 @@
+/* tools/gpsr_ui/static/app.css */
+:root {
+  --bg: #14161a; --fg: #e7e9ee; --dim: #8b93a3; --line: #2a2f38;
+  --pass: #4ec9a0; --fail: #e06c75; --timeout: #d9a441; --none: #8b93a3;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.topbar { padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.topbar a { color: var(--fg); text-decoration: none; }
+main { padding: 16px; }
+.tier h2 { font-size: 15px; color: var(--dim); margin: 20px 0 8px; }
+table.entries { width: 100%; border-collapse: collapse; }
+table.entries th { text-align: left; color: var(--dim); font-weight: 400;
+  border-bottom: 1px solid var(--line); padding: 4px 8px; }
+table.entries td { padding: 4px 8px; border-bottom: 1px solid var(--line);
+  vertical-align: top; }
+a { color: #6cb6ff; }
+.verdict { font-weight: 600; }
+.v-pass { color: var(--pass); } .v-fail { color: var(--fail); }
+.v-timeout, .v-error { color: var(--timeout); } .v-none { color: var(--none); }
+ul { margin: 4px 0; padding-left: 18px; }
