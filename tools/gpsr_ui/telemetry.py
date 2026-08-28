@@ -70,44 +70,21 @@ class RunModel:
     finished_wall: float | None = None
     announcements: list[str] = field(default_factory=list)
 
-    def epoch_at(self, wall: float | None) -> Epoch | None:
-        """Latest epoch at-or-before `wall`.
-
-        Epochs are appended in file-arrival order, which is chronological,
-        so a strictly-later epoch (wall > playhead) means every epoch after
-        it is later still and the scan can stop. An epoch whose wall failed
-        to parse (None) carries no ordering information -- it must not be
-        allowed to end the scan early, only to be skipped, or a single
-        unparseable timestamp partway through the list would hide every
-        valid epoch that follows it.
-        """
-        if wall is None:
-            return None
-        found: Epoch | None = None
-        for epoch in self.epochs:
-            if epoch.wall is None:
-                continue
-            if epoch.wall <= wall:
-                found = epoch
-            else:
-                break
-        return found
-
-    def status_at(self, wall: float | None) -> dict[str, Transition]:
-        """Last transition per node at or before `wall`.
-
-        A node that never ticked at or before `wall` (or never ticked at
-        all) simply has no key in the returned mapping -- callers use
-        dict.get, not indexing, for nodes that may not have started.
-        """
-        out: dict[str, Transition] = {}
-        if wall is None:
-            return out
-        for t in self.transitions:
-            if t.wall is None or t.wall > wall:
-                continue
-            out[t.node_id] = t
-        return out
+    # There used to be `epoch_at(wall)` and `status_at(wall)` here: the
+    # same "latest epoch/transition at-or-before this playhead" resolution
+    # the run page needs, computed server-side. Neither had a caller --
+    # the JSON API ships the raw `epochs`/`transitions` arrays as-is (see
+    # app.py's `_run_json`) precisely so the run page can scrub the
+    # playhead locally without a round trip per move, and the frontend
+    # duly does its own at-or-before resolution: `static/tree.js`'s
+    # `statusAt` for transitions (a near-line-for-line port of the old
+    # `status_at` above) and its `epochAt` for epochs (extracted from what
+    # used to be inlined in `static/run.js`'s `mountTree.draw()` -- see the
+    # B.3 fix). Those two are the live, tested implementations of this
+    # rule now; a maintainer chasing the next instance of the
+    # at-or-before bug should look there, not here. Removed rather than
+    # wired up so there is exactly one implementation per concern, not a
+    # server-side copy that only looks authoritative.
 
 
 def newest_events_file(run_dir: Path) -> Path | None:

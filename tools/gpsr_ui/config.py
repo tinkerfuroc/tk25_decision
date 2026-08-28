@@ -25,6 +25,23 @@ class Settings:
     # existing direct `Settings(...)` construction (tests included) valid.
     sim_stack_log_roots: tuple[Path, ...] = ()
 
+    def __post_init__(self) -> None:
+        # Enforce the read-only guarantee structurally, at the type
+        # boundary -- not just in load_settings(). `create_app()` accepts
+        # any `Settings`, and tests/test_app.py already builds one
+        # directly (not via load_settings()), so a check that only lived
+        # in load_settings() was a real bypass, not a hypothetical one:
+        # anything constructing `Settings` some other way could still
+        # point `state_dir` inside `bench_root` with no error at all.
+        # Living here means it holds no matter how a `Settings` comes to
+        # exist.
+        if self.bench_root == self.state_dir or (
+                self.bench_root in self.state_dir.parents):
+            raise ValueError(
+                f"state_dir ({self.state_dir}) must not be inside the bench "
+                f"corpus ({self.bench_root}); the viewer never writes there"
+            )
+
 
 def _path_env(name: str, default: Path | None) -> Path | None:
     raw = os.environ.get(name)
@@ -48,13 +65,10 @@ def load_settings() -> Settings:
     state_dir = _path_env("GPSR_UI_STATE_DIR", Path.home() / ".cache" / "gpsr-ui")
     assert bench_root is not None and state_dir is not None
 
-    # Enforce the read-only guarantee structurally, not by convention.
-    if bench_root == state_dir or bench_root in state_dir.parents:
-        raise ValueError(
-            f"GPSR_UI_STATE_DIR ({state_dir}) must not be inside the bench "
-            f"corpus ({bench_root}); the viewer never writes there"
-        )
-
+    # The read-only guarantee itself (state_dir must not be inside
+    # bench_root) is enforced by Settings.__post_init__ now, not here --
+    # it fires below, from the constructor call, and raises the same
+    # ValueError regardless of which env var supplied the offending path.
     return Settings(
         bench_root=bench_root,
         state_dir=state_dir,

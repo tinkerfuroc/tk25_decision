@@ -2,8 +2,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  activeAncestorIds, edgesFor, historyFor, isBookkeeping, isHiddenBookkeeping,
-  layoutTree, statusAt,
+  activeAncestorIds, edgesFor, epochAt, historyFor, isBookkeeping,
+  isHiddenBookkeeping, layoutTree, statusAt,
 } from "../../gpsr_ui/static/tree.js";
 
 const NODES = [
@@ -57,6 +57,45 @@ test("statusAt returns the last transition at or before the playhead", () => {
   assert.equal(statusAt(transitions, 25).get("a").status, "SUCCESS");
   assert.equal(statusAt(transitions, 25).has("b"), false);
   assert.equal(statusAt(transitions, 5).size, 0);
+});
+
+test("epochAt returns the latest epoch at or before the playhead", () => {
+  const epochs = [{ ordinal: 0, wall: 1 }, { ordinal: 1, wall: 2 }];
+  assert.equal(epochAt(epochs, 1.5).ordinal, 0);
+  assert.equal(epochAt(epochs, 9).ordinal, 1);
+});
+
+// B.3: the playhead sits before the first tree.generated epoch -- the
+// NORMAL case right after run.started/run.configured, well before any
+// tree exists. epochAt must return null here, not fall back to
+// epochs[0]: that fallback is exactly the bug this test pins -- it would
+// show a tree from the FUTURE relative to the playhead, the same bug
+// class already fixed twice on the frame-lookup side (frames.js/
+// clock.py). run.js's mountTree.draw() must render an explicit "tree
+// not yet generated" state for this null, not draw a tree at all.
+test("epochAt returns null (not the first epoch) when the playhead precedes every epoch", () => {
+  const epochs = [{ ordinal: 0, wall: 5 }, { ordinal: 1, wall: 10 }];
+  assert.equal(epochAt(epochs, 1), null);
+  assert.notEqual(epochAt(epochs, 1)?.ordinal, 0);
+});
+
+test("epochAt returns null on an empty epoch list or a null/undefined playhead", () => {
+  assert.equal(epochAt([], 5), null);
+  assert.equal(epochAt([{ ordinal: 0, wall: 1 }], null), null);
+  assert.equal(epochAt([{ ordinal: 0, wall: 1 }], undefined), null);
+});
+
+test("epochAt skips an epoch with an unparseable wall instead of ending the scan early", () => {
+  // A None/unparseable wall carries no ordering information -- it must
+  // only be skipped, never allowed to stop the scan, or one bad
+  // timestamp partway through the list would hide every valid epoch
+  // that follows it.
+  const epochs = [
+    { ordinal: 0, wall: 1 },
+    { ordinal: 1, wall: null },
+    { ordinal: 2, wall: 3 },
+  ];
+  assert.equal(epochAt(epochs, 5).ordinal, 2);
 });
 
 test("keepalive and bookkeeping nodes are flagged for collapsing", () => {

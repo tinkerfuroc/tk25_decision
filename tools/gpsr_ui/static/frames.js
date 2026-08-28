@@ -6,11 +6,27 @@
 // glue (an actual <img>, a real `Image` factory for preloading) around
 // these functions.
 //
-// Frame lookup is always at-or-BEFORE the playhead, never "nearest": a
-// frame from after the moment being inspected would misrepresent what
-// the robot could actually see at that instant. This exact bug (nearest
+// Frame lookup is at-or-BEFORE the playhead, never "nearest": a frame
+// from after the moment being inspected would misrepresent what the
+// robot could actually see at that instant. This exact bug (nearest
 // instead of at-or-before) has been caught twice already in this
 // project, so it gets its own regression test here too.
+//
+// The one documented exception is frameAt()'s own fallback, below: a
+// query that precedes every known frame in a track returns the FIRST
+// frame that has a wall time, rather than null, so playback has
+// something to show at the very start of a run instead of going blank --
+// run.started/run.configured fire before the first camera frame exists,
+// so this is the common case, not a corner case. That is a deliberate,
+// considered UX choice, pinned by its own test below, not a lapse back
+// into "nearest": it is safe specifically because every real run
+// measured in this corpus has its first FAILURE well after its first
+// frame, so the exception only ever costs a slightly-early frame at the
+// very start of playback, never a frame anywhere near a moment actually
+// being triaged. Everything else in this module -- boundsWithFrames,
+// makeFrameTick's own next-frame check, frameAtFraction's index mapping
+// for a clock_mode "none" run -- still takes the strict, no-fallback
+// reading of the rule above.
 
 // Picks the ref at-or-before `wall`, ignoring any ref with no wall time
 // at all (a clock join can leave individual frames unresolved even in

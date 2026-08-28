@@ -7,8 +7,8 @@
 import { createPlayhead } from "./playhead.js";
 import { buildLanes, collapseLaneItems, parseWall, xOf } from "./timeline.js";
 import {
-  activeAncestorIds, edgesFor, historyFor, isBookkeeping, isHiddenBookkeeping,
-  layoutTree, statusAt,
+  activeAncestorIds, edgesFor, epochAt, historyFor, isBookkeeping,
+  isHiddenBookkeeping, layoutTree, statusAt,
 } from "./tree.js";
 import {
   boundsWithFrames, createPlayer, fetchRunAndFrames, fractionOf, frameAt,
@@ -162,9 +162,14 @@ function renderRibbon(svg, lanes, bounds, playhead) {
 // history. "The tree" is whichever epoch is latest at-or-before the
 // playhead -- normally exactly two (a startup skeleton, then the
 // executor's materialised plan), so the panel must redraw the whole
-// tree (not just recolour it) whenever the epoch changes shape. Layout,
-// status-at-time and bookkeeping classification are pure functions from
-// tree.js so they're covered by node:test; only DOM wiring lives here.
+// tree (not just recolour it) whenever the epoch changes shape. When the
+// playhead precedes the first tree.generated epoch (run.started/
+// run.configured fire first), there is no at-or-before epoch at all --
+// mountTree's draw() shows an explicit "tree not yet generated" state
+// then, rather than falling back to the first epoch, which would show a
+// tree from the future relative to that playhead position. Layout,
+// status-at-time and epoch resolution are pure functions from tree.js
+// so they're covered by node:test; only DOM wiring lives here.
 function renderNodeDetail(detail, epoch, nodeId, transitions, wall) {
   if (!nodeId) {
     detail.textContent = "click a node";
@@ -239,13 +244,25 @@ function mountTree(container, model, playhead) {
   const TOP_MARGIN = 14;
 
   const draw = (wall) => {
-    // The tree shown is the latest epoch at or before the playhead.
-    let epoch = null;
-    for (const e of model.epochs) {
-      if (e.wall !== null && e.wall <= wall) epoch = e;
+    // The tree shown is the latest epoch at or before the playhead --
+    // never a fallback to epochs[0], which would show a tree from the
+    // FUTURE relative to the playhead whenever it precedes the first
+    // tree.generated event (run.started/run.configured fire before any
+    // tree exists, so this is the common case, not a corner case). See
+    // epochAt's own comment in tree.js.
+    const epoch = epochAt(model.epochs, wall);
+    if (epoch === null) {
+      currentEpoch = null;
+      nodesById = new Map();
+      svg.replaceChildren();
+      svg.removeAttribute("width");
+      svg.setAttribute("height", TOP_MARGIN + 20);
+      const placeholder = el("text", { class: "epoch-label", x: 0, y: 16 });
+      placeholder.textContent = "tree not yet generated";
+      svg.appendChild(placeholder);
+      detail.textContent = "click a node";
+      return;
     }
-    if (epoch === null) epoch = model.epochs[0];
-    if (!epoch) return;
 
     if (epoch !== currentEpoch) {
       currentEpoch = epoch;

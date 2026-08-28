@@ -59,6 +59,32 @@ export function layoutTree(nodes, rootId) {
   return { positions, width: (maxDepth + 1) * COL, height: row * ROW };
 }
 
+// Latest epoch at-or-before `wall`, or null if none exists yet -- e.g.
+// the playhead sits before the first `tree.generated` event, which is
+// the NORMAL case right after `run.started`/`run.configured` fire and
+// well before any tree exists. Callers must render an explicit "not yet
+// generated" state for that null, never fall back to `epochs[0]`: that
+// would show a tree from the FUTURE relative to the playhead, the same
+// bug class `clock.py`'s frame lookup exists to avoid (see frames.js).
+//
+// Epochs arrive in file-arrival order, which is chronological, so a
+// strictly-later epoch (wall > the playhead) means every epoch after it
+// is later still and the scan can stop there. An epoch whose wall failed
+// to parse (null) carries no ordering information -- it must only be
+// skipped, never allowed to end the scan early, or one unparseable
+// timestamp partway through the list would hide every valid epoch after
+// it.
+export function epochAt(epochs, wall) {
+  if (wall === null || wall === undefined) return null;
+  let found = null;
+  for (const epoch of epochs) {
+    if (epoch.wall === null || epoch.wall === undefined) continue;
+    if (epoch.wall <= wall) found = epoch;
+    else break;
+  }
+  return found;
+}
+
 // Last transition per node at or before `wall`. A node absent from the
 // returned map has never ticked at or before this playhead position --
 // callers must distinguish that ("never ticked") from a node whose last

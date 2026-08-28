@@ -157,15 +157,11 @@ def list_tiers(bench_root: Path) -> list[Tier]:
     return tiers
 
 
-def find_run(bench_root: Path, tier: str, dir_name: str) -> Path | None:
-    """Resolve a (tier, dir_name) pair to a run dir, refusing traversal."""
-    if "/" in dir_name or dir_name in {"", ".", ".."}:
-        return None
-    for candidate in list_tiers(bench_root):
-        if candidate.name != tier:
-            continue
-        for entry in candidate.entries:
-            for attempt in entry.attempts:
-                if attempt.dir_name == dir_name:
-                    return attempt.path
-    return None
+# There used to be a `find_run(bench_root, tier, dir_name)` here, resolving
+# a (tier, dir_name) pair to a run dir. It had no caller: app.py's `_resolve`
+# does the equivalent lookup itself, folded into the single `list_tiers()`
+# walk it also needs for the matching `Attempt` (see app.py's module
+# docstring) -- calling `find_run` there would have meant a second full
+# corpus walk per request just to re-derive a path `_resolve` already has.
+# Removed as dead code rather than kept "just in case"; `_resolve` in
+# app.py is the one implementation of this lookup now.

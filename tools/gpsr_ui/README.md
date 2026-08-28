@@ -42,9 +42,14 @@ papers over.
 
 Nothing is ever written inside `gpsr_runs/`. This is enforced two ways:
 
-- **Structurally, at startup.** `load_settings()` rejects a `GPSR_UI_STATE_DIR`
-  that is equal to, or nested inside, `GPSR_UI_BENCH_ROOT` — the derived-model
-  cache cannot be pointed into the corpus even by misconfiguration.
+- **Structurally, at the `Settings` type boundary.** `Settings.__post_init__`
+  rejects a `state_dir` that is equal to, or nested inside, `bench_root` --
+  the derived-model cache cannot be pointed into the corpus even by
+  misconfiguration, and this holds no matter how a `Settings` comes to exist.
+  `load_settings()` (which builds the `Settings` the shipped launcher
+  actually uses, from `GPSR_UI_STATE_DIR`/`GPSR_UI_BENCH_ROOT`) gets this for
+  free by constructing one; so does any other code path that builds a
+  `Settings` directly, including tests.
 - **By test, in two complementary forms**, both in `tests/test_read_only.py`:
   - `test_indexing_a_synthetic_corpus_mutates_nothing_at_all` builds an
     entirely synthetic corpus in a tmp dir and asserts full file-set equality
@@ -185,7 +190,7 @@ committing to a re-vendor.
     PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest
     node --test 'tests/js/**/*.mjs'
 
-86 Python tests, 67 Node tests, as of this writing.
+85 Python tests, 71 Node tests, as of this writing.
 
 Tests marked `corpus` (see `pytest.ini`) read the real bench tree and are
 skipped automatically when it is absent, or when `GPSR_UI_SKIP_CORPUS=1` is

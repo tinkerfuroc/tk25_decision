@@ -36,22 +36,16 @@ def test_exact_mode_when_index_jsonl_present(make_run):
     # Exact join: 1 sim-second maps to 5 wall-seconds here (RTF 0.2).
     assert clock.sim_to_wall("head", 2.0) == parse_wall(
         "2026-08-28T10:00:05.000000Z")
-    # Query wall (10:00:04) is 1s *before* frame 1 was captured (10:00:05),
-    # so the at-or-before frame is still frame 0 (10:00:00). Returning
-    # frame 1 here would show a frame from the future relative to the
-    # query, which is the exact failure mode this module exists to avoid.
-    assert clock.wall_to_frame(
-        "head", parse_wall("2026-08-28T10:00:04.000000Z")) == "0000_1000.jpg"
 
 
-def test_wall_to_frame_returns_a_bare_filename_not_a_run_relative_path(
+def test_indexed_files_returns_a_bare_filename_not_a_run_relative_path(
         make_run):
     """index.jsonl's "file" field is a run-relative path
     (e.g. "frames/head/0000_1000.jpg"), matching what the real bench
     writes -- not a bare filename. frames.py deals exclusively in bare
     filenames (FrameRef.file, frame_path()'s `file` parameter), so
-    Clock.wall_to_frame must agree and also return a bare filename, or a
-    future caller passing its result to frame_path() would get handed a
+    Clock._load_exact must normalize to a bare filename at the source, or
+    a caller passing one of these on to frame_path() would get handed a
     path where a name was expected."""
     run = make_run(
         name="s9999-016-x",
@@ -65,10 +59,9 @@ def test_wall_to_frame_returns_a_bare_filename_not_a_run_relative_path(
     )
     clock = load_clock(run)
     assert clock.mode == "exact"
-    frame = clock.wall_to_frame(
-        "head", parse_wall("2026-08-28T10:00:05.000000Z"))
-    assert frame == "0001_2000.jpg"
-    assert "/" not in frame
+    indexed = clock.indexed_files("head")
+    assert indexed == frozenset({"0000_1000.jpg", "0001_2000.jpg"})
+    assert all("/" not in name for name in indexed)
 
 
 def test_approximate_mode_interpolates_from_recorder_meta(make_run):
@@ -114,37 +107,6 @@ def test_index_jsonl_wins_over_recorder_meta(make_run):
     assert clock.mode == "exact"
     assert clock.sim_to_wall("head", 1.0) == parse_wall(
         "2026-08-28T10:00:00.000000Z")
-
-
-def test_wall_to_frame_before_first_frame_is_none_not_the_first_frame(
-        make_run):
-    """A query earlier than every known frame has no at-or-before frame.
-
-    Clamping to the first frame here would return a frame from the
-    future relative to the query -- the same bug class as the brief's
-    original (corrected) test assertion, just on the wall_to_frame side.
-    Every run emits run.started/run.configured before the first camera
-    frame exists, so this is the common case, not a corner case.
-    """
-    run = make_run(
-        name="s9999-014-x",
-        frames={"head": [(0, 1000), (1, 2000)]},
-        index_lines=[
-            {"label": "head", "file": "0000_1000.jpg",
-             "stamp_s": 1.0, "wall": "2026-08-28T10:00:00.000000Z"},
-            {"label": "head", "file": "0001_2000.jpg",
-             "stamp_s": 2.0, "wall": "2026-08-28T10:00:05.000000Z"},
-        ],
-    )
-    clock = load_clock(run)
-    assert clock.mode == "exact"
-    # Before the first frame's wall time: no frame is at-or-before it.
-    assert clock.wall_to_frame(
-        "head", parse_wall("2026-08-28T09:59:59.000000Z")) is None
-    # After the last frame's wall time: the last frame genuinely IS
-    # at-or-before it. This end is not symmetric with the first.
-    assert clock.wall_to_frame(
-        "head", parse_wall("2026-08-28T10:05:00.000000Z")) == "0001_2000.jpg"
 
 
 def test_approximate_sim_to_wall_clamps_past_last_stamp(make_run):

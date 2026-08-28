@@ -49,9 +49,16 @@ class _LiveClient:
 
 @contextmanager
 def _client(bench_root, tmp_path):
+    # `bench_root` here is always `run.parents[2]`, which -- given
+    # conftest.py's make_run layout (tmp_path/"t9-test"/"runs"/name) --
+    # is `tmp_path` itself. `Settings.__post_init__` now rejects a
+    # state_dir inside bench_root at construction time (finding B.5), so
+    # `tmp_path / "state"` would be rejected as nested inside bench_root;
+    # use a sibling of tmp_path instead, unique per test the same way
+    # tmp_path already is.
     settings = Settings(
         bench_root=bench_root,
-        state_dir=tmp_path / "state",
+        state_dir=tmp_path.parent / f"{tmp_path.name}-ui-state",
         sheet_events_path=None,
     )
     app = create_app(settings)

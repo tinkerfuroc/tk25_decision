@@ -91,35 +91,18 @@ class Clock:
             return None
         return frozenset(self._files.get(label, ()))
 
-    def wall_to_frame(self, label: str, wall: float | None) -> str | None:
-        """Filename of the frame whose wall time is nearest at-or-before."""
-        if wall is None:
-            return None
-        files = self._files.get(label)
-        if not files:
-            return None
-        walls = self._wall_series(label)
-        if walls is None:
-            return None
-        i = bisect.bisect_right(walls, wall) - 1
-        if i < 0:
-            # `wall` precedes every known frame: there genuinely is no
-            # frame at-or-before it. Do not clamp to the first frame --
-            # that would return a frame from the future relative to the
-            # query, which is exactly the bug this module exists to avoid.
-            return None
-        return files[i]
-
-    def _wall_series(self, label: str) -> list[float] | None:
-        if self.mode == "exact":
-            return self._walls.get(label)
-        if self.mode == "approximate":
-            stamps = self._stamps.get(label)
-            if not stamps:
-                return None
-            out = [self.sim_to_wall(label, s) for s in stamps]
-            return [w for w in out if w is not None]
-        return None
+    # There used to be a `wall_to_frame` here (filename of the frame
+    # nearest at-or-before a given wall time). It had no caller anywhere
+    # in this app -- the frontend never round-trips to the server to
+    # scrub frames, it holds the raw `frames/index.jsonl` rows client-side
+    # (from /api/frames) and resolves at-or-before locally, in
+    # `static/frames.js`'s `frameAt`. That JS function is the sole live
+    # implementation of "which frame is at-or-before this moment" and the
+    # sole place to fix the next bug in that rule; a Python copy that
+    # nothing calls would just be a decoy for whoever goes looking next.
+    # Removed rather than wired up: the whole point of shipping the raw
+    # arrays to the client is so scrubbing needs no round trip, which
+    # rules out routing this through the API instead.
 
 
 def _interpolate(xs: list[float], ys: list[float], x: float) -> float | None:
@@ -194,8 +177,8 @@ def _load_exact(run_dir: Path, clock: Clock) -> bool:
         if not isinstance(stamp, (int, float)) or wall is None:
             continue
         # `file` is a run-relative path (e.g. "frames/head/0000_1.jpg"),
-        # not a bare filename -- frames.py and Clock.wall_to_frame both
-        # deal in bare filenames, so normalize here, once, at the source.
+        # not a bare filename -- frames.py and static/frames.js both deal
+        # in bare filenames, so normalize here, once, at the source.
         rows.setdefault(label, []).append(
             (float(stamp), wall, Path(file).name))
 

@@ -8,9 +8,9 @@ two full walks of a 2.4 GB, ~92-run corpus per API request. This version
 walks the corpus exactly once per request, searching that single
 `list_tiers` result for both the run's path and its `Attempt`. Behaviour
 is unchanged: an unknown run or a traversal attempt in `dir_name` still
-404s. `corpus.find_run` is consequently unused here; it is left in place
-in corpus.py, which is out of scope for this task and is exercised by its
-own tests.
+404s. `corpus.find_run`, which this deviation made dead code (no caller
+anywhere in the app), has since been removed from corpus.py rather than
+left in place -- see the removal note there.
 
 Route shape deviates too: the brief's `/api/run/{tier}/{dir_name}` assumes
 a tier name is always a single path segment, but corpus.py's pseudo-tiers
@@ -93,7 +93,6 @@ def _run_json(run_dir: Path, model, clock, attempt: Attempt | None) -> dict:
         "tree_regenerations": model.tree_regenerations,
         "gate_failures": model.gate_failures,
         "clock_mode": clock.mode,
-        "clock_labels": clock.labels,
         "announcements": model.announcements,
         "epochs": [
             {

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gpsr_ui.config import load_settings
+import pytest
+
+from gpsr_ui.config import Settings, load_settings
 
 
 def test_defaults_point_at_bench_and_user_cache(monkeypatch):
@@ -30,6 +32,29 @@ def test_state_dir_is_never_inside_the_corpus(monkeypatch, tmp_path):
     """The read-only guarantee starts here: refuse to write into gpsr_runs."""
     monkeypatch.setenv("GPSR_UI_BENCH_ROOT", str(tmp_path / "bench"))
     monkeypatch.setenv("GPSR_UI_STATE_DIR", str(tmp_path / "bench" / "ui"))
-    import pytest
     with pytest.raises(ValueError, match="must not be inside"):
         load_settings()
+
+
+def test_settings_constructed_directly_still_enforces_the_guarantee(tmp_path):
+    """The check must hold at the `Settings` type boundary itself, not only
+    inside load_settings() -- `create_app()` accepts any `Settings`, and
+    tests/test_app.py already builds one directly (not via load_settings()),
+    so a validation-free bypass path here would be real, not hypothetical."""
+    with pytest.raises(ValueError, match="must not be inside"):
+        Settings(
+            bench_root=tmp_path / "bench",
+            state_dir=tmp_path / "bench" / "ui",
+            sheet_events_path=None,
+        )
+
+
+def test_settings_constructed_directly_with_state_dir_equal_to_bench_root(
+        tmp_path):
+    """The equality case (not just nesting) must also be rejected."""
+    with pytest.raises(ValueError, match="must not be inside"):
+        Settings(
+            bench_root=tmp_path / "bench",
+            state_dir=tmp_path / "bench",
+            sheet_events_path=None,
+        )
