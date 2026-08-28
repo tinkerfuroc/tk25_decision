@@ -91,10 +91,26 @@ export function renderCard(item) {
     </article>`;
 }
 
+// The count is over a bounded tail window of the log, never the whole
+// run (see live.py's find_progress_failures for why: the log can reach
+// tens to ~100MB and grows throughout a battery, so reading it whole on
+// every poll would stall the server). That MUST be visible here, not
+// just in the API shape -- an undisclosed partial count is worse than
+// an honest one, since it would silently understate a long battery's
+// real failure count with no indication anything was cut off.
+function windowLabel(progressFailures) {
+  const kb = Math.round(progressFailures.window_bytes / 1024);
+  const size = kb >= 1024 ? `${(kb / 1024).toFixed(1)}MB` : `${kb}KB`;
+  return progressFailures.truncated
+    ? `last ${size} of the log`
+    : `the whole log (${size})`;
+}
+
 export function renderProgressPanel(progressFailures) {
   if (!progressFailures) return "";
   return `<p class="muted progress-panel">"failed to make progress" in `
-    + `${escapeHtml(progressFailures.path)}: <b>${progressFailures.count}</b></p>`;
+    + `${windowLabel(progressFailures)} (${escapeHtml(progressFailures.path)}): `
+    + `<b>${progressFailures.recent_count}</b></p>`;
 }
 
 // Pure: the whole page body's HTML from one /api/live(/stream) payload.

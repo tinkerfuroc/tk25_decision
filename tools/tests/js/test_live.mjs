@@ -111,7 +111,31 @@ test("renderProgressPanel is empty when the bridge log could not be found", () =
   assert.equal(renderProgressPanel(null), "");
 });
 
-test("renderProgressPanel surfaces the count when the bridge log was found", () => {
-  const html = renderProgressPanel({ path: "/x/02-bridge.log", count: 3 });
+test("renderProgressPanel surfaces the recent count when the bridge log was found", () => {
+  const html = renderProgressPanel({
+    path: "/x/02-bridge.log", recent_count: 3,
+    window_bytes: 1024 * 1024, truncated: true,
+  });
   assert.ok(html.includes("<b>3</b>"));
+});
+
+test("renderProgressPanel discloses that a truncated count is over a recent window, not the whole log", () => {
+  // An undisclosed partial count is worse than an honest one: this
+  // wording must never look like a total over the whole run.
+  const html = renderProgressPanel({
+    path: "/x/02-bridge.log", recent_count: 7,
+    window_bytes: 1024 * 1024, truncated: true,
+  });
+  assert.ok(html.includes("last"));
+  assert.ok(html.includes("1.0MB") || html.includes("1MB"));
+  assert.ok(!html.includes("whole log"));
+});
+
+test("renderProgressPanel says 'the whole log' when the file is smaller than the window", () => {
+  const html = renderProgressPanel({
+    path: "/x/02-bridge.log", recent_count: 0,
+    window_bytes: 2048, truncated: false,
+  });
+  assert.ok(html.includes("whole log"));
+  assert.ok(!html.includes("last "));
 });

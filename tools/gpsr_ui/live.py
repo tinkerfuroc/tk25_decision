@@ -241,9 +241,25 @@ def live_summary(run_dir: Path, state_dir: Path | None = None) -> dict:
     }
 
 
-def find_progress_failures(search_roots: Iterable[Path]) -> dict | None:
-    """Best-effort 'Failed to make progress' count from the newest
-    02-bridge.log under any `gpsr_stack_logs/` found beneath
+_PROGRESS_FAILURE_MARKER = "Failed to make progress"
+# 02-bridge.log grows throughout a battery and has been measured at
+# 94.9 MB / 48.2 MB on this machine's sim worktrees. Reading the whole
+# file on every 2-second SSE tick (the naive first cut of this function)
+# stalled the single uvicorn worker for 0.23-0.82s per read on a 100 MB
+# log, with concurrent /healthz latency spiking from ~5ms to ~290ms --
+# and it gets steadily worse the longer the battery runs, which is
+# exactly when this dashboard is most needed. 1 MiB is generous for
+# spotting a recent burst of the marker without the read cost ever
+# scaling with the whole run.
+_PROGRESS_WINDOW_BYTES = 1024 * 1024
+
+
+def find_progress_failures(
+    search_roots: Iterable[Path],
+    window_bytes: int = _PROGRESS_WINDOW_BYTES,
+) -> dict | None:
+    """Best-effort 'Failed to make progress' count from the TAIL of the
+    newest 02-bridge.log under any `gpsr_stack_logs/` found beneath
     `search_roots`.
 
     Two directory layouts are checked per root, both observed in
@@ -253,14 +269,34 @@ def find_progress_failures(search_roots: Iterable[Path]) -> dict | None:
     run-id subdirectory (its name is an ISO-ish, lexicographically
     sortable timestamp, e.g. "20260828T091519") wins.
 
+    Only the last `window_bytes` of that file are ever read (default
+    1 MiB, see _PROGRESS_WINDOW_BYTES above) -- this is deliberately a
+    PARTIAL count over a recent window, not a total over the whole run,
+    and the return value says so explicitly rather than leaving that
+    undisclosed: the key is `recent_count` (never `count`, which would
+    invite a caller to treat it as a total), plus `window_bytes` (how
+    much was actually read -- less than the cap for a small file) and
+    `truncated` (whether the file is bigger than the window, i.e.
+    whether this really is a subset rather than the whole file). A
+    match straddling the exact byte cut point is undercounted by at
+    most one occurrence; that is an accepted, documented cost of a
+    bounded read, not a defect -- this is a "how bad is it right now"
+    signal, not an exact count, by design.
+
     This data source lives entirely OUTSIDE the run corpus and outside
     this repo, in a sim worktree whose lifetime this app does not
     control -- it can be created, renamed or torn down at any moment
     independent of this app's own lifetime. Resolved fresh on every
-    call (never cached, and deliberately cheap: a couple of bounded
-    globs plus one small file read). Returns None on any absence or I/O
-    problem -- never raises -- so a caller renders "missing panel" for
-    None rather than an error or a crash.
+    call (never cached). Returns None on any absence or I/O problem --
+    never raises -- so a caller renders "missing panel" for None rather
+    than an error or a crash.
+
+    This function performs a blocking file read and is NOT async-safe
+    to call directly from a coroutine running on the event loop -- even
+    a 1 MiB read is a syscall that can stall other requests on a
+    single-worker server. Callers on an event loop (see app.py's SSE
+    generator and its /api/live route) must run it via
+    `asyncio.to_thread` or an equivalent executor.
     """
     stacks: list[Path] = []
     for root in search_roots:
@@ -286,7 +322,26 @@ def find_progress_failures(search_roots: Iterable[Path]) -> dict | None:
         return None
     log_path = newest_dir / "02-bridge.log"
     try:
-        text = log_path.read_text(errors="replace")
+        size = log_path.stat().st_size
     except OSError:
         return None
-    return {"path": str(log_path), "count": text.count("Failed to make progress")}
+
+    try:
+        with log_path.open("rb") as fh:
+            if size > window_bytes:
+                fh.seek(size - window_bytes)
+            chunk = fh.read()
+    except OSError:
+        return None
+
+    # errors="replace" so a garbled/binary chunk (e.g. the seek landing
+    # mid-multibyte-character, or genuinely non-UTF-8 bytes in the log)
+    # decodes to something rather than raising -- this is a best-effort
+    # substring count, not something that should ever crash the panel.
+    text = chunk.decode("utf-8", errors="replace")
+    return {
+        "path": str(log_path),
+        "recent_count": text.count(_PROGRESS_FAILURE_MARKER),
+        "window_bytes": len(chunk),
+        "truncated": size > window_bytes,
+    }

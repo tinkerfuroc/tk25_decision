@@ -210,8 +210,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/api/live")
-    def api_live() -> JSONResponse:
+    async def api_live() -> JSONResponse:
         found = find_in_flight(settings.bench_root)
+        # find_progress_failures does a blocking file read (bounded, but
+        # still a syscall) -- run it off the event loop via a thread so
+        # it can never stall this coroutine or any other request being
+        # served by this worker while it waits on disk.
+        progress_failures = await asyncio.to_thread(
+            find_progress_failures, settings.sim_stack_log_roots)
         return JSONResponse({
             "in_flight": [
                 {
@@ -222,8 +228,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 }
                 for f in found
             ],
-            "progress_failures": find_progress_failures(
-                settings.sim_stack_log_roots),
+            "progress_failures": progress_failures,
         })
 
     @app.get("/api/live/stream")
@@ -259,10 +264,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 live_keys = {str(f.path) for f in found}
                 for stale in set(offsets) - live_keys:
                     del offsets[stale]
+                # Same reasoning as /api/live above: this generator IS
+                # the event loop's own coroutine here (not run in a
+                # threadpool the way a sync route function would be),
+                # so a blocking call inline would stall every other
+                # request this worker is serving, every 2s, for as long
+                # as the tail read takes -- worse the longer the bridge
+                # log has grown, which is exactly the situation this
+                # dashboard exists to be watched during.
+                progress_failures = await asyncio.to_thread(
+                    find_progress_failures, settings.sim_stack_log_roots)
                 payload = {
                     "in_flight": items,
-                    "progress_failures": find_progress_failures(
-                        settings.sim_stack_log_roots),
+                    "progress_failures": progress_failures,
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
                 await asyncio.sleep(2.0)

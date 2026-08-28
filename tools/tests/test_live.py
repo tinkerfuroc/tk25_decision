@@ -5,6 +5,7 @@ import json
 import os
 import time
 
+from gpsr_ui.clock import parse_wall
 from gpsr_ui.live import (
     find_in_flight,
     find_progress_failures,
@@ -64,6 +65,37 @@ def test_a_reused_directory_with_a_newer_event_log_is_in_flight(make_run):
     assert [f.dir_name for f in found] == ["s9999-063-x"]
 
 
+def test_a_reused_directory_gone_stale_is_not_in_flight(make_run):
+    """Liveness matrix case 5: run.json present AND events.jsonl newer
+    than it (the reused-directory signal that makes the case above IN
+    flight) -- but the event log itself has gone quiet past
+    `stale_after`. The staleness guard must still win here: a re-run
+    that crashed or was torn down right after starting must not look
+    live forever just because its stale run.json happens to predate its
+    equally-stale new events.jsonl. This combination (reused directory +
+    staleness) was previously covered only separately, never together.
+    """
+    run = make_run(name="s9999-063-z", verdict="PASS")
+    now = time.time()
+    os.utime(run / "run.json", (now - 1000, now - 1000))
+
+    new_debug = run / "debug" / "gpsr-20260828T235959000000Z-rerun-stale"
+    new_debug.mkdir(parents=True)
+    events = new_debug / "events.jsonl"
+    events.write_text(
+        json.dumps({"event_type": "run.started",
+                    "occurred_at": "2026-08-28T23:59:59.000000Z"}) + "\n"
+    )
+    # Newer than run.json (on its own, the reused-directory signal that
+    # would mark this in flight) but itself far older than stale_after
+    # relative to "now" -- gone quiet, not live.
+    os.utime(events, (now - 500, now - 500))
+    assert events.stat().st_mtime > (run / "run.json").stat().st_mtime
+
+    found = find_in_flight(run.parents[2], stale_after=60.0, now=now)
+    assert found == []
+
+
 def test_tail_events_resumes_from_a_byte_offset(make_run):
     run = make_run(name="s9999-063-y", verdict=None, finished=False)
     events = next((run / "debug").glob("gpsr-*")) / "events.jsonl"
@@ -111,6 +143,40 @@ def test_live_summary_reports_regenerations_and_elapsed(make_run):
     assert summary["tree_regenerations"] == 1
     assert summary["elapsed_s"] is not None
     assert summary["last_failure"]["feedback"] == "goto target failed"
+
+
+def test_live_summary_elapsed_tracks_real_time_not_a_frozen_log_mtime(
+    make_run,
+):
+    """The brief's reference computed elapsed as `events.stat().st_mtime
+    - started_wall`, which freezes for as long as the log goes quiet. A
+    run can legitimately go quiet for a stretch (a long nav goal with no
+    ticks) and still count as in flight, so elapsed must keep advancing
+    with real wall-clock time instead of stalling at whatever the log's
+    last write happened to be.
+
+    Back-date the event log's own mtime to something wildly different
+    from "now" (1970-01-01) to simulate a quiet stretch, and confirm
+    elapsed_s tracks real time.time() -- not that frozen mtime, which
+    would put elapsed_s at roughly negative 56 years instead.
+    """
+    run = make_run(name="s9999-069-x", verdict=None, finished=False)
+    events = next((run / "debug").glob("gpsr-*")) / "events.jsonl"
+    os.utime(events, (0, 0))  # 1970-01-01: deliberately absurd
+
+    started_wall = parse_wall("2026-08-28T10:00:00.000000Z")
+    summary = live_summary(run)
+
+    expected_real_time_elapsed = time.time() - started_wall
+    frozen_mtime_elapsed = events.stat().st_mtime - started_wall
+
+    assert summary["elapsed_s"] is not None
+    assert abs(summary["elapsed_s"] - expected_real_time_elapsed) < 5, (
+        "elapsed_s should track real wall-clock time"
+    )
+    assert abs(summary["elapsed_s"] - frozen_mtime_elapsed) > 1000, (
+        "elapsed_s must not have frozen at the (backdated) log's own mtime"
+    )
 
 
 def test_live_summary_prefers_the_most_recent_plan_step_across_kinds(make_run):
@@ -180,8 +246,12 @@ def test_find_progress_failures_counts_the_newest_bridge_log(tmp_path):
 
     found = find_progress_failures([root])
     assert found is not None
-    assert found["count"] == 2
+    assert found["recent_count"] == 2
     assert str(newer) in found["path"]
+    # Small file: read in full, so it is NOT reported as truncated.
+    assert found["truncated"] is False
+    assert found["window_bytes"] == len(
+        (newer / "02-bridge.log").read_bytes())
 
 
 def test_find_progress_failures_never_raises_on_an_unreadable_root(tmp_path):
@@ -190,3 +260,64 @@ def test_find_progress_failures_never_raises_on_an_unreadable_root(tmp_path):
     not_a_dir = tmp_path / "not-a-dir"
     not_a_dir.write_text("x")
     assert find_progress_failures([not_a_dir]) is None
+
+
+def test_find_progress_failures_never_raises_on_binary_garbage(tmp_path):
+    """The bridge log is read as bytes and decoded with errors="replace" --
+    a chunk that happens to end mid-multibyte-character, or is genuinely
+    non-UTF-8, must never raise or crash the panel."""
+    root = tmp_path / "tinker-sim"
+    stack = root / "6.0.1" / "gpsr_stack_logs" / "20260828T000000"
+    stack.mkdir(parents=True)
+    (stack / "02-bridge.log").write_bytes(
+        b"\xff\xfe\x00Failed to make progress\x00\x80\x81binary junk"
+    )
+    found = find_progress_failures([root])
+    assert found is not None
+    assert found["recent_count"] >= 1
+
+
+def test_find_progress_failures_only_reads_a_bounded_tail_window(tmp_path):
+    """The core fix over the naive whole-file read: a log far larger than
+    the window must never have its full contents read, and the marker
+    count must reflect only the tail, not the whole file -- an old
+    occurrence outside the window must NOT be counted, while a recent one
+    inside it must be."""
+    root = tmp_path / "tinker-sim"
+    stack = root / "6.0.1" / "gpsr_stack_logs" / "20260828T000000"
+    stack.mkdir(parents=True)
+    log = stack / "02-bridge.log"
+
+    window = 4096
+    old_marker = "Failed to make progress -- OLD, outside the window\n"
+    filler = "x" * (window * 3)  # comfortably larger than the window
+    recent_marker = "Failed to make progress -- RECENT, inside the window\n"
+    log.write_text(old_marker + filler + recent_marker)
+
+    found = find_progress_failures([root], window_bytes=window)
+    assert found is not None
+    assert found["truncated"] is True
+    assert found["window_bytes"] == window
+    assert found["recent_count"] == 1, (
+        "must count only the recent, in-window occurrence -- the old one "
+        "outside the window must not be read at all"
+    )
+
+
+def test_find_progress_failures_window_bytes_never_exceeds_the_cap(tmp_path):
+    """A large real 02-bridge.log has been measured at ~95MB; this proves
+    the function never reads more than `window_bytes` off such a file --
+    the whole point of the fix, not just a count-correctness detail."""
+    root = tmp_path / "tinker-sim"
+    stack = root / "6.0.1" / "gpsr_stack_logs" / "20260828T000000"
+    stack.mkdir(parents=True)
+    log = stack / "02-bridge.log"
+    # A few MB stand in for a real ~100MB log; still large enough that a
+    # full read would be trivially detectable as the wrong behaviour if
+    # it happened, without actually writing 100MB in a unit test.
+    log.write_text("z" * (4 * 1024 * 1024))
+
+    found = find_progress_failures([root], window_bytes=1024)
+    assert found is not None
+    assert found["window_bytes"] == 1024
+    assert found["truncated"] is True
