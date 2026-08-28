@@ -1,0 +1,18 @@
+<!-- tools/gpsr_ui/templates/run.html -->
+{% extends "base.html" %}
+{% block title %}{{ dir_name }}{% endblock %}
+{% block content %}
+<h2 class="run-title">{{ tier }} / {{ dir_name }}</h2>
+<div class="run-meta">
+  <span id="verdict">…</span>
+  <span id="clock-badge" class="badge">clock: …</span>
+  <span>tree regens: <b id="regen-count">…</b></span>
+  <span>gate failures: <b id="gate-failures">…</b></span>
+</div>
+<svg id="ribbon" class="ribbon" width="100%"></svg>
+<div id="panels"></div>
+<script type="module">
+  import { boot } from "/static/run.js";
+  boot({ tier: {{ tier|tojson }}, dirName: {{ dir_name|tojson }} });
+</script>
+{% endblock %}

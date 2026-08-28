@@ -20,3 +20,18 @@ a { color: #6cb6ff; }
 .v-pass { color: var(--pass); } .v-fail { color: var(--fail); }
 .v-timeout, .v-error { color: var(--timeout); } .v-none { color: var(--none); }
 ul { margin: 4px 0; padding-left: 18px; }
+
+.run-title { font-size: 15px; margin: 0 0 6px; }
+.run-meta { display: flex; gap: 14px; align-items: center;
+  margin-bottom: 12px; color: var(--dim); }
+.badge { padding: 1px 7px; border: 1px solid var(--line); border-radius: 3px; }
+.clock-exact { color: var(--pass); border-color: var(--pass); }
+.clock-approximate { color: var(--timeout); border-color: var(--timeout); }
+.clock-none { color: var(--none); }
+.ribbon { width: 100%; background: #0f1114; border: 1px solid var(--line); }
+.lane-rule { stroke: var(--line); stroke-width: 1; }
+.lane-label { fill: var(--dim); font-size: 9px; }
+.mark { cursor: pointer; }
+.mark.ok { fill: var(--pass); } .mark.bad { fill: var(--fail); }
+.mark.run { fill: var(--dim); }
+.cursor { stroke: #6cb6ff; stroke-width: 1; }

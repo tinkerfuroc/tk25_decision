@@ -205,6 +205,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"Cache-Control": "public, max-age=31536000, immutable"},
         )
 
+    @app.get("/run/{path:path}")
+    def run_page(request: Request, path: str):
+        # Route shape follows the same {path:path} convention as
+        # /api/run/{path:path} (see module docstring): a plain
+        # /run/{tier}/{dir_name} route can never address a run under a
+        # pseudo-tier whose name embeds a slash (e.g.
+        # t2-2026/invalidated-20260826). _resolve() 404s before we bother
+        # rendering a template for an unknown run.
+        _resolve(path)
+        tier, _, dir_name = path.rpartition("/")
+        return templates.TemplateResponse(
+            request,
+            "run.html",
+            {"tier": tier, "dir_name": dir_name},
+        )
+
     @app.get("/")
     def index(request: Request):
         return templates.TemplateResponse(

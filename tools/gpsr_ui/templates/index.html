@@ -12,7 +12,7 @@
       {% for entry in tier.entries %}
         {% set current = entry.attempts[0] %}
         <tr class="entry-row">
-          <td><a href="/api/run/{{ tier.name }}/{{ current.dir_name }}">
+          <td><a href="/run/{{ tier.name }}/{{ current.dir_name }}">
               {{ entry.entry_id }}</a></td>
           <td>{{ entry.template or "" }}</td>
           <td>{{ entry.feasibility or "" }}</td>
@@ -25,7 +25,7 @@
                 <summary>{{ entry.attempts|length - 1 }} archived</summary>
                 <ul>
                 {% for a in entry.attempts[1:] %}
-                  <li><a href="/api/run/{{ tier.name }}/{{ a.dir_name }}">
+                  <li><a href="/run/{{ tier.name }}/{{ a.dir_name }}">
                       {{ a.slug }}</a>
                       <span class="verdict v-{{ (a.verdict or 'none')|lower }}">
                       {{ a.verdict or "?" }}</span></li>

@@ -131,12 +131,60 @@ def test_run_api_resolves_pseudo_tier_with_embedded_slash(make_run, tmp_path):
         assert resp.json()["verdict"] == "PASS"
 
 
+def test_run_page_renders_for_a_known_run(make_run, tmp_path):
+    run = make_run(name="s9999-050-x", verdict="PASS")
+    with _client(run.parents[2], tmp_path) as client:
+        page = client.get("/run/t9-test/s9999-050-x")
+        assert page.status_code == 200
+        assert "s9999-050-x" in page.text
+        assert 'id="ribbon"' in page.text
+
+
+def test_run_page_404s_for_an_unknown_run(make_run, tmp_path):
+    run = make_run(name="s9999-051-x")
+    with _client(run.parents[2], tmp_path) as client:
+        assert client.get("/run/t9-test/nope").status_code == 404
+
+
+def test_run_page_resolves_pseudo_tier_with_embedded_slash(make_run, tmp_path):
+    """Same real-corpus fact as test_run_api_resolves_pseudo_tier_with_
+    embedded_slash: the HTML run page must also address runs whose tier
+    name embeds a slash (e.g. t2-2026/invalidated-20260826), not just the
+    JSON API."""
+    run = make_run(name="s9999-052-x", verdict="PASS")
+    tier_dir = run.parents[1]
+    runs_dir = run.parents[0]
+    pseudo_runs_dir = tier_dir / "runs-invalidated-20260826"
+    runs_dir.rename(pseudo_runs_dir)
+    new_run = pseudo_runs_dir / run.name
+
+    with _client(run.parents[2], tmp_path) as client:
+        resp = client.get(
+            f"/run/t9-test/invalidated-20260826/{new_run.name}"
+        )
+        assert resp.status_code == 200
+        assert new_run.name in resp.text
+
+
 def test_index_page_renders_the_entry(make_run, tmp_path):
     run = make_run(name="s9999-045-x", verdict="PASS")
     with _client(run.parents[2], tmp_path) as client:
         page = client.get("/")
         assert page.status_code == 200
         assert "s9999-045-x" in page.text
+
+
+def test_index_page_links_to_the_html_run_page_not_the_raw_json(
+    make_run, tmp_path
+):
+    """Task 6 pointed index entries at /api/run/... (raw JSON) because no
+    HTML run page existed yet. Now that /run/... exists, entries must link
+    there instead."""
+    run = make_run(name="s9999-057-x", verdict="PASS")
+    with _client(run.parents[2], tmp_path) as client:
+        page = client.get("/")
+        assert 'href="/run/t9-test/s9999-057-x"' in page.text
+        assert 'href="/api/run/t9-test/s9999-057-x"' not in page.text
 
 
 def test_frames_api_lists_labels_for_a_two_camera_run(make_run, tmp_path):
