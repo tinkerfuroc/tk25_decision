@@ -2247,7 +2247,7 @@ test("buildLanes separates milestones by kind and marks failures", () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd tools && node --test tests/js/`
+Run: `cd tools && node --test 'tests/js/**/*.mjs'`
 Expected: FAIL with `Cannot find module .../static/playhead.js`
 
 - [ ] **Step 3: Write the implementation**
@@ -2501,7 +2501,7 @@ Append to `app.css`:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd tools && node --test tests/js/`
+Run: `cd tools && node --test 'tests/js/**/*.mjs'`
 Expected: 6 passing
 Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v`
 Expected: all passing
@@ -2594,7 +2594,7 @@ test("keepalive and bookkeeping nodes are flagged for collapsing", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tools && node --test tests/js/test_tree.mjs`
+Run: `cd tools && node --test 'tests/js/**/*.mjs'test_tree.mjs`
 Expected: FAIL with `Cannot find module .../static/tree.js`
 
 - [ ] **Step 3: Write the implementation**
@@ -2766,7 +2766,7 @@ Append to `app.css`:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd tools && node --test tests/js/`
+Run: `cd tools && node --test 'tests/js/**/*.mjs'`
 Expected: 11 passing
 
 - [ ] **Step 5: Verify against a real run**
@@ -2840,7 +2840,7 @@ test("player reports its state and stops cleanly", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd tools && node --test tests/js/test_frames.mjs`
+Run: `cd tools && node --test 'tests/js/**/*.mjs'test_frames.mjs`
 Expected: FAIL with `Cannot find module .../static/frames.js`
 
 - [ ] **Step 3: Write the implementation**
@@ -3002,7 +3002,7 @@ Append to `app.css`:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd tools && node --test tests/js/`
+Run: `cd tools && node --test 'tests/js/**/*.mjs'`
 Expected: 16 passing
 
 - [ ] **Step 5: Verify the linked triage loop end to end**
@@ -3424,7 +3424,7 @@ Expected: 6 passed
 
 - [ ] **Step 5: Verify the full suite and the live page**
 
-Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v && node --test tests/js/`
+Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v && node --test 'tests/js/**/*.mjs'`
 Expected: everything passing
 Run: `cd tools && ./gpsr-ui &`, open `/live`.
 Expected: "no run in flight" when idle; a card with an advancing elapsed bar while a battery is running. Stop the server afterwards.
@@ -3501,7 +3501,10 @@ inside the corpus.
 
     cd tools
     PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest
-    node --test tests/js/
+    node --test 'tests/js/**/*.mjs'
+
+The JS glob must be quoted and explicit: `node --test tests/js/` fails on Node
+24, which treats a bare directory as a module rather than a test directory.
 
 Tests marked `corpus` read the real bench tree and skip when it is absent.
 Set `GPSR_UI_SKIP_CORPUS=1` to skip them explicitly — useful while a
@@ -3512,7 +3515,7 @@ battery is running.
 
 Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m pytest -v`
 Expected: all passing
-Run: `cd tools && node --test tests/js/`
+Run: `cd tools && node --test 'tests/js/**/*.mjs'`
 Expected: all passing
 Run: `cd tools && PYTHONPATH= /home/tinker/tinker-sim/6.0.1/.venv/bin/python -m compileall -q gpsr_ui`
 Expected: no output
