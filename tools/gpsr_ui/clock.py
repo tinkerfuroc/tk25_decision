@@ -71,6 +71,10 @@ class Clock:
             first, last, started, ended = span
             if last == first:
                 return started
+            if stamp_s <= first:
+                return started
+            if stamp_s >= last:
+                return ended
             frac = (stamp_s - first) / (last - first)
             return started + frac * (ended - started)
         return None
@@ -87,7 +91,11 @@ class Clock:
             return None
         i = bisect.bisect_right(walls, wall) - 1
         if i < 0:
-            i = 0
+            # `wall` precedes every known frame: there genuinely is no
+            # frame at-or-before it. Do not clamp to the first frame --
+            # that would return a frame from the future relative to the
+            # query, which is exactly the bug this module exists to avoid.
+            return None
         return files[i]
 
     def _wall_series(self, label: str) -> list[float] | None:
