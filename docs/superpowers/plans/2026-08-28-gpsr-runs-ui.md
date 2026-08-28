@@ -1272,7 +1272,9 @@ class RunModel:
             return None
         found = None
         for epoch in self.epochs:
-            if epoch.wall is not None and epoch.wall <= wall:
+            if epoch.wall is None:
+                continue  # one unparseable stamp must not hide later epochs
+            if epoch.wall <= wall:
                 found = epoch
             else:
                 break
@@ -1425,15 +1427,17 @@ def load_run_model(run_dir: Path) -> RunModel:
     # DynamicExecutor materialising the plan. Only beyond that is the
     # tree genuinely regenerated.
     model.tree_regenerations = max(0, len(model.epochs) - 2)
+
+    milestones, judge_events, _meta = sheet_events.load_run_telemetry(run_dir)
+    model.milestones = milestones
+    model.judge_events = judge_events
+
+    # Must follow the load above: judge_events is not in scope before it.
     model.gate_failures = sum(
         1 for j in judge_events
         if j.status == "FAILURE"
         and j.kind in ("PRECONDITION", "POSTCONDITION")
     )
-
-    milestones, judge_events, _meta = sheet_events.load_run_telemetry(run_dir)
-    model.milestones = milestones
-    model.judge_events = judge_events
 
     try:
         raw = (run_dir / "announcements.txt").read_text()
