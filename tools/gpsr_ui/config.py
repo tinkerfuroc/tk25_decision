@@ -16,6 +16,14 @@ class Settings:
     bench_root: Path
     state_dir: Path
     sheet_events_path: Path | None
+    # Where the live dashboard's "failed to make progress" panel looks for
+    # a sim worktree's gpsr_stack_logs/ -- see live.find_progress_failures.
+    # That data source lives entirely outside this corpus and outside this
+    # repo, in a worktree whose lifetime we do not control, so a default
+    # (empty tuple) must be a legal, harmless value: it just means the
+    # panel never has anything to show. A trailing default keeps every
+    # existing direct `Settings(...)` construction (tests included) valid.
+    sim_stack_log_roots: tuple[Path, ...] = ()
 
 
 def _path_env(name: str, default: Path | None) -> Path | None:
@@ -23,6 +31,16 @@ def _path_env(name: str, default: Path | None) -> Path | None:
     if raw is None or not raw.strip():
         return default
     return Path(raw).expanduser()
+
+
+def _sim_stack_log_roots() -> tuple[Path, ...]:
+    raw = os.environ.get("GPSR_UI_SIM_STACK_LOGS_ROOTS")
+    if raw is not None and raw.strip():
+        return tuple(Path(p).expanduser() for p in raw.split(":") if p.strip())
+    # The one real layout seen on this machine: a tinker-sim checkout,
+    # itself possibly holding several git worktrees, any of which might
+    # currently be running the sim stack for a live battery.
+    return (Path.home() / "tinker-sim",)
 
 
 def load_settings() -> Settings:
@@ -41,4 +59,5 @@ def load_settings() -> Settings:
         bench_root=bench_root,
         state_dir=state_dir,
         sheet_events_path=_path_env("GPSR_UI_SHEET_EVENTS", None),
+        sim_stack_log_roots=_sim_stack_log_roots(),
     )

@@ -42,11 +42,17 @@ function el(tag, attrs) {
 // and anything else) is encoded individually and rejoined. Task 8 found
 // and fixed exactly this bug for the run API; the frame routes need the
 // same treatment, not a fresh bare encodeURIComponent(tier).
-function pathSegments(tier, dirName, ...rest) {
+// Exported (not just used internally) so live.js -- the in-flight
+// dashboard, which links to a run's detail page and to its camera
+// frames from data that arrived as plain JSON, not a Jinja context --
+// can build the exact same URLs instead of reinventing a bare
+// `encodeURIComponent(tier)` that has already broken slash-bearing
+// tiers twice before.
+export function pathSegments(tier, dirName, ...rest) {
   return [...tier.split("/"), dirName, ...rest].map(encodeURIComponent).join("/");
 }
 
-function apiRunUrl(tier, dirName) {
+export function apiRunUrl(tier, dirName) {
   return `/api/run/${pathSegments(tier, dirName)}`;
 }
 
@@ -54,12 +60,20 @@ function apiRunUrl(tier, dirName) {
 // top-level prefixes (/api/frames/..., /frame/...), not nested under
 // /api/run/..., precisely so a greedy {path:path} match on /api/run/...
 // can never swallow them first (see app.py's module docstring).
-function apiFramesUrl(tier, dirName) {
+export function apiFramesUrl(tier, dirName) {
   return `/api/frames/${pathSegments(tier, dirName)}`;
 }
 
-function frameUrl(tier, dirName, label, file) {
+export function frameUrl(tier, dirName, label, file) {
   return `/frame/${pathSegments(tier, dirName, label, file)}`;
+}
+
+// /run/{path:path} follows the same convention: a plain
+// `/run/${tier}/${dirName}` string breaks the moment `tier` embeds a
+// slash (a real pseudo-tier name, e.g. "t2-2026/invalidated-20260826"),
+// same as the API routes above.
+export function runPageUrl(tier, dirName) {
+  return `/run/${pathSegments(tier, dirName)}`;
 }
 
 function runBounds(model) {

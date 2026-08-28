@@ -54,11 +54,13 @@ exactly as it is for the plain run API.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -67,6 +69,8 @@ from .clock import load_clock
 from .config import Settings, load_settings
 from .corpus import Attempt, list_tiers
 from .frames import frame_path, list_frames
+from .live import find_in_flight, find_progress_failures, live_summary, tail_events
+from .telemetry import newest_events_file
 
 _HERE = Path(__file__).parent
 
@@ -204,6 +208,70 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Frames are immutable once written; cache them hard.
             headers={"Cache-Control": "public, max-age=31536000, immutable"},
         )
+
+    @app.get("/api/live")
+    def api_live() -> JSONResponse:
+        found = find_in_flight(settings.bench_root)
+        return JSONResponse({
+            "in_flight": [
+                {
+                    "tier": f.tier,
+                    "dir_name": f.dir_name,
+                    "last_event_age": f.last_event_age,
+                    "summary": live_summary(f.path, settings.state_dir),
+                }
+                for f in found
+            ],
+            "progress_failures": find_progress_failures(
+                settings.sim_stack_log_roots),
+        })
+
+    @app.get("/api/live/stream")
+    async def api_live_stream():
+        async def events():
+            # Byte offsets per run path, so each poll's tail_events() call
+            # reads only what was appended to events.jsonl since the last
+            # tick rather than re-reading the whole file -- the largest
+            # run in the corpus has 5130 transitions, and this endpoint
+            # polls every 2 seconds for as long as a browser tab is open.
+            offsets: dict[str, int] = {}
+            while True:
+                found = find_in_flight(settings.bench_root)
+                items = []
+                for f in found:
+                    key = str(f.path)
+                    log = newest_events_file(f.path)
+                    new_events: list[dict] = []
+                    if log is not None:
+                        new_events, offsets[key] = tail_events(
+                            log, offsets.get(key, 0))
+                    items.append({
+                        "tier": f.tier,
+                        "dir_name": f.dir_name,
+                        "last_event_age": f.last_event_age,
+                        "summary": live_summary(f.path, settings.state_dir),
+                        "new_event_types": [
+                            e.get("event_type") for e in new_events],
+                    })
+                # Drop offsets for runs that are no longer in flight, or a
+                # long-lived browser tab would accumulate one stale entry
+                # per run ever seen for the lifetime of the connection.
+                live_keys = {str(f.path) for f in found}
+                for stale in set(offsets) - live_keys:
+                    del offsets[stale]
+                payload = {
+                    "in_flight": items,
+                    "progress_failures": find_progress_failures(
+                        settings.sim_stack_log_roots),
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+                await asyncio.sleep(2.0)
+
+        return StreamingResponse(events(), media_type="text/event-stream")
+
+    @app.get("/live")
+    def live_page(request: Request):
+        return templates.TemplateResponse(request, "live.html", {})
 
     @app.get("/run/{path:path}")
     def run_page(request: Request, path: str):

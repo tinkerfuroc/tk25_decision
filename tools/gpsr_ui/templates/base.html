@@ -8,7 +8,10 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <header class="topbar"><a href="/">GPSR Bench Run Viewer</a></header>
+  <header class="topbar">
+    <a href="/">GPSR Bench Run Viewer</a>
+    <a href="/live" class="topbar-live">live</a>
+  </header>
   <main>{% block content %}{% endblock %}</main>
 </body>
 </html>

@@ -6,8 +6,11 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg);
   font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.topbar { padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.topbar { padding: 10px 16px; border-bottom: 1px solid var(--line);
+  display: flex; gap: 16px; align-items: center; }
 .topbar a { color: var(--fg); text-decoration: none; }
+.topbar-live { color: var(--pass) !important; font-size: 12px;
+  border: 1px solid var(--pass); border-radius: 3px; padding: 1px 8px; }
 main { padding: 16px; }
 .tier h2 { font-size: 15px; color: var(--dim); margin: 20px 0 8px; }
 table.entries { width: 100%; border-collapse: collapse; }
@@ -101,3 +104,23 @@ ul { margin: 4px 0; padding-left: 18px; }
 .frame-controls button, .frame-controls select {
   background: #1b1f26; color: var(--fg); border: 1px solid var(--line);
   padding: 3px 10px; font: inherit; cursor: pointer; }
+
+.live-card { border: 1px solid var(--line); padding: 12px; margin-bottom: 12px;
+  background: #0f1114; }
+.live-card h3 { margin: 0 0 8px; font-size: 14px; }
+.live-card dl { display: grid; grid-template-columns: 110px 1fr;
+  gap: 2px 10px; margin: 0; }
+.live-card dt { color: var(--dim); }
+.live-card dd { margin: 0; }
+.budget { height: 4px; background: var(--line); margin-bottom: 10px; }
+.budget-fill { height: 100%; background: var(--pass); }
+.budget-fill.over { background: var(--timeout); }
+.bad { color: var(--fail); }
+.announce { color: var(--dim); font-size: 11px; margin: 8px 0 0;
+  white-space: pre-wrap; }
+.live-frames { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.live-frames figure { margin: 0; }
+.live-frames img { max-width: 220px; border: 1px solid var(--line);
+  background: #000; display: block; }
+.live-frames figcaption { color: var(--dim); font-size: 10px; padding-top: 2px; }
+.progress-panel { margin-top: 16px; }

@@ -1,0 +1,11 @@
+<!-- tools/gpsr_ui/templates/live.html -->
+{% extends "base.html" %}
+{% block title %}live{% endblock %}
+{% block content %}
+<h2 class="run-title">In flight</h2>
+<div id="live"><p class="muted">waiting for a run…</p></div>
+<script type="module">
+  import { boot } from "/static/live.js";
+  boot();
+</script>
+{% endblock %}

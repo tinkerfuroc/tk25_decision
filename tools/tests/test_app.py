@@ -13,6 +13,7 @@ names, scenarios and assertions are unchanged from the brief.
 """
 from __future__ import annotations
 
+import json
 import socket
 import threading
 import time
@@ -41,6 +42,9 @@ class _LiveClient:
 
     def get(self, path: str):
         return requests.get(self._base_url + path, timeout=5)
+
+    def stream(self, path: str):
+        return requests.get(self._base_url + path, timeout=5, stream=True)
 
 
 @contextmanager
@@ -263,3 +267,58 @@ def test_frame_routes_resolve_pseudo_tier_with_embedded_slash(
         )
         assert frame_resp.status_code == 200
         assert frame_resp.content == b"\xff\xd8\xff\xd9"
+
+
+def test_live_api_lists_an_in_flight_run_but_not_a_finished_one(
+    make_run, tmp_path
+):
+    in_flight = make_run(name="s9999-080-x", verdict=None, finished=False)
+    make_run(name="s9999-081-x", verdict="PASS")
+    with _client(in_flight.parents[2], tmp_path) as client:
+        body = client.get("/api/live").json()
+        names = [item["dir_name"] for item in body["in_flight"]]
+        assert names == ["s9999-080-x"]
+        assert body["in_flight"][0]["tier"] == "t9-test"
+        assert "summary" in body["in_flight"][0]
+        assert body["in_flight"][0]["summary"]["dir_name"] == "s9999-080-x"
+        # No sim worktree is configured for this hermetic test (Settings'
+        # sim_stack_log_roots defaults to () here, not the real machine's
+        # ~/tinker-sim) -- the panel must degrade to None, not error.
+        assert body["progress_failures"] is None
+
+
+def test_live_api_is_empty_when_nothing_is_in_flight(make_run, tmp_path):
+    run = make_run(name="s9999-082-x", verdict="PASS")
+    with _client(run.parents[2], tmp_path) as client:
+        body = client.get("/api/live").json()
+        assert body["in_flight"] == []
+
+
+def test_live_page_renders(make_run, tmp_path):
+    run = make_run(name="s9999-083-x", verdict=None, finished=False)
+    with _client(run.parents[2], tmp_path) as client:
+        page = client.get("/live")
+        assert page.status_code == 200
+        assert "live" in page.text.lower()
+
+
+def test_live_stream_emits_one_sse_line_with_the_in_flight_run(
+    make_run, tmp_path
+):
+    run = make_run(name="s9999-084-x", verdict=None, finished=False)
+    with _client(run.parents[2], tmp_path) as client:
+        resp = client.stream("/api/live/stream")
+        try:
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers["content-type"]
+            line = ""
+            for raw in resp.iter_lines(decode_unicode=True):
+                if raw and raw.startswith("data: "):
+                    line = raw[len("data: "):]
+                    break
+            assert line, "expected at least one SSE data line"
+            payload = json.loads(line)
+            assert [i["dir_name"] for i in payload["in_flight"]] == [
+                "s9999-084-x"]
+        finally:
+            resp.close()
