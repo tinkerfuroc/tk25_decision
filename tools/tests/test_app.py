@@ -137,3 +137,81 @@ def test_index_page_renders_the_entry(make_run, tmp_path):
         page = client.get("/")
         assert page.status_code == 200
         assert "s9999-045-x" in page.text
+
+
+def test_frames_api_lists_labels_for_a_two_camera_run(make_run, tmp_path):
+    run = make_run(
+        name="s9999-047-x",
+        frames={"head": [(0, 1000)], "arena": [(0, 1000)]},
+    )
+    with _client(run.parents[2], tmp_path) as client:
+        body = client.get("/api/frames/t9-test/s9999-047-x").json()
+        assert sorted(body["labels"]) == ["arena", "head"]
+        assert body["labels"]["head"][0]["file"] == "0000_1000.jpg"
+
+
+def test_frames_api_handles_a_single_camera_run(make_run, tmp_path):
+    """Real corpus fact: s2026-003-findObjInRoom has frames/head but no
+    frames/arena. A run may genuinely have only one camera."""
+    run = make_run(name="s9999-048-x", frames={"head": [(0, 1000)]})
+    with _client(run.parents[2], tmp_path) as client:
+        body = client.get("/api/frames/t9-test/s9999-048-x").json()
+        assert list(body["labels"]) == ["head"]
+
+
+def test_frame_route_serves_the_jpeg_bytes(make_run, tmp_path):
+    run = make_run(name="s9999-049-x", frames={"head": [(0, 1000)]})
+    with _client(run.parents[2], tmp_path) as client:
+        resp = client.get("/frame/t9-test/s9999-049-x/head/0000_1000.jpg")
+        assert resp.status_code == 200
+        assert resp.content == b"\xff\xd8\xff\xd9"
+        assert resp.headers["content-type"] == "image/jpeg"
+
+
+def test_frame_route_404s_for_traversal_and_unknown_files(make_run, tmp_path):
+    run = make_run(name="s9999-055-x", frames={"head": [(0, 1000)]})
+    with _client(run.parents[2], tmp_path) as client:
+        # unknown file
+        assert client.get(
+            "/frame/t9-test/s9999-055-x/head/nope.jpg"
+        ).status_code == 404
+        # literal ".." segment between run and label, decoded server-side
+        assert client.get(
+            "/frame/t9-test/s9999-055-x/../run.json"
+        ).status_code == 404
+        # escape attempt via label
+        assert client.get(
+            "/frame/t9-test/s9999-055-x/../head/0000_1000.jpg"
+        ).status_code == 404
+        # too few segments to even contain a run path
+        assert client.get("/frame/onlyonepart").status_code == 404
+
+
+def test_frame_routes_resolve_pseudo_tier_with_embedded_slash(
+    make_run, tmp_path
+):
+    """Same real-corpus fact as test_run_api_resolves_pseudo_tier_with_
+    embedded_slash: t2-2026/invalidated-20260826 style tier names carry
+    an embedded slash. Frame routes must address runs under them too."""
+    run = make_run(
+        name="s9999-056-x", verdict="PASS", frames={"head": [(0, 1000)]},
+    )
+    tier_dir = run.parents[1]
+    runs_dir = run.parents[0]
+    pseudo_runs_dir = tier_dir / "runs-invalidated-20260826"
+    runs_dir.rename(pseudo_runs_dir)
+    new_run = pseudo_runs_dir / run.name
+
+    with _client(run.parents[2], tmp_path) as client:
+        frames_resp = client.get(
+            f"/api/frames/t9-test/invalidated-20260826/{new_run.name}"
+        )
+        assert frames_resp.status_code == 200
+        assert list(frames_resp.json()["labels"]) == ["head"]
+
+        frame_resp = client.get(
+            f"/frame/t9-test/invalidated-20260826/{new_run.name}"
+            "/head/0000_1000.jpg"
+        )
+        assert frame_resp.status_code == 200
+        assert frame_resp.content == b"\xff\xd8\xff\xd9"

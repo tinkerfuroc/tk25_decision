@@ -22,6 +22,35 @@ those. The route below instead captures the whole remainder as one
 `{path:path}` segment and rpartitions it on the LAST slash into
 (tier, dir_name), so a multi-segment tier name resolves correctly while a
 single-segment one (as in every brief test) is unaffected.
+
+Task 7's frame routes inherit the same "tier may embed a slash" problem,
+plus one of their own. The brief proposes `/api/run/{tier}/{dir_name}/frames`
+and `/frame/{tier}/{dir_name}/{label}/{file}` -- both assume a fixed
+segment count, which a slash-bearing pseudo-tier already breaks (same
+defect as above). Worse, a same-prefix fix along the lines of
+`/api/run/{path:path}/frames` is ambiguous given the existing
+`/api/run/{path:path}` route: Starlette matches routes in registration
+order, and `{path:path}` is greedy, so a request for
+`/api/run/t9/some-run/frames` would already satisfy the existing
+`api_run` route (with `path="t9/some-run/frames"`, whose rpartition then
+sees a bogus dir_name of "frames") before ever reaching a route added
+after it -- the more-specific suffix route would only work by accident of
+declaration order, and even then only if no run happens to be named
+"frames".
+
+The frame routes below dodge this by using a DISTINCT top-level prefix
+per resource, so the greedy segment is unambiguously the very last thing
+in the URL and never collides with `/api/run/...`:
+
+  GET /api/frames/{path:path}        -- path = "tier[/suffix]/dir_name"
+  GET /frame/{path:path}             -- path = "tier[/suffix]/dir_name/label/file"
+
+The frame-serving route peels its trailing `label` and `file` segments
+off with `rsplit("/", 2)` (equivalent to two rpartitions from the right)
+and resolves the remaining "tier[/suffix]/dir_name" through the same
+`_resolve` used by `api_run`, so a run under a slash-bearing pseudo-tier
+(e.g. t2-2026/invalidated-20260826/some-run) is addressable for frames
+exactly as it is for the plain run API.
 """
 from __future__ import annotations
 
@@ -29,7 +58,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -37,6 +66,7 @@ from .cache import cached_run_model
 from .clock import load_clock
 from .config import Settings, load_settings
 from .corpus import Attempt, list_tiers
+from .frames import frame_path, list_frames
 
 _HERE = Path(__file__).parent
 
@@ -146,6 +176,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         model = cached_run_model(run_dir, settings.state_dir)
         clock = load_clock(run_dir)
         return JSONResponse(_run_json(run_dir, model, clock, attempt))
+
+    @app.get("/api/frames/{path:path}")
+    def api_frames(path: str) -> JSONResponse:
+        run_dir, _ = _resolve(path)
+        frames = list_frames(run_dir)
+        return JSONResponse({
+            "labels": {
+                label: [asdict(r) for r in refs]
+                for label, refs in frames.items()
+            }
+        })
+
+    @app.get("/frame/{path:path}")
+    def frame(path: str):
+        parts = path.rsplit("/", 2)
+        if len(parts) != 3:
+            raise HTTPException(status_code=404, detail="frame not found")
+        run_path, label, file = parts
+        run_dir, _ = _resolve(run_path)
+        resolved = frame_path(run_dir, label, file)
+        if resolved is None:
+            raise HTTPException(status_code=404, detail="frame not found")
+        return FileResponse(
+            resolved,
+            media_type="image/jpeg",
+            # Frames are immutable once written; cache them hard.
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
 
     @app.get("/")
     def index(request: Request):
