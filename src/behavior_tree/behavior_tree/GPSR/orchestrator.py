@@ -2042,7 +2042,9 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._bb.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
         self._bb.register_key(bb_keys.FACTS, access=Access.READ)
         self._bb.register_key(bb_keys.FACTS, access=Access.WRITE)
-        # Telemetry: TASK_ID is set once per executor (read+write); the
+        # Telemetry: TASK_ID is set (idempotently) on every ``_swap_in`` of
+        # this executor's slot, not just once — see the stamp in
+        # ``_swap_in`` (read+write access is registered here); the
         # current-step keys are read-only for the failed-step event.
         self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
         self._bb.register_key(bb_keys.TASK_ID, access=Access.WRITE)

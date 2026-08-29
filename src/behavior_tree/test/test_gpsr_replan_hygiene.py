@@ -130,6 +130,32 @@ def test_plan_target_marks_identical_final_attempt_with_error(monkeypatch):
     assert any("IDENTICAL" in u and "find_object" in u and "vlm_fallback" in u for u in prompts[1:])
 
 
+def test_plan_target_identical_marker_does_not_nest_on_repeated_identical_replans(monkeypatch):
+    # A target that keeps regenerating the same doomed plan across several
+    # replan cycles gets re-invoked with failure_reason ALREADY prefixed by
+    # a previous IDENTICAL_PLAN_ERROR_PREFIX marker. The composed error must
+    # not stack the prefix a second time.
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    same = {"plan": [{"action": "announce", "params": {"text": "x"}}]}
+
+    monkeypatch.setattr(planner_mod, "_call_llm", lambda *a, **k: (same, None))
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    p._store(0, 0, "d", same["plan"], py_trees.behaviours.Success("old"), None)
+    p._invalidate(0, 0)
+
+    nested_failure_reason = f"{planner_mod.IDENTICAL_PLAN_ERROR_PREFIX}: precondition unmet: at_robot(x) (invalid)"
+    p.plan_target(0, 0, "d", command="c", failure_reason=nested_failure_reason)
+
+    err = p.get_error(0, 0)
+    assert err is not None
+    assert err.count(planner_mod.IDENTICAL_PLAN_ERROR_PREFIX) == 1
+    assert err == f"{planner_mod.IDENTICAL_PLAN_ERROR_PREFIX}: precondition unmet: at_robot(x) (invalid)"
+
+
 def test_plan_target_different_plan_has_no_error(monkeypatch):
     p = planner_mod.GPSRPlanner(max_attempts=2)
     monkeypatch.setattr(p, "_new_client", lambda: _StubClient())

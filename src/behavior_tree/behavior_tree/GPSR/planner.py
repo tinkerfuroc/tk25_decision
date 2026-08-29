@@ -914,7 +914,7 @@ class GPSRPlanner:
     def _failed_plans(self, slot, index) -> List[List[Dict[str, Any]]]:
         with self._lock:
             entry = self._cache.get((slot, index))
-        return [list(p) for p in (entry.get("failed_plans") or [])] if entry else []
+            return [list(p) for p in (entry.get("failed_plans") or [])] if entry else []
 
     def _get_slot_context(self, slot: int) -> Dict[str, Any]:
         """The full-command context for ``slot``: {command, targets}."""
@@ -1075,6 +1075,16 @@ class GPSRPlanner:
             else [f"previous attempt failed: {failure_reason}"]
         )
         last_reason: Optional[str] = failure_reason
+        # A replan can be re-invoked with a failure_reason that is ITSELF a
+        # previous identical-plan marker (repeated identical replans across
+        # several cycles) — strip the leading prefix once so the final-attempt
+        # marker below never nests ("identical to failed plan: identical to
+        # failed plan: ...").
+        identical_marker_reason = failure_reason
+        if isinstance(identical_marker_reason, str):
+            nested_prefix = f"{IDENTICAL_PLAN_ERROR_PREFIX}: "
+            if identical_marker_reason.startswith(nested_prefix):
+                identical_marker_reason = identical_marker_reason[len(nested_prefix):]
         known_locs = set(KNOWN_LOCATIONS.keys())
         known_loc_arg = (known_locs | START_LOCATION_ALIASES) if known_locs else None
         known_actions = set(ACTION_FACTORIES.keys())
@@ -1116,6 +1126,17 @@ class GPSRPlanner:
             print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts}: "
                   f"raw {raw_actions} | kept {[s['action'] for s in cleaned]} "
                   f"| dropped {dropped}")
+            raw_mods = parsed.get("modifications")
+            if raw_mods:
+                # A rejected modification (schema/role mismatch) is otherwise
+                # unrecoverable from orchestrator.log — dump the payload that
+                # was actually sent, truncated so one bad attempt can't flood
+                # the log.
+                mods_dump = json.dumps(raw_mods, default=str)
+                if len(mods_dump) > 300:
+                    mods_dump = mods_dump[:300] + "...(truncated)"
+                print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
+                      f"modifications: {mods_dump}")
             if not cleaned:
                 last_reason = (
                     "you returned an EMPTY plan (or only unknown actions). You "
@@ -1179,7 +1200,7 @@ class GPSRPlanner:
             # back honestly (not the fallback) but MARKED: the executor skips
             # it instead of re-running a known dead end.
             self._store(slot, index, desc, cleaned, subtree,
-                        (f"{IDENTICAL_PLAN_ERROR_PREFIX}: {failure_reason}" if identical else None),
+                        (f"{IDENTICAL_PLAN_ERROR_PREFIX}: {identical_marker_reason}" if identical else None),
                         modifications=group_modifications_by_step(cleaned, mods or []))
             return
         # Every attempt failed -> guaranteed non-empty fallback plan.
