@@ -322,6 +322,69 @@ def test_escape_unrecoverable_reason_is_none_without_declared_postconditions():
     assert planner_mod._escape_no_untried_establisher_reason({"id": "t0"}, []) is None
 
 
+# ---------------------------------------------------------------------------
+# H1 (round-2 review): the exhaustion helper must NOT apply _escape_plan's
+# own materialisation arg-name filter (_ESCAPE_ALLOWED_ARG_NAMES) -- it
+# answers "has this STRATEGY been tried", not "can _escape_plan materialise a
+# step for it". Every one of answered(question)'s six establishers carries a
+# `question` arg, which _ESCAPE_ALLOWED_ARG_NAMES excludes -- so the OLD
+# helper (copying that filter) always returned "no untried establisher" for
+# answered(...), marking the target UNRECOVERABLE after a single replan even
+# though answer_question / count / announce / vlm_fallback / llm_fallback
+# were never tried.
+# ---------------------------------------------------------------------------
+
+def test_escape_unrecoverable_reason_is_none_for_answered_with_only_ask_person_tried():
+    target = {"id": "t0", "postconditions": ["answered(what_is_your_name)"]}
+    failed_plans = [[
+        {"action": "goto", "params": {"location": "living_room"}},
+        {"action": "find_person", "params": {"person": "x"}},
+        {"action": "ask_person", "params": {"question": "what_is_your_name"}},
+    ]]
+    assert planner_mod._escape_no_untried_establisher_reason(target, failed_plans) is None
+
+
+def test_escape_unrecoverable_reason_fires_for_answered_when_every_establisher_tried():
+    # All six of answered(question)'s registry establishers have been tried
+    # -- NOW the ladder really is exhausted.
+    target = {"id": "t0", "postconditions": ["answered(what_is_your_name)"]}
+    failed_plans = [[
+        {"action": "ask_person", "params": {"question": "q"}},
+        {"action": "answer_question", "params": {"question": "q"}},
+        {"action": "count", "params": {"object": "x", "question": "q"}},
+        {"action": "announce", "params": {"question": "q"}},
+        {"action": "vlm_fallback", "params": {"question": "q"}},
+        {"action": "llm_fallback", "params": {"question": "q"}},
+    ]]
+    reason = planner_mod._escape_no_untried_establisher_reason(target, failed_plans)
+    assert reason is not None
+    assert "answered(what_is_your_name)" in reason
+
+
+# ---------------------------------------------------------------------------
+# L3 (round-2 review): helper tests were all single-postcondition -- pin the
+# multi-postcondition shape (object_seen + held, the grasp/deliver targets
+# M2 below is about).
+# ---------------------------------------------------------------------------
+
+def test_escape_unrecoverable_reason_multi_postcondition_is_none_with_untried_establisher():
+    target = {"id": "t0", "postconditions": ["object_seen(spam)", "held(spam)"]}
+    failed_plans = [[{"action": "find_object", "params": {"object": "spam"}}]]
+    assert planner_mod._escape_no_untried_establisher_reason(target, failed_plans) is None
+
+
+def test_escape_unrecoverable_reason_multi_postcondition_lists_both_facts_when_exhausted():
+    target = {"id": "t0", "postconditions": ["object_seen(spam)", "held(spam)"]}
+    failed_plans = [[
+        {"action": "find_object", "params": {"object": "spam"}},
+        {"action": "search_object", "params": {"object": "spam"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+    ]]
+    reason = planner_mod._escape_no_untried_establisher_reason(target, failed_plans)
+    assert reason is not None
+    assert "object_seen(spam)" in reason and "held(spam)" in reason
+
+
 def test_plan_target_final_identical_attempt_escapes_to_untried_action(monkeypatch, capsys):
     # D1 integration (battery run 004): stubbed _call_llm returns the
     # identical [goto, find_object] plan on every attempt -- the cache must
@@ -394,6 +457,65 @@ def test_plan_target_marks_unrecoverable_when_escape_ladder_is_exhausted(monkeyp
     assert "[plan:0:0] no untried establisher for" in out
     assert "object_seen(pudding_box)" in out
     assert "-> unrecoverable" in out
+
+
+# ---------------------------------------------------------------------------
+# M2 (round-2 review): a validation-rejected escape action must be recorded
+# (`entry["tried_escapes"]`) so the SECOND identical replan sees the ladder
+# as exhausted instead of re-materialising (and re-rejecting) the same
+# doomed candidate forever -- the run-003/004 symptom E2 was meant to end,
+# for a 2-postcondition target (the common grasp/deliver shape): a
+# single-step escape can satisfy object_seen but never also held, so
+# validate_plan always rejects it on coverage grounds.
+# ---------------------------------------------------------------------------
+
+def test_plan_target_records_rejected_escape_then_marks_unrecoverable_on_next_replan(monkeypatch):
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    target = {"id": "t0", "desc": "d", "object": "spam", "location": "kitchen",
+              "depends_on": [], "preconditions": [],
+              "postconditions": ["object_seen(spam)", "held(spam)"]}
+    p._slot_context[0] = {"command": "c", "targets": [target]}
+    failed_first = [{"action": "goto", "params": {"location": "kitchen"}},
+                    {"action": "find_object", "params": {"object": "spam", "location": "kitchen"}},
+                    {"action": "grasp", "params": {"object": "spam"}}]
+    same = {"plan": list(failed_first)}
+    monkeypatch.setattr(planner_mod, "_call_llm", lambda *a, **k: (same, None))
+
+    def fake_validate(plan, desc, known_actions, **kwargs):
+        # The deterministic escape (a lone search_object) is the ONLY plan
+        # this fake rejects -- held(spam) stays uncovered (M-5: _escape_plan
+        # only ever materialises one step) -- everything else (the
+        # LLM-returned identical plan itself) validates fine.
+        if [s["action"] for s in plan] == ["search_object"]:
+            return False, "postcondition unmet: held(spam) (UNKNOWN)"
+        return True, ""
+
+    monkeypatch.setattr(planner_mod, "validate_plan", fake_validate)
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    p._store(0, 0, "d", failed_first, py_trees.behaviours.Success("s"), None)
+    p._invalidate(0, 0)
+
+    # Replan 1: identical -> _escape_plan picks search_object (untried) ->
+    # rejected by validate_plan (held still uncovered) -> the "rejected by
+    # validation" case is NOT unrecoverable -- ordinary IDENTICAL marker.
+    p.plan_target(0, 0, "d", command="c",
+                  failure_reason="postcondition unmet: object_seen(spam) (UNKNOWN)",
+                  target=target, all_targets=[target])
+    err1 = p.get_error(0, 0)
+    assert err1 is not None and err1.startswith(planner_mod.IDENTICAL_PLAN_ERROR_PREFIX)
+
+    # Replan 2: search_object is now a recorded tried_escape -- object_seen's
+    # two registry establishers (find_object, search_object) AND held's only
+    # establisher (grasp) have all been used -- the ladder is exhausted.
+    p._invalidate(0, 0)
+    p.plan_target(0, 0, "d", command="c",
+                  failure_reason="postcondition unmet: object_seen(spam) (UNKNOWN)",
+                  target=target, all_targets=[target])
+    err2 = p.get_error(0, 0)
+    assert err2 is not None and err2.startswith(planner_mod.UNRECOVERABLE_ERROR_PREFIX)
+    assert "object_seen(spam)" in err2 and "held(spam)" in err2
 
 
 def test_plan_target_marks_identical_final_attempt_with_error(monkeypatch):

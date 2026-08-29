@@ -505,6 +505,61 @@ def _last_goto_location(failed_plans: List[List[Dict[str, Any]]]) -> Optional[st
 _ESCAPE_ALLOWED_ARG_NAMES = {"object", "person", "location"}
 
 
+def _used_actions(failed_plans: List[List[Dict[str, Any]]]) -> set:
+    """L2 (round-2 review): action names already tried anywhere across
+    ``failed_plans`` (a strategy is "tried" once, anywhere, not per-plan) --
+    factored out so ``_escape_plan`` and ``_escape_no_untried_establisher_
+    reason`` (the exhaustion helper) can never independently drift on what
+    "used" means."""
+    return {
+        str(step.get("action"))
+        for plan in (failed_plans or [])
+        for step in (plan or [])
+        if isinstance(step, dict)
+    }
+
+
+def _escape_candidates(
+    predicate: str, used_actions: set, materialisable_only: bool,
+) -> List[str]:
+    """L2 (round-2 review): registry actions establishing ``predicate`` that
+    are not in ``used_actions``, in registry order.
+
+    ``materialisable_only=True`` (``_escape_plan``'s own use -- choosing
+    what to actually MATERIALISE as an escape step) additionally requires
+    every one of the candidate's establish-template arg names to be in
+    ``_ESCAPE_ALLOWED_ARG_NAMES`` (a `question`-bearing predicate can only be
+    materialised from the exact, un-normalised question text, which
+    ``parse_fact`` has already lower-cased/underscored away by the time a
+    fact reaches here -- see that constant's docstring).
+
+    ``materialisable_only=False`` (H1, round-2 review; the exhaustion
+    helper's use -- answering "has this STRATEGY been tried") drops that
+    filter entirely: an action establishing the predicate and not yet used
+    IS an untried establisher, whether or not ``_escape_plan`` could ever
+    materialise a step for it. Without this distinction every one of
+    ``answered(question)``'s six establishers (``ask_person``,
+    ``answer_question``, ``count``, ``announce``, ``vlm_fallback``,
+    ``llm_fallback``) carries a `question` arg -- ineligible for
+    materialisation -- so the OLD helper (copying ``_escape_plan``'s filter
+    verbatim) always answered "exhausted" for ``answered(...)`` after a
+    single replan, even though none of those five alternatives was ever
+    tried.
+    """
+    result = []
+    for name, contract in ACTION_CONTRACTS.items():
+        if name in used_actions:
+            continue
+        if not any(t.split("(", 1)[0] == predicate for t in contract.establishes):
+            continue
+        if materialisable_only:
+            arg_names = _establish_arg_names(name, predicate)
+            if not arg_names or any(a not in _ESCAPE_ALLOWED_ARG_NAMES for a in arg_names):
+                continue
+        result.append(name)
+    return result
+
+
 def _verified_at_robot_location(facts: Optional[List[str]]) -> Optional[str]:
     """The location argument of a verified ``at_robot(...)`` fact, if any.
 
@@ -623,6 +678,7 @@ def _escape_plan(
     all_targets: Optional[List[Dict[str, Any]]] = None,
     facts: Optional[List[str]] = None,
     known_locations: Optional[set] = None,
+    tried_escapes: Optional[set] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     """Deterministic fallback plan for a target the LLM is stuck replanning.
 
@@ -683,26 +739,17 @@ def _escape_plan(
     multi-step escape (append the failed plan's tail, or chain further
     establishers) is a real widening, not a bug fix, and is intentionally
     out of scope here.
+
+    ``tried_escapes`` (M2, round-2 review) is a set of action names from
+    escape candidates this cache entry already offered and had REJECTED
+    (by ``validate_plan`` downstream, or a subtree-build failure) -- added
+    to ``used_actions`` alongside ``failed_plans`` so a rejected candidate
+    is never re-selected (and re-rejected) on the next identical replan.
     """
-    used_actions = {
-        str(step.get("action"))
-        for plan in (failed_plans or [])
-        for step in (plan or [])
-        if isinstance(step, dict)
-    }
+    used_actions = _used_actions(failed_plans) | set(tried_escapes or ())
 
     def candidates_for(predicate: str) -> List[str]:
-        result = []
-        for name, contract in ACTION_CONTRACTS.items():
-            if name in used_actions:
-                continue
-            if not any(t.split("(", 1)[0] == predicate for t in contract.establishes):
-                continue
-            arg_names = _establish_arg_names(name, predicate)
-            if not arg_names or any(a not in _ESCAPE_ALLOWED_ARG_NAMES for a in arg_names):
-                continue
-            result.append(name)
-        return result
+        return _escape_candidates(predicate, used_actions, materialisable_only=True)
 
     own_postconditions = _canonical_postconditions(target)
     fact = None
@@ -741,6 +788,7 @@ def _escape_plan(
 def _escape_no_untried_establisher_reason(
     target: Optional[Dict[str, Any]],
     failed_plans: List[List[Dict[str, Any]]],
+    tried_escapes: Optional[set] = None,
 ) -> Optional[str]:
     """E2 (runs 003/004, 2026-08-29): non-``None`` when the escape ladder is exhausted.
 
@@ -748,13 +796,28 @@ def _escape_no_untried_establisher_reason(
     returned ``None`` on the final identical-plan attempt, to distinguish
     the truly UNRECOVERABLE case -- no registry action can establish ANY of
     the target's own declared postconditions without repeating one already
-    used in ``failed_plans`` -- from the other reasons ``_escape_plan`` can
-    come back empty: an eligible establisher exists but its materialised
-    escape step was rejected by ``validate_plan`` downstream, or a
-    self-navigating step's location could not be resolved
+    used in ``failed_plans``/``tried_escapes`` -- from the other reasons
+    ``_escape_plan`` can come back empty: an eligible establisher exists but
+    its materialised escape step was rejected by ``validate_plan``
+    downstream, or a self-navigating step's location could not be resolved
     (``_escape_step_for`` returning ``None``). Neither of those is
     unrecoverable -- a future replan attempt, or a different failure
     reason, could still find a way through.
+
+    H1 (round-2 review): "untried establisher" here means "has this
+    STRATEGY been tried at all" -- unlike ``_escape_plan``'s OWN candidate
+    search, this check does NOT apply the materialisation arg-name filter
+    (``_ESCAPE_ALLOWED_ARG_NAMES``). An establisher that ``_escape_plan``
+    itself could never materialise a step for (e.g. any of
+    ``answered(question)``'s establishers, which all carry a `question`
+    arg) is still a real, untried alternative the LLM could reach on its
+    own -- so its existence must fall through to the ordinary IDENTICAL_
+    PLAN marker (a future replan may yet try it), never UNRECOVERABLE.
+
+    ``tried_escapes`` (M2, round-2 review) mirrors ``_escape_plan``'s own
+    parameter -- a validation-rejected escape action counts as "used" here
+    too, so a second identical replan after a rejected escape correctly
+    sees the ladder as exhausted instead of looping forever.
 
     A target that declares no postconditions at all is deliberately NOT
     unrecoverable here (returns ``None``) -- there is nothing to say is
@@ -770,30 +833,13 @@ def _escape_no_untried_establisher_reason(
     own_postconditions = sorted(_canonical_postconditions(target))
     if not own_postconditions:
         return None
-    used_actions = {
-        str(step.get("action"))
-        for plan in (failed_plans or [])
-        for step in (plan or [])
-        if isinstance(step, dict)
-    }
-
-    def has_untried_establisher(predicate: str) -> bool:
-        for name, contract in ACTION_CONTRACTS.items():
-            if name in used_actions:
-                continue
-            if not any(t.split("(", 1)[0] == predicate for t in contract.establishes):
-                continue
-            arg_names = _establish_arg_names(name, predicate)
-            if not arg_names or any(a not in _ESCAPE_ALLOWED_ARG_NAMES for a in arg_names):
-                continue
-            return True
-        return False
+    used_actions = _used_actions(failed_plans) | set(tried_escapes or ())
 
     for raw in own_postconditions:
         fact, _error = parse_fact(raw)
         if fact is None:
             continue
-        if has_untried_establisher(fact.predicate):
+        if _escape_candidates(fact.predicate, used_actions, materialisable_only=False):
             return None
     return f"no untried establisher for {own_postconditions}"
 
@@ -1403,6 +1449,12 @@ class GPSRPlanner:
         with self._lock:
             prev = self._cache.get((slot, index))
             failed_plans = list(prev.get("failed_plans") or []) if prev else []
+            # M2 (round-2 review): carried forward like failed_plans -- a
+            # rejected-escape action recorded via _record_tried_escape must
+            # survive the wholesale entry replacement _store performs (e.g.
+            # for the IDENTICAL/UNRECOVERABLE marker stored right after
+            # _try_escape recorded the rejection).
+            tried_escapes = set(prev.get("tried_escapes") or ()) if prev else set()
             self._cache[(slot, index)] = {
                 "desc": desc,
                 "plan": list(plan),
@@ -1411,6 +1463,7 @@ class GPSRPlanner:
                 "error": error,
                 "modifications": modifications,
                 "failed_plans": failed_plans,
+                "tried_escapes": tried_escapes,
             }
 
     def _get_desc(self, slot, index) -> Optional[str]:
@@ -1460,6 +1513,33 @@ class GPSRPlanner:
         with self._lock:
             entry = self._cache.get((slot, index))
             return [list(p) for p in (entry.get("failed_plans") or [])] if entry else []
+
+    def _tried_escapes(self, slot, index) -> set:
+        """M2 (round-2 review): action names of escape candidates THIS
+        cache entry already offered and had rejected (by ``validate_plan``
+        or a subtree-build failure) -- see ``_record_tried_escape``."""
+        with self._lock:
+            entry = self._cache.get((slot, index))
+            return set(entry.get("tried_escapes") or ()) if entry else set()
+
+    def _record_tried_escape(self, slot, index, action_names) -> None:
+        """M2 (round-2 review): remember a validation-rejected (or subtree-
+        build-failed) escape's action name(s) against this cache entry, so
+        the exhaustion check (both ``_escape_plan``'s own candidate search
+        and ``_escape_no_untried_establisher_reason``) treats it as "used"
+        on the NEXT identical replan too. Without this, a rejected escape
+        never enters ``failed_plans`` (only a stored, once-executed plan
+        does), so ``_escape_plan`` would keep re-selecting -- and
+        ``validate_plan`` re-rejecting -- the exact same doomed candidate
+        forever (the run-003/004 symptom E2 was meant to end, for any
+        target whose single-step escape can never satisfy every
+        postcondition, e.g. a 2-postcondition grasp/deliver target)."""
+        with self._lock:
+            entry = self._cache.get((slot, index))
+            if entry is None:
+                return
+            tried = entry.setdefault("tried_escapes", set())
+            tried.update(str(a) for a in (action_names or []) if a)
 
     def _get_slot_context(self, slot: int) -> Dict[str, Any]:
         """The full-command context for ``slot``: {command, targets}."""
@@ -1609,17 +1689,30 @@ class GPSRPlanner:
 
         Quality (round-2 review): extracted verbatim from ``plan_target``'s
         inline escape block — pure refactor, callers unaffected.
+
+        M2 (round-2 review): ``tried_escapes`` (this cache entry's own
+        rejected-escape action names, see ``_record_tried_escape``) is
+        forwarded to both ``_escape_plan`` and the exhaustion helper, and a
+        NEWLY rejected candidate is recorded before returning — otherwise a
+        target whose single-step escape can never satisfy every
+        postcondition (e.g. a 2-postcondition grasp/deliver target) would
+        have ``_escape_plan`` re-select, and ``validate_plan`` re-reject,
+        the exact same candidate on every subsequent identical replan.
         """
         failed_plans = self._failed_plans(slot, index)
+        tried_escapes = self._tried_escapes(slot, index)
         escape = _escape_plan(
             target, target_obj, target_loc, identical_marker_reason,
             failed_plans,
             all_targets=all_targets,
             facts=self.get_facts(slot),
             known_locations=known_loc_arg,
+            tried_escapes=tried_escapes,
         )
         if escape is None:
-            unrecoverable_reason = _escape_no_untried_establisher_reason(target, failed_plans)
+            unrecoverable_reason = _escape_no_untried_establisher_reason(
+                target, failed_plans, tried_escapes=tried_escapes,
+            )
             if unrecoverable_reason is not None:
                 print(f"[plan:{slot}:{index}] {unrecoverable_reason} -> unrecoverable")
             return False, unrecoverable_reason
@@ -1650,6 +1743,12 @@ class GPSRPlanner:
             # An eligible, untried establisher existed (that is what
             # `_escape_plan` returned) — this dead end is "rejected by
             # validation" / "subtree build failed", never unrecoverable.
+            # M2: but it IS now "used" for the NEXT identical replan on
+            # this target — record it so `_escape_plan` never re-offers
+            # (and validate_plan never re-rejects) the same candidate.
+            self._record_tried_escape(
+                slot, index, [s.get("action") for s in escape if isinstance(s, dict)],
+            )
             return False, None
         print(f"[plan:{slot}:{index}] LLM stuck on an identical plan -> "
               f"deterministic escape {[s['action'] for s in escape_guarded]} "
@@ -1919,6 +2018,7 @@ class GPSRPlanner:
                     "ready": False,
                     "error": None,
                     "failed_plans": [],
+                    "tried_escapes": set(),
                 }
         for i, t in enumerate(norm_targets):
             threading.Thread(
