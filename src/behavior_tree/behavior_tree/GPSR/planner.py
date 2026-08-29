@@ -512,20 +512,27 @@ def _canonical_postconditions(target: Optional[Dict[str, Any]]) -> set:
 def _render_contract_block(
     contract: Optional[Dict[str, Any]],
     all_targets: Optional[List[Dict[str, Any]]],
+    include_ancestors: bool = True,
 ) -> str:
     """Render the "fact contract" block for the lower-layer prompt.
 
     Tells the model its OWN target's declared pre/postconditions (from the
-    top-layer split) plus, for every OTHER target in the same command
-    (ancestor or successor), the postconditions that belong to that target
-    and NOT to this one — facts it must never establish itself. See
-    ``task-A-brief.md`` for the "bring me a spam" defect this closes.
+    top-layer split) plus, for every OTHER target in the same command, the
+    postconditions that belong to that target and NOT to this one — facts it
+    must never establish itself. See ``task-A-brief.md`` for the "bring me a
+    spam" defect this closes.
 
-    Note: this is advisory prompt text and intentionally still lists
-    ancestors too (unlike the deterministic ``_drop_foreign_contract_steps``
-    guard, which is restricted to successors — see that function's
-    docstring). An ancestor's fact may legitimately need re-establishing
-    during recovery; the reworded "requires" line below makes that explicit.
+    ``include_ancestors`` mirrors ``_drop_foreign_contract_steps``'s
+    parameter of the same name (D2, Task D brief): on the INITIAL plan
+    (``include_ancestors=True``, the caller's default) ancestors' facts are
+    listed as "owned by" too — the DAG + precondition gate already guarantee
+    those facts hold, so re-planning them is pure waste (the "bring the spam
+    to me" t1 replanning the whole of t0 defect). On a REPLAN
+    (``include_ancestors=False``, passed explicitly by the caller when a
+    failure reason is present) an ancestor's fact may legitimately need
+    re-establishing during recovery (e.g. "precondition unmet: held(spam)"),
+    so only successors are listed — the reworded "requires" line below
+    already makes that conditional-recovery case explicit.
     """
     if not contract:
         return ""
@@ -544,9 +551,15 @@ def _render_contract_block(
         "\"requires\" state.",
     ]
     own_post_canon = _canonical_postconditions(contract)
+    targets = all_targets or []
+    pos = next(
+        (i for i, t in enumerate(targets) if _is_same_target(t, contract)), None,
+    )
     owned_lines = []
-    for other in all_targets or []:
+    for i, other in enumerate(targets):
         if _is_same_target(other, contract):
+            continue
+        if not include_ancestors and pos is not None and i < pos:
             continue
         other_facts = sorted(_canonical_postconditions(other) - own_post_canon)
         if other_facts:
@@ -567,29 +580,41 @@ def _drop_foreign_contract_steps(
     plan: List[Dict[str, Any]],
     target: Optional[Dict[str, Any]],
     all_targets: Optional[List[Dict[str, Any]]],
+    include_ancestors: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Deterministically drop plan steps that establish a LATER target's fact.
+    """Deterministically drop plan steps that establish another target's fact.
 
     A step is dropped iff at least one of its ``established_facts(step)`` is
     (a) NOT a canonical postcondition of ``target`` and (b) IS a canonical
-    postcondition of some target AFTER ``target`` in ``all_targets`` list
+    postcondition of some SUCCESSOR of ``target`` in ``all_targets`` list
     order (``all_targets[pos+1:]``, ``target``'s position found the same way
-    ``_is_same_target`` matches identity elsewhere). Facts are compared in
-    FULL (``at_robot(kitchen)`` vs ``at_robot(balcony)`` never collide) —
-    never by predicate alone. Only ``establishes`` (action_contracts.py)
-    counts; ``self_establishes`` (incidental navigation, e.g. place/deliver
-    reaching their own location) never triggers a drop, since it is not
-    consulted here at all.
+    ``_is_same_target`` matches identity elsewhere) — or, when
+    ``include_ancestors`` is True, also some ANCESTOR (``all_targets[:pos]``).
+    Facts are compared in FULL (``at_robot(kitchen)`` vs ``at_robot(balcony)``
+    never collide) — never by predicate alone. Only ``establishes``
+    (action_contracts.py) counts; ``self_establishes`` (incidental
+    navigation, e.g. place/deliver reaching their own location) never
+    triggers a drop, since it is not consulted here at all.
 
-    Deliberately excludes ANCESTORS (targets before ``target``): on the
-    replan/supervisor recovery paths a plan may need to legitimately
-    RE-establish an ancestor's fact (e.g. re-grasp after the precondition
-    gate rejects with "precondition unmet: held(spam)" because the earlier
-    target was skipped or the object was dropped) — dropping that step would
-    make recovery impossible. Duplicating an ancestor's work when recovery
-    is NOT needed is instead guarded by the prompt ("Prior targets ... do
-    NOT repeat their work", ``_render_contract_block``) and
-    ``validate_plan``'s prior-plan seeding.
+    ``include_ancestors=False`` (the default): a plan may need to
+    legitimately RE-establish an ancestor's fact (e.g. re-grasp after the
+    precondition gate rejects with "precondition unmet: held(spam)" because
+    the earlier target was skipped or the object was dropped) — dropping
+    that step would make recovery impossible. This is what ``plan_target``
+    passes on a REPLAN (``failure_reason`` set) and what
+    ``replace_target_plan`` (supervisor) always passes.
+
+    ``include_ancestors=True``: on the INITIAL plan (D2, Task D brief) the
+    DAG + precondition gate already guarantee an ancestor's postconditions
+    hold before this target runs, so a plan that re-does an ancestor's work
+    (e.g. t1 "bring the spam to me" re-planning t0's whole
+    ``[goto, grasp, deliver]``) is never legitimate recovery — it is pure
+    duplication, and dropping those steps is safe. ``plan_target`` passes
+    this on the initial plan (``failure_reason is None``). Duplicating an
+    ancestor's work when recovery is NOT needed is also guarded by the
+    prompt ("Prior targets ... do NOT repeat their work",
+    ``_render_contract_block``) and ``validate_plan``'s prior-plan seeding —
+    this is the deterministic backstop if the model ignores that.
 
     No LLM call, no cost — this is the deterministic guard that closes the
     "bring me a spam from the laundry_desk" defect (a plan reaching AHEAD
@@ -603,8 +628,11 @@ def _drop_foreign_contract_steps(
         (i for i, t in enumerate(all_targets) if _is_same_target(t, target)), None,
     )
     successor_targets = all_targets[pos + 1:] if pos is not None else []
+    ancestor_targets = (
+        all_targets[:pos] if (include_ancestors and pos is not None) else []
+    )
     foreign_post_canon: set = set()
-    for other in successor_targets:
+    for other in successor_targets + ancestor_targets:
         foreign_post_canon |= _canonical_postconditions(other)
     kept: List[Dict[str, Any]] = []
     dropped: List[str] = []
@@ -692,7 +720,9 @@ def _build_lower_layer_user_prompt(
         f"Full command (the whole instruction this target belongs to):\n{command}\n\n"
         f"Current target to plan:\n{desc}\n\n"
     )
-    contract_block = _render_contract_block(contract, all_targets)
+    contract_block = _render_contract_block(
+        contract, all_targets, include_ancestors=(failure_msg is None),
+    )
     if contract_block:
         body += contract_block + "\n"
     if target_loc:
@@ -1130,7 +1160,9 @@ class GPSRPlanner:
                       f"-> {err}")
                 continue
             cleaned, dropped = _clean_plan(parsed.get("plan", []))
-            cleaned, contract_dropped = _drop_foreign_contract_steps(cleaned, target, all_targets)
+            cleaned, contract_dropped = _drop_foreign_contract_steps(
+                cleaned, target, all_targets, include_ancestors=(failure_reason is None),
+            )
             dropped = list(dropped) + contract_dropped
             raw_actions = [
                 s.get("action") if isinstance(s, dict) else f"<{type(s).__name__}>"
@@ -1344,7 +1376,9 @@ class GPSRPlanner:
         cleaned, _ = _clean_plan(plan)
         targets = self._get_slot_context(slot).get("targets", [])
         target = targets[index] if index < len(targets) else None
-        guarded, contract_dropped = _drop_foreign_contract_steps(cleaned, target, targets)
+        guarded, contract_dropped = _drop_foreign_contract_steps(
+            cleaned, target, targets, include_ancestors=False,
+        )
         if contract_dropped:
             print(f"[replace:{slot}:{index}] contract-boundary dropped {contract_dropped}")
         if cleaned and not guarded:

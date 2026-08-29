@@ -110,16 +110,34 @@ def test_prompt_contract_for_t1_shows_requires_and_owned_by_ancestor():
         line for line in prompt.splitlines() if "must establish" in line
     )
     assert "delivered(spam,me)" in must_establish_line
-    # The prompt's "owned by" block still lists every OTHER target (ancestors
-    # included) -- only the deterministic guard (_drop_foreign_contract_steps)
-    # is restricted to successors (IMPORTANT-1). t0 is an ancestor (already
-    # executed) but its held(spam) postcondition is still NOT one of t1's own
-    # postconditions, so it is flagged "owned by t0" (labelled by id, per
-    # IMPORTANT-2): the prompt still asks the model not to re-emit it, but the
-    # reworded "requires" line (MINOR-1) makes clear this is advisory only --
-    # the model MAY re-establish it if the failure reason says it is unmet.
+    # `failure_msg` is None here -- this is the INITIAL plan (D2, Task D
+    # brief) -- so the "owned by" block lists every OTHER target, ancestors
+    # included: `_build_lower_layer_user_prompt` passes
+    # `include_ancestors=(failure_msg is None)` into `_render_contract_block`.
+    # t0 is an ancestor (already executed) but its held(spam) postcondition
+    # is still NOT one of t1's own postconditions, so it is flagged "owned by
+    # t0" (labelled by id, per IMPORTANT-2): the prompt still asks the model
+    # not to re-emit it, but the reworded "requires" line (MINOR-1) makes
+    # clear this is advisory only -- the model MAY re-establish it if the
+    # failure reason says it is unmet. A REPLAN (failure_msg set) drops this
+    # ancestor line -- see test_prompt_replan_owned_by_block_excludes_ancestors.
     owned_line = next(line for line in prompt.splitlines() if "owned by t0" in line)
     assert "held(spam)" in owned_line
+
+
+def test_prompt_replan_owned_by_block_excludes_ancestors():
+    # D2: on a REPLAN (failure_msg set), _drop_foreign_contract_steps only
+    # treats SUCCESSORS as foreign (an ancestor's fact may legitimately need
+    # re-establishing during recovery) -- the advisory "owned by" prompt
+    # block now follows the same rule, so it must NOT list t0 (t1's only
+    # ancestor) as owning held(spam) here, even though it still would on the
+    # initial plan (see test_prompt_contract_for_t1_shows_requires_and_owned_by_ancestor).
+    prompt = _build_lower_layer_user_prompt(
+        "bring me a spam from the laundry_desk", T1["desc"], "spam", "",
+        [T0], [], "precondition unmet: held(spam) (invalid)",
+        contract=T1, all_targets=[T0, T1],
+    )
+    assert not any("owned by t0" in line for line in prompt.splitlines())
 
 
 def test_prompt_requires_line_is_advisory_not_absolute():
@@ -197,6 +215,26 @@ def test_guard_t1_replan_keeps_grasp_for_ancestors_precondition():
     kept, dropped = _drop_foreign_contract_steps(plan, T1, [T0, T1])
     assert [s["action"] for s in kept] == ["goto", "find_object", "grasp", "deliver"]
     assert dropped == []
+
+
+def test_guard_t1_initial_plan_drops_grasp_for_ancestors_fact_when_asked():
+    # D2 (Task D brief) regression: t1 "Bring the spam to me" (depends_on t0
+    # held(spam)) was planned as [goto, grasp, deliver] -- the whole of t0
+    # again -- and executed twice. `include_ancestors=True` is what
+    # `plan_target` now passes ONLY on the INITIAL plan (no failure_reason):
+    # the DAG + precondition gate already guarantee t0's held(spam) holds, so
+    # a fresh grasp is pure duplication, safe to drop. The default
+    # (`include_ancestors=False`, exercised by
+    # `test_guard_t1_replan_keeps_grasp_for_ancestors_precondition` above)
+    # stays unchanged for the replan/recovery path.
+    plan = [
+        {"action": "goto", "params": {"location": "laundry_desk"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+        {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
+    ]
+    kept, dropped = _drop_foreign_contract_steps(plan, T1, [T0, T1], include_ancestors=True)
+    assert [s["action"] for s in kept] == ["goto", "deliver"]
+    assert dropped == ["contract:grasp->held(spam)"]
 
 
 def test_guard_returns_plan_unchanged_when_no_target_context():
@@ -302,6 +340,90 @@ def test_plan_target_drops_llm_deliver_step_and_stores_reduced_plan(monkeypatch,
     assert [s["action"] for s in p.get_action_plan(0, 0)] == ["goto", "grasp"]
     out = capsys.readouterr().out
     assert "dropped ['contract:deliver->delivered(spam,me)']" in out
+
+
+def test_plan_target_initial_plan_drops_ancestors_grasp_step(monkeypatch, capsys):
+    # D2 integration: t1's INITIAL plan (no failure_reason) re-does t0's
+    # whole [goto, grasp, deliver] -- the ancestor's held(spam) is guaranteed
+    # by the DAG + precondition gate, so `plan_target` now drops the
+    # duplicated grasp on this path (include_ancestors=True only when
+    # failure_reason is None).
+    p = GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {
+        "command": "bring me a spam from the laundry_desk",
+        "targets": [T0, T1],
+    }
+    llm_plan = {"plan": [
+        {"action": "goto", "params": {"location": "laundry_desk"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+        {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
+    ]}
+    monkeypatch.setattr(planner_module, "_call_llm", lambda *a, **k: (llm_plan, None))
+    monkeypatch.setattr(planner_module, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_module, "validate_plan_modifications", lambda *a, **k: (True, ""))
+
+    p.plan_target(
+        0, 1, T1["desc"], command="bring me a spam from the laundry_desk",
+        target_obj="spam", target_loc="", target=T1, all_targets=[T0, T1],
+    )
+
+    assert [s["action"] for s in p.get_action_plan(0, 1)] == ["goto", "deliver"]
+    out = capsys.readouterr().out
+    assert "dropped ['contract:grasp->held(spam)']" in out
+
+
+def test_plan_target_replan_keeps_ancestors_grasp_step(monkeypatch, capsys):
+    # D2: the SAME plan, but as a REPLAN (failure_reason set) -- e.g. the
+    # precondition gate rejected with "precondition unmet: held(spam)"
+    # because t0 was skipped. grasp must be kept for recovery
+    # (include_ancestors=False whenever failure_reason is not None).
+    p = GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {
+        "command": "bring me a spam from the laundry_desk",
+        "targets": [T0, T1],
+    }
+    llm_plan = {"plan": [
+        {"action": "goto", "params": {"location": "laundry_desk"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+        {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
+    ]}
+    monkeypatch.setattr(planner_module, "_call_llm", lambda *a, **k: (llm_plan, None))
+    monkeypatch.setattr(planner_module, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_module, "validate_plan_modifications", lambda *a, **k: (True, ""))
+
+    p.plan_target(
+        0, 1, T1["desc"], command="bring me a spam from the laundry_desk",
+        target_obj="spam", target_loc="", target=T1, all_targets=[T0, T1],
+        failure_reason="precondition unmet: held(spam) (invalid)",
+    )
+
+    assert [s["action"] for s in p.get_action_plan(0, 1)] == ["goto", "grasp", "deliver"]
+
+
+def test_replace_target_plan_keeps_ancestors_grasp_step(monkeypatch, capsys):
+    # D2: the supervisor path (`replace_target_plan`) always passes
+    # `include_ancestors=False` -- it never talks to the LLM and has no
+    # initial-vs-replan distinction of its own, so it must keep behaving
+    # exactly as before (ancestor facts are never dropped).
+    p = GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {
+        "command": "bring me a spam from the laundry_desk",
+        "targets": [T0, T1],
+    }
+    plan = [
+        {"action": "goto", "params": {"location": "laundry_desk"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+        {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
+    ]
+
+    p.replace_target_plan(0, 1, plan, reason="supervisor global replan")
+
+    assert [s["action"] for s in p.get_action_plan(0, 1)] == ["goto", "grasp", "deliver"]
 
 
 def test_replace_target_plan_keeps_original_plan_when_guard_empties_it(monkeypatch, capsys):
