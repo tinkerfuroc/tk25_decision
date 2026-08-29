@@ -2040,6 +2040,13 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._bb.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
         self._bb.register_key(bb_keys.FACTS, access=Access.READ)
         self._bb.register_key(bb_keys.FACTS, access=Access.WRITE)
+        # Telemetry: TASK_ID is set once per executor (read+write); the
+        # current-step keys are read-only for the failed-step event.
+        self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
+        self._bb.register_key(bb_keys.TASK_ID, access=Access.WRITE)
+        self._bb.register_key(bb_keys.CURRENT_ACTION, access=Access.READ)
+        self._bb.register_key(bb_keys.CURRENT_PARAMS, access=Access.READ)
+        self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.READ)
         for _, key in _TARGET_GATE_EVIDENCE_KEYS:
             self._bb.register_key(key, access=Access.WRITE)
         self._bb.register_key(bb_keys.SAVED_TARGETS_PREFIX + str(self._slot),
@@ -2073,6 +2080,33 @@ class DynamicExecutor(py_trees.composites.Composite):
                     self._bb.set(key, None, overwrite=True)
             self._bb.set(bb_keys.DEFERRED_PRECONDITIONS, [], overwrite=True)
         self._active_target_index = index
+        telemetry = get_default_telemetry()
+        if telemetry is not None:
+            try:
+                task_id = self._bb.get(bb_keys.TASK_ID)
+            except KeyError:
+                task_id = None
+            if not task_id:
+                # "executor task N" is 1-based (create_batch_command_flow_new) and
+                # bench/events.py joins it with the /task-N suffix, so N = slot + 1.
+                task_id = telemetry.task_id(self._slot + 1)
+                self._bb.set(bb_keys.TASK_ID, task_id, overwrite=True)
+            try:
+                revision = int(self._bb.get(bb_keys.TARGET_REPLAN_COUNT) or 0) + 1
+            except KeyError:
+                revision = 1
+            get_action_plan = getattr(self._planner, "get_action_plan", None)
+            # Telemetry must never break execution: plan shaping + emit guarded.
+            try:
+                steps = list(get_action_plan(self._slot, index)) if callable(get_action_plan) else []
+                telemetry.emit(
+                    "plan.materialized",
+                    {"slot": self._slot, "target_index": index, "revision": revision,
+                     "steps": [{"action": s.get("action"), "params": s.get("params") or {}} for s in steps]},
+                    task_id=task_id, phase="planning",
+                )
+            except Exception:
+                pass
         get_facts = getattr(self._planner, "get_facts", None)
         if callable(get_facts):
             self._bb.set(
@@ -2317,7 +2351,9 @@ class DynamicExecutor(py_trees.composites.Composite):
                     if terminal == py_trees.common.Status.SUCCESS:
                         self._on_target_success()
                     else:
-                        self._on_target_failure(self._last_child_feedback(node))
+                        reason = self._last_child_feedback(node)
+                        self._emit_failed_step(reason)
+                        self._on_target_failure(reason)
                     if self._state == "DONE":
                         terminal_status = (
                             py_trees.common.Status.SUCCESS
@@ -2341,6 +2377,33 @@ class DynamicExecutor(py_trees.composites.Composite):
             self.status = py_trees.common.Status.RUNNING
             yield self
             return
+
+    def _emit_failed_step(self, reason: str) -> None:
+        """Emit ``step.finished``/failed so the bench sees failed steps too.
+
+        ``BtNode_LogStepResult`` only runs after a successful step; a failed
+        leaf short-circuits the sequence before it. Telemetry must never break
+        execution, so every read/emit here is guarded.
+        """
+        telemetry = get_default_telemetry()
+        if telemetry is None:
+            return
+        try:
+            action = self._bb.get(bb_keys.CURRENT_ACTION)
+            params = self._bb.get(bb_keys.CURRENT_PARAMS) or {}
+            step_index = int(self._bb.get(bb_keys.PLAN_INDEX) or 1) - 1
+            task_id = self._bb.get(bb_keys.TASK_ID)
+        except KeyError:
+            return
+        try:
+            telemetry.emit(
+                "step.finished",
+                {"step_index": step_index, "action": action, "params": params,
+                 "outcome": "failed", "feedback": reason},
+                task_id=task_id, phase="execution",
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _last_child_feedback(node) -> str:
