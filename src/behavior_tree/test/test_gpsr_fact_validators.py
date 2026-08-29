@@ -181,6 +181,20 @@ def test_recognizable_detection_labels_must_match_requested_fact(
         ("bred_jacket", "red", False),
         ("cup", "cup", True),
         ("cup", "bottle", False),
+        # M1/M3 (round-2 review): a `.`-label's class/instance segments are
+        # matched by WHOLE-segment equality only -- never split into
+        # sub-tokens. "kitchen" is a fragment of the CLASS segment
+        # ("kitchen_item"), not the instance ("trash_can") -- INVALID.
+        ("kitchen_item.trash_can", "kitchen", False),
+        # "table" is a fragment of the INSTANCE segment
+        # ("round_white_table") -- also INVALID under the same rule (M3:
+        # gate false positives are the expensive direction; a wrong
+        # object_seen lets a grasp run on the wrong thing).
+        ("kitchen_item.round_white_table", "table", False),
+        # M1: the NEW whole-instance-segment equality rule -- a multi-word
+        # instance name matches its own exact requested string even though
+        # (M3) it is never split into sub-tokens.
+        ("food.pudding_box", "pudding_box", True),
     ],
 )
 def test_label_matches_equality_class_prefix_and_token_rules(label, requested, expected):

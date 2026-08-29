@@ -247,23 +247,34 @@ def _label_tokens(label: str) -> list[str]:
 def _label_matches(label: str, requested: str) -> bool:
     """label/requested already normalised.
 
-    True when equal, when the label's class prefix (text before the first
-    '.') equals requested, or when requested is one of the label's
-    '_'/'.'-separated tokens (person names: 'liam' in 'person_liam').
-
     Detector labels follow two grammars: `<class>.<instance>` (category-prompted
     object detection, e.g. "kitchen_item.round_white_table") and `<class> <name>`
-    (person specialist, e.g. "person_liam" after normalization). The token rule
-    is deliberately conservative: `requested` must be a WHOLE token -- never a
-    substring -- so "red" matches "red_jacket" but not "bred_jacket". A
-    multi-word `requested` (itself containing '_') only matches by equality or
-    class-prefix; its own tokens are never split against the label's tokens.
+    (person specialist, e.g. "person_liam" after normalization). The two
+    grammars are matched differently (M1/M3, round-2 review):
+
+    - `.`-label (category-prompted object detection): whole-label equality,
+      whole-CLASS-segment equality ("drink" == "drink.coke"'s class), or
+      (M1) whole-INSTANCE-segment equality ("pudding_box" ==
+      "food.pudding_box"'s instance) -- and nothing else. Neither segment is
+      ever split into sub-tokens (M3): "kitchen" must not match
+      "kitchen_item.trash_can" (a class-segment fragment) and "table" must
+      not match "kitchen_item.round_white_table" (an instance-segment
+      fragment) -- gate false positives are the expensive direction here (a
+      wrong object_seen lets a grasp run on the wrong thing).
+    - `.`-less label (person specialist grammar, e.g. "person_liam" /
+      "red_jacket"): whole-label equality, or `requested` as one whole
+      '_'-separated token of the label ("liam" in "person_liam"). The token
+      rule is deliberately conservative: `requested` must be a WHOLE token
+      -- never a substring -- so "red" matches "red_jacket" but not
+      "bred_jacket". A multi-word `requested` (itself containing '_') only
+      matches by equality; its own tokens are never split against the
+      label's tokens.
     """
     if label == requested:
         return True
-    class_prefix = label.split(".", 1)[0]
-    if class_prefix == requested:
-        return True
+    class_prefix, sep, instance = label.partition(".")
+    if sep:
+        return class_prefix == requested or instance == requested
     if "_" not in requested and requested in _label_tokens(label):
         return True
     return False
