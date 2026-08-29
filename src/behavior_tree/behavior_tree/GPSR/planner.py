@@ -228,9 +228,11 @@ LOWER_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
       person described by an attribute (not just a name) is detected.
     - "person-specialist" (action find_person): params
       {"name": "<named person>"} — pin the generalist scan to a named person.
-    - "vlm-template" (actions count / vlm_fallback): params
+    - "vlm-template" (action count ONLY): params
       {"question_template": "<must contain the {value} placeholder>"} — swap
-      the VLM question.
+      the VLM question the count fallback asks. For vlm_fallback, the question
+      is set directly via vlm_fallback(question="...") — no modification
+      needed or accepted.
     - "announce-text" (actions whose tree has a literal-message announce):
       params {"text": "<spoken text>"} — change a spoken announcement.
     - "pan-tilt-sweep" (actions find_person / find_object / describe_person):

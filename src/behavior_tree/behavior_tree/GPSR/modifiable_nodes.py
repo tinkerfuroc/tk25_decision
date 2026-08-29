@@ -40,6 +40,19 @@ class ModificationValidationError(ValidationError):
     """A modification directive failed validation and must be rejected."""
 
 
+@dataclass(frozen=True)
+class ModParamSpec(ParamSpec):
+    """``ParamSpec`` plus a human-readable ``requirement`` for rejection text.
+
+    ``gpsr_trace.ir.ParamSpec`` stays untouched (other callers depend on its
+    exact contract) — this subclass only ADDS the ``requirement`` field, so a
+    plain ``ParamSpec`` (no requirement text) still works anywhere a
+    ``ModParamSpec`` is accepted.
+    """
+
+    requirement: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Template parameter schemas (closed, JSON-safe types)
 # ---------------------------------------------------------------------------
@@ -60,8 +73,9 @@ def _str_list(value: Any) -> bool:
 
 #: Common float-list schemas reused by several templates.
 FLOAT_LIST = ParamSpec((list, tuple))
-TILT_LIST = ParamSpec((list, tuple), validator=_str_list)
-PAN_LIST = ParamSpec((list, tuple), validator=_str_list)
+_ANGLE_LIST_REQUIREMENT = "must be a list/tuple of numbers (degrees)"
+TILT_LIST = ModParamSpec((list, tuple), validator=_str_list, requirement=_ANGLE_LIST_REQUIREMENT)
+PAN_LIST = ModParamSpec((list, tuple), validator=_str_list, requirement=_ANGLE_LIST_REQUIREMENT)
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +111,10 @@ class TemplateSpec:
                     f"template {self.name!r}: missing required param {name!r}"
                 )
             if name in params and not spec.accepts(params[name]):
+                requirement = getattr(spec, "requirement", "") or ""
+                suffix = f": {requirement}" if requirement else " by schema"
                 raise ModificationValidationError(
-                    f"template {self.name!r}: param {name!r} rejected by schema"
+                    f"template {self.name!r}: param {name!r} rejected{suffix}"
                 )
 
 
@@ -110,13 +126,17 @@ Handler = Callable[[Any, str, Mapping[str, Any], str], Any]
 #   (subtree_root, action, params, target_node_id) -> new subtree root
 
 
-def _nested_role_for(action: str, target_id: str) -> str | None:
-    """Map a serialized node id of ``action``'s tree to a role, if any."""
+def _nested_roles_for(action: str, target_id: str) -> tuple[str, ...]:
+    """Every role a serialized node id of ``action``'s tree carries.
+
+    A single node can carry more than one role (e.g. ``count``'s VLM node is
+    both a generic ``vlm_query`` and the more specific ``count_vlm_branch``),
+    so this returns ALL matches rather than the first one — a template whose
+    ``applies_to`` names only the specific role must still resolve against
+    that node.
+    """
     roles = small_trees.get_small_tree_roles()
-    for role, ids in roles.items():
-        if target_id in ids:
-            return role
-    return None
+    return tuple(role for role, ids in roles.items() if target_id in ids)
 
 
 def _walk_to_node(root: Any, action: str, target_id: str) -> Any | None:
@@ -271,8 +291,14 @@ TEMPLATES: dict[str, TemplateSpec] = {
         name="attribute-person-specialist",
         applies_to=("find_person_sweep",),
         params={
-            "gate": ParamSpec(str, required=True, validator=_nonempty_str),
-            "prompt": ParamSpec(str, required=False, validator=_nonempty_str),
+            "gate": ModParamSpec(
+                str, required=True, validator=_nonempty_str,
+                requirement="must be a non-empty string",
+            ),
+            "prompt": ModParamSpec(
+                str, required=False, validator=_nonempty_str,
+                requirement="must be a non-empty string",
+            ),
             "pan_deg": PAN_LIST,
             "tilt_deg": TILT_LIST,
         },
@@ -283,7 +309,10 @@ TEMPLATES: dict[str, TemplateSpec] = {
         name="person-specialist",
         applies_to=("find_person_sweep",),
         params={
-            "name": ParamSpec(str, required=True, validator=_nonempty_str),
+            "name": ModParamSpec(
+                str, required=True, validator=_nonempty_str,
+                requirement="must be a non-empty string",
+            ),
             "pan_deg": PAN_LIST,
             "tilt_deg": TILT_LIST,
         },
@@ -291,14 +320,23 @@ TEMPLATES: dict[str, TemplateSpec] = {
     ),
     "vlm-template": TemplateSpec(
         name="vlm-template",
-        applies_to=("vlm_query", "count_vlm_branch"),
-        params={"question_template": ParamSpec(str, required=True, validator=_vlm_template_str)},
-        description="Swap the VLM question template on count/vlm_fallback query nodes.",
+        applies_to=("count_vlm_branch",),
+        params={"question_template": ModParamSpec(
+            str, required=True, validator=_vlm_template_str,
+            requirement=(
+                "must be a non-empty string containing the literal {value} "
+                'placeholder, e.g. "How many {value} are visible?"'
+            ),
+        )},
+        description="Swap the VLM question template on the count query node.",
     ),
     "announce-text": TemplateSpec(
         name="announce-text",
         applies_to=("announce_leaf",),
-        params={"text": ParamSpec(str, required=True, validator=_nonempty_str)},
+        params={"text": ModParamSpec(
+            str, required=True, validator=_nonempty_str,
+            requirement="must be a non-empty string",
+        )},
         description="Change the spoken text of an announce leaf.",
     ),
     "pan-tilt-sweep": TemplateSpec(
@@ -384,11 +422,11 @@ def validate_modifications(
                 f"modifications[{i}]: target_node_id {target!r} not found in "
                 f"{action} tree (serialized ids: {sorted(node_ids)[:6]}...)"
             )
-        role = _nested_role_for(action, target)
-        if role is None or role not in spec.applies_to:
+        roles = _nested_roles_for(action, target)
+        if not any(role in spec.applies_to for role in roles):
             return False, (
                 f"modifications[{i}]: template {template!r} does not apply to "
-                f"node {target!r} (role {role!r})"
+                f"node {target!r} (roles {roles!r})"
             )
         params = mod.get("params", {})
         if not isinstance(params, Mapping):

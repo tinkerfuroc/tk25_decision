@@ -105,6 +105,40 @@ def test_validate_rejects_bad_param_schema():
         "reason": "x",
     }])
     assert not ok and "rejected" in reason
+    # the rejection is actionable: it names the requirement, not just "schema"
+    assert "{value}" in reason
+
+
+# ---------------------------------------------------------------------------
+# vlm-template scope: count only, not vlm_fallback (Task B §1)
+# ---------------------------------------------------------------------------
+
+def test_vlm_template_applies_only_to_count():
+    assert TEMPLATES["vlm-template"].applies_to == ("count_vlm_branch",)
+
+
+def test_modification_targets_blurb_lists_no_vlm_fallback_id():
+    # Other templates (e.g. announce-text) may legitimately target a
+    # vlm_fallback node (it has an announce leaf) — only vlm-template's own
+    # line must never offer a vlm_fallback id.
+    from behavior_tree.GPSR.planner import _modification_targets_blurb
+    blurb = _modification_targets_blurb()
+    vlm_template_lines = [
+        line for line in blurb.splitlines() if line.startswith("- vlm-template:")
+    ]
+    assert vlm_template_lines, "vlm-template line missing from blurb"
+    assert "small/vlm_fallback/" not in vlm_template_lines[0]
+
+
+def test_vlm_template_rejected_on_vlm_fallback_query_node():
+    tree = small_trees.create_vlm_fallback()
+    vlm_id = _find_node_id(tree, "small/vlm_fallback", node_type="BtNode_VLMQuery")
+    ok, reason = _validate(tree, "vlm_fallback", [{
+        "template": "vlm-template",
+        "target_node_id": vlm_id,
+        "params": {"question_template": "How many {value}?"},
+    }])
+    assert not ok and "does not apply" in reason
 
 
 def test_validate_rejects_non_list_and_empty_list():
