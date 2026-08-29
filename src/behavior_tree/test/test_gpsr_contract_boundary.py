@@ -20,6 +20,7 @@ from behavior_tree.GPSR import planner as planner_module
 from behavior_tree.GPSR.planner import (
     GPSRPlanner,
     _build_lower_layer_user_prompt,
+    _drop_dangling_goto_before_self_nav,
     _drop_foreign_contract_steps,
 )
 
@@ -428,6 +429,54 @@ def test_guard_only_establishes_counts_not_self_establishes():
 
 
 # ---------------------------------------------------------------------------
+# 2b. Deterministic cleanup: _drop_dangling_goto_before_self_nav (I-4).
+# ---------------------------------------------------------------------------
+
+def test_dangling_goto_dropped_when_immediately_before_self_navigator():
+    # I-4 regression (run 000's t1 shape): the guard reduces
+    # [goto, grasp, deliver] to [goto, deliver] (grasp establishes an
+    # ancestor's held(spam)) -- but validate_plan's "no goto immediately
+    # before a self-navigating action" rule then ALWAYS rejects [goto,
+    # deliver] outright, burning a full LLM round-trip on the most common
+    # template. This cleanup drops the now-dangling goto deterministically.
+    plan = [
+        {"action": "goto", "params": {"location": "laundry_desk"}},
+        {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
+    ]
+    kept, dropped = _drop_dangling_goto_before_self_nav(plan)
+    assert kept == [{"action": "deliver", "params": {"object": "spam", "recipient": "me"}}]
+    assert dropped == ["contract:goto->dangling"]
+
+
+def test_dangling_goto_cleanup_is_a_noop_when_goto_not_immediately_before_self_nav():
+    plan = [
+        {"action": "goto", "params": {"location": "laundry_desk"}},
+        {"action": "find_object", "params": {"object": "spam"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+        {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
+    ]
+    kept, dropped = _drop_dangling_goto_before_self_nav(plan)
+    assert kept == plan
+    assert dropped == []
+
+
+def test_dangling_goto_cleanup_keeps_goto_before_a_non_self_navigator():
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "find_person", "params": {"person": "sarah"}},
+    ]
+    kept, dropped = _drop_dangling_goto_before_self_nav(plan)
+    assert kept == plan
+    assert dropped == []
+
+
+def test_dangling_goto_cleanup_empty_plan_is_a_noop():
+    kept, dropped = _drop_dangling_goto_before_self_nav([])
+    assert kept == []
+    assert dropped == []
+
+
+# ---------------------------------------------------------------------------
 # 3. Integration: plan_target drops the LLM's foreign-contract step and
 #    prints/traces it as `dropped`.
 # ---------------------------------------------------------------------------
@@ -464,14 +513,20 @@ def test_plan_target_drops_llm_deliver_step_and_stores_reduced_plan(monkeypatch,
 
 
 def test_plan_target_initial_plan_drops_ancestors_grasp_step(monkeypatch, capsys):
-    # D2 integration: t1's INITIAL plan (no failure_reason) re-does t0's
-    # whole [goto, grasp, deliver] -- the ancestor's held(spam) is guaranteed
-    # by the DAG + precondition gate, so `plan_target` now drops the
-    # duplicated grasp on this path (include_ancestors=True only when
-    # failure_reason is None).
+    # D2/I-4 integration (round-2 review, run 000's t1 shape): t1's INITIAL
+    # plan (no failure_reason) re-does t0's whole [goto, grasp, deliver] --
+    # the ancestor's held(spam) is guaranteed by the DAG + precondition
+    # gate, so `plan_target` drops the duplicated grasp on this path
+    # (include_ancestors=True only when failure_reason is None), leaving
+    # [goto, deliver]. UN-STUBBED validate_plan (I-4) then always rejects
+    # [goto, deliver] outright (goto immediately before a self-navigating
+    # deliver is redundant) -- so plan_target's dangling-goto cleanup must
+    # ALSO drop that now-pointless goto, leaving a plan a real
+    # validate_plan actually accepts: ["deliver"].
     p = GPSRPlanner(max_attempts=2)
     monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
     monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    monkeypatch.setattr(planner_module, "KNOWN_LOCATIONS", {"laundry_desk": object()})
     p._slot_context[0] = {
         "command": "bring me a spam from the laundry_desk",
         "targets": [T0, T1],
@@ -482,7 +537,6 @@ def test_plan_target_initial_plan_drops_ancestors_grasp_step(monkeypatch, capsys
         {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
     ]}
     monkeypatch.setattr(planner_module, "_call_llm", lambda *a, **k: (llm_plan, None))
-    monkeypatch.setattr(planner_module, "validate_plan", lambda *a, **k: (True, ""))
     monkeypatch.setattr(planner_module, "validate_plan_modifications", lambda *a, **k: (True, ""))
 
     p.plan_target(
@@ -490,9 +544,10 @@ def test_plan_target_initial_plan_drops_ancestors_grasp_step(monkeypatch, capsys
         target_obj="spam", target_loc="", target=T1, all_targets=[T0, T1],
     )
 
-    assert [s["action"] for s in p.get_action_plan(0, 1)] == ["goto", "deliver"]
+    assert [s["action"] for s in p.get_action_plan(0, 1)] == ["deliver"]
     out = capsys.readouterr().out
-    assert "dropped ['contract:grasp->held(spam)']" in out
+    assert "contract:grasp->held(spam)" in out
+    assert "contract:goto->dangling" in out
 
 
 def test_plan_target_replan_keeps_ancestors_grasp_step(monkeypatch, capsys):

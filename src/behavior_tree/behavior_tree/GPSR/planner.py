@@ -66,6 +66,7 @@ from .action_contracts import (
     established_facts,
     render_self_satisfied_rule,
     self_established_facts,
+    self_navigating_destinations,
 )
 from .orchestrator import (
     SYSTEM_PROMPT,
@@ -992,6 +993,42 @@ def _drop_foreign_contract_steps(
     return kept, dropped
 
 
+def _drop_dangling_goto_before_self_nav(
+    plan: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Drop a ``goto`` step immediately followed by a self-navigating step.
+
+    I-4 (round-2 review): ``_drop_foreign_contract_steps`` can reduce a plan
+    like ``[goto, grasp, deliver]`` (the ``grasp`` established an ancestor's
+    already-guaranteed ``held(object)``) down to ``[goto, deliver]`` — but
+    ``planner_validators.validate_plan``'s "no goto immediately before a
+    self-navigating action" rule (``self_navigating_destinations()`` —
+    ``deliver``/``place``/``search_object``/... never hardcoded) then ALWAYS
+    rejects that plan outright, burning a full LLM round-trip on the most
+    common template (fetch-and-deliver). This mirrors that same rule
+    deterministically, no LLM call, so the guard-reduced plan is repaired in
+    place instead of handed to the model to discover is broken.
+
+    Only ever removes a ``goto`` that directly precedes (in the ALREADY
+    guard-reduced plan) a self-navigating step — a ``goto`` anywhere else is
+    untouched, same as the validator it mirrors.
+    """
+    self_nav_dests = self_navigating_destinations()
+    kept: List[Dict[str, Any]] = []
+    dropped: List[str] = []
+    steps = list(plan or [])
+    for i, step in enumerate(steps):
+        nxt = steps[i + 1] if i + 1 < len(steps) else None
+        if (
+            isinstance(step, dict) and step.get("action") == "goto"
+            and isinstance(nxt, dict) and nxt.get("action") in self_nav_dests
+        ):
+            dropped.append("contract:goto->dangling")
+            continue
+        kept.append(step)
+    return kept, dropped
+
+
 def _contract_drop_note(
     dropped: List[str],
     target: Optional[Dict[str, Any]],
@@ -1523,7 +1560,14 @@ class GPSRPlanner:
             cleaned, contract_dropped = _drop_foreign_contract_steps(
                 cleaned, target, all_targets, include_ancestors=not failure_reason,
             )
-            dropped = list(dropped) + contract_dropped
+            # I-4 (round-2 review): repair a plan the guard just reduced to
+            # e.g. [goto, deliver] -- validate_plan's goto-before-self-nav
+            # rule would otherwise always reject it, burning an LLM
+            # round-trip. _contract_drop_note (below) only walks
+            # `contract_dropped`, not this cleanup's entries -- a dangling
+            # goto has no "owning" sibling target to name.
+            cleaned, dangling_dropped = _drop_dangling_goto_before_self_nav(cleaned)
+            dropped = list(dropped) + contract_dropped + dangling_dropped
             raw_actions = [
                 s.get("action") if isinstance(s, dict) else f"<{type(s).__name__}>"
                 for s in (parsed.get("plan", []) or [])
@@ -1610,6 +1654,11 @@ class GPSRPlanner:
                     escape_guarded, escape_dropped = _drop_foreign_contract_steps(
                         escape, target, all_targets, include_ancestors=not failure_reason,
                     )
+                    # I-4: same dangling-goto repair as the main attempt path.
+                    escape_guarded, escape_dangling_dropped = (
+                        _drop_dangling_goto_before_self_nav(escape_guarded)
+                    )
+                    escape_dropped = list(escape_dropped) + escape_dangling_dropped
                     escape_ok, escape_reason = validate_plan(
                         escape_guarded, desc or "", known_actions,
                         known_locations=known_loc_arg,
