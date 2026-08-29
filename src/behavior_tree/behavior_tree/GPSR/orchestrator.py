@@ -296,11 +296,14 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         starts next to them. If the command says "follow X to the Y" (or
         "follow them to the Y"), emit ``follow(person=X)`` THEN
         ``goto(location=Y)`` so the destination is reached when the person stops.
+        ONLY when the command explicitly says follow / accompany / come with;
+        "find/locate/meet <person> in <room>" is goto + find_person, never follow.
     - guide(location: str)
         Lead a person to ``location``. MUST be preceded by ``find_person``
         then ``approach_person`` in the same plan (locate the person and walk
         to them before leading). Never use ``guide`` to express "go
-        yourself" — that is ``goto``.
+        yourself" — that is ``goto``. ONLY when the command says guide/lead/take
+        <person> to <location>.
     - grasp(object: str, from_shelf?: bool, from_cabinet?: bool, from_coat_rack?: bool)
         Pick up an object from the surface in front of the robot. ``grasp`` moves
         the arm to the table-grasp scan pose, detects the object on the table
