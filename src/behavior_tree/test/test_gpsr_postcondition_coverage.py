@@ -16,7 +16,7 @@ import py_trees
 import pytest
 
 from behavior_tree.GPSR import planner as planner_module
-from behavior_tree.GPSR.planner_validators import validate_plan, _uncovered_postcondition_reason
+from behavior_tree.GPSR.planner_validators import validate_plan, uncovered_postcondition_reason
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +61,64 @@ def test_announce_covers_answered_postcondition():
         # reason (no goto(start_position) before the final announce).
         plan, "what day is it", {"goto", "grasp", "announce"},
         postconditions=["answered(what day is today)"],
+    )
+    assert ok, reason
+
+
+def test_llm_fallback_alone_covers_answered_postcondition():
+    # H1 (round-2 fix): the sim defect this brief is fixing -- "tell me what
+    # day it is" plans llm_fallback(question=...) and the prompt explicitly
+    # says do NOT add an announce after it. Bare llm_fallback must cover
+    # answered(...) on its own now.
+    plan = [{"action": "llm_fallback", "params": {"question": "what day is today"}}]
+    ok, reason = validate_plan(
+        plan, "tell me what day it is", {"llm_fallback"},
+        postconditions=["answered(what day is today)"],
+    )
+    assert ok, reason
+
+
+def test_goto_vlm_fallback_covers_answered_postcondition():
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "vlm_fallback", "params": {"question": "what colour is the mug"}},
+    ]
+    ok, reason = validate_plan(
+        plan, "what colour is the mug", {"goto", "vlm_fallback"},
+        postconditions=["answered(what colour is the mug)"],
+    )
+    assert ok, reason
+
+
+def test_goto_count_goto_announce_covers_answered_postcondition():
+    # The t1-42 observed shape: answered(how many drinks there are on the
+    # kitchen_table) planned as [goto, count, goto(start_position), announce()].
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen_table"}},
+        {"action": "count", "params": {"object": "drinks", "location": "kitchen_table"}},
+        {"action": "goto", "params": {"location": "start_position"}},
+        {"action": "announce", "params": {}},
+    ]
+    ok, reason = validate_plan(
+        plan, "how many drinks are there on the kitchen table",
+        {"goto", "count", "announce"},
+        postconditions=["answered(how many drinks there are on the kitchen table)"],
+    )
+    assert ok, reason
+
+
+def test_llm_fallback_added_to_bare_announce_whitelist():
+    # H1: llm_fallback joins vlm_fallback/count/describe_person/ask_person as
+    # a legitimate predecessor for a text-less announce (structural rule,
+    # independent of postconditions).
+    plan = [
+        {"action": "llm_fallback", "params": {"question": "what day is today"}},
+        {"action": "goto", "params": {"location": "start_position"}},
+        {"action": "announce", "params": {}},
+    ]
+    ok, reason = validate_plan(
+        plan, "please tell me what day it is",
+        {"llm_fallback", "goto", "announce"},
     )
     assert ok, reason
 
@@ -112,7 +170,7 @@ def test_postcondition_check_runs_after_earlier_more_specific_rejections():
 
 
 def test_uncovered_reason_lists_every_registry_establisher():
-    reason = _uncovered_postcondition_reason(
+    reason = uncovered_postcondition_reason(
         [{"action": "goto", "params": {"location": "kitchen"}}],
         ["object_seen(coke)"],
     )

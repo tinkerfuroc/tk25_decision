@@ -42,6 +42,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from .action_contracts import ACTION_CONTRACTS, self_established_facts, self_navigating_destinations
 from .validators import canonical_fact, parse_fact
 
+__all__ = ["validate_dag", "validate_plan", "uncovered_postcondition_reason"]
+
 
 # Match anything that looks like an unresolved template token: <day>, <country>,
 # <name>, <foo bar>, etc. Whitelist a few legitimate uses such as <unknown> if
@@ -226,10 +228,29 @@ def _same_object(a: str, b: str) -> bool:
     return False
 
 
-def _uncovered_postcondition_reason(
+def _established_predicates(steps: Iterable[Dict[str, Any]]) -> set:
+    """Predicate names any step in ``steps`` establishes, per its contract.
+
+    Shared by ``uncovered_postcondition_reason`` (below) and
+    ``planner.replace_target_plan`` (which subtracts predicates already
+    established by ``completed_steps`` before re-checking coverage on the
+    REMAINING plan) — both need "what does this list of steps establish"
+    computed identically.
+    """
+    predicates: set = set()
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        contract = ACTION_CONTRACTS.get(step.get("action"))
+        if contract is not None:
+            predicates.update(t.split("(", 1)[0] for t in contract.establishes)
+    return predicates
+
+
+def uncovered_postcondition_reason(
     plan: List[Dict[str, Any]], postconditions: Iterable[str],
 ) -> Optional[str]:
-    """Rejection message when ``plan`` establishes none of ``postconditions``.
+    """Rejection message for the first of ``postconditions`` the plan leaves uncovered.
 
     Predicate-level match only: a step's action counts as an establisher of a
     postcondition's predicate if that predicate appears among
@@ -241,24 +262,25 @@ def _uncovered_postcondition_reason(
     ``at_robot`` is special-cased: any step that self-navigates to *some*
     location (``goto``/``search_object``/``place``/``deliver`` — anything
     with ``at_robot`` in ``self_establishes``, per ``self_established_facts``)
-    satisfies it, without needing an exact destination match here.
+    satisfies it, without needing an exact destination match here. ``goto``
+    already appears in ``established_predicates`` via its own
+    ``establishes=("at_robot(location)",)``, so this special case only
+    changes the outcome for the OTHER self-navigators — search_object/place/
+    deliver — whose ``establishes`` tuple does not otherwise name
+    ``at_robot``.
 
     Returns ``None`` when every parsable postcondition is covered (or there
-    are none); otherwise the first uncovered postcondition's rejection
-    message, naming every registry establisher for its predicate.
+    are none); otherwise the FIRST uncovered postcondition's rejection
+    message (checked in ``postconditions`` order — it does not wait to
+    collect every miss), naming every registry establisher for its predicate.
     """
-    established_predicates: set = set()
-    self_at_robot = False
-    for step in plan:
-        if not isinstance(step, dict):
-            continue
-        contract = ACTION_CONTRACTS.get(step.get("action"))
-        if contract is not None:
-            established_predicates.update(
-                t.split("(", 1)[0] for t in contract.establishes
-            )
-        if any(f.startswith("at_robot(") for f in self_established_facts(step)):
-            self_at_robot = True
+    established = _established_predicates(plan)
+    self_at_robot = any(
+        f.startswith("at_robot(")
+        for step in plan
+        if isinstance(step, dict)
+        for f in self_established_facts(step)
+    )
 
     for condition in postconditions or []:
         fact, _error = parse_fact(condition)
@@ -266,7 +288,7 @@ def _uncovered_postcondition_reason(
             continue
         if fact.predicate == "at_robot" and self_at_robot:
             continue
-        if fact.predicate in established_predicates:
+        if fact.predicate in established:
             continue
         establishers = [
             name for name, c in ACTION_CONTRACTS.items()
@@ -302,7 +324,7 @@ def validate_plan(
     list (``target["postconditions"]``). When given, every parsable
     postcondition must be named by at least one step's contract
     (``ACTION_CONTRACTS[action].establishes``) — see
-    ``_uncovered_postcondition_reason``. This is the LAST check applied, so
+    ``uncovered_postcondition_reason``. This is the LAST check applied, so
     it never pre-empts an earlier, more specific rejection.
 
     Returns (True, None) if the plan passes, (False, reason) otherwise.
@@ -320,6 +342,7 @@ def validate_plan(
     saw_find_person = False
     saw_ask_person = False
     saw_vlm_fallback = False
+    saw_llm_fallback = False
     saw_count = False
     saw_describe_person = False
     saw_goto_destinations: set = set()
@@ -338,6 +361,8 @@ def validate_plan(
                 saw_ask_person = True
             elif action == "vlm_fallback":
                 saw_vlm_fallback = True
+            elif action == "llm_fallback":
+                saw_llm_fallback = True
             elif action == "count":
                 saw_count = True
             elif action == "describe_person":
@@ -367,23 +392,25 @@ def validate_plan(
             saw_ask_person = True
         if action == "vlm_fallback":
             saw_vlm_fallback = True
+        if action == "llm_fallback":
+            saw_llm_fallback = True
         if action == "count":
             saw_count = True
         if action == "describe_person":
             saw_describe_person = True
         # Rule: a text-less ``announce`` reports the latest gathered result from
         # the REPORT_INFO buffer, so it needs a prior result-producing action
-        # (count / describe_person / ask_person / vlm_fallback). A bare announce
-        # with nothing gathered would speak an empty/stale buffer.
+        # (count / describe_person / ask_person / vlm_fallback / llm_fallback).
+        # A bare announce with nothing gathered would speak an empty/stale buffer.
         if action == "announce" and not (params.get("text") or params.get("message")):
             if not (saw_count or saw_describe_person or saw_ask_person
-                    or saw_vlm_fallback):
+                    or saw_vlm_fallback or saw_llm_fallback):
                 return False, (
                     f"step {i}: announce() with no text reports the last gathered "
-                    "result, but no count/describe_person/ask_person/vlm_fallback "
-                    "ran before it. Either give announce a literal text=..., or do "
-                    "the gathering action first (then goto start_position, then "
-                    "the text-less announce)."
+                    "result, but no count/describe_person/ask_person/vlm_fallback/"
+                    "llm_fallback ran before it. Either give announce a literal "
+                    "text=..., or do the gathering action first (then goto "
+                    "start_position, then the text-less announce)."
                 )
         if action == "record_position":
             lab = params.get("label")
@@ -565,7 +592,7 @@ def validate_plan(
     # LAST so every earlier, more specific rejection keeps precedence over
     # this coarser one.
     if postconditions:
-        reason = _uncovered_postcondition_reason(plan, postconditions)
+        reason = uncovered_postcondition_reason(plan, postconditions)
         if reason is not None:
             return False, reason
 

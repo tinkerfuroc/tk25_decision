@@ -287,3 +287,95 @@ def test_plan_target_exhaustion_stores_ready_non_identical_acknowledgement(monke
     plan = p.get_action_plan(0, 0)
     assert plan[0]["action"] == "announce"
     assert plan[0]["params"]["acknowledgement"] is True
+
+
+# ---------------------------------------------------------------------------
+# M2 (round-2 fix) — replace_target_plan tags installed announce+text steps
+# acknowledgement=True (supervisor recovery is never an answer), and the flag
+# must survive materialise_params / _canonical_plan / group_modifications_by_step.
+# ---------------------------------------------------------------------------
+
+def test_replace_target_plan_tags_installed_announce_with_text_as_acknowledgement(monkeypatch):
+    import py_trees
+    from behavior_tree.GPSR import planner as planner_mod
+
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    target = {
+        "id": "t0", "desc": "tell me what day it is", "object": "", "location": "",
+        "depends_on": [], "preconditions": [], "postconditions": ["answered(what day is today)"],
+    }
+    p._slot_context[0] = {"command": "tell me what day it is", "targets": [target]}
+    plan = [{"action": "announce", "params": {"text": "I could not find the answer"}}]
+
+    p.replace_target_plan(0, 0, plan, reason="supervisor global replan")
+
+    installed = p.get_action_plan(0, 0)
+    assert installed[0]["params"]["acknowledgement"] is True
+    # The caller's own plan list/dict must not be mutated in place.
+    assert "acknowledgement" not in plan[0]["params"]
+
+
+def test_replace_target_plan_leaves_textless_announce_untagged(monkeypatch):
+    import py_trees
+    from behavior_tree.GPSR import planner as planner_mod
+
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    target = {
+        "id": "t0", "desc": "tell me how many drinks", "object": "", "location": "",
+        "depends_on": [], "preconditions": [], "postconditions": ["answered(how many drinks)"],
+    }
+    p._slot_context[0] = {"command": "tell me how many drinks", "targets": [target]}
+    plan = [
+        {"action": "count", "params": {"object": "drinks"}},
+        {"action": "announce", "params": {}},
+    ]
+
+    p.replace_target_plan(0, 0, plan, reason="supervisor global replan")
+
+    installed = p.get_action_plan(0, 0)
+    assert "acknowledgement" not in installed[1]["params"]
+
+
+def test_acknowledgement_flag_survives_materialise_params():
+    # materialise_params only reads text/message for announce -- the extra
+    # acknowledgement key must not raise or change ANNOUNCE_TEXT resolution.
+    import py_trees
+    from py_trees.common import Access
+    from behavior_tree.GPSR.orchestrator import materialise_params
+    from behavior_tree.GPSR.small_trees import bb_keys
+
+    py_trees.blackboard.Blackboard.clear()
+    bb = py_trees.blackboard.Client(name="t")
+    bb.register_key(bb_keys.ANNOUNCE_TEXT, access=Access.WRITE)
+    bb.register_key(bb_keys.ANNOUNCE_TEXT, access=Access.READ)
+    bb.register_key(bb_keys.REPORT_INFO, access=Access.READ)
+
+    materialise_params(bb, "announce", {"text": "sorry about that", "acknowledgement": True})
+    assert bb.get(bb_keys.ANNOUNCE_TEXT) == "sorry about that"
+    py_trees.blackboard.Blackboard.clear()
+
+
+def test_acknowledgement_flag_included_in_canonical_plan_identity():
+    # _canonical_plan (planner.py) is only used for identical-plan detection
+    # -- the flag being part of identity is fine (and expected): two plans
+    # differing ONLY by the flag must not be considered identical.
+    from behavior_tree.GPSR.planner import _canonical_plan
+
+    a = [{"action": "announce", "params": {"text": "hi"}}]
+    b = [{"action": "announce", "params": {"text": "hi", "acknowledgement": True}}]
+    assert _canonical_plan(a) != _canonical_plan(b)
+
+
+def test_acknowledgement_flag_does_not_break_modification_grouping():
+    # group_modifications_by_step matches by step_index (or unique action
+    # name) only -- it never inspects params -- so the flag must not stop a
+    # modification from being assigned to its step.
+    from behavior_tree.GPSR.modifiable_nodes import group_modifications_by_step
+
+    plan = [{"action": "announce", "params": {"text": "sorry", "acknowledgement": True}}]
+    mods = [{"step_index": 0, "field": "text", "value": "sorry again", "reason": "clarify"}]
+    grouped = group_modifications_by_step(plan, mods)
+    assert 0 in grouped
+    assert grouped[0][0]["value"] == "sorry again"

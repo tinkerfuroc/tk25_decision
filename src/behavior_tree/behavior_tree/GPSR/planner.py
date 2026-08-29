@@ -49,7 +49,9 @@ from .modifiable_nodes import (
     group_modifications_by_step,
     validate_plan_modifications,
 )
-from .planner_validators import validate_plan, validate_dag, _uncovered_postcondition_reason
+from .planner_validators import (
+    validate_plan, validate_dag, uncovered_postcondition_reason, _established_predicates,
+)
 from .validators import apply_fact_transitions, canonical_fact, parse_fact
 from .small_trees import (
     ACTION_FACTORIES,
@@ -1594,6 +1596,27 @@ class GPSRPlanner:
                   f"-- keeping the original (unfiltered) plan instead of installing []")
         else:
             cleaned = guarded
+        # M2: this synchronous path is supervisor RECOVERY, never an answer
+        # attempt -- GLOBAL_REPLAN explicitly allows installing an
+        # announce(text=...) step (supervision/prompts.py), and unlike
+        # plan_target's LLM-driven plans there is no contract distinguishing
+        # "the answer" from "sorry, I could not do X" here. Tag every
+        # installed announce step that carries a literal text with
+        # acknowledgement=True (mirrors orchestrator._fallback_plan's own
+        # tagging) so validators._action_verdict's answered-gate fallback
+        # never reads a refusal/recovery announce as a spoken answer. A
+        # text-less announce (reporting a prior gathering step's result) is
+        # left untouched -- that is the legitimate "tell me" pattern.
+        tagged: List[Dict[str, Any]] = []
+        for step in cleaned:
+            if (isinstance(step, dict) and step.get("action") == "announce"
+                    and isinstance(step.get("params"), dict)
+                    and str(step["params"].get("text") or "").strip()):
+                params = dict(step["params"])
+                params["acknowledgement"] = True
+                step = {**step, "params": params}
+            tagged.append(step)
+        cleaned = tagged
         # Postcondition coverage: the supervisor's plan is the REMAINING
         # steps after `completed_steps`, so a postcondition a completed step
         # already established must not be demanded again from the remaining
@@ -1604,21 +1627,13 @@ class GPSRPlanner:
         # fallback. Surfacing it in the log keeps the assumption checkable.
         target_postconditions = (target or {}).get("postconditions") if target else None
         if target_postconditions:
-            completed_established: set = set()
-            for step in completed_steps or []:
-                if not isinstance(step, dict):
-                    continue
-                contract = ACTION_CONTRACTS.get(step.get("action"))
-                if contract is not None:
-                    completed_established.update(
-                        t.split("(", 1)[0] for t in contract.establishes
-                    )
+            completed_established = _established_predicates(completed_steps or [])
             remaining_postconditions = [
                 cond for cond in target_postconditions
                 if (parse_fact(cond)[0] is None
                     or parse_fact(cond)[0].predicate not in completed_established)
             ]
-            coverage_reason = _uncovered_postcondition_reason(cleaned, remaining_postconditions)
+            coverage_reason = uncovered_postcondition_reason(cleaned, remaining_postconditions)
             if coverage_reason is not None:
                 print(f"[replace:{slot}:{index}] WARNING: {coverage_reason} "
                       "(supervisor replacement plan installed anyway -- no "
