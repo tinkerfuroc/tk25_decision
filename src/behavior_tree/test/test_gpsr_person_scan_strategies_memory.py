@@ -57,12 +57,17 @@ class _RunOnceThen(py_trees.behaviour.Behaviour):
         return self._final_status
 
 
-def _build(memory: bool):
+def _build(memory: "bool | None" = None):
     """Real _person_scan_strategies() with an always-matching attribute
     specialist (so selector.children == [waving, specialist, generalist]),
-    scan leaves replaced by _RunOnceThen stubs. `memory` overrides the root
-    Selector's memory flag post-construction (Selector.tick() reads
-    self.memory live, so this is equivalent to constructing it either way)."""
+    scan leaves replaced by _RunOnceThen stubs.
+
+    `memory=None` (the default) leaves the constructor's own `memory` value
+    untouched, so the positive test actually pins whatever
+    `_person_scan_strategies()` builds in production. Passing an explicit
+    bool overrides the flag post-construction (`Selector.tick()` reads
+    `self.memory` live, so this is equivalent to constructing it either
+    way) -- used only by the negative control to force the pre-fix shape."""
     py_trees.blackboard.Blackboard.clear()
     writer = py_trees.blackboard.Client(name="seed person scan strategies")
     writer.register_key(bb_keys.TARGET_PERSON_PROMPT, access=Access.WRITE)
@@ -71,7 +76,8 @@ def _build(memory: bool):
     selector = small_trees._person_scan_strategies(
         extra_specialist={"gate": "liam", "prompt": "person liam"},
     )
-    selector.memory = memory
+    if memory is not None:
+        selector.memory = memory
     assert len(selector.children) == 3, "expected [waving, specialist, generalist]"
     waving_branch, specialist_branch, generalist_branch = selector.children
 
@@ -105,7 +111,14 @@ def _tick_to_completion_or_budget(selector, max_ticks: int = 4):
 
 
 def test_memory_true_resumes_the_generalist_instead_of_relaunching_the_specialist():
-    selector, specialist_stub, generalist_stub = _build(memory=True)
+    """Pins the PRODUCTION value: builds the real selector without
+    overriding `memory`, so this fails if `_person_scan_strategies()` is
+    ever reverted to `memory=False` (round-2 review M1)."""
+    selector, specialist_stub, generalist_stub = _build()
+
+    assert selector.memory is True, (
+        "production _person_scan_strategies() selector must be memory=True"
+    )
 
     _tick_to_completion_or_budget(selector, max_ticks=4)
 
