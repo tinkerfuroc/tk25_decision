@@ -2820,8 +2820,25 @@ def create_execute_one_step(max_corrections: int = 3) -> py_trees.composites.Seq
         dispatch_or_correct = monitor_then_log
     else:
         correction = create_self_correction(max_corrections=max_corrections)
+        # memory=True: once `correction` (the replan branch) goes RUNNING it
+        # must be resumed, not torn down and relaunched from `monitor_then_log`
+        # every tick. With memory=False, a non-memory Selector re-enters
+        # child 0 (monitor_then_log/dispatch) on EVERY tick regardless of
+        # which branch is in flight: since `pop` isn't re-ticked while this
+        # Sequence is RUNNING here, the same failed action's router still
+        # matches, so monitor_then_log relaunches that action from scratch;
+        # the moment it goes RUNNING again it becomes `current_child`, and
+        # the selector's own priority-interrupt handling
+        # (`previous != current_child`) invalidates the in-flight `correction`
+        # branch (BtNode_PlanActions mid-replan) before it can ever complete
+        # — the same livelock shape as F3 (round-2 review follow-up), bounded
+        # only by `max_corrections`. memory=True makes the Selector resume
+        # directly at whichever branch last went RUNNING; a fresh entry
+        # (this composite's own status != RUNNING, e.g. a new step) still
+        # resets to child 0 first (see Selector.tick()), so normal
+        # dispatch-first-then-correct semantics are unchanged.
         dispatch_or_correct = py_trees.composites.Selector(
-            "dispatch_or_correct", memory=False,
+            "dispatch_or_correct", memory=True,
             children=[monitor_then_log, correction],
         )
 
