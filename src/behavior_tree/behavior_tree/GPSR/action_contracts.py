@@ -107,6 +107,13 @@ def established_facts(step: Mapping[str, Any]) -> list[str]:
     missing or blank, that whole template is skipped (never guess a partial
     fact). Used by the contract-boundary guard to tell whether a step
     establishes a fact owned by a *different* target of the same command.
+
+    Facts are compared EXACTLY (canonicalised argument text only) — e.g. the
+    top layer's ``delivered(spam,me)`` vs. a lower-layer step that emits
+    ``recipient: "operator"``/``"the user"`` canonicalise to different facts
+    and will NOT be recognised as the same. Normalising recipient aliases
+    before comparison is intentionally left to the prompt (the top layer's
+    "must establish"/"owned by" text), not this function.
     """
     contract = ACTION_CONTRACTS.get(str(step.get("action")))
     if contract is None:
@@ -116,14 +123,20 @@ def established_facts(step: Mapping[str, Any]) -> list[str]:
     for template in contract.establishes:
         predicate, _, arglist = template.partition("(")
         arg_names = [a.strip() for a in arglist.rstrip(")").split(",") if a.strip()]
+        if not arg_names:
+            # A future zero-arity establishes template has no params to
+            # resolve, so it can never yield a well-formed fact — never emit
+            # the unparsable f"{predicate}()".
+            continue
         values: list[str] = []
+        skip = False
         for name in arg_names:
             value = params.get(name)
             if value is None or not str(value).strip():
-                values = None  # type: ignore[assignment]
+                skip = True
                 break
             values.append(_normalize(str(value)))
-        if values is None:
+        if skip:
             continue
         facts.append(f"{predicate}({','.join(values)})")
     return facts

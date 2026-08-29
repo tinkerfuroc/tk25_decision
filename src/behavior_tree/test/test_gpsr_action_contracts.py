@@ -72,6 +72,15 @@ def test_established_facts_normalises_args():
     ) == ["delivered(spam,me)"]
 
 
+def test_established_facts_zero_arity_template_never_emits_unparsable_fact(monkeypatch):
+    # MINOR-4 guard: a future zero-arity `establishes` template (no params to
+    # resolve) must never produce the unparsable f"{predicate}()" — it is
+    # skipped, same as a template with an unresolvable param.
+    fake = ac.ActionContract("beep", establishes=("beeped()",))
+    monkeypatch.setitem(ac.ACTION_CONTRACTS, "beep", fake)
+    assert ac.established_facts({"action": "beep", "params": {}}) == []
+
+
 def test_established_facts_no_self_establish_actions_are_empty():
     # approach_person/describe_person/etc have no `establishes` templates at all.
     assert ac.established_facts({"action": "approach_person", "params": {}}) == []
