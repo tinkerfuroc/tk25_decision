@@ -64,6 +64,7 @@ from .supervision.runtime import get_default_supervisor, wrap_action_factory
 from .action_contracts import (
     ACTION_CONTRACTS,
     IDENTICAL_PLAN_ERROR_PREFIX,
+    UNRECOVERABLE_ERROR_PREFIX,
     established_facts,
     render_self_satisfied_rule,
     self_established_facts,
@@ -735,6 +736,66 @@ def _escape_plan(
     if chosen_step is None:
         return None
     return [chosen_step]
+
+
+def _escape_no_untried_establisher_reason(
+    target: Optional[Dict[str, Any]],
+    failed_plans: List[List[Dict[str, Any]]],
+) -> Optional[str]:
+    """E2 (runs 003/004, 2026-08-29): non-``None`` when the escape ladder is exhausted.
+
+    Called by ``_try_escape`` only after ``_escape_plan`` has already
+    returned ``None`` on the final identical-plan attempt, to distinguish
+    the truly UNRECOVERABLE case -- no registry action can establish ANY of
+    the target's own declared postconditions without repeating one already
+    used in ``failed_plans`` -- from the other reasons ``_escape_plan`` can
+    come back empty: an eligible establisher exists but its materialised
+    escape step was rejected by ``validate_plan`` downstream, or a
+    self-navigating step's location could not be resolved
+    (``_escape_step_for`` returning ``None``). Neither of those is
+    unrecoverable -- a future replan attempt, or a different failure
+    reason, could still find a way through.
+
+    A target that declares no postconditions at all is deliberately NOT
+    unrecoverable here (returns ``None``) -- there is nothing to say is
+    exhausted, and this function's only caller already restricts itself to
+    the final identical-plan attempt, so an ordinary IDENTICAL_PLAN marker
+    still applies to that degenerate case.
+
+    Returns the ``"no untried establisher for <facts>"`` reason text (never
+    just a bool) so both the log line and the stored
+    ``UNRECOVERABLE_ERROR_PREFIX: <reason>`` marker can reuse the exact same
+    string.
+    """
+    own_postconditions = sorted(_canonical_postconditions(target))
+    if not own_postconditions:
+        return None
+    used_actions = {
+        str(step.get("action"))
+        for plan in (failed_plans or [])
+        for step in (plan or [])
+        if isinstance(step, dict)
+    }
+
+    def has_untried_establisher(predicate: str) -> bool:
+        for name, contract in ACTION_CONTRACTS.items():
+            if name in used_actions:
+                continue
+            if not any(t.split("(", 1)[0] == predicate for t in contract.establishes):
+                continue
+            arg_names = _establish_arg_names(name, predicate)
+            if not arg_names or any(a not in _ESCAPE_ALLOWED_ARG_NAMES for a in arg_names):
+                continue
+            return True
+        return False
+
+    for raw in own_postconditions:
+        fact, _error = parse_fact(raw)
+        if fact is None:
+            continue
+        if has_untried_establisher(fact.predicate):
+            return None
+    return f"no untried establisher for {own_postconditions}"
 
 
 def _deterministic_target_intent(target: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1525,7 +1586,7 @@ class GPSRPlanner:
         known_actions: set,
         known_loc_arg: Optional[set],
         prior_plan: List[Dict[str, Any]],
-    ) -> bool:
+    ) -> Tuple[bool, Optional[str]]:
         """D1 (Task D brief, battery run 004): try ONE deterministic escape.
 
         Called from ``plan_target`` only when the LLM's regenerated plan is
@@ -1536,22 +1597,32 @@ class GPSRPlanner:
         untried strategy (e.g. ``search_object`` after ``find_object`` kept
         failing). No LLM call burns replan budget for this: it either
         produces real forward progress (stores the escape's subtree,
-        ``error=None``, and returns True — the caller returns immediately)
-        or returns False, falling straight through to the existing
-        IDENTICAL_PLAN marker path unchanged.
+        ``error=None``, and returns ``(True, None)`` — the caller returns
+        immediately) or returns ``(False, unrecoverable_reason)``, falling
+        straight through to the existing IDENTICAL_PLAN marker path — UNLESS
+        ``unrecoverable_reason`` is not ``None`` (E2, runs 003/004,
+        2026-08-29): the escape ladder is fully exhausted (no untried
+        establisher exists for ANY of the target's own postconditions, not
+        merely the one this attempt tried), so the caller stamps an
+        UNRECOVERABLE_ERROR_PREFIX marker instead of an ordinary IDENTICAL
+        one — see ``plan_target``.
 
         Quality (round-2 review): extracted verbatim from ``plan_target``'s
         inline escape block — pure refactor, callers unaffected.
         """
+        failed_plans = self._failed_plans(slot, index)
         escape = _escape_plan(
             target, target_obj, target_loc, identical_marker_reason,
-            self._failed_plans(slot, index),
+            failed_plans,
             all_targets=all_targets,
             facts=self.get_facts(slot),
             known_locations=known_loc_arg,
         )
         if escape is None:
-            return False
+            unrecoverable_reason = _escape_no_untried_establisher_reason(target, failed_plans)
+            if unrecoverable_reason is not None:
+                print(f"[plan:{slot}:{index}] {unrecoverable_reason} -> unrecoverable")
+            return False, unrecoverable_reason
         escape_guarded, escape_dropped = _drop_foreign_contract_steps(
             escape, target, all_targets, include_ancestors=not failure_reason,
         )
@@ -1576,12 +1647,15 @@ class GPSRPlanner:
         else:
             print(f"[plan:{slot}:{index}] deterministic escape REJECTED: {escape_reason}")
         if escape_subtree is None:
-            return False
+            # An eligible, untried establisher existed (that is what
+            # `_escape_plan` returned) — this dead end is "rejected by
+            # validation" / "subtree build failed", never unrecoverable.
+            return False, None
         print(f"[plan:{slot}:{index}] LLM stuck on an identical plan -> "
               f"deterministic escape {[s['action'] for s in escape_guarded]} "
               f"dropped {escape_dropped}")
         self._store(slot, index, desc, escape_guarded, escape_subtree, None)
-        return True
+        return True, None
 
     def plan_target(
         self,
@@ -1753,12 +1827,15 @@ class GPSRPlanner:
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"REJECTED: identical to failed plan")
                 continue
-            if identical and self._try_escape(
-                slot, index, desc, target, target_obj, target_loc,
-                identical_marker_reason, all_targets, failure_reason,
-                known_actions, known_loc_arg, prior_plan,
-            ):
-                return
+            unrecoverable_reason = None
+            if identical:
+                handled, unrecoverable_reason = self._try_escape(
+                    slot, index, desc, target, target_obj, target_loc,
+                    identical_marker_reason, all_targets, failure_reason,
+                    known_actions, known_loc_arg, prior_plan,
+                )
+                if handled:
+                    return
             # Accepted — build the subtree on this (worker) thread, then cache.
             try:
                 subtree = self.build_target_subtree(slot, index, cleaned, modifications=mods)
@@ -1773,9 +1850,21 @@ class GPSRPlanner:
                   + (" (IDENTICAL — executor will not run it)" if identical else ""))
             # A final-attempt plan that still repeats the failed one is handed
             # back honestly (not the fallback) but MARKED: the executor skips
-            # it instead of re-running a known dead end.
-            self._store(slot, index, desc, cleaned, subtree,
-                        (f"{IDENTICAL_PLAN_ERROR_PREFIX}: {identical_marker_reason}" if identical else None),
+            # it instead of re-running a known dead end. E2 (runs 003/004,
+            # 2026-08-29): when the escape ladder is fully exhausted
+            # (unrecoverable_reason set), the marker is UNRECOVERABLE_ERROR_
+            # PREFIX instead of the ordinary IDENTICAL_PLAN one — the
+            # executor forces the replan budget to exhausted for that marker
+            # so the target ends instead of cycling through more of these.
+            if identical:
+                error = (
+                    f"{UNRECOVERABLE_ERROR_PREFIX}: {unrecoverable_reason}"
+                    if unrecoverable_reason is not None
+                    else f"{IDENTICAL_PLAN_ERROR_PREFIX}: {identical_marker_reason}"
+                )
+            else:
+                error = None
+            self._store(slot, index, desc, cleaned, subtree, error,
                         modifications=group_modifications_by_step(cleaned, mods or []))
             return
         # Every attempt failed -> guaranteed non-empty fallback plan.

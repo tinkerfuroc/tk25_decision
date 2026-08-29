@@ -68,6 +68,7 @@ from .small_trees import (
 )
 from .action_contracts import (
     IDENTICAL_PLAN_ERROR_PREFIX,
+    UNRECOVERABLE_ERROR_PREFIX,
     contract_for as _contract_for,
     self_established_facts as _self_established_facts,
 )
@@ -2359,6 +2360,30 @@ class DynamicExecutor(py_trees.composites.Composite):
                 self._log(f"target:{self._index}:{self._current_desc()} "
                           f"IDENTICAL_PLAN_SKIPPED ({error})")
                 self._emit_failed_step(None, error)
+                self._on_target_failure(error)
+                if self._state == "DONE":
+                    self.stop(py_trees.common.Status.FAILURE)
+                    yield self
+                    return
+                self.status = py_trees.common.Status.RUNNING
+                yield self
+                return
+            # E2 (runs 003/004, 2026-08-29): a marker the planner stamped
+            # UNRECOVERABLE (the deterministic escape ladder is fully
+            # exhausted for this target -- no untried establisher exists for
+            # any of its own postconditions) is skipped the same way an
+            # IDENTICAL_PLAN marker is, but the target's replan budget is
+            # FORCED to exhausted first so `_on_target_failure`'s existing
+            # "budget exceeded" path fires immediately -- no further
+            # replan_target call for this target, ever, no matter how much
+            # budget remained. Telemetry/the bench still see the normal
+            # "budget exceeded" SKIPPED reason; the FAILED log line for this
+            # tick carries the unrecoverable text via `error` itself.
+            if isinstance(error, str) and error.startswith(UNRECOVERABLE_ERROR_PREFIX):
+                self._log(f"target:{self._index}:{self._current_desc()} "
+                          f"UNRECOVERABLE_SKIPPED ({error})")
+                self._emit_failed_step(None, error)
+                self._bb.set(bb_keys.TARGET_REPLAN_COUNT, self._max_replans, overwrite=True)
                 self._on_target_failure(error)
                 if self._state == "DONE":
                     self.stop(py_trees.common.Status.FAILURE)

@@ -289,3 +289,62 @@ def test_identical_replan_is_skipped_not_executed(tmp_path):
     assert len(failed) >= 2
     assert all(e["payload"]["reason"].startswith(planner_mod.IDENTICAL_PLAN_ERROR_PREFIX) for e in failed)
     assert ex.status == py_trees.common.Status.FAILURE
+
+
+# E2 (runs 003/004, 2026-08-29): a target whose escape ladder is fully
+# exhausted (planner marks it UNRECOVERABLE_ERROR_PREFIX, distinct from an
+# IDENTICAL_PLAN_ERROR_PREFIX marker) must fail ONCE and never be replanned
+# again -- the executor forces the replan budget to exhausted so the existing
+# "budget exceeded" path fires immediately instead of cycling through more
+# doomed replan attempts.
+class _UnrecoverableAfterFirstPlanner(_Planner):
+    def __init__(self, plan):
+        super().__init__(plan)
+        self._checks = 0
+        self.replan_calls = 0
+
+    def is_target_ready(self, slot, index):
+        self._checks += 1
+        return True
+
+    def get_error(self, slot, index):
+        if self._checks <= 1:
+            return None
+        return (planner_mod.UNRECOVERABLE_ERROR_PREFIX
+                + ": no untried establisher for ['object_seen(x)']")
+
+    def replan_target(self, slot, index, reason):
+        self.replan_calls += 1
+
+
+def test_unrecoverable_replan_fails_target_once_with_no_further_replan(tmp_path):
+    plan = [{"action": "place", "params": {"location": "kitchen_table"}}]
+    tele, path = _telemetry(tmp_path)
+    w = _seed_blackboard()
+    planner = _UnrecoverableAfterFirstPlanner(plan)
+    ex = DynamicExecutor("executor task 1", 0, planner, max_replans_per_target=3)
+    ex._announce = lambda text: None  # budget exhaustion announces via a real ROS node
+    tree = py_trees.trees.BehaviourTree(ex)
+    ex.setup(gpsr_tree=tree, node=object())
+    ticks = 0
+    for _ in range(5):
+        tree.tick()
+        ticks += 1
+        if ex.status != py_trees.common.Status.RUNNING:
+            break  # a re-tick of a terminal executor re-activates it
+    # execute(1, genuine failure -> one normal replan) +
+    # unrecoverable-skip-at-forced-budget(2): no SECOND replan ever requested.
+    assert ticks == 2
+    tele.close(status="done")
+    telemetry_mod.set_default_telemetry(None)
+
+    log = w.get(bb_keys.STATE_LOG)
+    assert sum("UNRECOVERABLE_SKIPPED" in entry for entry in log) == 1
+    assert any("SKIPPED (replan budget exceeded)" in entry for entry in log)
+    failed = [e for e in _lines(path) if e["event_type"] == "target.failed"]
+    assert len(failed) == 1
+    assert failed[0]["payload"]["reason"].startswith(planner_mod.UNRECOVERABLE_ERROR_PREFIX)
+    assert ex.status == py_trees.common.Status.FAILURE
+    # The only replan_target call is the one genuine execution failure from
+    # tick 1 -- the unrecoverable marker itself never triggers another one.
+    assert planner.replan_calls == 1

@@ -19,6 +19,18 @@ from .validators import _normalize
 # planner imports orchestrator — importing it back would form a cycle.
 IDENTICAL_PLAN_ERROR_PREFIX = "identical to failed plan"
 
+# E2 (round-2 review, runs 003/004): cache-entry ``error`` prefix the planner
+# stamps instead of IDENTICAL_PLAN_ERROR_PREFIX when the final-attempt
+# identical plan's deterministic escape (planner._try_escape) came back empty
+# BECAUSE no registry action can establish ANY of the target's own
+# postconditions without repeating one already tried — the escape ladder is
+# fully exhausted, not merely "try again". The executor treats this marker
+# like the identical one (skip execution, target.failed) but ALSO forces the
+# target's replan budget to exhausted, so the target ends honestly instead of
+# burning the rest of the budget on more IDENTICAL_PLAN_SKIPPED markers for a
+# plan the LLM cannot vary.
+UNRECOVERABLE_ERROR_PREFIX = "unrecoverable"
+
 
 @dataclass(frozen=True)
 class ActionContract:
@@ -204,7 +216,8 @@ def render_self_satisfied_rule() -> str:
 
 
 __all__ = [
-    "ActionContract", "ACTION_CONTRACTS", "IDENTICAL_PLAN_ERROR_PREFIX", "contract_for",
+    "ActionContract", "ACTION_CONTRACTS", "IDENTICAL_PLAN_ERROR_PREFIX",
+    "UNRECOVERABLE_ERROR_PREFIX", "contract_for",
     "self_established_facts", "established_facts", "self_navigating_destinations",
     "render_self_satisfied_rule",
 ]

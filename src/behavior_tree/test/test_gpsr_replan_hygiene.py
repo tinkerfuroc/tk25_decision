@@ -272,6 +272,56 @@ def test_escape_plan_returns_none_when_failure_reason_has_no_fact():
     assert planner_mod._escape_plan(target, "", "", "", []) is None
 
 
+# ---------------------------------------------------------------------------
+# E2 (runs 003/004, 2026-08-29): when the escape ladder is fully exhausted --
+# no registry action can establish ANY of the target's own postconditions
+# without repeating one already tried -- the target must END honestly
+# (UNRECOVERABLE_ERROR_PREFIX) instead of burning the whole replan budget on
+# a run of IDENTICAL_PLAN_SKIPPED markers for plans the LLM cannot vary.
+# _escape_no_untried_establisher_reason distinguishes this from the other
+# reasons _escape_plan can come back empty (an eligible establisher exists
+# but its escape step was rejected by validate_plan, or a self-navigating
+# step's location could not be resolved) -- neither of those is unrecoverable.
+# ---------------------------------------------------------------------------
+
+def test_escape_unrecoverable_reason_is_none_when_an_untried_establisher_exists():
+    target = {"id": "t0", "postconditions": ["object_seen(pudding_box)"]}
+    failed_plans = [[
+        {"action": "goto", "params": {"location": "living_room"}},
+        {"action": "find_object", "params": {"object": "pudding_box", "location": "living_room"}},
+    ]]
+    assert planner_mod._escape_no_untried_establisher_reason(target, failed_plans) is None
+
+
+def test_escape_unrecoverable_reason_fires_when_all_establishers_are_tried():
+    # find_object AND search_object -- object_seen's only two registry
+    # establishers -- have both already failed.
+    target = {"id": "t0", "postconditions": ["object_seen(pudding_box)"]}
+    failed_plans = [
+        [{"action": "find_object", "params": {"object": "pudding_box"}}],
+        [{"action": "search_object", "params": {"object": "pudding_box"}}],
+    ]
+    reason = planner_mod._escape_no_untried_establisher_reason(target, failed_plans)
+    assert reason is not None
+    assert "object_seen(pudding_box)" in reason
+
+
+def test_escape_unrecoverable_reason_fires_for_person_found_single_establisher():
+    # person_found is established ONLY by find_person -- there is no second
+    # strategy, so a single failed find_person already exhausts the ladder.
+    target = {"id": "t0", "postconditions": ["person_found(liam)"]}
+    failed_plans = [[{"action": "find_person", "params": {"person": "liam"}}]]
+    reason = planner_mod._escape_no_untried_establisher_reason(target, failed_plans)
+    assert reason is not None
+    assert "person_found(liam)" in reason
+
+
+def test_escape_unrecoverable_reason_is_none_without_declared_postconditions():
+    # A target that declares no postconditions at all is not the
+    # "escape ladder exhausted" case -- there is nothing to say is exhausted.
+    assert planner_mod._escape_no_untried_establisher_reason({"id": "t0"}, []) is None
+
+
 def test_plan_target_final_identical_attempt_escapes_to_untried_action(monkeypatch, capsys):
     # D1 integration (battery run 004): stubbed _call_llm returns the
     # identical [goto, find_object] plan on every attempt -- the cache must
@@ -308,10 +358,14 @@ def test_plan_target_final_identical_attempt_escapes_to_untried_action(monkeypat
     assert "dropped []" in out
 
 
-def test_plan_target_final_identical_attempt_keeps_marker_when_escape_exhausted(monkeypatch):
-    # The mirror case: find_object AND search_object have BOTH already
-    # failed for this target, so _escape_plan has nothing left to try and
-    # the existing IDENTICAL_PLAN marker path must still apply unchanged.
+def test_plan_target_marks_unrecoverable_when_escape_ladder_is_exhausted(monkeypatch, capsys):
+    # E2 (runs 003/004, 2026-08-29): find_object AND search_object have BOTH
+    # already failed for this target -- object_seen's only two registry
+    # establishers -- so _escape_plan has nothing left to try. This is the
+    # truly UNRECOVERABLE case (not merely "identical again"): the target
+    # must be marked so the executor ends it instead of burning the rest of
+    # the replan budget on more IDENTICAL_PLAN_SKIPPED markers for a plan the
+    # LLM cannot vary.
     p = planner_mod.GPSRPlanner(max_attempts=2)
     monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
     monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
@@ -334,7 +388,12 @@ def test_plan_target_final_identical_attempt_keeps_marker_when_escape_exhausted(
     assert p.is_target_ready(0, 0)
     assert [s["action"] for s in p.get_action_plan(0, 0)] == ["goto", "find_object"]
     err = p.get_error(0, 0)
-    assert err is not None and err.startswith(planner_mod.IDENTICAL_PLAN_ERROR_PREFIX)
+    assert err is not None and err.startswith(planner_mod.UNRECOVERABLE_ERROR_PREFIX)
+    assert "object_seen(pudding_box)" in err
+    out = capsys.readouterr().out
+    assert "[plan:0:0] no untried establisher for" in out
+    assert "object_seen(pudding_box)" in out
+    assert "-> unrecoverable" in out
 
 
 def test_plan_target_marks_identical_final_attempt_with_error(monkeypatch):
