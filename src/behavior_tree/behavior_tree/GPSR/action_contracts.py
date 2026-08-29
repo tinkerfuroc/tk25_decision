@@ -70,7 +70,16 @@ ACTION_CONTRACTS: dict[str, ActionContract] = {
         _c("follow"),
         _c("guide"),
         _c("open"),
-        _c("announce"),
+        # `announce` establishes `answered(question)` too, but is registered
+        # AFTER ask_person/answer_question so _ESTABLISHER_FOR_PREDICATE
+        # (planner.py) still resolves "answered" -> ask_person (the FIRST
+        # registry entry wins). announce has no `question` param (only
+        # `text`), so established_facts() for it stays [] — the establishes
+        # template can never resolve, which is intentional: this widens what
+        # the postcondition-coverage check and the answered-gate fallback
+        # accept without ever letting announce silently "establish" a fact
+        # for a SIBLING target via the contract-boundary guard.
+        _c("announce", establishes=("answered(question)",)),
         _c("record_position"),
         _c("vlm_fallback", records=("vlm_answer",)),
         _c("llm_fallback", records=("llm_answer",)),

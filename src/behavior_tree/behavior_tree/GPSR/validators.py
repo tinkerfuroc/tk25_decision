@@ -316,6 +316,19 @@ def _action_verdict(fact: Fact, context: VerificationContext) -> Optional[Verifi
                     f"action-verdict fallback: stronger verifier not installed; successful {action} action",
                     0.5,
                 )
+        if fact.predicate == "answered" and not params.get("acknowledgement"):
+            from .action_contracts import ACTION_CONTRACTS  # lazy: action_contracts imports this module
+            contract = ACTION_CONTRACTS.get(action)
+            establishes_answered = contract is not None and any(
+                t.split("(", 1)[0] == "answered" for t in contract.establishes
+            )
+            if establishes_answered and str(params.get("text", "")).strip():
+                return _result(
+                    Verdict.VALID,
+                    "action-verdict fallback: spoken announce stands as the answer; "
+                    "question identity unavailable",
+                    0.5,
+                )
     return None
 
 

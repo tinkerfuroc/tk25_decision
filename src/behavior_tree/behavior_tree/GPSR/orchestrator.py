@@ -640,12 +640,23 @@ def _fallback_plan(command: str) -> List[Dict[str, Any]]:
     Never let the robot silently refuse: emit a single spoken acknowledgement so
     the operator hears a response and the command always has *a* plan. Only hit
     after every planning attempt failed — realistic commands never reach here.
+
+    ``params["acknowledgement"] = True`` marks this announce as a planning
+    -failure apology, not a real answer: the cached entry this plan is stored
+    under is READY with a non-None error (``"all N attempts failed …"``, see
+    GPSRTargetPlanner.plan_target), and the executor's REQUESTING branch only
+    skips a cached entry whose error starts with IDENTICAL_PLAN_ERROR_PREFIX —
+    this one does not, so it IS swapped in and executed. Without the flag,
+    validators._action_verdict's answered-fallback (announce establishes
+    answered(question)) would turn that planning failure into a postcondition
+    gate PASS.
     """
     return [{
         "action": "announce",
         "params": {
             "text": "I heard your command but could not work out a complete "
                     "plan for it. I will skip it for now.",
+            "acknowledgement": True,
         },
     }]
 
