@@ -13,7 +13,18 @@ _NODE_STATUS_TO_TASK_STATUS = {"SUCCESS": "succeeded", "FAILURE": "failed"}
 # t1-42 run, e.g. "precondition unmet: at_robot(laundry_desk) (INVALID)" on a leaf several
 # levels under its "executor task N" ancestor) -- vs. routine noise like a "plan-file emit
 # failed (ignored): ..." SUCCESS feedback that should not overwrite it.
-_DIAG_RE = re.compile(r"(precondition unmet|postcondition unmet|error)", re.IGNORECASE)
+#
+# H3 (round-2 review, run 004): also recognises the H1/E2 escape-ladder's UNRECOVERABLE_
+# ERROR_PREFIX/IDENTICAL_PLAN_ERROR_PREFIX markers (action_contracts.py -- "unrecoverable: no
+# untried establisher for [...]" / "identical to failed plan: ...") and search_object's own
+# "swept N of M spots" sweep-exhausted feedback -- without these, a genuine one of these
+# diagnostics never overwrites diag_by_slot, so a node-derived failure's reason falls back to
+# the bare, uninformative "executor node FAILURE" (e.g. run 004's detail).
+_DIAG_RE = re.compile(
+    r"(precondition unmet|postcondition unmet|error|unrecoverable|"
+    r"swept \d+ of \d+ spots|identical to failed plan)",
+    re.IGNORECASE,
+)
 
 
 @dataclass

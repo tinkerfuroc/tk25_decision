@@ -1,6 +1,6 @@
 import json
 
-from behavior_tree.GPSR.bench.events import TaskResult, parse_events, slot_of
+from behavior_tree.GPSR.bench.events import TaskResult, _DIAG_RE, parse_events, slot_of
 
 
 def _ev(event_type, task_id=None, payload=None, at="2026-08-23T00:00:00Z", seq=0):
@@ -123,6 +123,62 @@ def test_parse_events_captures_the_last_precondition_unmet_feedback_from_a_neste
     results = parse_events(path)
     assert results[1].status == "failed"
     assert results[1].reason == "precondition unmet: at_robot(kitchen) (INVALID)"
+
+
+# ---------------------------------------------------------------------------
+# H3 (round-2 review, run 004): _DIAG_RE must also recognise the reasons the
+# H1/E2 escape ladder and the H1 search_object sweep produce -- without this,
+# a genuine "unrecoverable" or "swept N of M spots" diagnostic never
+# overwrites diag_by_slot, so a node-derived failure's reason falls back to
+# the bare, uninformative "executor node FAILURE".
+# ---------------------------------------------------------------------------
+
+def test_diag_re_matches_unrecoverable_reason():
+    text = "unrecoverable: no untried establisher for ['object_seen(pudding_box)']"
+    assert _DIAG_RE.search(text)
+
+
+def test_diag_re_matches_search_object_swept_reason():
+    text = "search_object: swept 1 of 6 spots at bedroom, nothing found"
+    assert _DIAG_RE.search(text)
+
+
+def test_parse_events_captures_an_unrecoverable_feedback_from_a_nested_node(tmp_path):
+    lines = [
+        _tree_generated({"executor/root/7/0/13": "executor task 1"}, at="2026-08-23T00:00:00Z", seq=0),
+        _node_states_changed({"executor/root/7/0/13": "RUNNING"}, at="2026-08-23T00:00:01Z", seq=1),
+        _ev("tree.node_states_changed", None, {"tree_kind": "executor", "nodes": [
+            {"id": "executor/root/7/0/13/0/0", "node_id": "executor/root/7/0/13/0/0",
+             "status": "FAILURE",
+             "feedback": "unrecoverable: no untried establisher for ['object_seen(pudding_box)']"}]},
+            at="2026-08-23T00:00:02Z", seq=2),
+        _node_states_changed({"executor/root/7/0/13": "FAILURE"}, at="2026-08-23T00:00:03Z", seq=3),
+    ]
+    path = tmp_path / "events.jsonl"
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+
+    results = parse_events(path)
+    assert results[1].status == "failed"
+    assert results[1].reason == "unrecoverable: no untried establisher for ['object_seen(pudding_box)']"
+
+
+def test_parse_events_captures_a_search_object_swept_feedback_from_a_nested_node(tmp_path):
+    lines = [
+        _tree_generated({"executor/root/7/0/13": "executor task 1"}, at="2026-08-23T00:00:00Z", seq=0),
+        _node_states_changed({"executor/root/7/0/13": "RUNNING"}, at="2026-08-23T00:00:01Z", seq=1),
+        _ev("tree.node_states_changed", None, {"tree_kind": "executor", "nodes": [
+            {"id": "executor/root/7/0/13/0/0", "node_id": "executor/root/7/0/13/0/0",
+             "status": "FAILURE",
+             "feedback": "search_object: swept 1 of 6 spots at bedroom, nothing found"}]},
+            at="2026-08-23T00:00:02Z", seq=2),
+        _node_states_changed({"executor/root/7/0/13": "FAILURE"}, at="2026-08-23T00:00:03Z", seq=3),
+    ]
+    path = tmp_path / "events.jsonl"
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+
+    results = parse_events(path)
+    assert results[1].status == "failed"
+    assert results[1].reason == "search_object: swept 1 of 6 spots at bedroom, nothing found"
 
 
 def test_parse_events_ignores_node_states_from_a_non_executor_tree(tmp_path):
