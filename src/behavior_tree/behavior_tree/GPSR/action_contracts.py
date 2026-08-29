@@ -13,6 +13,12 @@ from typing import Any, Mapping
 
 from .validators import _normalize
 
+# Cache-entry ``error`` prefix the planner stamps on a replan that came back
+# IDENTICAL to the plan that just failed (final attempt only). The executor
+# refuses to swap in / execute such a plan. Lives here (not planner.py) because
+# planner imports orchestrator — importing it back would form a cycle.
+IDENTICAL_PLAN_ERROR_PREFIX = "identical to failed plan"
+
 
 @dataclass(frozen=True)
 class ActionContract:
@@ -112,6 +118,6 @@ def render_self_satisfied_rule() -> str:
 
 
 __all__ = [
-    "ActionContract", "ACTION_CONTRACTS", "contract_for",
+    "ActionContract", "ACTION_CONTRACTS", "IDENTICAL_PLAN_ERROR_PREFIX", "contract_for",
     "self_established_facts", "self_navigating_destinations", "render_self_satisfied_rule",
 ]

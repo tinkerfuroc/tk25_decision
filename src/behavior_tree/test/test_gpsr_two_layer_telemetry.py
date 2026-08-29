@@ -7,6 +7,7 @@ import py_trees
 import pytest
 from py_trees.common import Access
 
+from behavior_tree.GPSR import planner as planner_mod
 from behavior_tree.GPSR import telemetry as telemetry_mod
 from behavior_tree.GPSR.bench.events import parse_events
 from behavior_tree.GPSR.orchestrator import BtNode_TargetPreconditionCheck, DynamicExecutor
@@ -235,3 +236,56 @@ def test_same_target_swaps_get_strictly_increasing_revisions(tmp_path):
     telemetry_mod.set_default_telemetry(None)
     mat = [e for e in _lines(path) if e["event_type"] == "plan.materialized"]
     assert [e["payload"]["revision"] for e in mat] == [1, 2]
+
+
+# Task 9: a replan that came back IDENTICAL to the failed plan is marked by the
+# planner and must never be swapped in / executed again by the executor. Each
+# skip burns one replan-budget slot and reports target.failed.
+class _IdenticalAfterFirstPlanner(_Planner):
+    def __init__(self, plan):
+        super().__init__(plan)
+        self._checks = 0
+
+    def is_target_ready(self, slot, index):
+        self._checks += 1
+        return True
+
+    def get_error(self, slot, index):
+        if self._checks <= 1:
+            return None
+        return planner_mod.IDENTICAL_PLAN_ERROR_PREFIX + ": postcondition unmet: object_seen(x) (UNKNOWN)"
+
+
+def test_identical_replan_is_skipped_not_executed(tmp_path):
+    plan = [{"action": "place", "params": {"location": "kitchen_table"}}]
+    tele, path = _telemetry(tmp_path)
+    w = _seed_blackboard()
+    ex = DynamicExecutor("executor task 1", 0, _IdenticalAfterFirstPlanner(plan),
+                         max_replans_per_target=2)
+    ex._announce = lambda text: None  # budget exhaustion announces via a real ROS node
+    tree = py_trees.trees.BehaviourTree(ex)
+    ex.setup(gpsr_tree=tree, node=object())
+    replan_counts = []
+    ticks = 0
+    for _ in range(5):
+        tree.tick()
+        ticks += 1
+        replan_counts.append(w.get(bb_keys.TARGET_REPLAN_COUNT))
+        if ex.status != py_trees.common.Status.RUNNING:
+            break  # a re-tick of a terminal executor re-activates it
+    # execute(1) + skip(2) + skip-at-budget(3): the identical plan never ran again.
+    assert ticks == 3
+    tele.close(status="done")
+    telemetry_mod.set_default_telemetry(None)
+
+    lines = _lines(path)
+    mat = [e for e in lines if e["event_type"] == "plan.materialized"]
+    assert len(mat) == 1
+    assert max(replan_counts) == 2
+    log = w.get(bb_keys.STATE_LOG)
+    assert sum("IDENTICAL_PLAN_SKIPPED" in entry for entry in log) == 2
+    assert any("SKIPPED (replan budget exceeded)" in entry for entry in log)
+    failed = [e for e in lines if e["event_type"] == "target.failed"]
+    assert len(failed) >= 2
+    assert all(e["payload"]["reason"].startswith(planner_mod.IDENTICAL_PLAN_ERROR_PREFIX) for e in failed)
+    assert ex.status == py_trees.common.Status.FAILURE

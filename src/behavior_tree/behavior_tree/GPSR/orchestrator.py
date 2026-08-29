@@ -67,6 +67,7 @@ from .small_trees import (
     create_goto,
 )
 from .action_contracts import (
+    IDENTICAL_PLAN_ERROR_PREFIX,
     contract_for as _contract_for,
     self_established_facts as _self_established_facts,
 )
@@ -2328,6 +2329,28 @@ class DynamicExecutor(py_trees.composites.Composite):
                 self.status = py_trees.common.Status.RUNNING
                 yield self
                 return
+            # A replan the planner MARKED as identical to the plan that just
+            # failed is never executed again: it burns one replan-budget slot
+            # (and, if budget remains, triggers another replan whose guard
+            # still compares against the same failed plan) or SKIPs at budget.
+            # Readiness first: while a replan is in flight the entry is not
+            # ready and its error is cleared, so only a READY marked plan skips.
+            get_error = getattr(self._planner, "get_error", None)
+            error = None
+            if callable(get_error) and self._planner.is_target_ready(self._slot, self._index):
+                error = get_error(self._slot, self._index)
+            if isinstance(error, str) and error.startswith(IDENTICAL_PLAN_ERROR_PREFIX):
+                self._log(f"target:{self._index}:{self._current_desc()} "
+                          f"IDENTICAL_PLAN_SKIPPED ({error})")
+                self._emit_failed_step(None, error)
+                self._on_target_failure(error)
+                if self._state == "DONE":
+                    self.stop(py_trees.common.Status.FAILURE)
+                    yield self
+                    return
+                self.status = py_trees.common.Status.RUNNING
+                yield self
+                return
             subtree = self._swap_in(self._index)
             if subtree is None:
                 self.feedback_message = (
@@ -2394,6 +2417,9 @@ class DynamicExecutor(py_trees.composites.Composite):
         (pre gate) or a step that just logged ``succeeded`` (post gate). Those
         — and any failure with no current step at all — are reported as
         ``target.failed`` instead of being attributed to a stale step.
+
+        ``node=None`` means no subtree ran at all (the executor refused an
+        identical replan before swapping it in): always ``target.failed``.
         """
         telemetry = get_default_telemetry()
         if telemetry is None:
@@ -2406,7 +2432,7 @@ class DynamicExecutor(py_trees.composites.Composite):
             tip = node.tip() if callable(getattr(node, "tip", None)) else None
         except Exception:  # noqa: BLE001
             tip = None
-        is_gate = isinstance(
+        is_gate = node is None or isinstance(
             tip, (BtNode_TargetPreconditionCheck, BtNode_TargetPostconditionCheck),
         ) or str(reason or "").startswith(self._GATE_REASON_PREFIXES)
         action = None

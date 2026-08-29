@@ -94,3 +94,53 @@ def test_executor_passes_leaf_feedback_as_replan_reason():
     for _ in seq.tick():
         pass
     assert DynamicExecutor._last_child_feedback(seq) == leaf.feedback_message
+
+
+def test_alternatives_for_reason_lists_registry_establishers():
+    text = planner_mod._alternatives_for_reason("postcondition unmet: object_seen(kitchen item) (UNKNOWN)")
+    assert "find_object" in text and "search_object" in text
+    assert "vlm_fallback" in text
+    assert planner_mod._alternatives_for_reason("child FAILURE") == ""
+
+
+def test_plan_target_marks_identical_final_attempt_with_error(monkeypatch):
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    same = {"plan": [{"action": "goto", "params": {"location": "living_room"}},
+                     {"action": "find_object", "params": {"object": "kitchen item", "location": "living_room"}}]}
+    prompts = []
+
+    def fake_call(client, system, user, temperature):
+        prompts.append(user)
+        return same, None
+
+    monkeypatch.setattr(planner_mod, "_call_llm", fake_call)
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    p._store(0, 0, "d", same["plan"], py_trees.behaviours.Success("old"), None)
+    p._invalidate(0, 0)
+    p.plan_target(0, 0, "d", command="c", failure_reason="postcondition unmet: object_seen(kitchen item) (UNKNOWN)")
+    assert p.is_target_ready(0, 0)
+    assert p.get_action_plan(0, 0) == same["plan"]
+    err = p.get_error(0, 0)
+    assert err is not None and err.startswith(planner_mod.IDENTICAL_PLAN_ERROR_PREFIX)
+    # the non-final rejection told the LLM what would be acceptable
+    assert any("IDENTICAL" in u and "find_object" in u and "vlm_fallback" in u for u in prompts[1:])
+
+
+def test_plan_target_different_plan_has_no_error(monkeypatch):
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    old = [{"action": "goto", "params": {"location": "a"}}]
+    new = {"plan": [{"action": "vlm_fallback", "params": {"question": "where is it"}}]}
+    monkeypatch.setattr(planner_mod, "_call_llm", lambda *a, **k: (new, None))
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    p._store(0, 0, "d", old, py_trees.behaviours.Success("old"), None)
+    p._invalidate(0, 0)
+    p.plan_target(0, 0, "d", command="c", failure_reason="x")
+    assert p.get_error(0, 0) is None

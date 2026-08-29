@@ -28,6 +28,7 @@ from __future__ import annotations
 import copy
 import json
 import random
+import re
 import textwrap
 import threading
 import uuid
@@ -57,7 +58,12 @@ from .small_trees import (
     get_small_tree_roles,
 )
 from .supervision.runtime import get_default_supervisor, wrap_action_factory
-from .action_contracts import ACTION_CONTRACTS, render_self_satisfied_rule, self_established_facts
+from .action_contracts import (
+    ACTION_CONTRACTS,
+    IDENTICAL_PLAN_ERROR_PREFIX,
+    render_self_satisfied_rule,
+    self_established_facts,
+)
 from .orchestrator import (
     SYSTEM_PROMPT,
     KNOWN_LOCATIONS,
@@ -419,6 +425,32 @@ def _canonical_plan(plan: List[Dict[str, Any]]) -> tuple:
     )
 
 
+def _alternatives_for_reason(failure_reason: str) -> str:
+    """Tell the LLM what WOULD be acceptable when its regenerated plan repeats the failed one.
+
+    Parses the first ``predicate(...)`` fact in ``failure_reason`` (e.g. from
+    ``postcondition unmet: object_seen(kitchen item) (UNKNOWN)``) and names
+    every registry action whose ``establishes`` covers that predicate, plus
+    the generic escape hatches. Empty when no fact is found — the identical
+    rejection then stands on its own.
+    """
+    match = re.search(r"([a-z_]+)\(([^()]*)\)", str(failure_reason or ""))
+    if match is None:
+        return ""
+    fact, _err = parse_fact(match.group(0))
+    if fact is None:
+        return ""
+    establishers = [
+        name for name, c in ACTION_CONTRACTS.items()
+        if any(t.split("(", 1)[0] == fact.predicate for t in c.establishes)
+    ]
+    parts = []
+    if establishers:
+        parts.append("try a DIFFERENT location or strategy with " + " / ".join(establishers))
+    parts.append("or fall back to vlm_fallback / llm_fallback, or announce what you could not do")
+    return "Acceptable alternatives: " + ", ".join(parts) + "."
+
+
 def _deterministic_target_intent(target: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Compile metadata into validator-only intent steps without cache reads."""
     intents: List[Dict[str, Any]] = []
@@ -694,6 +726,9 @@ class GPSRPlanner:
             entry = self._cache.get((slot, index))
             if entry:
                 entry["ready"] = False
+                # A stale marker (e.g. IDENTICAL_PLAN_ERROR_PREFIX) must not
+                # outlive the plan it described; _store rebuilds it anyway.
+                entry["error"] = None
                 entry["failed_plan"] = list(entry.get("plan") or [])
 
     def _failed_plan(self, slot, index) -> Optional[List[Dict[str, Any]]]:
@@ -917,12 +952,13 @@ class GPSRPlanner:
                       f"REJECTED: {last_reason}")
                 continue
             failed = self._failed_plan(slot, index)
-            if (failed is not None and _canonical_plan(cleaned) == _canonical_plan(failed)
-                    and attempt < self._max_attempts - 1):
+            identical = failed is not None and _canonical_plan(cleaned) == _canonical_plan(failed)
+            if identical and attempt < self._max_attempts - 1:
                 last_reason = (
                     "the regenerated plan was IDENTICAL to the plan that just failed "
                     f"({failure_reason or 'unknown reason'}) — you MUST change it: add, remove "
-                    "or reorder steps so the failure cannot recur"
+                    "or reorder steps so the failure cannot recur. "
+                    + _alternatives_for_reason(failure_reason or "")
                 )
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"REJECTED: identical to failed plan")
@@ -937,8 +973,13 @@ class GPSRPlanner:
                 continue
             print(f"[plan:{slot}:{index}] accepted on attempt {attempt+1}: "
                   f"{[s['action'] for s in cleaned]}"
-                  + (f" mods={len(mods or [])}" if mods else ""))
-            self._store(slot, index, desc, cleaned, subtree, None,
+                  + (f" mods={len(mods or [])}" if mods else "")
+                  + (" (IDENTICAL — executor will not run it)" if identical else ""))
+            # A final-attempt plan that still repeats the failed one is handed
+            # back honestly (not the fallback) but MARKED: the executor skips
+            # it instead of re-running a known dead end.
+            self._store(slot, index, desc, cleaned, subtree,
+                        (f"{IDENTICAL_PLAN_ERROR_PREFIX}: {failure_reason}" if identical else None),
                         modifications=group_modifications_by_step(cleaned, mods or []))
             return
         # Every attempt failed -> guaranteed non-empty fallback plan.
@@ -1073,6 +1114,12 @@ class GPSRPlanner:
         if not entry:
             return []
         return list(entry.get("plan") or [])
+
+    def get_error(self, slot: int, index: int) -> Optional[str]:
+        """The cache entry's ``error`` (None when absent or ready with no error)."""
+        with self._lock:
+            entry = self._cache.get((slot, index))
+        return entry.get("error") if entry else None
 
     def get_modifications(self, slot: int, index: int) -> Dict[int, List[Dict[str, Any]]]:
         """The step-indexed modification groups for a cached target plan.
