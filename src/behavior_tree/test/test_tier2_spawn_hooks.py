@@ -106,6 +106,30 @@ def test_run_tier2_clear_failure_is_appended_to_detail_without_changing_verdict(
     assert "clear failed" in results[0].detail
 
 
+def test_run_tier2_spawn_failure_still_runs_clear_cmd_and_reports_both(tmp_path):
+    """Fix round 1: clear_cmd previously never ran when spawn_cmd failed (the ``continue``
+    skipped the try/finally that ran it). Ruling: if clear_cmd is set, run it once after a
+    spawn failure -- before writing run.json and continuing -- appending its own failure to
+    the ERROR detail without changing the verdict."""
+    order_log = tmp_path / "order.log"
+    marker = tmp_path / "orchestrator-marker"
+    entries = [_entry(0, "go to the sofa")]
+    spawn_cmd = ["sh", "-c", "echo spawn-boom 1>&2; echo spawn >> " + str(order_log) + "; exit 1"]
+    clear_cmd = ["sh", "-c", "echo clear-boom 1>&2; echo clear >> " + str(order_log) + "; exit 1"]
+    results = run_tier2(entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+                        out_dir=tmp_path / "out", timeout_s=20,
+                        launcher=_fake_orchestrator(tmp_path, marker=marker),
+                        reset_cmd=["true"], spawn_cmd=spawn_cmd, clear_cmd=clear_cmd, settle_s=0)
+
+    assert results[0].verdict == "ERROR"
+    assert "spawn failed" in results[0].detail
+    assert "clear failed" in results[0].detail
+    assert not marker.exists()
+
+    order = order_log.read_text().splitlines()
+    assert order == ["spawn", "clear"]
+
+
 def test_run_tier2_without_spawn_cmd_writes_no_scene_key(tmp_path):
     entries = [_entry(0, "go to the sofa")]
     results = run_tier2(entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",

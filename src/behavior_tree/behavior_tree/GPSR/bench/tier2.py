@@ -112,55 +112,49 @@ def _substitute(cmd: Sequence[str], mapping: dict[str, str]) -> list[str]:
     return out
 
 
-def _reset(reset_cmd: Sequence[str]) -> str | None:
-    """Run the reset command; return an error detail string, or None on success."""
+def _run_hook(cmd: Sequence[str], mapping: dict[str, str] | None, *, timeout: float, label: str,
+             tail_bytes: int | None = None) -> str | None:
+    """Run one external hook command; return an error detail string, or None on success.
+
+    Shared by ``_reset``/``_run_spawn_cmd``/``_run_clear_cmd`` (all three had near-identical
+    bodies: substitute -> subprocess.run -> classify timeout/OSError/nonzero-exit into a
+    ``"{label} failed: ..."`` string). ``mapping is None`` skips ``_substitute`` entirely,
+    preserving ``_reset``'s original behaviour of running ``reset_cmd`` verbatim (it takes no
+    per-run substitution keys). ``tail_bytes`` truncates stderr to its last N characters before
+    it's embedded in the error string (spawn/clear cap it; ``_reset`` does not, matching its
+    prior untruncated behaviour).
+    """
+    resolved = _substitute(cmd, mapping) if mapping is not None else list(cmd)
     try:
-        result = subprocess.run(list(reset_cmd), timeout=180, capture_output=True, text=True)
+        result = subprocess.run(resolved, timeout=timeout, capture_output=True, text=True)
     except subprocess.TimeoutExpired:
-        return "reset failed: timed out after 180s"
+        return f"{label} failed: timed out after {int(timeout)}s"
     except OSError as exc:
-        return f"reset failed: {exc}"
+        return f"{label} failed: {exc}"
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
+        if tail_bytes is not None:
+            stderr = stderr[-tail_bytes:]
         suffix = f": {stderr}" if stderr else ""
-        return f"reset failed: exit code {result.returncode}{suffix}"
+        return f"{label} failed: exit code {result.returncode}{suffix}"
     return None
+
+
+def _reset(reset_cmd: Sequence[str]) -> str | None:
+    """Run the reset command; return an error detail string, or None on success."""
+    return _run_hook(reset_cmd, None, timeout=180, label="reset")
 
 
 def _run_spawn_cmd(spawn_cmd: Sequence[str], mapping: dict[str, str]) -> str | None:
     """Run the scene-spawn command for one run; return an error detail
     string, or None on success. Mirrors _reset's shape."""
-    cmd = _substitute(spawn_cmd, mapping)
-    try:
-        result = subprocess.run(cmd, timeout=120, capture_output=True, text=True)
-    except subprocess.TimeoutExpired:
-        return "spawn failed: timed out after 120s"
-    except OSError as exc:
-        return f"spawn failed: {exc}"
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        tail = stderr[-2000:]
-        suffix = f": {tail}" if tail else ""
-        return f"spawn failed: exit code {result.returncode}{suffix}"
-    return None
+    return _run_hook(spawn_cmd, mapping, timeout=120, label="spawn", tail_bytes=2000)
 
 
 def _run_clear_cmd(clear_cmd: Sequence[str], mapping: dict[str, str]) -> str | None:
     """Run the scene-clear command for one run; return an error detail
     string, or None on success."""
-    cmd = _substitute(clear_cmd, mapping)
-    try:
-        result = subprocess.run(cmd, timeout=60, capture_output=True, text=True)
-    except subprocess.TimeoutExpired:
-        return "clear failed: timed out after 60s"
-    except OSError as exc:
-        return f"clear failed: {exc}"
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        tail = stderr[-2000:]
-        suffix = f": {tail}" if tail else ""
-        return f"clear failed: exit code {result.returncode}{suffix}"
-    return None
+    return _run_hook(clear_cmd, mapping, timeout=60, label="clear", tail_bytes=2000)
 
 
 def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[str],
@@ -327,8 +321,16 @@ def run_tier2(entries: Sequence[CorpusEntry], *, mock_config: Path, constants: P
         if spawn_cmd:
             spawn_error = _run_spawn_cmd(spawn_cmd, scene_mapping)
             if spawn_error is not None:
+                detail = spawn_error
+                if clear_cmd:
+                    # A scene may have partially spawned before the failure; run clear_cmd
+                    # once so the sim isn't left dirty for the next entry's reset. Its own
+                    # failure is appended to the ERROR detail, not scored separately.
+                    clear_error = _run_clear_cmd(clear_cmd, scene_mapping)
+                    if clear_error is not None:
+                        detail = detail + " | " + clear_error
                 result = BenchResult(entry.id, entry.template, entry.feasibility, TIER, "ERROR",
-                                     spawn_error)
+                                     detail)
                 _write_run_json(run_dir, entry, tier_label, result)
                 results.append(result)
                 if _halted(results, out_dir, halt_after_errors):
