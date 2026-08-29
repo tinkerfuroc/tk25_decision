@@ -75,43 +75,10 @@ class RecoveryLedger:
     def mark_result(self, issue_id: str, strategy_id: str, *, succeeded: bool) -> None:
         with self._lock:
             attempt = self._find(issue_id, strategy_id)
-            if attempt.state in {"succeeded", "failed"}:
-                # Idempotent re-confirmation of the SAME outcome (see
-                # mark_unresolved_failed's docstring: the controller and the
-                # slot can both independently resolve the same attempt) is a
-                # no-op; a contradicting outcome is still a real bug.
-                if attempt.succeeded == bool(succeeded):
-                    return
-                raise ValueError("only an executed recovery can receive an outcome")
             if attempt.state != "executing":
                 raise ValueError("only an executed recovery can receive an outcome")
             attempt.state = "succeeded" if succeeded else "failed"
             attempt.succeeded = bool(succeeded)
-
-    def mark_unresolved_failed(self, issue_id: str) -> None:
-        """Resolve any still-``executing`` attempt for ``issue_id`` as failed.
-
-        F1.1 (round-2 review): ``SupervisedSubtaskSlot`` only calls
-        ``mark_result`` lazily, when it moves on to apply the NEXT
-        intervention (see runtime.py ``_apply_intervention``'s leading
-        ``recovery_finished`` call) -- so a still-``executing`` attempt's
-        failure is not recorded until one full extra rebuild cycle later.
-        Left uncorrected, ``exhausted()`` lags reality by exactly one cycle:
-        a controller checking exhaustion before proposing recovery N+1 does
-        not yet see recovery N counted as failed, so a 4th (5th, ...)
-        distinct strategy can be proposed and applied before the 3-failure
-        cap is ever enforced (the actual mechanism behind run 005's 19x
-        find_person sweep pattern reproduced end-to-end in
-        test_local_recovery_exhausts_after_three_identical_failures_and_escalates).
-        A fresh checkpoint arriving for the SAME issue is itself the
-        evidence the previous attempt did not fix things, so the controller
-        calls this to resolve it FIRST, before checking ``exhausted()``.
-        """
-        with self._lock:
-            for attempt in self._attempts.get(issue_id, ()):
-                if attempt.state == "executing":
-                    attempt.state = "failed"
-                    attempt.succeeded = False
 
     def failed_count(self, issue_id: str) -> int:
         with self._lock:

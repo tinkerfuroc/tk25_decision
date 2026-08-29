@@ -78,12 +78,6 @@ class MissionSupervisor:
         self._records: dict[str, CheckpointRecord] = {}
         self._interventions: list[SupervisorIntervention] = []
         self._issue_checkpoint: dict[str, str] = {}
-        # F1.1: issues already escalated to a global replan for ledger
-        # exhaustion -- both _start_local (a fresh checkpoint for an
-        # already-exhausted issue) and recovery_finished (the slot's own
-        # lazy resolution of its last attempt) can independently observe the
-        # SAME exhaustion; only the first one actually starts the replan.
-        self._exhausted_issues: set[str] = set()
         self._lock = threading.RLock()
 
     def submit(
@@ -258,27 +252,11 @@ class MissionSupervisor:
         )
         if succeeded or not self.ledger.exhausted(proposal.issue_id):
             return
-        if self._already_escalated(proposal.issue_id):
-            return
         with self._lock:
             checkpoint_id = self._issue_checkpoint.get(proposal.issue_id)
             record = self._records.get(checkpoint_id or "")
             if record is not None and record.verification is not None:
                 self._start_global(record, "three_distinct_recoveries_failed")
-
-    def _already_escalated(self, issue_id: str) -> bool:
-        """True, and remembers it, the first time ``issue_id`` is escalated.
-
-        F1.1: mark_unresolved_failed (recovery.py) means a fresh checkpoint's
-        _start_local and this slot's own lazy recovery_finished call can both
-        independently notice the SAME issue just became exhausted; only the
-        first caller should actually start a global replan for it.
-        """
-        with self._lock:
-            if issue_id in self._exhausted_issues:
-                return True
-            self._exhausted_issues.add(issue_id)
-            return False
 
     def record(self, checkpoint_id: str) -> CheckpointRecord | None:
         with self._lock:
@@ -395,15 +373,8 @@ class MissionSupervisor:
             target=target,
             location=location,
         )
-        # F1.1 (round-2 review): a fresh checkpoint for the SAME issue is
-        # itself the evidence that whatever local_recovery attempt is still
-        # "executing" for it did not fix things -- resolve it as failed FIRST
-        # so exhausted() below reflects reality instead of lagging one whole
-        # rebuild cycle behind (see mark_unresolved_failed's docstring).
-        self.ledger.mark_unresolved_failed(issue_id)
         if self.ledger.exhausted(issue_id):
-            if not self._already_escalated(issue_id):
-                self._start_global(record, "recovery_budget_exhausted")
+            self._start_global(record, "recovery_budget_exhausted")
             return
         record.issue_id = issue_id
         self._issue_checkpoint[issue_id] = request.checkpoint_id
