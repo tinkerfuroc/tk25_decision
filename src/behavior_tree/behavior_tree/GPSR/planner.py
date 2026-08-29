@@ -142,10 +142,11 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
        targets: acquire/grasp with postcondition held(plant); transport/goto
        balcony depending on that target with precondition held(plant) and
        postcondition at_robot(balcony); place depending on transport with
-       preconditions held(plant), at_robot(balcony) and postcondition
-       placed(plant,balcony). A "then"/"and" separates targets when it joins
-       distinct work: "grab a coke from the kitchen, then take it to Susan in
-       the living room" has two end-states.
+       precondition held(plant) and postcondition placed(plant,balcony).
+       __SELF_SATISFIED_RULE__ Preconditions list only facts an EARLIER
+       target must have established. A "then"/"and" separates targets when
+       it joins distinct work: "grab a coke from the kitchen, then take it to
+       Susan in the living room" has two end-states.
     8. Enumeration of SEVERAL separately-named concrete objects is the one
        intra-verb-phrase case that does split: "grab a coke, some chips and a
        lemonade from the kitchen" -> three fetch targets, each carrying
@@ -156,7 +157,7 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
     10. Every postcondition must be meaningful and checkable under the closed
         vocabulary above. If a clause cannot be resolved into concrete work,
         keep it as a target anyway — the lower layer will plan an announcement.
-""").strip()
+""").strip().replace("__SELF_SATISFIED_RULE__", render_self_satisfied_rule())
 
 
 # ---------------------------------------------------------------------------

@@ -175,3 +175,11 @@ def test_deterministic_intent_derives_from_registry():
     assert intents[1]["params"] == {"location": "balcony"}
     assert _deterministic_target_intent({"desc": "x", "postconditions": ["object_seen(coke)"]})[0]["action"] == "find_object"
     assert _deterministic_target_intent({"desc": "x", "postconditions": ["answered(name)"]})[0]["action"] == "ask_person"
+
+
+def test_split_prompt_rule_7_is_rendered_from_registry():
+    from behavior_tree.GPSR import planner
+    prompt = planner.TOP_LAYER_SYSTEM_PROMPT
+    assert ac.render_self_satisfied_rule() in prompt
+    assert "preconditions held(plant), at_robot(balcony)" not in prompt
+    assert "precondition held(plant) and\n       postcondition placed(plant,balcony)" in prompt or "precondition held(plant)" in prompt
