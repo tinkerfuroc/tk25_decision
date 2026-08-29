@@ -61,6 +61,7 @@ from .supervision.runtime import get_default_supervisor, wrap_action_factory
 from .action_contracts import (
     ACTION_CONTRACTS,
     IDENTICAL_PLAN_ERROR_PREFIX,
+    established_facts,
     render_self_satisfied_rule,
     self_established_facts,
 )
@@ -486,6 +487,164 @@ def _flatten_prior_plans(planner, slot: int, index: int) -> List[Dict[str, Any]]
     return _deterministic_prior_plan(targets, index)
 
 
+def _is_same_target(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> bool:
+    """Identity match for target dicts, tolerant of copies carrying the same id."""
+    if a is None or b is None:
+        return False
+    if a is b:
+        return True
+    a_id, b_id = a.get("id"), b.get("id")
+    return bool(a_id) and a_id == b_id
+
+
+def _render_contract_block(
+    contract: Optional[Dict[str, Any]],
+    all_targets: Optional[List[Dict[str, Any]]],
+) -> str:
+    """Render the "fact contract" block for the lower-layer prompt.
+
+    Tells the model its OWN target's declared pre/postconditions (from the
+    top-layer split) plus, for every OTHER target in the same command
+    (ancestor or successor), the postconditions that belong to that target
+    and NOT to this one — facts it must never establish itself. See
+    ``task-A-brief.md`` for the "bring me a spam" defect this closes.
+    """
+    if not contract:
+        return ""
+    preconditions = list(contract.get("preconditions") or [])
+    postconditions = list(contract.get("postconditions") or [])
+    if not preconditions and not postconditions:
+        return ""
+    requires_str = ", ".join(str(p) for p in preconditions) or "(none)"
+    establish_str = ", ".join(str(p) for p in postconditions) or "(none)"
+    lines = [
+        "This target's fact contract (from the top layer):",
+        f"  requires (established by earlier targets, do NOT re-establish): {requires_str}",
+        f"  must establish: {establish_str}",
+    ]
+    own_post_canon: set = set()
+    for raw in postconditions:
+        fact, _error = parse_fact(str(raw))
+        if fact is not None:
+            own_post_canon.add(canonical_fact(fact))
+    owned_lines = []
+    for i, other in enumerate(all_targets or []):
+        if _is_same_target(other, contract):
+            continue
+        other_facts = []
+        for raw in other.get("postconditions") or []:
+            fact, _error = parse_fact(str(raw))
+            if fact is None:
+                continue
+            canon = canonical_fact(fact)
+            if canon not in own_post_canon and canon not in other_facts:
+                other_facts.append(canon)
+        if other_facts:
+            owned_lines.append(
+                f"  owned by T{i} \"{other.get('desc') or ''}\": {', '.join(other_facts)}"
+            )
+    if owned_lines:
+        lines.append(
+            "Plan ONLY the steps that establish the \"must establish\" facts from the\n"
+            "\"requires\" state. Facts owned by OTHER targets of this command are listed\n"
+            "below — never perform an action that establishes one of them:"
+        )
+        lines.extend(owned_lines)
+    return "\n".join(lines) + "\n"
+
+
+def _drop_foreign_contract_steps(
+    plan: List[Dict[str, Any]],
+    target: Optional[Dict[str, Any]],
+    all_targets: Optional[List[Dict[str, Any]]],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Deterministically drop plan steps that establish ANOTHER target's fact.
+
+    A step is dropped iff at least one of its ``established_facts(step)`` is
+    (a) NOT a canonical postcondition of ``target`` and (b) IS a canonical
+    postcondition of some OTHER target in ``all_targets``. Facts are compared
+    in FULL (``at_robot(kitchen)`` vs ``at_robot(balcony)`` never collide) —
+    never by predicate alone. Only ``establishes`` (action_contracts.py)
+    counts; ``self_establishes`` (incidental navigation, e.g. place/deliver
+    reaching their own location) never triggers a drop, since it is not
+    consulted here at all.
+
+    No LLM call, no cost — this is the deterministic guard that closes the
+    "bring me a spam from the laundry_desk" defect even if the prompt's
+    contract block (``_render_contract_block``) is ignored by the model.
+    """
+    if not target or not all_targets:
+        return list(plan or []), []
+    own_post_canon: set = set()
+    for raw in target.get("postconditions") or []:
+        fact, _error = parse_fact(str(raw))
+        if fact is not None:
+            own_post_canon.add(canonical_fact(fact))
+    foreign_post_canon: set = set()
+    for other in all_targets:
+        if _is_same_target(other, target):
+            continue
+        for raw in other.get("postconditions") or []:
+            fact, _error = parse_fact(str(raw))
+            if fact is not None:
+                foreign_post_canon.add(canonical_fact(fact))
+    kept: List[Dict[str, Any]] = []
+    dropped: List[str] = []
+    for step in plan or []:
+        facts = established_facts(step) if isinstance(step, dict) else []
+        foreign_fact = next(
+            (f for f in facts if f not in own_post_canon and f in foreign_post_canon),
+            None,
+        )
+        if foreign_fact is not None:
+            dropped.append(f"contract:{step.get('action')}->{foreign_fact}")
+            continue
+        kept.append(step)
+    return kept, dropped
+
+
+def _contract_drop_note(
+    dropped: List[str],
+    target: Optional[Dict[str, Any]],
+    all_targets: Optional[List[Dict[str, Any]]],
+) -> str:
+    """Sentence naming the dropped step(s) + owning target, for ``last_reason``.
+
+    Only used when the contract-boundary-reduced plan then fails
+    ``validate_plan`` (e.g. it no longer establishes its own postcondition):
+    tells the retry which steps were removed and why, so it does not just
+    re-emit them.
+    """
+    contract_entries = [d for d in dropped if str(d).startswith("contract:")]
+    if not contract_entries or not target or not all_targets:
+        return ""
+    owner_by_fact: Dict[str, str] = {}
+    for i, other in enumerate(all_targets):
+        if _is_same_target(other, target):
+            continue
+        for raw in other.get("postconditions") or []:
+            fact, _error = parse_fact(str(raw))
+            if fact is None:
+                continue
+            owner_by_fact.setdefault(
+                canonical_fact(fact), f"T{i} \"{other.get('desc') or ''}\""
+            )
+    parts = []
+    for entry in contract_entries:
+        _, _, rest = entry.partition(":")
+        action, _, fact = rest.partition("->")
+        owner = owner_by_fact.get(fact, "another target")
+        parts.append(f"{action} (establishes {fact}, owned by {owner})")
+    if not parts:
+        return ""
+    return (
+        " Note: the contract-boundary guard already removed "
+        + "; ".join(parts)
+        + " from your last plan because that fact belongs to a DIFFERENT "
+        "target of this command — do not re-emit them."
+    )
+
+
 def _build_lower_layer_user_prompt(
     command: str,
     desc: str,
@@ -496,6 +655,8 @@ def _build_lower_layer_user_prompt(
     failure_msg: Optional[str] = None,
     nonce: Optional[str] = None,
     verified_facts: Optional[List[str]] = None,
+    contract: Optional[Dict[str, Any]] = None,
+    all_targets: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Build the lower-layer user prompt WITH full-command + prior-target context.
 
@@ -516,6 +677,9 @@ def _build_lower_layer_user_prompt(
         f"Full command (the whole instruction this target belongs to):\n{command}\n\n"
         f"Current target to plan:\n{desc}\n\n"
     )
+    contract_block = _render_contract_block(contract, all_targets)
+    if contract_block:
+        body += contract_block + "\n"
     if target_loc:
         body += (
             f"Location context: {target_obj or 'the target'} was assigned to "
@@ -871,6 +1035,8 @@ class GPSRPlanner:
         target_loc: str = "",
         prior_targets: Optional[List[Dict[str, Any]]] = None,
         failure_reason: Optional[str] = None,
+        target: Optional[Dict[str, Any]] = None,
+        all_targets: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """LOWER LAYER. Blocking: plan ONE target and pre-build its subtree.
 
@@ -880,6 +1046,16 @@ class GPSRPlanner:
         the earlier targets of the same command. The lower layer plans against
         that context — the assigned location wins over any predefined default —
         and validates against prior targets so it does not repeat their work.
+
+        ``target`` (this target's own dict, carrying its declared
+        pre/postconditions) and ``all_targets`` (the full slot target list)
+        drive the fact-contract boundary: the prompt tells the model which
+        facts are its own to establish and which belong to sibling targets
+        (``_render_contract_block``), and the deterministic
+        ``_drop_foreign_contract_steps`` guard removes any step establishing
+        a sibling's fact even if the model ignores the prompt. Both are
+        optional (None/empty -> no-op) so callers that don't have this
+        context (offline mock, ad hoc tests) are unaffected.
 
         Called from worker threads (request_plan_all / replan_target). Validates
         the plan the same way the legacy single-command planner did, then builds
@@ -917,6 +1093,8 @@ class GPSRPlanner:
                 last_reason,
                 nonce=nonce,
                 verified_facts=self.get_facts(slot),
+                contract=target,
+                all_targets=all_targets,
             )
             parsed, err = _call_llm(
                 client, LOWER_LAYER_SYSTEM_PROMPT, user_prompt, temperature,
@@ -927,6 +1105,8 @@ class GPSRPlanner:
                       f"-> {err}")
                 continue
             cleaned, dropped = _clean_plan(parsed.get("plan", []))
+            cleaned, contract_dropped = _drop_foreign_contract_steps(cleaned, target, all_targets)
+            dropped = list(dropped) + contract_dropped
             raw_actions = [
                 s.get("action") if isinstance(s, dict) else f"<{type(s).__name__}>"
                 for s in (parsed.get("plan", []) or [])
@@ -950,7 +1130,11 @@ class GPSRPlanner:
                 prior_plan=prior_plan,
             )
             if not ok:
-                last_reason = reason
+                # The contract-boundary guard may have just removed the step(s)
+                # that would have satisfied this target's own postcondition
+                # (e.g. it planned only the foreign `deliver`). Tell the retry
+                # what was dropped and why so it does not just re-emit them.
+                last_reason = reason + _contract_drop_note(contract_dropped, target, all_targets)
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"REJECTED: {reason}")
                 continue
@@ -1058,6 +1242,7 @@ class GPSRPlanner:
                     str(t.get("location") or ""),
                     [dict(x) for x in _dependency_ancestor_targets(norm_targets, i)],
                 ),
+                kwargs={"target": norm_targets[i], "all_targets": norm_targets},
                 daemon=True,
             ).start()
 
@@ -1085,7 +1270,8 @@ class GPSRPlanner:
                 str(t.get("location") or ""),
                 [dict(x) for x in _dependency_ancestor_targets(targets, index)],
             ),
-            kwargs={"failure_reason": reason}, daemon=True,
+            kwargs={"failure_reason": reason, "target": t, "all_targets": targets},
+            daemon=True,
         ).start()
 
     def replace_target_plan(
@@ -1101,9 +1287,22 @@ class GPSRPlanner:
         This is synchronous and network-free: the supervisor has already
         validated the typed plan.  Building and caching a fresh subtree here
         lets ``DynamicExecutor`` swap it at the next safe tick boundary.
+
+        Also runs the deterministic contract-boundary guard
+        (``_drop_foreign_contract_steps``): unlike ``plan_target`` this path
+        never talks to an LLM, but the supervisor's replacement plan is still
+        free-form JSON that could name a step belonging to a sibling target
+        (e.g. a premature ``deliver``). The target/all-targets context is
+        available here from this planner's own slot context — no caller
+        change needed.
         """
         desc = self._get_desc(slot, index) or f"target {index}"
         cleaned, _ = _clean_plan(plan)
+        targets = self._get_slot_context(slot).get("targets", [])
+        target = targets[index] if index < len(targets) else None
+        cleaned, contract_dropped = _drop_foreign_contract_steps(cleaned, target, targets)
+        if contract_dropped:
+            print(f"[replace:{slot}:{index}] contract-boundary dropped {contract_dropped}")
         subtree = self.build_target_subtree(
             slot, index, cleaned, completed_steps=completed_steps,
         )
