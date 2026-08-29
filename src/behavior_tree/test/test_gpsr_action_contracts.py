@@ -48,3 +48,68 @@ def test_render_self_satisfied_rule_mentions_each_self_navigator():
     for action in ("goto", "place", "deliver", "search_object"):
         assert action in text
     assert "at_robot" in text
+
+
+import py_trees
+from py_trees.common import Access
+
+from behavior_tree.GPSR.orchestrator import materialise_params
+from behavior_tree.GPSR.small_trees import bb_keys
+
+
+@pytest.fixture(autouse=True)
+def _clear_blackboard_after_materialise_tests():
+    # _bb() below clears the shared py_trees Blackboard singleton on entry,
+    # but leaves whatever it wrote behind on exit. Without a teardown clear
+    # here, that state (LAST_NAV_LOCATION, TARGET_LOCATION, ...) leaks into
+    # any test module that runs afterwards in the same pytest session and
+    # doesn't clear the blackboard itself (e.g. test_gpsr_target_gates.py,
+    # which alphabetically follows this file).
+    yield
+    py_trees.blackboard.Blackboard.clear()
+
+
+def _bb():
+    py_trees.blackboard.Blackboard.clear()
+    bb = py_trees.blackboard.Client(name="t")
+    for key in (bb_keys.LAST_NAV_LOCATION, bb_keys.TARGET_LOCATION, bb_keys.TARGET_POSE,
+                bb_keys.GRASP_ASK_REFEREE, bb_keys.GRASP_REFEREE_LOCATION,
+                bb_keys.GRASP_REFEREE_POSE, bb_keys.GRASP_REFEREE_IS_APPLIANCE,
+                bb_keys.TARGET_OBJECT_NAME, bb_keys.TARGET_OBJECT_PROMPT,
+                bb_keys.TARGET_PERSON_PROMPT, bb_keys.ANNOUNCE_TEXT, bb_keys.ASK_QUESTION,
+                bb_keys.VLM_QUESTION, bb_keys.LLM_QUESTION, bb_keys.CURRENT_DYNLABEL):
+        bb.register_key(key, access=Access.WRITE)
+        bb.register_key(key, access=Access.READ)
+    for key in (bb_keys.REPORT_INFO, bb_keys.START_POSE, bb_keys.DYNAMIC_LOCATIONS):
+        bb.register_key(key, access=Access.READ)
+    from behavior_tree.GPSR.orchestrator import SEARCH_POSE_KEYS
+    for key in SEARCH_POSE_KEYS:
+        bb.register_key(key, access=Access.WRITE)
+    bb.set(bb_keys.LAST_NAV_LOCATION, "", overwrite=True)
+    return bb
+
+
+@pytest.mark.parametrize("action,params,expected", [
+    ("goto", {"location": "kitchen_table"}, "kitchen_table"),
+    ("place", {"location": "kitchen_table"}, "kitchen_table"),
+    ("deliver", {"object": "coke", "recipient": "Susan", "recipient_location": "living_room"}, "living_room"),
+    ("search_object", {"object": "coke", "location": "kitchen"}, "kitchen"),
+])
+def test_materialise_records_last_nav_for_self_navigators(action, params, expected):
+    bb = _bb()
+    materialise_params(bb, action, params)
+    assert bb.get(bb_keys.LAST_NAV_LOCATION) == expected
+
+
+def test_materialise_does_not_touch_last_nav_for_grasp():
+    bb = _bb()
+    bb.set(bb_keys.LAST_NAV_LOCATION, "shelf", overwrite=True)
+    materialise_params(bb, "grasp", {"object": "coke"})
+    assert bb.get(bb_keys.LAST_NAV_LOCATION) == "shelf"
+
+
+def test_materialise_deliver_without_location_leaves_last_nav():
+    bb = _bb()
+    bb.set(bb_keys.LAST_NAV_LOCATION, "office", overwrite=True)
+    materialise_params(bb, "deliver", {"object": "coke", "recipient": "Susan"})
+    assert bb.get(bb_keys.LAST_NAV_LOCATION) == "office"

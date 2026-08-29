@@ -66,6 +66,7 @@ from .small_trees import (
     SEARCH_POSE_KEYS,
     create_goto,
 )
+from .action_contracts import contract_for as _contract_for
 from .telemetry import get_default_telemetry
 from .supervision.models import SupervisionMode
 from .supervision.runtime import get_default_supervisor, wrap_action_factory
@@ -1046,30 +1047,40 @@ def materialise_params(bb_client, action: str, params: Dict[str, Any]) -> None:
                 "location to possible_poses/egpsr_rooms or search_spots."
             )
 
-    # Track where the robot navigates so a following grasp can tell it is a
-    # shelf grasp (the fetch flow is goto(location) -> grasp(object)).
-    if action == "goto":
-        bb_client.set(bb_keys.LAST_NAV_LOCATION, str(params.get("location") or ""), overwrite=True)
-
     # search_object: resolve the room's sweep spots into SEARCH_POSE_0..N.
     # location is optional — when omitted, fall back to the object's default
     # location (DEFAULT_OBJECT_LOCATIONS). A location with no explicit
     # search-spot list sweeps just itself. Unused slots are cleared to None
-    # so the sweep guards them out.
+    # so the sweep guards them out. The resolved fallback is written back into
+    # a local copy of params so the contract nav-record block below (which
+    # reads params[contract.self_establishes["at_robot"]]) sees it too.
     if action == "search_object":
+        params = dict(params)
         loc = params.get("location")
         obj = params.get("object")
         if not loc and obj:
             loc = DEFAULT_OBJECT_LOCATIONS.get(str(obj).lower())
+            params["location"] = loc
         if loc:
             bb_client.set(bb_keys.TARGET_LOCATION, loc, overwrite=True)
-        # Remember where we searched so a following grasp can tell it is a
-        # shelf grasp even if the planner forgot the from_shelf flag.
-        bb_client.set(bb_keys.LAST_NAV_LOCATION, str(loc or ""), overwrite=True)
         spot_names = ROOM_SEARCH_SPOTS.get(str(loc).lower(), [loc]) if loc else []
         for i, search_key in enumerate(SEARCH_POSE_KEYS):
             pose = resolve_pose(bb_client, spot_names[i]) if i < len(spot_names) else None
             bb_client.set(search_key, pose, overwrite=True)
+
+    # Track where the robot navigates so a following grasp can tell it is a
+    # shelf grasp, and so at_robot(<dest>) can verify after ANY action that
+    # navigates itself (goto / place / deliver / search_object). Which actions
+    # and which param is the action contract's business, not this function's.
+    try:
+        contract = _contract_for(action)
+    except KeyError:
+        contract = None
+    if contract is not None and "last_nav_location" in contract.records:
+        nav_param = contract.self_establishes.get("at_robot")
+        nav_value = params.get(nav_param) if nav_param else None
+        if nav_value is not None and str(nav_value).strip():
+            bb_client.set(bb_keys.LAST_NAV_LOCATION, str(nav_value), overwrite=True)
 
     # grasp: decide whether to bypass the real grasp and ask a referee. The
     # robot cannot safely grasp from a shelf, cabinet, or coat rack. Truthy
