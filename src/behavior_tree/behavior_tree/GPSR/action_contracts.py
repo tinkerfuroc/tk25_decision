@@ -87,7 +87,17 @@ ACTION_CONTRACTS: dict[str, ActionContract] = {
         _c("approach_person"),
         _c("describe_person"),
         _c("follow"),
-        _c("guide"),
+        # M-4 (round-2 review): guide navigates to `location` itself
+        # (small_trees.create_guide, "retry guide goto") but previously
+        # declared no self_establishes -- a guide target's at_robot(<dest>)
+        # postcondition then demanded an EXTRA goto step from the model,
+        # which could be placed BEFORE guide (the robot walks off alone,
+        # leaving the person behind). Declaring this makes the
+        # goto-before-self-nav rule and the at_robot action-verdict fallback
+        # apply to guide too, same as goto/place/deliver/search_object.
+        # Param name "location" per ACTION_CATALOGUE_DESCRIPTION
+        # (orchestrator.py) and materialise_params.
+        _c("guide", self_establishes={"at_robot": "location"}, self_navigating=True),
         _c("open"),
         # `announce` has no `question` param (only `text`), so
         # established_facts() for it stays [] — the establishes template can

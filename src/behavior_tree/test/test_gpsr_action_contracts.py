@@ -111,8 +111,15 @@ def test_llm_vlm_fallback_established_facts_resolve_answered_when_question_prese
 
 
 def test_self_navigating_destinations_excludes_goto():
+    # M-4 (round-2 review): guide navigates (small_trees.create_guide,
+    # "retry guide goto") but declared no self_establishes -- a guide
+    # target's at_robot(<dest>) postcondition then demanded an EXTRA goto,
+    # and the model could place it before guide (robot walks off alone).
+    # guide's param name is "location" (ACTION_CATALOGUE_DESCRIPTION /
+    # materialise_params: "guide(location: str) Lead a person to location").
     assert ac.self_navigating_destinations() == {
         "deliver": "recipient_location",
+        "guide": "location",
         "place": "location",
         "search_object": "location",
     }
@@ -120,7 +127,7 @@ def test_self_navigating_destinations_excludes_goto():
 
 def test_render_self_satisfied_rule_mentions_each_self_navigator():
     text = ac.render_self_satisfied_rule()
-    for action in ("goto", "place", "deliver", "search_object"):
+    for action in ("goto", "place", "deliver", "search_object", "guide"):
         assert action in text
     assert "at_robot" in text
 
@@ -194,6 +201,40 @@ from behavior_tree.GPSR.planner_validators import validate_plan
 from behavior_tree.GPSR.validators import (
     Verdict, VerificationContext, _action_verdict, parse_fact,
 )
+
+
+def test_validate_plan_rejects_goto_immediately_before_guide():
+    # M-4: guide is now a real self-navigator, so the goto-before-self-nav
+    # rule applies to it too -- a goto right before guide is redundant
+    # (guide navigates to `location` itself) and the model must instead put
+    # the destination on the guide step directly.
+    plan = [
+        {"action": "find_person", "params": {"person": "sarah"}},
+        {"action": "approach_person", "params": {}},
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "guide", "params": {"location": "kitchen"}},
+    ]
+    ok, reason = validate_plan(
+        plan, "guide sarah to the kitchen",
+        {"find_person", "approach_person", "goto", "guide"},
+    )
+    assert not ok
+    assert "guide" in reason and "redundant" in reason
+
+
+def test_action_verdict_accepts_at_robot_after_guide():
+    # M-4: guide's self_establishes now makes the generic at_robot
+    # action-verdict fallback apply to it, same as goto/place/deliver.
+    fact, _ = parse_fact("at_robot(kitchen)")
+    ctx = VerificationContext(
+        phase="postcondition", established_facts=frozenset(),
+        completed_steps=(
+            {"action": "guide", "params": {"location": "kitchen"}, "succeeded": True},
+        ),
+        target_object="", target_location="",
+    )
+    result = _action_verdict(fact, ctx)
+    assert result is not None and result.verdict is Verdict.VALID
 
 
 def test_validate_plan_rejects_goto_before_each_self_navigator(monkeypatch):
