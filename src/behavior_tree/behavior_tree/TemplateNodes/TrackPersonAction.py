@@ -417,7 +417,7 @@ class BtNode_TrackPersonAction(ActionHandler):
             return py_trees.common.Status.SUCCESS
         else:
             self.feedback_message = f"Tracking failed with status {self.result_status}"
-            self.logger.warn(f"TrackPerson action failed with status {self.result_status}")
+            self.logger.warning(f"TrackPerson action failed with status {self.result_status}")
             return py_trees.common.Status.FAILURE
 
     def update(self) -> Status:
