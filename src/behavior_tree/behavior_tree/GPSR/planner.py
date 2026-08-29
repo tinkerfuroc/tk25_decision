@@ -448,6 +448,172 @@ def _alternatives_for_reason(failure_reason: str) -> str:
     return "Acceptable alternatives: " + ", ".join(parts) + "."
 
 
+def _establish_arg_names(action: str, predicate: str) -> List[str]:
+    """Param names for ``action``'s ``establishes`` template naming ``predicate``.
+
+    e.g. ``find_object`` establishes ``object_seen(object)`` -> ``["object"]``.
+    Empty when ``action`` does not establish ``predicate`` at all.
+    """
+    contract = ACTION_CONTRACTS.get(action)
+    if contract is None:
+        return []
+    for template in contract.establishes:
+        pred, _, arglist = template.partition("(")
+        if pred == predicate:
+            return [a.strip() for a in arglist.rstrip(")").split(",") if a.strip()]
+    return []
+
+
+def _last_goto_location(failed_plans: List[List[Dict[str, Any]]]) -> Optional[str]:
+    """The most recent ``goto(location=...)`` step across ``failed_plans``.
+
+    Scans plans most-recent-first, and within a plan, steps most-recent-first
+    — a target that keeps failing on an identical plan has an equivalent
+    ``goto`` in its OWN just-failed plan too, so this recovers "where the
+    robot was" for a self-navigating escape action (``search_object``) even
+    though ``_escape_plan`` is only handed the failed-plan history.
+    """
+    for plan in reversed(failed_plans or []):
+        for step in reversed(plan or []):
+            if isinstance(step, dict) and step.get("action") == "goto":
+                loc = (step.get("params") or {}).get("location")
+                if loc:
+                    return str(loc)
+    return None
+
+
+def _escape_step_for(
+    action: str,
+    fact: "Fact",
+    target_obj: str,
+    target_loc: str,
+    failed_plans: List[List[Dict[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    """Materialise one step for ``action`` establishing ``fact``.
+
+    Params start from the ``establishes`` template's arg names zipped with
+    ``fact.args`` (e.g. ``object_seen(pudding_box)`` + ``find_object`` ->
+    ``{"object": "pudding_box"}``) — the fact args are already normalised
+    (lowercased, spaces -> underscores) by ``parse_fact``, so an ``object``
+    param is then overridden with the top layer's authoritative,
+    un-normalised ``target_obj`` when one is available (the earlier failed
+    steps used that exact string; escaping to a normalised variant would
+    make the new step look like it targets a DIFFERENT object). A
+    self-navigating action (``search_object``) additionally gets its own
+    ``location`` param filled from ``target_loc`` or the last ``goto`` seen
+    in ``failed_plans`` — never left implicit, since plan_validators.py
+    rejects an implicit-navigation ``find_object`` and ``search_object``
+    needs somewhere to search FROM.
+    """
+    arg_names = _establish_arg_names(action, fact.predicate)
+    if len(arg_names) != len(fact.args):
+        return None
+    params: Dict[str, Any] = dict(zip(arg_names, fact.args))
+    if target_obj and "object" in params:
+        params["object"] = target_obj
+    contract = ACTION_CONTRACTS[action]
+    loc_param = contract.self_establishes.get("at_robot")
+    if loc_param and loc_param not in params:
+        loc = target_loc or _last_goto_location(failed_plans)
+        if loc:
+            params[loc_param] = loc
+    return {"action": action, "params": params}
+
+
+def _escape_plan(
+    target: Optional[Dict[str, Any]],
+    target_obj: str,
+    target_loc: str,
+    failure_reason: str,
+    failed_plans: List[List[Dict[str, Any]]],
+) -> Optional[List[Dict[str, Any]]]:
+    """Deterministic fallback plan for a target the LLM is stuck replanning.
+
+    Evidence (battery run 004, D1 in the Task D brief): after one
+    ``find_object`` failure, the LLM kept returning the identical
+    ``[goto, find_object]`` plan for every replan across the whole budget —
+    ``search_object`` (a genuinely different, untried strategy) was never
+    tried. This closes that gap with NO LLM call: parse the first fact out of
+    ``failure_reason`` (the same regex/parse ``_alternatives_for_reason``
+    uses), find every registry action whose ``establishes`` covers that
+    predicate, drop the ones already used in ANY of ``failed_plans`` (by
+    action name — a strategy is "tried" once, anywhere, not per-plan), and
+    materialise the FIRST remaining one (registry order — same convention as
+    ``_ESTABLISHER_FOR_PREDICATE``).
+
+    If the chosen action itself ``requires`` a fact (e.g. ``grasp`` requires
+    ``object_seen(object)``), its canonical establisher
+    (``_ESTABLISHER_FOR_PREDICATE``) is prepended too, with the same param
+    value the chosen action's own step uses for that param name (the
+    registry's param-naming convention is consistent across an action's
+    ``requires``/``establishes`` templates — e.g. both use ``object``) — if
+    that value cannot be resolved, the whole escape is abandoned (``None``)
+    rather than emitting a step nothing can materialise.
+
+    Returns ``None`` when no untried establisher exists — e.g. ``held``
+    (after ``find_object`` failed) is established ONLY by ``grasp``, and if
+    the plan history shows ``grasp`` already failed too there is nothing
+    left to try; the caller falls back to the existing IDENTICAL_PLAN marker
+    path.
+    """
+    match = re.search(r"([a-z_]+)\(([^()]*)\)", str(failure_reason or ""))
+    if match is None:
+        return None
+    fact, _err = parse_fact(match.group(0))
+    if fact is None:
+        return None
+    used_actions = {
+        str(step.get("action"))
+        for plan in (failed_plans or [])
+        for step in (plan or [])
+        if isinstance(step, dict)
+    }
+    candidates = [
+        name for name, c in ACTION_CONTRACTS.items()
+        if any(t.split("(", 1)[0] == fact.predicate for t in c.establishes)
+        and name not in used_actions
+    ]
+    if not candidates:
+        return None
+    chosen = candidates[0]
+    target_obj = target_obj or str((target or {}).get("object") or "")
+    target_loc = target_loc or str((target or {}).get("location") or "")
+    chosen_step = _escape_step_for(chosen, fact, target_obj, target_loc, failed_plans)
+    if chosen_step is None:
+        return None
+    steps: List[Dict[str, Any]] = []
+    for req_template in ACTION_CONTRACTS[chosen].requires:
+        req_predicate, _, req_arglist = req_template.partition("(")
+        # Names as used INSIDE `chosen`'s own `requires` template (e.g.
+        # grasp requires `object_seen(object)` -> ["object"]).
+        requires_own_arg_names = [
+            a.strip() for a in req_arglist.rstrip(")").split(",") if a.strip()
+        ]
+        req_action = _ESTABLISHER_FOR_PREDICATE.get(req_predicate)
+        if not req_action or req_action == chosen:
+            continue
+        # Names the canonical establisher's OWN `establishes` template uses
+        # for that same predicate (e.g. find_object establishes
+        # `object_seen(object)` -> ["object"]).
+        req_establish_arg_names = _establish_arg_names(req_action, req_predicate)
+        if not req_establish_arg_names or len(req_establish_arg_names) != len(requires_own_arg_names):
+            return None
+        req_params = {}
+        for establish_name, requires_name in zip(req_establish_arg_names, requires_own_arg_names):
+            # The registry names the same logical param identically across an
+            # action's `requires` and its OWN `establishes` templates (e.g.
+            # grasp's own `held(object)` and its `requires` `object_seen(object)`
+            # both use `object`) -- reuse chosen_step's value for that name.
+            # Give up on the whole escape rather than guess if that ever
+            # stops holding.
+            if requires_name not in chosen_step["params"]:
+                return None
+            req_params[establish_name] = chosen_step["params"][requires_name]
+        steps.append({"action": req_action, "params": req_params})
+    steps.append(chosen_step)
+    return steps
+
+
 def _deterministic_target_intent(target: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Compile metadata into validator-only intent steps without cache reads."""
     intents: List[Dict[str, Any]] = []
@@ -1230,6 +1396,42 @@ class GPSRPlanner:
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"REJECTED: identical to failed plan")
                 continue
+            if identical:
+                # D1 (Task D brief, battery run 004): before handing back the
+                # doomed IDENTICAL plan, try ONE deterministic, network-free
+                # escape — a registry action establishing the failed fact
+                # that has never been tried across this target's ENTIRE
+                # failed-plan history. No LLM call burns replan budget for
+                # this; it either produces real forward progress or falls
+                # straight through to the existing marker path unchanged.
+                escape = _escape_plan(
+                    target, target_obj, target_loc, identical_marker_reason,
+                    self._failed_plans(slot, index),
+                )
+                if escape is not None:
+                    escape_guarded, _escape_dropped = _drop_foreign_contract_steps(
+                        escape, target, all_targets, include_ancestors=(failure_reason is None),
+                    )
+                    escape_ok, escape_reason = validate_plan(
+                        escape_guarded, desc or "", known_actions,
+                        known_locations=known_loc_arg,
+                        prior_plan=prior_plan,
+                        postconditions=(target or {}).get("postconditions"),
+                    )
+                    escape_subtree = None
+                    if escape_ok:
+                        try:
+                            escape_subtree = self.build_target_subtree(slot, index, escape_guarded)
+                        except Exception as exc:  # noqa: BLE001 — fall through to the marker path
+                            print(f"[plan:{slot}:{index}] deterministic escape subtree build "
+                                  f"failed: {exc!r}")
+                    else:
+                        print(f"[plan:{slot}:{index}] deterministic escape REJECTED: {escape_reason}")
+                    if escape_subtree is not None:
+                        print(f"[plan:{slot}:{index}] LLM stuck on an identical plan -> "
+                              f"deterministic escape {[s['action'] for s in escape_guarded]}")
+                        self._store(slot, index, desc, escape_guarded, escape_subtree, None)
+                        return
             # Accepted — build the subtree on this (worker) thread, then cache.
             try:
                 subtree = self.build_target_subtree(slot, index, cleaned, modifications=mods)

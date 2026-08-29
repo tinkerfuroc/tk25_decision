@@ -103,11 +103,165 @@ def test_alternatives_for_reason_lists_registry_establishers():
     assert planner_mod._alternatives_for_reason("child FAILURE") == ""
 
 
-def test_plan_target_marks_identical_final_attempt_with_error(monkeypatch):
+# ---------------------------------------------------------------------------
+# D1: _escape_plan -- deterministic escape when the LLM is stuck repeating
+# an identical plan across the whole replan budget (battery run 004).
+# ---------------------------------------------------------------------------
+
+def test_escape_plan_object_seen_after_find_object_tries_search_object():
+    failed_plans = [[
+        {"action": "goto", "params": {"location": "living_room"}},
+        {"action": "find_object", "params": {"object": "pudding_box", "location": "living_room"}},
+    ]]
+    plan = planner_mod._escape_plan(
+        {"id": "t0"}, "pudding_box", "",
+        "postcondition unmet: object_seen(pudding_box) (UNKNOWN)", failed_plans,
+    )
+    assert plan == [
+        {"action": "search_object", "params": {"object": "pudding_box", "location": "living_room"}},
+    ]
+
+
+def test_escape_plan_object_seen_returns_none_when_both_establishers_tried():
+    # find_object AND search_object both already failed -- object_seen has
+    # no other registry establisher, so there is nothing left to try.
+    failed_plans = [
+        [{"action": "goto", "params": {"location": "living_room"}},
+         {"action": "find_object", "params": {"object": "pudding_box", "location": "living_room"}}],
+        [{"action": "goto", "params": {"location": "living_room"}},
+         {"action": "search_object", "params": {"object": "pudding_box", "location": "living_room"}}],
+    ]
+    plan = planner_mod._escape_plan(
+        {"id": "t0"}, "pudding_box", "",
+        "postcondition unmet: object_seen(pudding_box) (UNKNOWN)", failed_plans,
+    )
+    assert plan is None
+
+
+def test_escape_plan_person_found_after_find_person_has_no_untried_establisher():
+    # person_found is established ONLY by find_person -- there is no second
+    # strategy to escape to.
+    failed_plans = [[{"action": "find_person", "params": {"person": "waving_person"}}]]
+    plan = planner_mod._escape_plan(
+        {"id": "t0"}, "", "",
+        "postcondition unmet: person_found(waving_person) (UNKNOWN)", failed_plans,
+    )
+    assert plan is None
+
+
+def test_escape_plan_held_after_grasp_has_no_untried_establisher():
+    # `held` is established ONLY by `grasp`, which is already in the failed
+    # history -- so there is no untried establisher and _escape_plan returns
+    # None. This is DESPITE grasp itself `requires` object_seen: the
+    # requires-chaining ("prepend its canonical establisher") logic only
+    # runs once a CANDIDATE has been chosen -- with zero candidates here it
+    # never triggers. See
+    # test_escape_plan_prepends_canonical_establisher_for_an_untried_requires
+    # below for the chaining logic actually firing.
+    failed_plans = [[
+        {"action": "find_object", "params": {"object": "spam"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+    ]]
+    plan = planner_mod._escape_plan(
+        {"id": "t0"}, "spam", "",
+        "precondition unmet: held(spam) (invalid)", failed_plans,
+    )
+    assert plan is None
+
+
+def test_escape_plan_prepends_canonical_establisher_for_an_untried_requires():
+    # grasp itself is untried, but it `requires` object_seen(object), which
+    # is not yet established anywhere in the failed history (no
+    # find_object/search_object) -- its canonical establisher (find_object)
+    # must be prepended so the escape plan is actually executable.
+    failed_plans = [[
+        {"action": "goto", "params": {"location": "laundry_desk"}},
+        {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
+    ]]
+    plan = planner_mod._escape_plan(
+        {"id": "t0"}, "spam", "",
+        "precondition unmet: held(spam) (invalid)", failed_plans,
+    )
+    assert plan == [
+        {"action": "find_object", "params": {"object": "spam"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+    ]
+
+
+def test_escape_plan_returns_none_when_failure_reason_has_no_fact():
+    assert planner_mod._escape_plan({"id": "t0"}, "", "", "child FAILURE", []) is None
+    assert planner_mod._escape_plan({"id": "t0"}, "", "", "", []) is None
+
+
+def test_plan_target_final_identical_attempt_escapes_to_untried_action(monkeypatch, capsys):
+    # D1 integration (battery run 004): stubbed _call_llm returns the
+    # identical [goto, find_object] plan on every attempt -- the cache must
+    # hold the deterministic escape plan (search_object) with error None,
+    # instead of burning the whole replan budget on IDENTICAL_PLAN_SKIPPED
+    # markers.
     p = planner_mod.GPSRPlanner(max_attempts=2)
     monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
     monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
     p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    same = {"plan": [{"action": "goto", "params": {"location": "living_room"}},
+                     {"action": "find_object", "params": {"object": "pudding_box", "location": "living_room"}}]}
+    monkeypatch.setattr(planner_mod, "_call_llm", lambda *a, **k: (same, None))
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    p._store(0, 0, "d", same["plan"], py_trees.behaviours.Success("old"), None)
+    p._invalidate(0, 0)
+    p.plan_target(0, 0, "d", command="c", failure_reason="postcondition unmet: object_seen(pudding_box) (UNKNOWN)")
+    assert p.is_target_ready(0, 0)
+    plan = p.get_action_plan(0, 0)
+    assert [s["action"] for s in plan] == ["search_object"]
+    assert plan[0]["params"]["object"] == "pudding_box"
+    assert plan[0]["params"]["location"] == "living_room"
+    assert p.get_error(0, 0) is None
+    out = capsys.readouterr().out
+    assert "LLM stuck on an identical plan -> deterministic escape" in out
+
+
+def test_plan_target_final_identical_attempt_keeps_marker_when_escape_exhausted(monkeypatch):
+    # The mirror case: find_object AND search_object have BOTH already
+    # failed for this target, so _escape_plan has nothing left to try and
+    # the existing IDENTICAL_PLAN marker path must still apply unchanged.
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    earlier = [{"action": "goto", "params": {"location": "living_room"}},
+               {"action": "search_object", "params": {"object": "pudding_box", "location": "living_room"}}]
+    same = {"plan": [{"action": "goto", "params": {"location": "living_room"}},
+                     {"action": "find_object", "params": {"object": "pudding_box", "location": "living_room"}}]}
+    monkeypatch.setattr(planner_mod, "_call_llm", lambda *a, **k: (same, None))
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    p._store(0, 0, "d", earlier, py_trees.behaviours.Success("s"), None)
+    p._invalidate(0, 0)
+    p._store(0, 0, "d", same["plan"], py_trees.behaviours.Success("s"), None)
+    p._invalidate(0, 0)
+    p.plan_target(0, 0, "d", command="c", failure_reason="postcondition unmet: object_seen(pudding_box) (UNKNOWN)")
+    assert p.is_target_ready(0, 0)
+    assert [s["action"] for s in p.get_action_plan(0, 0)] == ["goto", "find_object"]
+    err = p.get_error(0, 0)
+    assert err is not None and err.startswith(planner_mod.IDENTICAL_PLAN_ERROR_PREFIX)
+
+
+def test_plan_target_marks_identical_final_attempt_with_error(monkeypatch):
+    # D1 update: with only find_object in the failed history, the final
+    # identical attempt would now escape to search_object (see
+    # test_plan_target_final_identical_attempt_escapes_to_untried_action)
+    # instead of falling back to the marker -- so this test's history now
+    # ALSO includes a failed search_object attempt, exhausting object_seen's
+    # only two registry establishers, to keep exercising the marker path
+    # this test is actually about (plus the non-final rejection prompt
+    # content, still driven by the same object_seen failure_reason).
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    earlier_search = [{"action": "goto", "params": {"location": "living_room"}},
+                      {"action": "search_object", "params": {"object": "kitchen item", "location": "living_room"}}]
     same = {"plan": [{"action": "goto", "params": {"location": "living_room"}},
                      {"action": "find_object", "params": {"object": "kitchen item", "location": "living_room"}}]}
     prompts = []
@@ -119,6 +273,8 @@ def test_plan_target_marks_identical_final_attempt_with_error(monkeypatch):
     monkeypatch.setattr(planner_mod, "_call_llm", fake_call)
     monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
     monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    p._store(0, 0, "d", earlier_search, py_trees.behaviours.Success("older"), None)
+    p._invalidate(0, 0)
     p._store(0, 0, "d", same["plan"], py_trees.behaviours.Success("old"), None)
     p._invalidate(0, 0)
     p.plan_target(0, 0, "d", command="c", failure_reason="postcondition unmet: object_seen(kitchen item) (UNKNOWN)")
@@ -135,11 +291,18 @@ def test_plan_target_identical_marker_does_not_nest_on_repeated_identical_replan
     # replan cycles gets re-invoked with failure_reason ALREADY prefixed by
     # a previous IDENTICAL_PLAN_ERROR_PREFIX marker. The composed error must
     # not stack the prefix a second time.
+    #
+    # D1: the fact this test parses out of the (stripped) reason is
+    # at_robot(x), whose only registry establisher is goto -- the failed
+    # plan includes goto too (not just announce) so `_escape_plan` finds
+    # nothing untried and this test keeps exercising the marker path it is
+    # actually about, instead of the new deterministic escape.
     p = planner_mod.GPSRPlanner(max_attempts=2)
     monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
     monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
     p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
-    same = {"plan": [{"action": "announce", "params": {"text": "x"}}]}
+    same = {"plan": [{"action": "goto", "params": {"location": "x"}},
+                     {"action": "announce", "params": {"text": "x"}}]}
 
     monkeypatch.setattr(planner_mod, "_call_llm", lambda *a, **k: (same, None))
     monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
