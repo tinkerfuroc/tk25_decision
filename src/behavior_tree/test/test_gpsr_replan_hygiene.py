@@ -144,3 +144,58 @@ def test_plan_target_different_plan_has_no_error(monkeypatch):
     p._invalidate(0, 0)
     p.plan_target(0, 0, "d", command="c", failure_reason="x")
     assert p.get_error(0, 0) is None
+
+
+def test_failed_plans_accumulate_across_invalidations():
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    a = [{"action": "goto", "params": {"location": "x"}}]
+    b = [{"action": "vlm_fallback", "params": {"question": "q"}}]
+    p._store(0, 0, "d", a, py_trees.behaviours.Success("s"), None)
+    p._invalidate(0, 0)
+    p._store(0, 0, "d", b, py_trees.behaviours.Success("s"), None)   # _store must carry failed_plans forward
+    p._invalidate(0, 0)
+    assert p._failed_plans(0, 0) == [a, b]
+    assert p._failed_plan(0, 0) == b
+    p._invalidate(0, 0)                                              # same plan again -> no duplicate
+    assert p._failed_plans(0, 0) == [a, b]
+
+
+def test_plan_target_rejects_plan_identical_to_an_earlier_failure(monkeypatch):
+    p = planner_mod.GPSRPlanner(max_attempts=3)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    first = [{"action": "goto", "params": {"location": "living_room"}},
+             {"action": "find_object", "params": {"object": "kitchen item", "location": "living_room"}}]
+    second = [{"action": "vlm_fallback", "params": {"question": "q"}}]
+    fresh = [{"action": "announce", "params": {"text": "cannot find it"}}]
+    # history: first failed, then second failed
+    p._store(0, 0, "d", first, py_trees.behaviours.Success("s"), None); p._invalidate(0, 0)
+    p._store(0, 0, "d", second, py_trees.behaviours.Success("s"), None); p._invalidate(0, 0)
+    responses = iter([{"plan": first}, {"plan": fresh}])
+    reasons = []
+
+    def fake_call(client, system, user, temperature):
+        reasons.append(user)
+        return next(responses), None
+
+    monkeypatch.setattr(planner_mod, "_call_llm", fake_call)
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    p.plan_target(0, 0, "d", command="c", failure_reason="postcondition unmet: object_seen(kitchen item) (UNKNOWN)")
+    assert p.get_action_plan(0, 0) == fresh          # `first` was rejected even though the LAST failure was `second`
+    assert p.get_error(0, 0) is None
+    assert any("IDENTICAL" in u for u in reasons[1:])
+
+
+def test_new_command_starts_with_empty_failed_plans(monkeypatch):
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    p._store(0, 0, "d", [{"action": "goto", "params": {"location": "x"}}], py_trees.behaviours.Success("s"), None)
+    p._invalidate(0, 0)
+    assert p._failed_plans(0, 0)
+    # Drive the fresh-entry creation in request_plan_all directly (the pattern
+    # used by test_gpsr_target_planner.py: monkeypatch plan_target so no
+    # worker thread is spawned, then inspect the entry it just created).
+    monkeypatch.setattr(p, "plan_target", lambda *a, **k: None)
+    p.request_plan_all(0, ["new target"], command="new command")
+    assert p._failed_plans(0, 0) == []

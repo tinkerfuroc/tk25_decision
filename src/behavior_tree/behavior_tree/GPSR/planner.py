@@ -704,6 +704,8 @@ class GPSRPlanner:
 
     def _store(self, slot, index, desc, plan, subtree, error, modifications=None):
         with self._lock:
+            prev = self._cache.get((slot, index))
+            failed_plans = list(prev.get("failed_plans") or []) if prev else []
             self._cache[(slot, index)] = {
                 "desc": desc,
                 "plan": list(plan),
@@ -711,6 +713,7 @@ class GPSRPlanner:
                 "ready": True,
                 "error": error,
                 "modifications": modifications,
+                "failed_plans": failed_plans,
             }
 
     def _get_desc(self, slot, index) -> Optional[str]:
@@ -729,12 +732,23 @@ class GPSRPlanner:
                 # A stale marker (e.g. IDENTICAL_PLAN_ERROR_PREFIX) must not
                 # outlive the plan it described; _store rebuilds it anyway.
                 entry["error"] = None
-                entry["failed_plan"] = list(entry.get("plan") or [])
+                failed_plan = list(entry.get("plan") or [])
+                entry["failed_plan"] = failed_plan
+                failed_plans = entry.setdefault("failed_plans", [])
+                if failed_plan and _canonical_plan(failed_plan) not in {
+                    _canonical_plan(p) for p in failed_plans
+                }:
+                    failed_plans.append(failed_plan)
 
     def _failed_plan(self, slot, index) -> Optional[List[Dict[str, Any]]]:
         with self._lock:
             entry = self._cache.get((slot, index))
         return list(entry["failed_plan"]) if entry and entry.get("failed_plan") else None
+
+    def _failed_plans(self, slot, index) -> List[List[Dict[str, Any]]]:
+        with self._lock:
+            entry = self._cache.get((slot, index))
+        return [list(p) for p in (entry.get("failed_plans") or [])] if entry else []
 
     def _get_slot_context(self, slot: int) -> Dict[str, Any]:
         """The full-command context for ``slot``: {command, targets}."""
@@ -951,8 +965,8 @@ class GPSRPlanner:
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"REJECTED: {last_reason}")
                 continue
-            failed = self._failed_plan(slot, index)
-            identical = failed is not None and _canonical_plan(cleaned) == _canonical_plan(failed)
+            failed_canonicals = {_canonical_plan(p) for p in self._failed_plans(slot, index)}
+            identical = _canonical_plan(cleaned) in failed_canonicals
             if identical and attempt < self._max_attempts - 1:
                 last_reason = (
                     "the regenerated plan was IDENTICAL to the plan that just failed "
@@ -1033,6 +1047,7 @@ class GPSRPlanner:
                     "subtree": None,
                     "ready": False,
                     "error": None,
+                    "failed_plans": [],
                 }
         for i, t in enumerate(norm_targets):
             threading.Thread(
