@@ -405,6 +405,20 @@ for _name, _contract in ACTION_CONTRACTS.items():
         _ESTABLISHER_FOR_PREDICATE.setdefault(_pred, _name)
 
 
+def _canonical_plan(plan: List[Dict[str, Any]]) -> tuple:
+    """Order/param-order-insensitive-within-a-step identity for a plan.
+
+    Used to detect a regenerated replan that is IDENTICAL to the plan that
+    just failed, so `plan_target` can reject it and force the model to
+    actually change something instead of burning the replan budget re-running
+    the same doomed steps.
+    """
+    return tuple(
+        (str(s.get("action")), tuple(sorted((str(k), str(v)) for k, v in (s.get("params") or {}).items())))
+        for s in plan or []
+    )
+
+
 def _deterministic_target_intent(target: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Compile metadata into validator-only intent steps without cache reads."""
     intents: List[Dict[str, Any]] = []
@@ -674,11 +688,18 @@ class GPSRPlanner:
 
     def _invalidate(self, slot, index) -> None:
         """Mark (slot, index) not-ready so an in-flight replan's OLD subtree is
-        never re-swapped in while the fresh plan is still being produced."""
+        never re-swapped in while the fresh plan is still being produced, and
+        remember the plan that just failed so the replan can refuse to repeat it."""
         with self._lock:
             entry = self._cache.get((slot, index))
             if entry:
                 entry["ready"] = False
+                entry["failed_plan"] = list(entry.get("plan") or [])
+
+    def _failed_plan(self, slot, index) -> Optional[List[Dict[str, Any]]]:
+        with self._lock:
+            entry = self._cache.get((slot, index))
+        return list(entry["failed_plan"]) if entry and entry.get("failed_plan") else None
 
     def _get_slot_context(self, slot: int) -> Dict[str, Any]:
         """The full-command context for ``slot``: {command, targets}."""
@@ -894,6 +915,17 @@ class GPSRPlanner:
                 last_reason = f"invalid modifications: {reason}"
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"REJECTED: {last_reason}")
+                continue
+            failed = self._failed_plan(slot, index)
+            if (failed is not None and _canonical_plan(cleaned) == _canonical_plan(failed)
+                    and attempt < self._max_attempts - 1):
+                last_reason = (
+                    "the regenerated plan was IDENTICAL to the plan that just failed "
+                    f"({failure_reason or 'unknown reason'}) — you MUST change it: add, remove "
+                    "or reorder steps so the failure cannot recur"
+                )
+                print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
+                      f"REJECTED: identical to failed plan")
                 continue
             # Accepted — build the subtree on this (worker) thread, then cache.
             try:

@@ -606,7 +606,13 @@ def _build_planner_user_prompt(
 
 
 def _clean_plan(plan_raw: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Keep only well-formed {action, params} steps using known actions."""
+    """Keep only well-formed {action, params} steps using known actions.
+
+    Consecutive identical steps (same action AND params) are collapsed to one:
+    a replan that emits ``place, place`` would execute the second against a
+    now-empty gripper and fail for a reason that has nothing to do with the
+    command.
+    """
     cleaned: List[Dict[str, Any]] = []
     dropped: List[str] = []
     if not isinstance(plan_raw, list):
@@ -617,10 +623,13 @@ def _clean_plan(plan_raw: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
             continue
         action = step.get("action")
         params = step.get("params", {}) or {}
-        if action in ACTION_FACTORIES:
-            cleaned.append({"action": action, "params": params})
-        else:
+        if action not in ACTION_FACTORIES:
             dropped.append(str(action))
+            continue
+        if cleaned and cleaned[-1]["action"] == action and cleaned[-1]["params"] == params:
+            dropped.append(f"duplicate:{action}")
+            continue
+        cleaned.append({"action": action, "params": params})
     return cleaned, dropped
 
 
