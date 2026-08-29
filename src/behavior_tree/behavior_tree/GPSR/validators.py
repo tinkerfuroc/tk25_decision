@@ -306,8 +306,16 @@ def _action_verdict(fact: Fact, context: VerificationContext) -> Optional[Verifi
             if (_norm_match(params.get("object", ""), target[0]) and
                     _norm_match(params.get("recipient", ""), target[1])):
                 return _result(Verdict.VALID, "action-verdict fallback: stronger verifier not installed; successful deliver action", 0.5)
-        if fact.predicate == "at_robot" and action == "goto" and _norm_match(params.get("location", ""), target[0]):
-            return _result(Verdict.VALID, "action-verdict fallback: stronger verifier not installed; successful goto action", 0.5)
+        if fact.predicate == "at_robot":
+            from .action_contracts import ACTION_CONTRACTS  # lazy: action_contracts imports this module
+            contract = ACTION_CONTRACTS.get(str(action))
+            nav_param = contract.self_establishes.get("at_robot") if contract else None
+            if nav_param and _norm_match(params.get(nav_param, ""), target[0]):
+                return _result(
+                    Verdict.VALID,
+                    f"action-verdict fallback: stronger verifier not installed; successful {action} action",
+                    0.5,
+                )
     return None
 
 

@@ -57,6 +57,7 @@ from .small_trees import (
     get_small_tree_roles,
 )
 from .supervision.runtime import get_default_supervisor, wrap_action_factory
+from .action_contracts import ACTION_CONTRACTS, render_self_satisfied_rule, self_established_facts
 from .orchestrator import (
     SYSTEM_PROMPT,
     KNOWN_LOCATIONS,
@@ -394,6 +395,15 @@ def _dependency_ancestor_targets(
     return [target for target in targets[:index] if target["id"] in needed]
 
 
+# First action (in registry order) whose ``establishes`` names each predicate.
+# goto is listed before search_object in the registry so at_robot -> goto.
+_ESTABLISHER_FOR_PREDICATE: Dict[str, str] = {}
+for _name, _contract in ACTION_CONTRACTS.items():
+    for _tmpl in _contract.establishes:
+        _pred = _tmpl.split("(", 1)[0]
+        _ESTABLISHER_FOR_PREDICATE.setdefault(_pred, _name)
+
+
 def _deterministic_target_intent(target: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Compile metadata into validator-only intent steps without cache reads."""
     intents: List[Dict[str, Any]] = []
@@ -404,16 +414,7 @@ def _deterministic_target_intent(target: Dict[str, Any]) -> List[Dict[str, Any]]
         if fact is None:
             continue
         params = {"location": fact.args[0]} if fact.predicate == "at_robot" and fact.args else {}
-        action = {
-            "at_robot": "goto",
-            "object_seen": "find_object",
-            "person_found": "find_person",
-            "counted": "count",
-            "answered": "ask_person",
-            "held": "grasp",
-            "placed": "place",
-            "delivered": "deliver",
-        }.get(fact.predicate)
+        action = _ESTABLISHER_FOR_PREDICATE.get(fact.predicate)
         if action:
             intents.append({"action": action, "params": params})
     if not intents and ("find" in desc and "person" in desc):

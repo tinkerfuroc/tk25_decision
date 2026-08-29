@@ -113,3 +113,65 @@ def test_materialise_deliver_without_location_leaves_last_nav():
     bb.set(bb_keys.LAST_NAV_LOCATION, "office", overwrite=True)
     materialise_params(bb, "deliver", {"object": "coke", "recipient": "Susan"})
     assert bb.get(bb_keys.LAST_NAV_LOCATION) == "office"
+
+
+from behavior_tree.GPSR.planner_validators import validate_plan
+from behavior_tree.GPSR.validators import (
+    Verdict, VerificationContext, _action_verdict, parse_fact,
+)
+
+
+def test_validate_plan_rejects_goto_before_each_self_navigator(monkeypatch):
+    fake = ac.ActionContract("teleport", self_establishes={"at_robot": "location"},
+                             records=("last_nav_location",), self_navigating=True)
+    monkeypatch.setitem(ac.ACTION_CONTRACTS, "teleport", fake)
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "teleport", "params": {"location": "kitchen"}},
+    ]
+    ok, reason = validate_plan(plan, "teleport to the kitchen", {"goto", "teleport"})
+    assert not ok and "teleport" in reason and "redundant" in reason
+
+
+def test_action_verdict_accepts_at_robot_after_place_and_deliver():
+    fact, _ = parse_fact("at_robot(kitchen_table)")
+    ctx = VerificationContext(
+        phase="postcondition", established_facts=frozenset(),
+        completed_steps=(
+            {"action": "place", "params": {"location": "kitchen_table"}, "succeeded": True},
+        ),
+        target_object="", target_location="",
+    )
+    result = _action_verdict(fact, ctx)
+    assert result is not None and result.verdict is Verdict.VALID
+
+    fact, _ = parse_fact("at_robot(living_room)")
+    ctx = VerificationContext(
+        phase="postcondition", established_facts=frozenset(),
+        completed_steps=(
+            {"action": "deliver", "params": {"object": "coke", "recipient": "Susan",
+                                             "recipient_location": "living_room"}, "succeeded": True},
+        ),
+        target_object="", target_location="",
+    )
+    result = _action_verdict(fact, ctx)
+    assert result is not None and result.verdict is Verdict.VALID
+
+
+def test_action_verdict_rejects_at_robot_after_grasp():
+    fact, _ = parse_fact("at_robot(kitchen_table)")
+    ctx = VerificationContext(
+        phase="postcondition", established_facts=frozenset(),
+        completed_steps=({"action": "grasp", "params": {"object": "coke"}, "succeeded": True},),
+        target_object="", target_location="",
+    )
+    assert _action_verdict(fact, ctx) is None
+
+
+def test_deterministic_intent_derives_from_registry():
+    from behavior_tree.GPSR.planner import _deterministic_target_intent
+    intents = _deterministic_target_intent({"desc": "x", "postconditions": ["placed(plant,balcony)", "at_robot(balcony)"]})
+    assert [i["action"] for i in intents] == ["place", "goto"]
+    assert intents[1]["params"] == {"location": "balcony"}
+    assert _deterministic_target_intent({"desc": "x", "postconditions": ["object_seen(coke)"]})[0]["action"] == "find_object"
+    assert _deterministic_target_intent({"desc": "x", "postconditions": ["answered(name)"]})[0]["action"] == "ask_person"

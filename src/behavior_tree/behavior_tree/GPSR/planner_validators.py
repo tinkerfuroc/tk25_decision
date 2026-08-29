@@ -39,6 +39,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .action_contracts import self_navigating_destinations
+
 
 # Match anything that looks like an unresolved template token: <day>, <country>,
 # <name>, <foo bar>, etc. Whitelist a few legitimate uses such as <unknown> if
@@ -430,7 +432,7 @@ def validate_plan(
     # then re-navigates to the stale pose that goto just set). The destination
     # must live on the action itself: deliver -> recipient_location,
     # place -> location. No goto before them.
-    _SELF_NAV_DEST = {"deliver": "recipient_location", "place": "location"}
+    _SELF_NAV_DEST = self_navigating_destinations()
     for i in range(len(plan) - 1):
         if plan[i].get("action") != "goto":
             continue
