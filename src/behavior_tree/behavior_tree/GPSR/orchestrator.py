@@ -2011,6 +2011,7 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._state = "REQUESTING"
         self._index = 0
         self._active_target_index: Optional[int] = None
+        self._swap_count = 0
         self._num_targets = 0
         self._target_outcomes: Dict[str, str] = {}
         self._targets: List[Any] = []
@@ -2079,22 +2080,21 @@ class DynamicExecutor(py_trees.composites.Composite):
                 if evidence_name != "last_nav_location":
                     self._bb.set(key, None, overwrite=True)
             self._bb.set(bb_keys.DEFERRED_PRECONDITIONS, [], overwrite=True)
+            self._swap_count = 0
         self._active_target_index = index
+        # Every materialization of the same target (LLM replan OR supervisor
+        # replacement, which does not bump TARGET_REPLAN_COUNT) gets a strictly
+        # increasing revision.
+        self._swap_count += 1
         telemetry = get_default_telemetry()
         if telemetry is not None:
-            try:
-                task_id = self._bb.get(bb_keys.TASK_ID)
-            except KeyError:
-                task_id = None
-            if not task_id:
-                # "executor task N" is 1-based (create_batch_command_flow_new) and
-                # bench/events.py joins it with the /task-N suffix, so N = slot + 1.
-                task_id = telemetry.task_id(self._slot + 1)
-                self._bb.set(bb_keys.TASK_ID, task_id, overwrite=True)
-            try:
-                revision = int(self._bb.get(bb_keys.TARGET_REPLAN_COUNT) or 0) + 1
-            except KeyError:
-                revision = 1
+            # The blackboard is process-global and shared by every slot's
+            # executor, so stamp this executor's identity on every swap
+            # (idempotent per executor) rather than only when unset — otherwise
+            # slots 2..N inherit slot 1's task id. Same helper as the legacy flow.
+            task_id = _task_identity(self._slot)
+            self._bb.set(bb_keys.TASK_ID, task_id, overwrite=True)
+            revision = self._swap_count
             get_action_plan = getattr(self._planner, "get_action_plan", None)
             # Telemetry must never break execution: plan shaping + emit guarded.
             try:
@@ -2303,6 +2303,7 @@ class DynamicExecutor(py_trees.composites.Composite):
             self._target_outcomes = {}
             self._supervisor_aborted = False
             self._active_target_index = None
+            self._swap_count = 0
             if not callable(getattr(self._planner, "get_facts", None)):
                 self._bb.set(bb_keys.FACTS, [], overwrite=True)
             if self._num_targets == 0:
@@ -2352,7 +2353,7 @@ class DynamicExecutor(py_trees.composites.Composite):
                         self._on_target_success()
                     else:
                         reason = self._last_child_feedback(node)
-                        self._emit_failed_step(reason)
+                        self._emit_failed_step(node, reason)
                         self._on_target_failure(reason)
                     if self._state == "DONE":
                         terminal_status = (
@@ -2378,24 +2379,52 @@ class DynamicExecutor(py_trees.composites.Composite):
             yield self
             return
 
-    def _emit_failed_step(self, reason: str) -> None:
+    _GATE_REASON_PREFIXES = ("precondition unmet", "postcondition unmet")
+
+    def _emit_failed_step(self, node, reason: str) -> None:
         """Emit ``step.finished``/failed so the bench sees failed steps too.
 
         ``BtNode_LogStepResult`` only runs after a successful step; a failed
         leaf short-circuits the sequence before it. Telemetry must never break
         execution, so every read/emit here is guarded.
+
+        ``node`` is the terminal target subtree; its ``tip()`` is the failing
+        leaf. When that leaf is a target gate (pre/postcondition check) no step
+        failed: CURRENT_ACTION still names the previous target's last step
+        (pre gate) or a step that just logged ``succeeded`` (post gate). Those
+        — and any failure with no current step at all — are reported as
+        ``target.failed`` instead of being attributed to a stale step.
         """
         telemetry = get_default_telemetry()
         if telemetry is None:
             return
         try:
-            action = self._bb.get(bb_keys.CURRENT_ACTION)
-            params = self._bb.get(bb_keys.CURRENT_PARAMS) or {}
-            step_index = int(self._bb.get(bb_keys.PLAN_INDEX) or 1) - 1
             task_id = self._bb.get(bb_keys.TASK_ID)
         except KeyError:
-            return
+            task_id = None
         try:
+            tip = node.tip() if callable(getattr(node, "tip", None)) else None
+        except Exception:  # noqa: BLE001
+            tip = None
+        is_gate = isinstance(
+            tip, (BtNode_TargetPreconditionCheck, BtNode_TargetPostconditionCheck),
+        ) or str(reason or "").startswith(self._GATE_REASON_PREFIXES)
+        action = None
+        if not is_gate:
+            try:
+                action = self._bb.get(bb_keys.CURRENT_ACTION)
+            except KeyError:
+                action = None
+        try:
+            if is_gate or not action:
+                telemetry.emit(
+                    "target.failed",
+                    {"slot": self._slot, "target_index": self._index, "reason": reason},
+                    task_id=task_id, phase="execution",
+                )
+                return
+            params = self._bb.get(bb_keys.CURRENT_PARAMS) or {}
+            step_index = int(self._bb.get(bb_keys.PLAN_INDEX) or 1) - 1
             telemetry.emit(
                 "step.finished",
                 {"step_index": step_index, "action": action, "params": params,
