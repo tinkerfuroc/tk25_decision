@@ -757,6 +757,87 @@ def _canonical_postconditions(target: Optional[Dict[str, Any]]) -> set:
     return result
 
 
+def _foreign_facts(
+    target: Optional[Dict[str, Any]],
+    all_targets: Optional[List[Dict[str, Any]]],
+    include_ancestors: bool = False,
+) -> Tuple[set, List[Tuple[str, str]]]:
+    """Foreign (off-limits) postcondition facts for ``target``.
+
+    Shared by ``_render_contract_block`` (advisory prompt text) and
+    ``_drop_foreign_contract_steps`` (the deterministic guard) so the two
+    can never disagree (I-2, round-2 review): before this factoring the
+    guard folded a retracted ancestor fact through ``apply_fact_transitions``
+    (M1, Task D review) but the prompt's "owned by" text did not, so a model
+    that followed the prompt literally could still be told an already-
+    retracted ancestor fact (e.g. ``held(spam)`` after ``placed(spam,
+    table)``) was off-limits, or worse, never told a still-foreign one was.
+
+    Returns ``(foreign_fact_set, owned_pairs)``:
+
+    - ``foreign_fact_set``: the plain union the guard matches
+      ``established_facts(step)`` against (minus ``target``'s own
+      postconditions, applied by the caller).
+    - ``owned_pairs``: ``[(owner_target_id, fact), ...]`` — one entry per
+      still-foreign fact, attributed to the target that (still) owns it —
+      used by the prompt to render one "owned by <id>" line per owner, in
+      the same order the facts were folded in.
+
+    SUCCESSORS (targets AFTER ``target`` in ``all_targets`` list order) are
+    ALWAYS foreign, attributed by their raw declared postconditions — they
+    have not executed yet, so nothing of theirs has been retracted.
+
+    ANCESTORS (``_dependency_ancestor_targets(all_targets, pos)`` —
+    DECLARED ``depends_on`` only, never bare list position, per I-1) are
+    foreign ONLY when ``include_ancestors`` is True (the INITIAL plan — see
+    ``_drop_foreign_contract_steps``'s own docstring for why). Their raw
+    postconditions are folded through ``apply_fact_transitions`` IN
+    DEPENDENCY ORDER so a fact one ancestor's postcondition retracts (e.g.
+    ``placed(spam,table)`` retracting ``held(spam)``) is never attributed
+    to — or counted as foreign from — the ancestor that no longer holds it
+    (M1, Task D review).
+    """
+    if not target or not all_targets:
+        return set(), []
+    own_post_canon = _canonical_postconditions(target)
+    pos = next(
+        (i for i, t in enumerate(all_targets) if _is_same_target(t, target)), None,
+    )
+    successor_targets = all_targets[pos + 1:] if pos is not None else []
+    foreign: set = set()
+    owned_pairs: List[Tuple[str, str]] = []
+    for other in successor_targets:
+        owner = str(other.get("id") or "")
+        for fact in sorted(_canonical_postconditions(other) - own_post_canon):
+            foreign.add(fact)
+            owned_pairs.append((owner, fact))
+    if include_ancestors and pos is not None:
+        ancestor_targets = _dependency_ancestor_targets(all_targets, pos)
+        # Fold every ancestor's raw postconditions through the SAME
+        # transition ledger the runtime uses, in dependency order, tracking
+        # which ancestor currently "owns" each still-effective fact — a
+        # later ancestor's postcondition can retract an earlier one's
+        # (M1, Task D review).
+        state: List[str] = []
+        owner_by_fact: Dict[str, str] = {}
+        for other in ancestor_targets:
+            owner = str(other.get("id") or "")
+            new_state = apply_fact_transitions(state, other.get("postconditions") or [])
+            for fact in set(state) - set(new_state):
+                owner_by_fact.pop(fact, None)
+            for fact in set(new_state) - set(state):
+                owner_by_fact[fact] = owner
+            state = new_state
+        for other in ancestor_targets:
+            owner = str(other.get("id") or "")
+            for fact in sorted(state):
+                if owner_by_fact.get(fact) != owner or fact in own_post_canon:
+                    continue
+                foreign.add(fact)
+                owned_pairs.append((owner, fact))
+    return foreign, owned_pairs
+
+
 def _render_contract_block(
     contract: Optional[Dict[str, Any]],
     all_targets: Optional[List[Dict[str, Any]]],
@@ -798,31 +879,27 @@ def _render_contract_block(
         "Plan ONLY the steps that establish the \"must establish\" facts from the\n"
         "\"requires\" state.",
     ]
-    own_post_canon = _canonical_postconditions(contract)
+    # I-2 (round-2 review): the same helper the guard uses (_foreign_facts)
+    # so the prompt's "owned by" text and the deterministic guard can never
+    # disagree about which ancestor still owns a fact (M1's retraction
+    # ledger, folded through here too).
     targets = all_targets or []
-    pos = next(
-        (i for i, t in enumerate(targets) if _is_same_target(t, contract)), None,
+    _foreign_set, owned_pairs = _foreign_facts(
+        contract, targets, include_ancestors=include_ancestors,
     )
-    # I-1 (round-2 review): the ancestor set here must be the same one
-    # _drop_foreign_contract_steps uses -- DECLARED dependencies
-    # (_dependency_ancestor_targets), never bare list position. A target
-    # that precedes `contract` in `targets` but is NOT one of its declared
-    # dependencies is not a guaranteed-established ancestor (validate_plan's
-    # prior_plan seeding, also dependency-keyed, would not agree either), so
-    # its facts must still be flagged "owned by" during a replan too.
-    ancestor_targets = _dependency_ancestor_targets(targets, pos) if pos is not None else []
-    owned_lines = []
-    for i, other in enumerate(targets):
-        if _is_same_target(other, contract):
-            continue
-        if not include_ancestors and any(_is_same_target(other, a) for a in ancestor_targets):
-            continue
-        other_facts = sorted(_canonical_postconditions(other) - own_post_canon)
-        if other_facts:
-            owned_lines.append(
-                f"  owned by {other.get('id') or ''} \"{other.get('desc') or ''}\": "
-                f"{', '.join(other_facts)}"
-            )
+    id_to_desc = {str(t.get("id") or ""): str(t.get("desc") or "") for t in targets}
+    owned_by_id: Dict[str, List[str]] = {}
+    owner_order: List[str] = []
+    for owner_id, fact in owned_pairs:
+        if owner_id not in owned_by_id:
+            owned_by_id[owner_id] = []
+            owner_order.append(owner_id)
+        owned_by_id[owner_id].append(fact)
+    owned_lines = [
+        f"  owned by {owner_id} \"{id_to_desc.get(owner_id, '')}\": "
+        f"{', '.join(owned_by_id[owner_id])}"
+        for owner_id in owner_order
+    ]
     if owned_lines:
         lines.append(
             "Facts owned by OTHER targets of this command are listed below — "
@@ -845,7 +922,12 @@ def _drop_foreign_contract_steps(
     postcondition of some SUCCESSOR of ``target`` in ``all_targets`` list
     order (``all_targets[pos+1:]``, ``target``'s position found the same way
     ``_is_same_target`` matches identity elsewhere) — or, when
-    ``include_ancestors`` is True, also some ANCESTOR (``all_targets[:pos]``).
+    ``include_ancestors`` is True, also some declared-dependency ANCESTOR
+    (``_dependency_ancestor_targets(all_targets, pos)`` — I-1, round-2
+    review: NEVER bare list position, ``all_targets[:pos]``, which can
+    include a target ``target`` never actually depends on). See
+    ``_foreign_facts`` (shared with ``_render_contract_block``) for exactly
+    how the ancestor set is computed and transitioned.
     Facts are compared in FULL (``at_robot(kitchen)`` vs ``at_robot(balcony)``
     never collide) — never by predicate alone. Only ``establishes``
     (action_contracts.py) counts; ``self_establishes`` (incidental
@@ -880,40 +962,12 @@ def _drop_foreign_contract_steps(
     if not target or not all_targets:
         return list(plan or []), []
     own_post_canon = _canonical_postconditions(target)
-    pos = next(
-        (i for i, t in enumerate(all_targets) if _is_same_target(t, target)), None,
+    # I-2 (round-2 review): shared with _render_contract_block's "owned by"
+    # text via _foreign_facts, so the two can never disagree about which
+    # ancestor fact still counts as foreign (M1's retraction ledger).
+    foreign_post_canon, _owned_pairs = _foreign_facts(
+        target, all_targets, include_ancestors=include_ancestors,
     )
-    successor_targets = all_targets[pos + 1:] if pos is not None else []
-    # I-1 (round-2 review): DECLARED dependencies only, never bare list
-    # position -- a target that precedes `target` in `all_targets` but is
-    # NOT one of its declared dependencies is not guaranteed already
-    # established (validate_plan's prior_plan seeding, also
-    # dependency-keyed, would not agree), so treating its facts as
-    # "guaranteed ancestor state" here can drop a step (e.g. `goto`) the
-    # replan then has no way to legitimately re-emit.
-    ancestor_targets = (
-        _dependency_ancestor_targets(all_targets, pos)
-        if (include_ancestors and pos is not None) else []
-    )
-    foreign_post_canon: set = set()
-    for other in successor_targets:
-        foreign_post_canon |= _canonical_postconditions(other)
-    if ancestor_targets:
-        # M1 (Task D review): ancestors' facts are only "guaranteed" if they
-        # SURVIVE to this target -- apply_fact_transitions retracts held(obj)
-        # once placed(obj,..)/delivered(obj,..) is established for it, so a
-        # later ancestor's postcondition can drop an earlier ancestor's
-        # (e.g. "take the spam to the table, then bring it to me": t0
-        # held(spam), t1 placed(spam,table) retracts it -- t2's initial plan
-        # legitimately re-grasps). Run the ancestors' RAW postconditions
-        # through the same transition ledger the runtime uses, in order, so
-        # a retracted fact never lands in the foreign set. Successors keep
-        # the plain union above -- they have not executed yet, so nothing of
-        # theirs has been retracted.
-        ancestor_raw_postconditions = [
-            pc for other in ancestor_targets for pc in (other.get("postconditions") or [])
-        ]
-        foreign_post_canon |= set(apply_fact_transitions([], ancestor_raw_postconditions))
     kept: List[Dict[str, Any]] = []
     dropped: List[str] = []
     for step in plan or []:

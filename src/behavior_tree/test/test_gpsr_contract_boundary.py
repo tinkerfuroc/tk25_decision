@@ -159,19 +159,26 @@ def test_prompt_replan_owned_by_block_excludes_ancestors():
     assert not any("owned by t0" in line for line in prompt.splitlines())
 
 
-def test_prompt_replan_owned_by_block_is_keyed_on_declared_dependency_not_position():
-    # I-1: on a REPLAN the "owned by" exclusion must use
-    # _dependency_ancestor_targets, not bare list position -- t0 precedes t1
-    # but t1 does NOT declare t0 as a dependency, so t0's fact is NOT a
-    # guaranteed ancestor fact and must still be flagged "owned by t0" even
-    # during a replan (unlike test_prompt_replan_owned_by_block_excludes_ancestors,
-    # where T1 DOES declare T0 as a dependency and t0 is correctly excluded).
-    prompt = _build_lower_layer_user_prompt(
+def test_prompt_never_lists_a_non_dependency_preceding_target_as_owned():
+    # I-1/I-2: t0 precedes t1 in list order but t1 does NOT declare t0 as a
+    # dependency -- t0 is neither a SUCCESSOR nor a declared-dependency
+    # ANCESTOR of t1, so _foreign_facts (shared by the guard and this
+    # render) never attributes its fact to t1's "owned by" block, on
+    # EITHER the initial plan or a replan. This is the render-side mirror
+    # of test_guard_keeps_goto_when_ancestor_is_not_a_declared_dependency
+    # (which pins the same invariant for the deterministic guard).
+    initial_prompt = _build_lower_layer_user_prompt(
+        "find the spam in the kitchen", KITCHEN_T1["desc"], "spam", "kitchen",
+        [KITCHEN_T0], [],
+        contract=KITCHEN_T1, all_targets=[KITCHEN_T0, KITCHEN_T1],
+    )
+    assert not any("owned by t0" in line for line in initial_prompt.splitlines())
+    replan_prompt = _build_lower_layer_user_prompt(
         "find the spam in the kitchen", KITCHEN_T1["desc"], "spam", "kitchen",
         [KITCHEN_T0], [], "some failure",
         contract=KITCHEN_T1, all_targets=[KITCHEN_T0, KITCHEN_T1],
     )
-    assert any("owned by t0" in line for line in prompt.splitlines())
+    assert not any("owned by t0" in line for line in replan_prompt.splitlines())
 
 
 def test_prompt_requires_line_is_advisory_not_absolute():
@@ -190,6 +197,26 @@ def test_prompt_requires_line_is_advisory_not_absolute():
     assert "do NOT re-establish" not in requires_line
     assert "normally established by earlier targets" in requires_line
     assert "re-establish only if the failure reason below says it is unmet" in requires_line
+
+
+def test_prompt_table_dag_does_not_list_retracted_ancestor_fact_as_owned():
+    # I-2: t2's ancestors are t0 (held(spam)) and t1 (placed(spam,table),
+    # which RETRACTS held(spam) via apply_fact_transitions). The guard
+    # already accounts for this (M1, Task D review) -- the prompt's "owned
+    # by" block must now agree: t2's initial prompt must NOT list
+    # held(spam) as "owned by t0" (it no longer holds by the time t2 runs),
+    # only placed(spam,table) as "owned by t1".
+    prompt = _build_lower_layer_user_prompt(
+        "take the spam to the table then bring it to me", TABLE_T2["desc"],
+        "spam", "", [TABLE_T0, TABLE_T1], [],
+        contract=TABLE_T2, all_targets=[TABLE_T0, TABLE_T1, TABLE_T2],
+    )
+    assert not any(
+        "owned by t0" in line and "held(spam)" in line
+        for line in prompt.splitlines()
+    )
+    owned_line = next(line for line in prompt.splitlines() if "owned by t1" in line)
+    assert "placed(spam,table)" in owned_line
 
 
 def test_prompt_plan_only_sentence_renders_without_sibling_facts():
