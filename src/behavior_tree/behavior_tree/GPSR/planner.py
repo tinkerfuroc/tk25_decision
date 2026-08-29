@@ -203,6 +203,15 @@ LOWER_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
       so the pose is captured at runtime. NEVER refuse a step with
       "cannot find a known location" when the command names a real room or
       place — record it instead.
+    - If part of the target is impossible, still emit the doable steps and
+      finish with ``announce(text=...)`` explaining what you could not do —
+      but that announce is a REFUSAL, not an answer: set
+      ``"acknowledgement": true`` in its ``params`` (alongside ``text``).
+      This is DIFFERENT from the "tell ME" reporting pattern above (a
+      text-less ``announce()`` after a real gathering step, or
+      ``announce(text=...)`` stating an actual result you gathered) — those
+      never carry ``acknowledgement``. Only a spoken apology / "I could not
+      ..." does.
 
     OPTIONAL small-tree modifications: when a step's generic small tree cannot
     express the behaviour the command needs, you may attach a TYPED modification
@@ -1539,7 +1548,9 @@ class GPSRPlanner:
                     "MUST return a NON-EMPTY plan of the known actions — never "
                     "refuse. If part of the target is impossible, still emit the "
                     "doable steps and finish with announce(text=...) explaining "
-                    "what you could not do."
+                    "what you could not do — and set \"acknowledgement\": true in "
+                    "that announce's params (I-3, round-2 review): it is a "
+                    "refusal, never an answer."
                 )
                 continue
             prior_plan = _flatten_prior_plans(self, slot, index)

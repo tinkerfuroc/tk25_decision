@@ -53,6 +53,17 @@ _VOCABULARY = {
 _TIER2_HOOKS: dict[str, Tier2Hook] = {}
 _FACT_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)$", re.DOTALL)
 
+# I-3 (round-2 review): matches an LLM-authored refusal/apology announce
+# ("I could not count the drinks", "Sorry, I couldn't find the object") so
+# _action_verdict's answered() fallback (below) never counts it as a real
+# answer -- test-pinned, keep the alternation and wording in sync with
+# test_gpsr_answered_gate.py::test_refusal_regex_matches_every_pinned_apology_phrasing.
+_REFUSAL_RE = re.compile(
+    r"^\s*(sorry[,.]?\s*)?i\s+(could\s*not|couldn't|cannot|can't|was\s+unable|"
+    r"am\s+unable|did\s+not|didn't|failed)\b",
+    re.IGNORECASE,
+)
+
 
 def _normalize(value: str) -> str:
     return re.sub(r"\s+", "_", value.strip().lower())
@@ -331,6 +342,18 @@ def _action_verdict(fact: Fact, context: VerificationContext) -> Optional[Verifi
             # the plan is covered even before this text-less announce is
             # reached. Any step whose contract establishes "answered",
             # succeeded, and is not flagged acknowledgement qualifies.
+            # I-3 (round-2 review): an LLM-authored refusal/apology announce
+            # is never flagged acknowledgement (only orchestrator._fallback_plan
+            # and planner.replace_target_plan tag that -- a plan the LOWER
+            # LAYER LLM produced on its own has no such tag), so without this
+            # check a replan that gave up ("I could not count the drinks")
+            # would read back as a postcondition PASS the same as a real
+            # answer. Belt-and-braces alongside the "acknowledgement": true
+            # instruction in LOWER_LAYER_SYSTEM_PROMPT (planner.py) that asks
+            # the model to tag its own refusals.
+            if (action == "announce"
+                    and _REFUSAL_RE.match(str(params.get("text") or ""))):
+                establishes_answered = False
             if establishes_answered:
                 reason = (
                     "action-verdict fallback: spoken announce stands as the answer; "

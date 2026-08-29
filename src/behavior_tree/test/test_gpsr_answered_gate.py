@@ -30,6 +30,8 @@ Two things had to change together:
 """
 from __future__ import annotations
 
+import pytest
+
 from behavior_tree.GPSR import action_contracts as ac
 from behavior_tree.GPSR.orchestrator import _fallback_plan
 from behavior_tree.GPSR.action_contracts import IDENTICAL_PLAN_ERROR_PREFIX
@@ -197,6 +199,98 @@ def test_action_verdict_ignores_acknowledgement_flagged_announce():
         ),
     )
     assert _action_verdict(fact, ctx) is None
+
+
+# ---------------------------------------------------------------------------
+# I-3 (round-2 review) -- an LLM-authored refusal/apology announce (NOT
+# flagged acknowledgement, since the LLM wrote it, not _fallback_plan /
+# replace_target_plan) must never stand in for a real answer either.
+# ---------------------------------------------------------------------------
+
+def test_action_verdict_ignores_refusal_worded_announce_without_acknowledgement_flag():
+    # Scenario: count/vlm_fallback failed, the replan fell back to
+    # [goto start_position, announce(text="I could not count the drinks")].
+    # Coverage accepts it (announce establishes answered()) and the announce
+    # itself succeeds -- but the text is a refusal, not an answer, and this
+    # replan plan never tagged it acknowledgement=True (only
+    # _fallback_plan/replace_target_plan do that). _action_verdict must
+    # still refuse to call this VALID.
+    fact, _ = parse_fact("answered(how_many_drinks)")
+    ctx = VerificationContext(
+        phase="postcondition",
+        completed_steps=(
+            {"action": "announce", "params": {"text": "I could not count the drinks"}},
+        ),
+    )
+    assert _action_verdict(fact, ctx) is None
+
+
+def test_action_verdict_accepts_real_answer_announce_without_acknowledgement_flag():
+    fact, _ = parse_fact("answered(how_many_drinks)")
+    ctx = VerificationContext(
+        phase="postcondition",
+        completed_steps=(
+            {"action": "announce", "params": {"text": "There are three drinks."}},
+        ),
+    )
+    result = _action_verdict(fact, ctx)
+    assert result is not None and result.verdict is Verdict.VALID
+
+
+@pytest.mark.parametrize("text", [
+    "I could not count the drinks",
+    "Sorry, I couldn't find the object",
+    "sorry, I cannot answer that",
+    "I can't complete that task",
+    "I was unable to locate the person",
+    "I am unable to see the object",
+    "I did not find anything",
+    "I didn't understand the question",
+    "I failed to grasp the object",
+])
+def test_refusal_regex_matches_every_pinned_apology_phrasing(text):
+    from behavior_tree.GPSR.validators import _REFUSAL_RE
+    assert _REFUSAL_RE.match(text) is not None
+
+
+def test_refusal_regex_does_not_match_a_real_answer():
+    from behavior_tree.GPSR.validators import _REFUSAL_RE
+    assert _REFUSAL_RE.match("There are three drinks.") is None
+    assert _REFUSAL_RE.match("Today is Saturday.") is None
+
+
+# ---------------------------------------------------------------------------
+# I-3(a) -- the lower-layer prompt (system + retry text) instructs the model
+# to tag its own refusal/apology announce acknowledgement=True.
+# ---------------------------------------------------------------------------
+
+def test_lower_layer_system_prompt_requires_acknowledgement_on_refusal_announce():
+    from behavior_tree.GPSR.planner import LOWER_LAYER_SYSTEM_PROMPT
+    assert '"acknowledgement": true' in LOWER_LAYER_SYSTEM_PROMPT
+    assert "REFUSAL" in LOWER_LAYER_SYSTEM_PROMPT
+    assert "never an answer" in LOWER_LAYER_SYSTEM_PROMPT.lower() or \
+        "not an answer" in LOWER_LAYER_SYSTEM_PROMPT.lower()
+
+
+def test_empty_plan_retry_reason_requires_acknowledgement_on_refusal_announce(monkeypatch):
+    import py_trees
+    from behavior_tree.GPSR import planner as planner_mod
+
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: object())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    prompts = []
+
+    def fake_call(client, system, user, temperature):
+        prompts.append(user)
+        return {"plan": []}, None
+
+    monkeypatch.setattr(planner_mod, "_call_llm", fake_call)
+
+    p.plan_target(0, 0, "tell me what day it is", command="tell me what day it is")
+
+    assert len(prompts) == 2
+    assert "acknowledgement" in prompts[1]
 
 
 def test_artifact_branch_still_wins_when_present():
