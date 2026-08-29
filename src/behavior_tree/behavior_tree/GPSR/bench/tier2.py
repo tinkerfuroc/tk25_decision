@@ -37,12 +37,69 @@ _FALLBACK_PLAN_MARKER = "could not work out a complete plan"
 PLANNER_EXHAUSTED_DETAIL = "planner exhausted attempts (fallback plan executed)"
 
 
-def _scan_planner_exhaustion(log_path: Path, max_bytes: int = 5_000_000) -> tuple[bool, bool]:
+def _events_show_recovery(events_path: Path) -> bool:
+    """H2 (round-2 review, sim run 003, 2026-08-29): True when the LAST target-outcome
+    evidence recorded in ``events_path`` (a ``step.finished`` or ``target.failed`` telemetry
+    event -- ``bench/events.py``'s ``parse_events`` folds these into ``TaskResult``, but this
+    needs each one IN FILE ORDER, not the folded per-task summary) is a genuine step
+    succeeding on an action OTHER than ``announce`` -- the ONLY action the guaranteed
+    fallback plan ever uses (``_fallback_plan``, orchestrator.py). The events JSONL is
+    append-only and single-writer, so file order is already chronological: no cross-file
+    timestamp correlation with the orchestrator.log scan below is needed, only "what was the
+    LAST thing that happened".
+
+    A trailing failure (``target.failed``, or a ``step.finished`` with
+    ``outcome != "succeeded"``), a trailing ``announce`` (the fallback's own hollow
+    acknowledgement, or -- conservatively treated the same way here -- a real ``announce``
+    step), or no such events at all all score ``False`` (no evidence of recovery -- the
+    caller's override stays in force). Missing/unreadable files score ``False`` too.
+    """
+    path = Path(events_path)
+    if not path.is_file():
+        return False
+    last_ok = False
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                kind = event.get("event_type")
+                payload = event.get("payload") or {}
+                if kind == "step.finished":
+                    last_ok = (
+                        payload.get("outcome") == "succeeded"
+                        and str(payload.get("action")) != "announce"
+                    )
+                elif kind == "target.failed":
+                    last_ok = False
+    except OSError:
+        return False
+    return last_ok
+
+
+def _scan_planner_exhaustion(
+    log_path: Path, events_path: Path | None = None, max_bytes: int = 5_000_000,
+) -> tuple[bool, bool]:
     """Bounded scan of an orchestrator.log for planner-fallback evidence.
 
     Returns ``(exhausted, split_fell_back)``. Reads at most the last ``max_bytes`` of the
     file (a stuck/looping run's log can't blow up scoring). Missing/unreadable files score
     as ``(False, False)`` -- absence of evidence is not evidence of exhaustion.
+
+    H2 (round-2 review, sim run 003, 2026-08-29): ``exhausted`` used to flip a PASS to FAIL
+    on ANY exhaustion evidence anywhere in the log, even when a LATER replan/escape went on
+    to complete every real target (003: goto, search_object, grasp, place, all succeeding
+    after one earlier fallback) -- a real recovery scored as a hollow FAIL. When
+    ``events_path`` is given and shows the run's LAST recorded outcome was a genuine (real
+    action) success (``_events_show_recovery``), the override is dropped even though the log
+    still carries the earlier exhaustion evidence -- the fallback was NOT this run's final
+    outcome. ``events_path=None`` (a caller with no events file to offer) keeps the pre-H2
+    behaviour: any exhaustion evidence still overrides.
     """
     if not log_path.is_file():
         return False, False
@@ -64,6 +121,8 @@ def _scan_planner_exhaustion(log_path: Path, max_bytes: int = 5_000_000) -> tupl
             split_fell_back = True
         elif "[plan:" in line:
             exhausted = True
+    if exhausted and events_path is not None and _events_show_recovery(events_path):
+        exhausted = False
     return exhausted, split_fell_back
 
 
@@ -158,12 +217,17 @@ def _run_clear_cmd(clear_cmd: Sequence[str], mapping: dict[str, str]) -> str | N
 
 
 def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[str],
-                      timeout_s: float, poll_s: float = 1.0) -> tuple[str, str, float, list[str]]:
+                      timeout_s: float, poll_s: float = 1.0,
+                      ) -> tuple[str, str, float, list[str], Path | None]:
     """Launch the orchestrator for a single command and score task id 1.
 
     This is tier1's ``run_group`` per-task clock semantics specialised to n=1: slot 0's
     clock starts at launch (same as ``run_group``'s ``slot_clock_start[0] = started_mono``),
     so ``timeout_s`` is a plain wall-clock budget here.
+
+    H2 (round-2 review): the return tuple now also carries the resolved ``events_path`` (or
+    ``None`` if it was never located) -- the post-run verdict guard (``_scan_planner_
+    exhaustion``, called from ``run_tier2``) needs it to check for later recovery evidence.
     """
     run_dir = Path(run_dir).resolve()
     tasks: dict[int, object] = {}
@@ -196,6 +260,7 @@ def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[
         events = _events_file(run_dir, started - 1)
         if events:
             tasks = parse_events(events)
+        events_path = events
 
     _write_announcements(run_dir)
 
@@ -213,7 +278,7 @@ def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[
     else:
         # Defensive fallback; not a normal path (mirrors run_group's own fallback branch).
         verdict, detail = "TIMEOUT", f"timed out after {timeout_s:.0f}s"
-    return verdict, detail, seconds, plan
+    return verdict, detail, seconds, plan, events_path
 
 
 _ANNOUNCE_RE = re.compile(r"Finished announcing (.+?)(?:\.\s*)?$")
@@ -349,14 +414,14 @@ def run_tier2(entries: Sequence[CorpusEntry], *, mock_config: Path, constants: P
 
             env = bench_env(mock_config=mock_config, constants=constants, plan_dir=run_dir,
                             commands=[entry.text], live_llm=live_llm)
-            verdict, detail, seconds, plan = _run_orchestrator(
+            verdict, detail, seconds, plan, events_path = _run_orchestrator(
                 env=env, run_dir=run_dir, launcher=launcher, timeout_s=timeout_s)
         except Exception as exc:
             # Unexpected exception in a single run: score as ERROR with detail, continue batch.
             # This exception source is typically Popen(launcher) raising OSError for unexecutable
             # binary (which occurs outside _run_orchestrator's own try/finally), but guards all
             # unexpected exceptions in this span.
-            verdict, detail, seconds, plan = "ERROR", f"exception: {exc!r}", 0.0, []
+            verdict, detail, seconds, plan, events_path = "ERROR", f"exception: {exc!r}", 0.0, [], None
         finally:
             if recorder_proc is not None:
                 _stop(recorder_proc)
@@ -369,7 +434,8 @@ def run_tier2(entries: Sequence[CorpusEntry], *, mock_config: Path, constants: P
             detail = (detail + " | " if detail else "") + clear_error
 
         if verdict == "PASS":
-            exhausted, split_fell_back = _scan_planner_exhaustion(run_dir / "orchestrator.log")
+            exhausted, split_fell_back = _scan_planner_exhaustion(
+                run_dir / "orchestrator.log", events_path)
             if exhausted:
                 verdict, detail = "FAIL", PLANNER_EXHAUSTED_DETAIL
             if split_fell_back:

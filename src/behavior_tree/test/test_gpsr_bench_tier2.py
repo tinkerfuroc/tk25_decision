@@ -262,6 +262,90 @@ def test_tier2_pass_survives_transient_llm_errors_that_recovered(tmp_path):
     assert results[0].detail == ""
 
 
+# -- H2 (round-2 review, sim run 003, 2026-08-29): the exhausted-attempts override must only
+# apply when the fallback was the run's FINAL outcome, not merely evidence that it happened
+# somewhere in the log -- a later replan/escape that goes on to complete every real target
+# (003: goto, search_object, grasp, place, all AFTER one earlier fallback) is a genuine PASS.
+# ------------------------------------------------------------------------------------------
+
+def _fake_orchestrator_with_exhaustion_then_recovery(tmp_path: Path) -> list[str]:
+    """Prints the exhausted-planner log lines (same as `_EXHAUSTED_LOG_LINES`), THEN emits a
+    hollow fallback `announce` step succeeding, THEN emits real recovered steps (goto,
+    search_object, grasp, place, all succeeding) before `task.finished(succeeded)` -- mirrors
+    sim run 003: an earlier planner exhaustion followed by genuine recovery."""
+    script = tmp_path / "fake_orch_recovery.py"
+    script.write_text(textwrap.dedent(f"""
+        import json, os, time
+        for line in {list(_EXHAUSTED_LOG_LINES)!r}:
+            print(line, flush=True)
+        d = os.path.join(os.environ["BT_GPSR_PLAN_DIR"], "debug", "traj-1"); os.makedirs(d, exist_ok=True)
+        f = open(os.path.join(d, "events.jsonl"), "a", buffering=1)
+        def ev(t, payload):
+            f.write(json.dumps({{"event_type": t, "task_id": "traj-1/task-1", "payload": payload, "occurred_at": "x"}}) + "\\n")
+        ev("step.finished", {{"action": "announce", "outcome": "succeeded"}})
+        for action in ("goto", "search_object", "grasp", "place"):
+            ev("step.finished", {{"action": action, "outcome": "succeeded"}})
+        ev("task.finished", {{"status": "succeeded", "reason": "r"}})
+        while True:
+            time.sleep(1)
+    """))
+    return [sys.executable, str(script)]
+
+
+def test_tier2_pass_stays_pass_when_exhaustion_is_followed_by_real_recovery(tmp_path):
+    entries = [_entry(0, "bring me a spam from the laundry desk")]
+    results = run_tier2(
+        entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+        out_dir=tmp_path / "out", timeout_s=20,
+        launcher=_fake_orchestrator_with_exhaustion_then_recovery(tmp_path),
+        reset_cmd=["true"], settle_s=0)
+
+    assert results[0].verdict == "PASS"
+    assert results[0].detail == ""
+
+
+def test_scan_planner_exhaustion_drops_override_when_events_show_later_real_success(tmp_path):
+    log_path = tmp_path / "orchestrator.log"
+    log_path.write_text("\n".join(_EXHAUSTED_LOG_LINES) + "\n")
+    events_path = tmp_path / "events.jsonl"
+    events = [
+        {"event_type": "step.finished", "payload": {"action": "announce", "outcome": "succeeded"}},
+        {"event_type": "step.finished", "payload": {"action": "goto", "outcome": "succeeded"}},
+        {"event_type": "step.finished", "payload": {"action": "place", "outcome": "succeeded"}},
+    ]
+    events_path.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+
+    exhausted, split_fell_back = tier2._scan_planner_exhaustion(log_path, events_path)
+    assert exhausted is False
+    assert split_fell_back is False
+
+
+def test_scan_planner_exhaustion_keeps_override_when_fallback_is_the_final_event(tmp_path):
+    log_path = tmp_path / "orchestrator.log"
+    log_path.write_text("\n".join(_EXHAUSTED_LOG_LINES) + "\n")
+    events_path = tmp_path / "events.jsonl"
+    events = [
+        {"event_type": "step.finished", "payload": {"action": "goto", "outcome": "succeeded"}},
+        {"event_type": "step.finished", "payload": {"action": "announce", "outcome": "succeeded"}},
+    ]
+    events_path.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+
+    exhausted, split_fell_back = tier2._scan_planner_exhaustion(log_path, events_path)
+    assert exhausted is True
+    assert split_fell_back is False
+
+
+def test_scan_planner_exhaustion_keeps_override_when_no_events_file_is_given(tmp_path):
+    # Backward compatible: an omitted/None events_path (e.g. a direct caller that never
+    # located one) leaves the pre-H2 behaviour unchanged -- any exhaustion evidence still
+    # flips the verdict, since there is nothing to prove a later recovery happened.
+    log_path = tmp_path / "orchestrator.log"
+    log_path.write_text("\n".join(_EXHAUSTED_LOG_LINES) + "\n")
+    exhausted, split_fell_back = tier2._scan_planner_exhaustion(log_path)
+    assert exhausted is True
+    assert split_fell_back is False
+
+
 def test_tier2_split_stage_fallback_alone_annotates_detail_but_stays_pass(tmp_path):
     """A deterministic split fallback (`[split] all N attempts failed`) does NOT by itself
     mean planning failed -- the deterministic split can still be planned normally -- so it
