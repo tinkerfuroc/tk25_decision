@@ -31,7 +31,13 @@ def _fake_orchestrator_with_log_lines(tmp_path: Path, log_lines: list[str] = (),
     """A stand-in orchestrator that prints `log_lines` to stdout -- captured verbatim into
     orchestrator.log by tier2._run_orchestrator -- before writing task-1 telemetry with the
     given status, then idles. Used to synthesize planner-fallback evidence for the post-run
-    verdict guard without needing a real (or previously-recorded) orchestrator run."""
+    verdict guard without needing a real (or previously-recorded) orchestrator run.
+
+    The single `step.finished` event emitted here always represents the guaranteed fallback
+    plan's own hollow acknowledgement (`_fallback_plan`, orchestrator.py) -- the only action
+    this stand-in ever runs -- so, faithfully to what a real fallback run emits, its params
+    carry `acknowledgement: True` (see task H, round-2 review, 2026-08-29:
+    `_events_show_recovery` in tier2.py keys off exactly this flag)."""
     script = tmp_path / "fake_orch_guard.py"
     script.write_text(textwrap.dedent(f"""
         import json, os, time
@@ -41,7 +47,8 @@ def _fake_orchestrator_with_log_lines(tmp_path: Path, log_lines: list[str] = (),
         f = open(os.path.join(d, "events.jsonl"), "a", buffering=1)
         def ev(t, payload):
             f.write(json.dumps({{"event_type": t, "task_id": "traj-1/task-1", "payload": payload, "occurred_at": "x"}}) + "\\n")
-        ev("step.finished", {{"action": "announce", "outcome": "succeeded"}})
+        ev("step.finished", {{"action": "announce", "outcome": "succeeded",
+                              "params": {{"acknowledgement": True}}}})
         ev("task.finished", {{"status": {status!r}, "reason": "r"}})
         while True:
             time.sleep(1)
@@ -321,17 +328,46 @@ def test_scan_planner_exhaustion_drops_override_when_events_show_later_real_succ
 
 
 def test_scan_planner_exhaustion_keeps_override_when_fallback_is_the_final_event(tmp_path):
+    # Task H (round-2 review, 2026-08-29): only the fallback's OWN acknowledgement -- tagged
+    # with `params.acknowledgement = True` by `_fallback_plan` (orchestrator.py) -- is hollow.
+    # A trailing `announce` with that flag set is the fallback plan's guaranteed apology, not
+    # real progress, so the override stays in force.
     log_path = tmp_path / "orchestrator.log"
     log_path.write_text("\n".join(_EXHAUSTED_LOG_LINES) + "\n")
     events_path = tmp_path / "events.jsonl"
     events = [
         {"event_type": "step.finished", "payload": {"action": "goto", "outcome": "succeeded"}},
-        {"event_type": "step.finished", "payload": {"action": "announce", "outcome": "succeeded"}},
+        {"event_type": "step.finished", "payload": {
+            "action": "announce", "outcome": "succeeded",
+            "params": {"text": "I heard your command but could not work out a complete "
+                               "plan for it. I will skip it for now.",
+                       "acknowledgement": True}}},
     ]
     events_path.write_text("\n".join(json.dumps(e) for e in events) + "\n")
 
     exhausted, split_fell_back = tier2._scan_planner_exhaustion(log_path, events_path)
     assert exhausted is True
+    assert split_fell_back is False
+
+
+def test_scan_planner_exhaustion_drops_override_when_final_announce_is_real(tmp_path):
+    # Task H (round-2 review, 2026-08-29): a real, LLM-planned `announce` step (no
+    # `acknowledgement` flag in its params) as the run's final event is genuine progress --
+    # e.g. a question-answering target whose whole plan legitimately ends in a spoken
+    # answer -- so it must NOT be treated as the hollow fallback and the override drops.
+    log_path = tmp_path / "orchestrator.log"
+    log_path.write_text("\n".join(_EXHAUSTED_LOG_LINES) + "\n")
+    events_path = tmp_path / "events.jsonl"
+    events = [
+        {"event_type": "step.finished", "payload": {"action": "goto", "outcome": "succeeded"}},
+        {"event_type": "step.finished", "payload": {
+            "action": "announce", "outcome": "succeeded",
+            "params": {"text": "The kitchen table has three apples on it."}}},
+    ]
+    events_path.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+
+    exhausted, split_fell_back = tier2._scan_planner_exhaustion(log_path, events_path)
+    assert exhausted is False
     assert split_fell_back is False
 
 

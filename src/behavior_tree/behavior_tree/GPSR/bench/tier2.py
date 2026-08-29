@@ -42,17 +42,32 @@ def _events_show_recovery(events_path: Path) -> bool:
     evidence recorded in ``events_path`` (a ``step.finished`` or ``target.failed`` telemetry
     event -- ``bench/events.py``'s ``parse_events`` folds these into ``TaskResult``, but this
     needs each one IN FILE ORDER, not the folded per-task summary) is a genuine step
-    succeeding on an action OTHER than ``announce`` -- the ONLY action the guaranteed
-    fallback plan ever uses (``_fallback_plan``, orchestrator.py). The events JSONL is
-    append-only and single-writer, so file order is already chronological: no cross-file
-    timestamp correlation with the orchestrator.log scan below is needed, only "what was the
-    LAST thing that happened".
+    succeeding -- the guaranteed fallback plan's only action is ``announce``
+    (``_fallback_plan``, orchestrator.py), so a succeeded ``announce`` is treated as hollow
+    UNLESS it is a real, LLM-planned announce.
+
+    Follow-up (round-2 review, task H, 2026-08-29): ``_fallback_plan`` tags its own
+    acknowledgement with ``params["acknowledgement"] = True`` specifically so downstream
+    consumers can tell it apart from a real announce (see that function's docstring in
+    orchestrator.py, and ``validators._action_verdict``'s answered-fallback handling, which
+    reads the same flag). ``BtNode_LogStepResult``/the supervisor-failure path both put the
+    step's raw ``CURRENT_PARAMS`` dict straight into the ``step.finished`` event's
+    ``payload["params"]`` (orchestrator.py's ``update()``/``on_target_failed`` methods), and
+    ``Telemetry.emit`` copies ``payload`` verbatim (``_json_safe(dict(payload or {}))``,
+    telemetry.py) -- no field is dropped or renamed in between. So a succeeded ``announce``
+    event's ``params.acknowledgement`` reliably distinguishes the fallback's hollow
+    acknowledgement (flag truthy -- NOT recovery) from a real, LLM-planned ``announce`` step
+    such as a question-answering target's final response (flag absent/falsy -- IS recovery,
+    same as any other genuine action).
+
+    The events JSONL is append-only and single-writer, so file order is already
+    chronological: no cross-file timestamp correlation with the orchestrator.log scan below
+    is needed, only "what was the LAST thing that happened".
 
     A trailing failure (``target.failed``, or a ``step.finished`` with
-    ``outcome != "succeeded"``), a trailing ``announce`` (the fallback's own hollow
-    acknowledgement, or -- conservatively treated the same way here -- a real ``announce``
-    step), or no such events at all all score ``False`` (no evidence of recovery -- the
-    caller's override stays in force). Missing/unreadable files score ``False`` too.
+    ``outcome != "succeeded"``), a trailing hollow ``announce`` (the fallback's own
+    acknowledgement), or no such events at all all score ``False`` (no evidence of recovery
+    -- the caller's override stays in force). Missing/unreadable files score ``False`` too.
     """
     path = Path(events_path)
     if not path.is_file():
@@ -71,10 +86,12 @@ def _events_show_recovery(events_path: Path) -> bool:
                 kind = event.get("event_type")
                 payload = event.get("payload") or {}
                 if kind == "step.finished":
-                    last_ok = (
-                        payload.get("outcome") == "succeeded"
-                        and str(payload.get("action")) != "announce"
+                    succeeded = payload.get("outcome") == "succeeded"
+                    is_hollow_announce = (
+                        str(payload.get("action")) == "announce"
+                        and bool((payload.get("params") or {}).get("acknowledgement"))
                     )
+                    last_ok = succeeded and not is_hollow_announce
                 elif kind == "target.failed":
                     last_ok = False
     except OSError:
