@@ -1144,7 +1144,20 @@ def _person_scan_strategies(extra_specialist=None):
     Returns NEW node instances each call so it can be dropped into every branch
     of the pan-tilt sweep (see ``_pantilt_sweep``).
     """
-    selector = py_trees.composites.Selector("person scan strategies", memory=False)
+    # F3 (round-2 review): memory=True. Every branch here is a memory
+    # Sequence whose tail is a multi-tick async ServiceHandler (waving scan /
+    # attribute-specialist scan / generalist scan). A non-memory Selector
+    # re-enters child 0 on EVERY tick regardless of which branch is actually
+    # in flight; whichever higher-priority branch resolves fast (a guard
+    # that fails, or a specialist scan that resolves within the same tick)
+    # gets fully re-run from scratch each cycle while a lower-priority
+    # branch's in-flight async call never gets a chance to be revisited
+    # long enough to complete — a livelock (sim run 005: stuck at pan/tilt
+    # pose #1 for 116 cycles, ~8.6 minutes, never advancing). memory=True
+    # makes the Selector resume directly at whichever branch last went
+    # RUNNING, matching every other async-leaf Selector in this file (e.g.
+    # the pantilt sweep itself, `_pantilt_sweep`, is already memory=True).
+    selector = py_trees.composites.Selector("person scan strategies", memory=True)
     # waving-person specialist — only when the descriptor calls for it
     waving_branch = py_trees.composites.Sequence("waving person branch", memory=True)
     waving_branch.add_child(BtNode_CheckBBContains(
