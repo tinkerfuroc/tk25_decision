@@ -62,27 +62,49 @@ ACTION_CONTRACTS: dict[str, ActionContract] = {
         _c("grasp", requires=("object_seen(object)",), establishes=("held(object)",)),
         _c("find_person", establishes=("person_found(person)",),
            records=("person_detection", "target_person_pose")),
-        _c("count", establishes=("counted(object)",), records=("count_value", "count_target")),
         _c("ask_person", establishes=("answered(question)",), records=("person_answer",)),
         _c("answer_question", establishes=("answered(question)",), records=("qa_answer",)),
+        # `count`/`announce`/`vlm_fallback`/`llm_fallback` below ALL also
+        # establish `answered(question)`, but every one of them is registered
+        # AFTER ask_person/answer_question so _ESTABLISHER_FOR_PREDICATE
+        # (planner.py) still resolves "answered" -> ask_person (the FIRST
+        # registry entry wins — `setdefault`). This widens what the
+        # postcondition-coverage check (planner_validators) and the
+        # answered-gate action-verdict fallback (validators._action_verdict)
+        # accept as a valid "answered" establisher without changing which
+        # action is canonical for _deterministic_target_intent.
+        #
+        # `count` keeps `counted(object)` FIRST in its own tuple — that
+        # ordering is what a caller iterating `establishes` for "the
+        # predicate this step is really about" would see first; it has no
+        # effect on `_ESTABLISHER_FOR_PREDICATE`, which is keyed by
+        # REGISTRY order, not per-contract tuple order. `count` has no
+        # `question` param, so `established_facts()` for it stays `[]`
+        # (only `counted(object)` can ever resolve) — same reasoning as
+        # `announce` below.
+        _c("count", establishes=("counted(object)", "answered(question)"),
+           records=("count_value", "count_target")),
         _c("approach_person"),
         _c("describe_person"),
         _c("follow"),
         _c("guide"),
         _c("open"),
-        # `announce` establishes `answered(question)` too, but is registered
-        # AFTER ask_person/answer_question so _ESTABLISHER_FOR_PREDICATE
-        # (planner.py) still resolves "answered" -> ask_person (the FIRST
-        # registry entry wins). announce has no `question` param (only
-        # `text`), so established_facts() for it stays [] — the establishes
-        # template can never resolve, which is intentional: this widens what
-        # the postcondition-coverage check and the answered-gate fallback
-        # accept without ever letting announce silently "establish" a fact
-        # for a SIBLING target via the contract-boundary guard.
+        # `announce` has no `question` param (only `text`), so
+        # established_facts() for it stays [] — the establishes template can
+        # never resolve, which is intentional: this widens what the
+        # postcondition-coverage check and the answered-gate fallback accept
+        # without ever letting announce silently "establish" a fact for a
+        # SIBLING target via the contract-boundary guard.
         _c("announce", establishes=("answered(question)",)),
         _c("record_position"),
-        _c("vlm_fallback", records=("vlm_answer",)),
-        _c("llm_fallback", records=("llm_answer",)),
+        # vlm_fallback/llm_fallback DO carry a `question` param, so unlike
+        # announce/count, established_facts() for these two CAN resolve to a
+        # real `answered(<question>)` fact when `question` is set — that is
+        # deliberate (H1): a `[goto, vlm_fallback(question=...)]` /
+        # `[llm_fallback(question=...)]` plan genuinely establishes the
+        # question it was asked, for its own target.
+        _c("vlm_fallback", establishes=("answered(question)",), records=("vlm_answer",)),
+        _c("llm_fallback", establishes=("answered(question)",), records=("llm_answer",)),
     )
 }
 

@@ -87,6 +87,29 @@ def test_established_facts_no_self_establish_actions_are_empty():
     assert ac.established_facts({"action": "find_person", "params": {"person": "Alex"}}) == ["person_found(alex)"]
 
 
+def test_count_established_facts_stays_counted_only_no_question_param():
+    # H1: count now ALSO establishes answered(question), but it has no
+    # `question` param (only `object`/`location`), so the answered(question)
+    # template can never resolve -- established_facts() for count stays
+    # exactly ["counted(object)"], same as before H1.
+    assert ac.established_facts({"action": "count", "params": {"object": "drinks"}}) == ["counted(drinks)"]
+    assert ac.established_facts({"action": "count", "params": {}}) == []
+
+
+def test_llm_vlm_fallback_established_facts_resolve_answered_when_question_present():
+    # H1: unlike count/announce, vlm_fallback/llm_fallback DO carry a
+    # `question` param, so their answered(question) template CAN resolve --
+    # deliberately, per the fix brief.
+    assert ac.established_facts(
+        {"action": "llm_fallback", "params": {"question": "what day is today"}}
+    ) == ["answered(what_day_is_today)"]
+    assert ac.established_facts({"action": "llm_fallback", "params": {}}) == []
+    assert ac.established_facts(
+        {"action": "vlm_fallback", "params": {"question": "what colour is the mug"}}
+    ) == ["answered(what_colour_is_the_mug)"]
+    assert ac.established_facts({"action": "vlm_fallback", "params": {}}) == []
+
+
 def test_self_navigating_destinations_excludes_goto():
     assert ac.self_navigating_destinations() == {
         "deliver": "recipient_location",

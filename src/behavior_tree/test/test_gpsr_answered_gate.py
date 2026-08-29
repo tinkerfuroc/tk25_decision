@@ -12,14 +12,21 @@ Two things had to change together:
 1. action_contracts.ACTION_CONTRACTS["announce"] now declares
    establishes=("answered(question)",) -- registered AFTER ask_person /
    answer_question so the FIRST-registered establisher
-   (planner._ESTABLISHER_FOR_PREDICATE) stays ask_person.
+   (planner._ESTABLISHER_FOR_PREDICATE) stays ask_person. count/vlm_fallback/
+   llm_fallback also declare it now (round-2 H1 fix), all likewise
+   registered after ask_person/answer_question.
 2. validators._action_verdict gains a generic "answered" fallback: a
-   completed, successful step whose contract establishes "answered" and
-   carries non-empty params["text"] counts as an answer, UNLESS the step is
-   flagged params["acknowledgement"] = True -- the planner's guaranteed
-   fallback plan (orchestrator._fallback_plan) sets that flag on its apology
-   announce so a planning FAILURE can never read back as a postcondition
-   PASS.
+   completed, successful step whose contract establishes "answered" counts
+   as an answer, UNLESS the step is flagged params["acknowledgement"] = True
+   -- the planner's guaranteed fallback plan (orchestrator._fallback_plan)
+   sets that flag on its apology announce so a planning FAILURE can never
+   read back as a postcondition PASS. (round-2 M1 fix: this no longer also
+   requires a non-empty params["text"] -- a text-less announce reporting a
+   prior count/ask_person/vlm_fallback/llm_fallback result now qualifies via
+   THAT predecessor step's own contract, without inspecting the announce's
+   own params at all. The static bare-announce rule in
+   planner_validators.validate_plan is what actually enforces that a
+   text-less announce only follows a real gathering step.)
 """
 from __future__ import annotations
 
@@ -45,6 +52,26 @@ def test_announce_establishes_answered_but_registered_after_ask_person():
 
     from behavior_tree.GPSR.planner import _ESTABLISHER_FOR_PREDICATE
     assert _ESTABLISHER_FOR_PREDICATE["answered"] == "ask_person"
+
+
+def test_all_answered_establishers_registered_after_ask_person_and_answer_question():
+    # H1: count/announce/vlm_fallback/llm_fallback all declare
+    # establishes=(..., "answered(question)") now, but every one of them is
+    # registered AFTER ask_person/answer_question in ACTION_CONTRACTS, so
+    # the canonical establisher (_ESTABLISHER_FOR_PREDICATE, first-registered
+    # wins via setdefault) never changes.
+    order = list(ac.ACTION_CONTRACTS)
+    ask_index = order.index("ask_person")
+    answer_index = order.index("answer_question")
+    for action in ("count", "announce", "vlm_fallback", "llm_fallback"):
+        contract = ac.contract_for(action)
+        assert any(t.split("(", 1)[0] == "answered" for t in contract.establishes), action
+        assert order.index(action) > ask_index, action
+        assert order.index(action) > answer_index, action
+
+    from behavior_tree.GPSR.planner import _ESTABLISHER_FOR_PREDICATE
+    assert _ESTABLISHER_FOR_PREDICATE["answered"] == "ask_person"
+    assert _ESTABLISHER_FOR_PREDICATE["counted"] == "count"
 
 
 def test_announce_established_facts_stays_empty():
@@ -78,16 +105,70 @@ def test_action_verdict_announce_success_is_valid_with_generic_reason():
     )
 
 
-def test_action_verdict_announce_empty_text_is_unknown():
+def test_action_verdict_announce_empty_text_still_valid_since_M1():
+    # M1 (round-2 fix): the verdict no longer inspects params["text"] at all
+    # -- a text-less announce's OWN contract already establishes "answered"
+    # (H1), so it qualifies on its own, same as ask_person/answer_question/
+    # count/vlm_fallback/llm_fallback would. What actually stops a
+    # groundless text-less announce from ever reaching here is the STATIC
+    # bare-announce rule in planner_validators.validate_plan (it requires a
+    # prior count/describe_person/ask_person/vlm_fallback/llm_fallback
+    # before a text-less announce is even accepted into a plan) -- this
+    # runtime fallback trusts that gate already ran.
     fact, _ = parse_fact("answered(what_day_is_today)")
     ctx = VerificationContext(
         phase="postcondition",
         completed_steps=({"action": "announce", "params": {"text": ""}},),
     )
-    assert _action_verdict(fact, ctx) is None
-    # Full path: no artifact evidence either -> overall UNKNOWN.
+    result = _action_verdict(fact, ctx)
+    assert result is not None
+    assert result.verdict is Verdict.VALID
+    assert result.confidence == 0.5
+    # Full path agrees.
     result = _verify(fact, {}, ctx)
-    assert result.verdict is Verdict.UNKNOWN
+    assert result.verdict is Verdict.VALID
+
+
+def test_action_verdict_textless_announce_after_count_is_valid():
+    # The t1-42 sim shape: [goto, count, goto(start_position), announce()]
+    # for an answered(how many ...) target. count itself now establishes
+    # "answered" too (H1), so this qualifies even before the text-less
+    # announce step is reached.
+    fact, _ = parse_fact("answered(how_many_drinks_there_are_on_the_kitchen_table)")
+    ctx = VerificationContext(
+        phase="postcondition",
+        completed_steps=(
+            {"action": "goto", "params": {"location": "kitchen_table"}},
+            {"action": "count", "params": {"object": "drinks", "location": "kitchen_table"}},
+            {"action": "goto", "params": {"location": "start_position"}},
+            {"action": "announce", "params": {}},
+        ),
+    )
+    result = _action_verdict(fact, ctx)
+    assert result is not None
+    assert result.verdict is Verdict.VALID
+    assert result.confidence == 0.5
+
+
+def test_verify_answered_accepts_bare_count_value_artifact():
+    # H1: validators._verify's answered branch now mirrors the `counted`
+    # branch and accepts a bare count_value artifact as sufficient runtime
+    # evidence for answered(...), same as qa_answer/llm_answer/vlm_answer.
+    fact, _ = parse_fact("answered(how_many_drinks)")
+    ctx = VerificationContext(phase="postcondition", completed_steps=())
+    result = _verify(fact, {"count_value": 3}, ctx)
+    assert result.verdict is Verdict.VALID
+    assert "count_value" not in result.evidence  # generic identity-unavailable wording
+    assert "nonempty answer" in result.evidence
+
+
+def test_action_verdict_unrelated_action_yields_no_verdict():
+    fact, _ = parse_fact("answered(what_day_is_today)")
+    ctx = VerificationContext(
+        phase="postcondition",
+        completed_steps=({"action": "follow", "params": {"person": "sarah"}},),
+    )
+    assert _action_verdict(fact, ctx) is None
 
 
 def test_action_verdict_precondition_phase_never_verdicts():
@@ -140,11 +221,17 @@ def test_action_verdict_widening_covers_ask_person_and_answer_question():
     # Deliberate widening: ANY action whose contract establishes answered()
     # qualifies the same way, not just announce -- proves the check is
     # generic (contract-driven), not a hardcoded "announce" string compare.
-    for action, param in (("ask_person", "question"), ("answer_question", "question")):
+    # L1 (round-2 fix): a REALISTIC step shape -- ask_person/answer_question
+    # carry `question`, never `text` (orchestrator.materialise_params reads
+    # `question` for ask_person, see orchestrator.py ~1208-1211). Per M1 the
+    # verdict no longer inspects any param at all, so this also proves the
+    # rule holds for the actual param shape these actions use, not a
+    # fabricated `text` key that ask_person never has.
+    for action in ("ask_person", "answer_question"):
         fact, _ = parse_fact("answered(what_day_is_today)")
         ctx = VerificationContext(
             phase="postcondition",
-            completed_steps=({"action": action, "params": {"text": "Saturday"}},),
+            completed_steps=({"action": action, "params": {"question": "What day is today?"}},),
         )
         result = _action_verdict(fact, ctx)
         assert result is not None and result.verdict is Verdict.VALID, action

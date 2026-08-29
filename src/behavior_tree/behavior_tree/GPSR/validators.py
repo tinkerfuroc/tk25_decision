@@ -322,13 +322,24 @@ def _action_verdict(fact: Fact, context: VerificationContext) -> Optional[Verifi
             establishes_answered = contract is not None and any(
                 t.split("(", 1)[0] == "answered" for t in contract.establishes
             )
-            if establishes_answered and str(params.get("text", "")).strip():
-                return _result(
-                    Verdict.VALID,
+            # M1: no longer requires a non-empty params["text"] -- a
+            # text-less announce() reporting a prior count/describe_person/
+            # ask_person/vlm_fallback result (the prompt's canonical "tell
+            # ME" pattern) has nothing IN ITS OWN params to check; the
+            # earlier successful step already qualifies via ITS OWN contract
+            # (count/ask_person/... establish "answered" too, see H1), so
+            # the plan is covered even before this text-less announce is
+            # reached. Any step whose contract establishes "answered",
+            # succeeded, and is not flagged acknowledgement qualifies.
+            if establishes_answered:
+                reason = (
                     "action-verdict fallback: spoken announce stands as the answer; "
-                    "question identity unavailable",
-                    0.5,
+                    "question identity unavailable"
+                    if action == "announce" else
+                    f"action-verdict fallback: successful {action} action establishes "
+                    "answered(); question identity unavailable"
                 )
+                return _result(Verdict.VALID, reason, 0.5)
     return None
 
 
@@ -396,7 +407,14 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
             return _result(Verdict.VALID, "count artifact contains count_value; target identity unavailable")
     elif fact.predicate == "answered":
         answer_keys = ("qa_answer", "person_answer", "llm_answer", "vlm_answer")
-        if any(isinstance(evidence.get(key), str) and evidence[key].strip() for key in answer_keys):
+        # count also establishes answered(question) now (H1: "how many ..."
+        # is a spoken-answer target too) -- mirror the `counted` branch above
+        # and accept a bare count_value artifact, same as any other answer key.
+        has_answer_artifact = (
+            any(isinstance(evidence.get(key), str) and evidence[key].strip() for key in answer_keys)
+            or "count_value" in evidence
+        )
+        if has_answer_artifact:
             provenance = next((evidence.get(key) for key in
                                ("qa_question", "ask_question", "question_provenance", "vlm_question", "llm_question")
                                if isinstance(evidence.get(key), str) and evidence[key].strip()), None)
