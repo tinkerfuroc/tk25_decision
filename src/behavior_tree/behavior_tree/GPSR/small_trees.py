@@ -965,6 +965,68 @@ def create_find_object(pan_deg=None, tilt_deg=None):
     return seq
 
 
+class SearchObjectSelector(py_trees.composites.Selector):
+    """F2 (round-2 review): ``small/search_object``'s root.
+
+    A stock memory Selector (SUCCESS on the first spot with a match, FAILURE
+    only once every filled spot has been swept) EXCEPT: on terminating
+    FAILURE it replaces its own ``feedback_message`` with a one-line summary
+    of how many spots were actually swept, instead of leaving whatever the
+    tip's internal guard message was.
+
+    Without this, ``orchestrator._last_child_feedback`` -- which calls
+    ``node.tip()`` and reports ITS ``feedback_message`` -- surfaces the tip
+    of the LAST branch tried, which for any room with fewer search spots
+    than ``MAX_SEARCH_SPOTS`` is an unfilled slot's ``BtNode_CheckBBKeySet``
+    guard: ``"gpsr/search_pose_5 is None"``. That is an internal blackboard
+    key, meaningless to an operator or a replanning LLM. ``tip()`` is
+    overridden the same way: once this node has failed and set its own
+    message, IT becomes the reported tip instead of delegating further down.
+    Selector semantics (class name keeps "Selector" so
+    ``tree_serialization._semantics`` still classifies it as one; node ids
+    stay purely path-based so ``_classify_node_roles``'s
+    ``small/search_object/root`` -> ``search_object_sweep`` role is
+    unaffected) are otherwise untouched -- structural only, no behaviour
+    change on SUCCESS.
+    """
+
+    def __init__(self, name: str, capacity: int):
+        super().__init__(name, memory=True)
+        self._capacity = capacity
+        self._client = None
+
+    def setup(self, **kwargs):
+        super().setup(**kwargs)
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(bb_keys.TARGET_LOCATION, access=Access.READ)
+
+    def tick(self):
+        for node in super().tick():
+            yield node
+        if self.status == Status.FAILURE:
+            self._summarise_sweep()
+
+    def tip(self):
+        if self.status == Status.FAILURE and self.feedback_message:
+            return self
+        return super().tip()
+
+    def _summarise_sweep(self) -> None:
+        swept = sum(
+            1
+            for branch in self.children
+            if branch.children and branch.children[0].status == Status.SUCCESS
+        )
+        try:
+            location = self._client.get(bb_keys.TARGET_LOCATION)
+        except Exception:
+            location = None
+        self.feedback_message = (
+            f"search_object: swept {swept} of {self._capacity} spots "
+            f"at {location}, nothing found"
+        )
+
+
 def create_search_object(capacity: int = MAX_SEARCH_SPOTS):
     """Sweep a room's search spots until the target object is located.
 
@@ -985,7 +1047,7 @@ def create_search_object(capacity: int = MAX_SEARCH_SPOTS):
     """
     cap = max(1, int(capacity))
     pose_keys = [f"gpsr/search_pose_{i}" for i in range(cap)]
-    sweep = py_trees.composites.Selector("small/search_object", memory=True)
+    sweep = SearchObjectSelector("small/search_object", capacity=cap)
     for i, pose_key in enumerate(pose_keys):
         branch = py_trees.composites.Sequence(f"search spot {i}", memory=True)
         branch.add_child(BtNode_CheckBBKeySet(f"spot {i} set?", pose_key))
