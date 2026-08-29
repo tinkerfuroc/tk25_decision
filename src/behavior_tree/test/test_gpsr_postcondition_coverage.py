@@ -16,7 +16,9 @@ import py_trees
 import pytest
 
 from behavior_tree.GPSR import planner as planner_module
-from behavior_tree.GPSR.planner_validators import validate_plan, uncovered_postcondition_reason
+from behavior_tree.GPSR.planner_validators import (
+    validate_plan, uncovered_postcondition_reason, established_predicates,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +194,15 @@ def test_postcondition_check_runs_after_earlier_more_specific_rejections():
     )
     assert not ok
     assert "placeholder" in reason
+
+
+def test_established_predicates_is_public():
+    # Quality (round-2 review): made public alongside
+    # uncovered_postcondition_reason -- both are shared, non-internal
+    # planner-validation helpers (planner.replace_target_plan also uses
+    # this one).
+    plan = [{"action": "find_person", "params": {"person": "sarah"}}]
+    assert established_predicates(plan) == {"person_found"}
 
 
 def test_uncovered_reason_lists_every_registry_establisher():

@@ -42,7 +42,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from .action_contracts import ACTION_CONTRACTS, self_established_facts, self_navigating_destinations
 from .validators import canonical_fact, parse_fact
 
-__all__ = ["validate_dag", "validate_plan", "uncovered_postcondition_reason"]
+__all__ = [
+    "validate_dag", "validate_plan", "uncovered_postcondition_reason",
+    "established_predicates",
+]
 
 
 # Match anything that looks like an unresolved template token: <day>, <country>,
@@ -228,7 +231,7 @@ def _same_object(a: str, b: str) -> bool:
     return False
 
 
-def _established_predicates(steps: Iterable[Dict[str, Any]]) -> set:
+def established_predicates(steps: Iterable[Dict[str, Any]]) -> set:
     """Predicate names any step in ``steps`` establishes, per its contract.
 
     Shared by ``uncovered_postcondition_reason`` (below) and
@@ -277,7 +280,7 @@ def uncovered_postcondition_reason(
     message (checked in ``postconditions`` order — it does not wait to
     collect every miss), naming every registry establisher for its predicate.
     """
-    established = _established_predicates(plan)
+    established = established_predicates(plan)
     self_nav_destinations = {
         nav_fact.args[0]
         for step in plan

@@ -50,7 +50,7 @@ from .modifiable_nodes import (
     validate_plan_modifications,
 )
 from .planner_validators import (
-    validate_plan, validate_dag, uncovered_postcondition_reason, _established_predicates,
+    validate_plan, validate_dag, uncovered_postcondition_reason, established_predicates,
     _norm_loc,
 )
 from .validators import apply_fact_transitions, canonical_fact, parse_fact
@@ -1486,6 +1486,78 @@ class GPSRPlanner:
 
     # -- lower layer ----------------------------------------------------------
 
+    def _try_escape(
+        self,
+        slot: int,
+        index: int,
+        desc: str,
+        target: Optional[Dict[str, Any]],
+        target_obj: str,
+        target_loc: str,
+        identical_marker_reason: Optional[str],
+        all_targets: Optional[List[Dict[str, Any]]],
+        failure_reason: Optional[str],
+        known_actions: set,
+        known_loc_arg: Optional[set],
+        prior_plan: List[Dict[str, Any]],
+    ) -> bool:
+        """D1 (Task D brief, battery run 004): try ONE deterministic escape.
+
+        Called from ``plan_target`` only when the LLM's regenerated plan is
+        IDENTICAL to the one that just failed (the final attempt). Before
+        handing back the doomed identical plan, try a registry action
+        establishing the failed fact that has never been tried across this
+        target's ENTIRE failed-plan history — a genuinely different,
+        untried strategy (e.g. ``search_object`` after ``find_object`` kept
+        failing). No LLM call burns replan budget for this: it either
+        produces real forward progress (stores the escape's subtree,
+        ``error=None``, and returns True — the caller returns immediately)
+        or returns False, falling straight through to the existing
+        IDENTICAL_PLAN marker path unchanged.
+
+        Quality (round-2 review): extracted verbatim from ``plan_target``'s
+        inline escape block — pure refactor, callers unaffected.
+        """
+        escape = _escape_plan(
+            target, target_obj, target_loc, identical_marker_reason,
+            self._failed_plans(slot, index),
+            all_targets=all_targets,
+            facts=self.get_facts(slot),
+            known_locations=known_loc_arg,
+        )
+        if escape is None:
+            return False
+        escape_guarded, escape_dropped = _drop_foreign_contract_steps(
+            escape, target, all_targets, include_ancestors=not failure_reason,
+        )
+        # I-4: same dangling-goto repair as the main attempt path.
+        escape_guarded, escape_dangling_dropped = (
+            _drop_dangling_goto_before_self_nav(escape_guarded)
+        )
+        escape_dropped = list(escape_dropped) + escape_dangling_dropped
+        escape_ok, escape_reason = validate_plan(
+            escape_guarded, desc or "", known_actions,
+            known_locations=known_loc_arg,
+            prior_plan=prior_plan,
+            postconditions=(target or {}).get("postconditions"),
+        )
+        escape_subtree = None
+        if escape_ok:
+            try:
+                escape_subtree = self.build_target_subtree(slot, index, escape_guarded)
+            except Exception as exc:  # noqa: BLE001 — fall through to the marker path
+                print(f"[plan:{slot}:{index}] deterministic escape subtree build "
+                      f"failed: {exc!r}")
+        else:
+            print(f"[plan:{slot}:{index}] deterministic escape REJECTED: {escape_reason}")
+        if escape_subtree is None:
+            return False
+        print(f"[plan:{slot}:{index}] LLM stuck on an identical plan -> "
+              f"deterministic escape {[s['action'] for s in escape_guarded]} "
+              f"dropped {escape_dropped}")
+        self._store(slot, index, desc, escape_guarded, escape_subtree, None)
+        return True
+
     def plan_target(
         self,
         slot: int,
@@ -1656,51 +1728,12 @@ class GPSRPlanner:
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"REJECTED: identical to failed plan")
                 continue
-            if identical:
-                # D1 (Task D brief, battery run 004): before handing back the
-                # doomed IDENTICAL plan, try ONE deterministic, network-free
-                # escape — a registry action establishing the failed fact
-                # that has never been tried across this target's ENTIRE
-                # failed-plan history. No LLM call burns replan budget for
-                # this; it either produces real forward progress or falls
-                # straight through to the existing marker path unchanged.
-                escape = _escape_plan(
-                    target, target_obj, target_loc, identical_marker_reason,
-                    self._failed_plans(slot, index),
-                    all_targets=all_targets,
-                    facts=self.get_facts(slot),
-                    known_locations=known_loc_arg,
-                )
-                if escape is not None:
-                    escape_guarded, escape_dropped = _drop_foreign_contract_steps(
-                        escape, target, all_targets, include_ancestors=not failure_reason,
-                    )
-                    # I-4: same dangling-goto repair as the main attempt path.
-                    escape_guarded, escape_dangling_dropped = (
-                        _drop_dangling_goto_before_self_nav(escape_guarded)
-                    )
-                    escape_dropped = list(escape_dropped) + escape_dangling_dropped
-                    escape_ok, escape_reason = validate_plan(
-                        escape_guarded, desc or "", known_actions,
-                        known_locations=known_loc_arg,
-                        prior_plan=prior_plan,
-                        postconditions=(target or {}).get("postconditions"),
-                    )
-                    escape_subtree = None
-                    if escape_ok:
-                        try:
-                            escape_subtree = self.build_target_subtree(slot, index, escape_guarded)
-                        except Exception as exc:  # noqa: BLE001 — fall through to the marker path
-                            print(f"[plan:{slot}:{index}] deterministic escape subtree build "
-                                  f"failed: {exc!r}")
-                    else:
-                        print(f"[plan:{slot}:{index}] deterministic escape REJECTED: {escape_reason}")
-                    if escape_subtree is not None:
-                        print(f"[plan:{slot}:{index}] LLM stuck on an identical plan -> "
-                              f"deterministic escape {[s['action'] for s in escape_guarded]} "
-                              f"dropped {escape_dropped}")
-                        self._store(slot, index, desc, escape_guarded, escape_subtree, None)
-                        return
+            if identical and self._try_escape(
+                slot, index, desc, target, target_obj, target_loc,
+                identical_marker_reason, all_targets, failure_reason,
+                known_actions, known_loc_arg, prior_plan,
+            ):
+                return
             # Accepted — build the subtree on this (worker) thread, then cache.
             try:
                 subtree = self.build_target_subtree(slot, index, cleaned, modifications=mods)
@@ -1899,7 +1932,7 @@ class GPSRPlanner:
         # fallback. Surfacing it in the log keeps the assumption checkable.
         target_postconditions = (target or {}).get("postconditions") if target else None
         if target_postconditions:
-            completed_established = _established_predicates(completed_steps or [])
+            completed_established = established_predicates(completed_steps or [])
             remaining_postconditions = [
                 cond for cond in target_postconditions
                 if (parse_fact(cond)[0] is None
