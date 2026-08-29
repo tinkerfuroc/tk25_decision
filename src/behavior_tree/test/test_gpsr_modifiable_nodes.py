@@ -345,3 +345,40 @@ def test_diff_reports_added_for_specialist():
     added = [record for record in diff if record["reason"] == "added"]
     assert added, "specialist insertion must add nodes"
     assert any("red jacket specialist scan" in str(record.get("name", "")) for record in added)
+
+
+# ---------------------------------------------------------------------------
+# No-gpsr_trace fallback (review L1): ModParamSpec must construct even when
+# the module falls back to its own plain ParamSpec.
+# ---------------------------------------------------------------------------
+
+def test_mod_param_spec_constructs_under_no_gpsr_trace_fallback(monkeypatch):
+    import importlib
+    import sys
+
+    # Force `from gpsr_trace.ir import ParamSpec` (and the events import) to
+    # raise ImportError, then reload the module under test so it takes the
+    # `except ImportError` branch — this is what "old installs without
+    # gpsr_trace" actually hit at import time.
+    monkeypatch.setitem(sys.modules, "gpsr_trace", None)
+    monkeypatch.setitem(sys.modules, "gpsr_trace.ir", None)
+    monkeypatch.setitem(sys.modules, "gpsr_trace.events", None)
+    import behavior_tree.GPSR.modifiable_nodes as mn
+
+    try:
+        importlib.reload(mn)
+        # The fallback ParamSpec is a frozen dataclass with (types, required,
+        # validator) — before the L1 fix, ModParamSpec's generated __init__
+        # only accepted `requirement`, so this call raised TypeError.
+        spec = mn.ModParamSpec((list, tuple), validator=lambda v: isinstance(v, list), requirement="must be a list")
+        assert spec.accepts([1, 2, 3])
+        assert not spec.accepts("nope")
+        assert spec.requirement == "must be a list"
+        # A plain (non-Mod) fallback ParamSpec still works too.
+        plain = mn.ParamSpec((list, tuple))
+        assert plain.accepts([1])
+        assert not plain.accepts(3)
+    finally:
+        # Restore the real gpsr_trace-backed module for every other test.
+        monkeypatch.undo()
+        importlib.reload(mn)

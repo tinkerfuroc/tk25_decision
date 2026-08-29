@@ -27,10 +27,24 @@ try:  # gpsr_trace is optional (allows old installs to import the GPSR module)
     from gpsr_trace.ir import ParamSpec
     from gpsr_trace.events import ValidationError
 except ImportError:  # pragma: no cover
+    @dataclass(frozen=True)
     class ParamSpec:  # type: ignore[no-redef]
-        def __init__(self, types, required=False, validator=None):  # noqa: ANN001
-            self.types = types
-            self.required = required
+        """Fallback matching ``gpsr_trace.ir.ParamSpec``'s dataclass shape.
+
+        Must stay a frozen dataclass with the same field set (``types``,
+        ``required``, ``validator``) so ``ModParamSpec(ParamSpec)`` — also a
+        ``@dataclass(frozen=True)`` — inherits real fields via
+        ``__dataclass_fields__`` instead of generating an ``__init__`` that
+        only knows about ``requirement``.
+        """
+
+        types: Any
+        required: bool = False
+        validator: Any = None
+
+        def accepts(self, value: Any) -> bool:
+            types = self.types if isinstance(self.types, tuple) else (self.types,)
+            return isinstance(value, types) and (self.validator is None or bool(self.validator(value)))
 
     class ValidationError(ValueError):
         pass
@@ -73,7 +87,10 @@ def _str_list(value: Any) -> bool:
 
 #: Common float-list schemas reused by several templates.
 FLOAT_LIST = ParamSpec((list, tuple))
-_ANGLE_LIST_REQUIREMENT = "must be a list/tuple of numbers (degrees)"
+# N1 (Task B review): `_str_list` only accepts `list`, never `tuple` (a tuple
+# is unreachable from JSON input anyway), so the requirement text says "list"
+# only -- it must not promise tuples are accepted too.
+_ANGLE_LIST_REQUIREMENT = "must be a list of numbers (degrees)"
 TILT_LIST = ModParamSpec((list, tuple), validator=_str_list, requirement=_ANGLE_LIST_REQUIREMENT)
 PAN_LIST = ModParamSpec((list, tuple), validator=_str_list, requirement=_ANGLE_LIST_REQUIREMENT)
 
@@ -111,6 +128,9 @@ class TemplateSpec:
                     f"template {self.name!r}: missing required param {name!r}"
                 )
             if name in params and not spec.accepts(params[name]):
+                # N2 (Task B review): `getattr` (not `spec.requirement`) is
+                # deliberate -- a plain `ParamSpec` (e.g. search-spots.capacity)
+                # has no `requirement` field, and must keep working here.
                 requirement = getattr(spec, "requirement", "") or ""
                 suffix = f": {requirement}" if requirement else " by schema"
                 raise ModificationValidationError(

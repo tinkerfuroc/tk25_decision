@@ -922,7 +922,7 @@ class GPSRPlanner:
     def _failed_plan(self, slot, index) -> Optional[List[Dict[str, Any]]]:
         with self._lock:
             entry = self._cache.get((slot, index))
-        return list(entry["failed_plan"]) if entry and entry.get("failed_plan") else None
+            return list(entry["failed_plan"]) if entry and entry.get("failed_plan") else None
 
     def _failed_plans(self, slot, index) -> List[List[Dict[str, Any]]]:
         with self._lock:
@@ -1191,9 +1191,9 @@ class GPSRPlanner:
             if identical and attempt < self._max_attempts - 1:
                 last_reason = (
                     "the regenerated plan was IDENTICAL to the plan that just failed "
-                    f"({failure_reason or 'unknown reason'}) — you MUST change it: add, remove "
+                    f"({identical_marker_reason or 'unknown reason'}) — you MUST change it: add, remove "
                     "or reorder steps so the failure cannot recur. "
-                    + _alternatives_for_reason(failure_reason or "")
+                    + _alternatives_for_reason(identical_marker_reason or "")
                 )
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"REJECTED: identical to failed plan")

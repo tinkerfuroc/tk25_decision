@@ -156,6 +156,54 @@ def test_plan_target_identical_marker_does_not_nest_on_repeated_identical_replan
     assert err == f"{planner_mod.IDENTICAL_PLAN_ERROR_PREFIX}: precondition unmet: at_robot(x) (invalid)"
 
 
+def test_plan_target_non_final_identical_rejection_uses_stripped_reason(monkeypatch):
+    # L3 (Task B review): the non-final identical-attempt retry prompt must
+    # show the STRIPPED reason (`identical_marker_reason`), never the raw
+    # `failure_reason` -- which, on a repeated identical-replan cycle, is
+    # itself already prefixed with IDENTICAL_PLAN_ERROR_PREFIX. Showing the
+    # raw value nests the prefix in the prompt text ("... plan that just
+    # failed (identical to failed plan: ...)").
+    p = planner_mod.GPSRPlanner(max_attempts=3)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    same = {"plan": [{"action": "announce", "params": {"text": "x"}}]}
+    different = {"plan": [{"action": "goto", "params": {"location": "a"}}]}
+    responses = iter([same, same, different])
+    prompts = []
+
+    def fake_call(client, system, user, temperature):
+        prompts.append(user)
+        return next(responses), None
+
+    monkeypatch.setattr(planner_mod, "_call_llm", fake_call)
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    p._store(0, 0, "d", same["plan"], py_trees.behaviours.Success("old"), None)
+    p._invalidate(0, 0)
+
+    nested_failure_reason = f"{planner_mod.IDENTICAL_PLAN_ERROR_PREFIX}: precondition unmet: at_robot(x) (invalid)"
+    p.plan_target(0, 0, "d", command="c", failure_reason=nested_failure_reason)
+
+    assert p.get_action_plan(0, 0) == different["plan"]
+    non_final_prompts = prompts[1:]
+    assert non_final_prompts, "expected at least one retry prompt after a non-final identical rejection"
+    marker = "The previous attempt failed with: "
+    for u in non_final_prompts:
+        # Isolate the retry-reason sentence built from `last_reason` (the
+        # non-final identical-rejection text) -- NOT the whole prompt, which
+        # also echoes the raw `failure_reason` once in its unrelated
+        # "Completed steps so far" state log.
+        start = u.index(marker) + len(marker)
+        failed_with_sentence = u[start:u.index("\n", start)]
+        assert "IDENTICAL" in failed_with_sentence
+        assert "precondition unmet: at_robot(x) (invalid)" in failed_with_sentence
+        # The stripped reason must appear on its own -- the raw,
+        # still-prefixed failure_reason ("identical to failed plan:
+        # precondition unmet: ...") must not be nested inside it.
+        assert planner_mod.IDENTICAL_PLAN_ERROR_PREFIX not in failed_with_sentence
+
+
 def test_plan_target_different_plan_has_no_error(monkeypatch):
     p = planner_mod.GPSRPlanner(max_attempts=2)
     monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
