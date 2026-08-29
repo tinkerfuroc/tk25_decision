@@ -65,6 +65,25 @@ MOVE_T2 = {
     "postconditions": ["placed(plant,balcony)"],
 }
 
+# The take-to-table-then-bring-to-me DAG (M1, Task D review): t0 grasps the
+# spam, t1 places it on the table (which RETRACTS t0's held(spam)), t2
+# delivers it to me -- and so must legitimately re-grasp.
+TABLE_T0 = {
+    "id": "t0", "desc": "Get a spam from the laundry_desk", "object": "spam",
+    "location": "laundry_desk", "depends_on": [],
+    "preconditions": [], "postconditions": ["held(spam)"],
+}
+TABLE_T1 = {
+    "id": "t1", "desc": "Put the spam on the table", "object": "spam",
+    "location": "table", "depends_on": ["t0"],
+    "preconditions": ["held(spam)"], "postconditions": ["placed(spam,table)"],
+}
+TABLE_T2 = {
+    "id": "t2", "desc": "Bring the spam to me", "object": "spam", "location": "",
+    "depends_on": ["t1"],
+    "preconditions": ["placed(spam,table)"], "postconditions": ["delivered(spam,me)"],
+}
+
 
 # ---------------------------------------------------------------------------
 # 1. Prompt: contract line + owned-by-sibling lines.
@@ -235,6 +254,28 @@ def test_guard_t1_initial_plan_drops_grasp_for_ancestors_fact_when_asked():
     kept, dropped = _drop_foreign_contract_steps(plan, T1, [T0, T1], include_ancestors=True)
     assert [s["action"] for s in kept] == ["goto", "deliver"]
     assert dropped == ["contract:grasp->held(spam)"]
+
+
+def test_guard_ancestor_facts_retracted_by_a_later_ancestor_are_not_foreign():
+    # M1 (Task D review): "take the spam to the table, then bring it to me".
+    # t2's ancestors are t0 (held(spam)) and t1 (placed(spam,table), which
+    # RETRACTS held(spam) for that object -- apply_fact_transitions drops
+    # held(obj) once placed(obj,..)/delivered(obj,..) is established for it).
+    # t2's INITIAL plan legitimately re-grasps (the spam is on the table, not
+    # in the gripper); a plain union of ancestor postconditions would wrongly
+    # treat held(spam) as still "guaranteed" (t0's fact, never retracted in a
+    # naive union) and drop the grasp step, letting `deliver` run empty.
+    plan = [
+        {"action": "goto", "params": {"location": "table"}},
+        {"action": "find_object", "params": {"object": "spam", "location": "table"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+        {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
+    ]
+    kept, dropped = _drop_foreign_contract_steps(
+        plan, TABLE_T2, [TABLE_T0, TABLE_T1, TABLE_T2], include_ancestors=True,
+    )
+    assert [s["action"] for s in kept] == ["goto", "find_object", "grasp", "deliver"]
+    assert dropped == []
 
 
 def test_guard_returns_plan_unchanged_when_no_target_context():
@@ -424,6 +465,52 @@ def test_replace_target_plan_keeps_ancestors_grasp_step(monkeypatch, capsys):
     p.replace_target_plan(0, 1, plan, reason="supervisor global replan")
 
     assert [s["action"] for s in p.get_action_plan(0, 1)] == ["goto", "grasp", "deliver"]
+
+
+def test_plan_target_initial_plan_attempt_two_still_lists_ancestors_as_owned(monkeypatch):
+    # M2/N1 (Task D review): the prompt's "owned by" block must follow the
+    # SAME include_ancestors rule as the _drop_foreign_contract_steps guard --
+    # keyed on `plan_target`'s own `failure_reason` ARGUMENT, never on
+    # `last_reason` (the retry-prompt text), which goes non-None as soon as
+    # attempt 1 of the INITIAL plan is rejected for ANY reason (here, an
+    # unrelated validator rejection) even though this is still the initial
+    # plan (no `failure_reason` was ever passed to `plan_target`).
+    p = GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {
+        "command": "bring me a spam from the laundry_desk",
+        "targets": [T0, T1],
+    }
+    llm_plan = {"plan": [{"action": "deliver", "params": {"object": "spam", "recipient": "me"}}]}
+    prompts = []
+
+    def fake_call(client, system, user, temperature):
+        prompts.append(user)
+        return llm_plan, None
+
+    monkeypatch.setattr(planner_module, "_call_llm", fake_call)
+    validate_calls = {"n": 0}
+
+    def fake_validate(*a, **k):
+        validate_calls["n"] += 1
+        if validate_calls["n"] == 1:
+            return False, "some unrelated validator rejection"
+        return True, ""
+
+    monkeypatch.setattr(planner_module, "validate_plan", fake_validate)
+    monkeypatch.setattr(planner_module, "validate_plan_modifications", lambda *a, **k: (True, ""))
+
+    p.plan_target(
+        0, 1, T1["desc"], command="bring me a spam from the laundry_desk",
+        target_obj="spam", target_loc="", target=T1, all_targets=[T0, T1],
+    )
+
+    assert len(prompts) == 2
+    assert any("owned by t0" in line for line in prompts[0].splitlines())
+    # The regression: before the fix, attempt 2's prompt dropped this line
+    # because `last_reason` (attempt 1's rejection text) was non-None.
+    assert any("owned by t0" in line for line in prompts[1].splitlines())
 
 
 def test_replace_target_plan_keeps_original_plan_when_guard_empties_it(monkeypatch, capsys):

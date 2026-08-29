@@ -484,12 +484,68 @@ def _last_goto_location(failed_plans: List[List[Dict[str, Any]]]) -> Optional[st
     return None
 
 
+# L1 (Task D review): a registry action may only be an escape CANDIDATE when
+# every one of its establish-template's own arg names is one of these three —
+# a `question`-bearing predicate (e.g. answered(question)) can only be
+# materialised from the exact, un-normalised question text, which
+# `parse_fact` has already lower-cased/underscored away by the time a fact
+# reaches here; escaping to it would emit a garbled param (see L1 finding).
+_ESCAPE_ALLOWED_ARG_NAMES = {"object", "person", "location"}
+
+
+def _verified_at_robot_location(facts: Optional[List[str]]) -> Optional[str]:
+    """The location argument of a verified ``at_robot(...)`` fact, if any.
+
+    L2 (Task D review), last resort for a self-navigating escape step's
+    location: the planner's own ``get_facts(slot)`` ledger records the most
+    recently gate-verified ``at_robot`` fact — ground truth for "where the
+    robot currently is" even when no target/ancestor location or failed-plan
+    ``goto`` resolves one.
+    """
+    for raw in facts or []:
+        fact, _error = parse_fact(str(raw))
+        if fact is not None and fact.predicate == "at_robot" and fact.args:
+            return fact.args[0]
+    return None
+
+
+def _nearest_ancestor_location(
+    target: Optional[Dict[str, Any]],
+    all_targets: Optional[List[Dict[str, Any]]],
+) -> Optional[str]:
+    """The closest (in list order) dependency ancestor's own ``location``.
+
+    L2 (Task D review), second-to-last resort for a self-navigating escape
+    step's location: a target's own assigned location and the last ``goto``
+    in its OWN failed-plan history both come up empty when the goto lived in
+    an ANCESTOR's plan instead (battery run 004: t1's only failed plan was
+    ``['find_object']``, no goto of its own — the goto was in t0's plan).
+    Ancestors nearer in list order are preferred (most likely to describe
+    where the robot currently is); ancestors with no declared location are
+    skipped.
+    """
+    if not target or not all_targets:
+        return None
+    pos = next(
+        (i for i, t in enumerate(all_targets) if _is_same_target(t, target)), None,
+    )
+    if pos is None:
+        return None
+    for ancestor in reversed(_dependency_ancestor_targets(all_targets, pos)):
+        loc = str(ancestor.get("location") or "").strip()
+        if loc:
+            return loc
+    return None
+
+
 def _escape_step_for(
     action: str,
     fact: "Fact",
     target_obj: str,
     target_loc: str,
     failed_plans: List[List[Dict[str, Any]]],
+    ancestor_loc: Optional[str] = None,
+    verified_loc: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Materialise one step for ``action`` establishing ``fact``.
 
@@ -502,10 +558,16 @@ def _escape_step_for(
     steps used that exact string; escaping to a normalised variant would
     make the new step look like it targets a DIFFERENT object). A
     self-navigating action (``search_object``) additionally gets its own
-    ``location`` param filled from ``target_loc`` or the last ``goto`` seen
-    in ``failed_plans`` — never left implicit, since plan_validators.py
-    rejects an implicit-navigation ``find_object`` and ``search_object``
-    needs somewhere to search FROM.
+    ``location`` param resolved, in order (L2, Task D review):
+    ``target_loc``, the last ``goto`` seen in ``failed_plans``, the nearest
+    dependency ancestor's own ``location`` (``ancestor_loc``), a verified
+    ``at_robot(...)`` fact from the planner's fact ledger (``verified_loc``).
+    NEVER left implicit: when none of these resolves, the whole step (and so
+    the whole escape) is abandoned (``None``) — plan_validators.py rejects an
+    implicit-navigation ``search_object`` anyway, and emitting one only to
+    have it rejected downstream burns a validate_plan cycle for no gain; the
+    caller falls straight through to the existing IDENTICAL_PLAN marker path
+    instead.
     """
     arg_names = _establish_arg_names(action, fact.predicate)
     if len(arg_names) != len(fact.args):
@@ -516,9 +578,15 @@ def _escape_step_for(
     contract = ACTION_CONTRACTS[action]
     loc_param = contract.self_establishes.get("at_robot")
     if loc_param and loc_param not in params:
-        loc = target_loc or _last_goto_location(failed_plans)
-        if loc:
-            params[loc_param] = loc
+        loc = (
+            target_loc
+            or _last_goto_location(failed_plans)
+            or ancestor_loc
+            or verified_loc
+        )
+        if not loc:
+            return None
+        params[loc_param] = loc
     return {"action": action, "params": params}
 
 
@@ -528,6 +596,8 @@ def _escape_plan(
     target_loc: str,
     failure_reason: str,
     failed_plans: List[List[Dict[str, Any]]],
+    all_targets: Optional[List[Dict[str, Any]]] = None,
+    facts: Optional[List[str]] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     """Deterministic fallback plan for a target the LLM is stuck replanning.
 
@@ -535,85 +605,95 @@ def _escape_plan(
     ``find_object`` failure, the LLM kept returning the identical
     ``[goto, find_object]`` plan for every replan across the whole budget —
     ``search_object`` (a genuinely different, untried strategy) was never
-    tried. This closes that gap with NO LLM call: parse the first fact out of
-    ``failure_reason`` (the same regex/parse ``_alternatives_for_reason``
-    uses), find every registry action whose ``establishes`` covers that
-    predicate, drop the ones already used in ANY of ``failed_plans`` (by
-    action name — a strategy is "tried" once, anywhere, not per-plan), and
-    materialise the FIRST remaining one (registry order — same convention as
-    ``_ESTABLISHER_FOR_PREDICATE``).
+    tried. This closes that gap with NO LLM call, working from the TARGET
+    (H1, Task D review), not the reason text:
 
-    If the chosen action itself ``requires`` a fact (e.g. ``grasp`` requires
-    ``object_seen(object)``), its canonical establisher
-    (``_ESTABLISHER_FOR_PREDICATE``) is prepended too, with the same param
-    value the chosen action's own step uses for that param name (the
-    registry's param-naming convention is consistent across an action's
-    ``requires``/``establishes`` templates — e.g. both use ``object``) — if
-    that value cannot be resolved, the whole escape is abandoned (``None``)
-    rather than emitting a step nothing can materialise.
+    (1) if a ``pred(args)`` fact parses out of ``failure_reason`` (the same
+        regex/parse ``_alternatives_for_reason`` uses) AND that fact is one
+        of the target's OWN declared postconditions, use it — this is the
+        common case, where the reason is a structured postcondition-gate
+        message. A reason like ``"precondition unmet: held(spam)"`` is
+        deliberately SKIPPED here even when ``held(...)`` parses cleanly:
+        the escape is postcondition-only (M3, Task D review) — re-planning a
+        target's own PREcondition is not this function's job (and would
+        need the chained "prepend a canonical establisher for what the
+        chosen action itself requires" logic this fix REMOVES — see below).
+    (2) otherwise (including most real leaf-failure messages, which rarely
+        contain a fact at all — see the H1 evidence run) iterate the
+        target's own canonical postconditions in DECLARED order and pick the
+        first whose predicate still has an untried establisher.
 
-    Returns ``None`` when no untried establisher exists — e.g. ``held``
-    (after ``find_object`` failed) is established ONLY by ``grasp``, and if
-    the plan history shows ``grasp`` already failed too there is nothing
-    left to try; the caller falls back to the existing IDENTICAL_PLAN marker
-    path.
+    Either way: every registry action whose ``establishes`` covers the
+    chosen predicate is a candidate, MINUS the ones already used in ANY of
+    ``failed_plans`` (by action name — a strategy is "tried" once, anywhere,
+    not per-plan) and MINUS any whose establish-template arg names are not
+    all in ``_ESCAPE_ALLOWED_ARG_NAMES`` (L1, Task D review). The FIRST
+    remaining candidate (registry order) is materialised.
+
+    M3 (Task D review): the escape is POSTCONDITION-ONLY — no more
+    requires-chaining. If the chosen action itself ``requires`` something
+    unresolved (e.g. ``deliver`` requires ``held(object)``), the resulting
+    step is simply incomplete; the caller's ``validate_plan`` (which already
+    runs on the escape, same as the LLM path) rejects it and the existing
+    IDENTICAL_PLAN marker path applies — no different than any other invalid
+    escape candidate.
+
+    Returns ``None`` when no untried, eligible establisher exists — e.g.
+    ``held`` (after ``find_object`` and ``grasp`` both failed) is
+    established ONLY by ``grasp``, and if the plan history shows ``grasp``
+    already failed too there is nothing left to try.
     """
-    match = re.search(r"([a-z_]+)\(([^()]*)\)", str(failure_reason or ""))
-    if match is None:
-        return None
-    fact, _err = parse_fact(match.group(0))
-    if fact is None:
-        return None
     used_actions = {
         str(step.get("action"))
         for plan in (failed_plans or [])
         for step in (plan or [])
         if isinstance(step, dict)
     }
-    candidates = [
-        name for name, c in ACTION_CONTRACTS.items()
-        if any(t.split("(", 1)[0] == fact.predicate for t in c.establishes)
-        and name not in used_actions
-    ]
+
+    def candidates_for(predicate: str) -> List[str]:
+        result = []
+        for name, contract in ACTION_CONTRACTS.items():
+            if name in used_actions:
+                continue
+            if not any(t.split("(", 1)[0] == predicate for t in contract.establishes):
+                continue
+            arg_names = _establish_arg_names(name, predicate)
+            if not arg_names or any(a not in _ESCAPE_ALLOWED_ARG_NAMES for a in arg_names):
+                continue
+            result.append(name)
+        return result
+
+    own_postconditions = _canonical_postconditions(target)
+    fact = None
+    match = re.search(r"([a-z_]+)\(([^()]*)\)", str(failure_reason or ""))
+    if match is not None:
+        parsed_fact, _err = parse_fact(match.group(0))
+        if parsed_fact is not None and canonical_fact(parsed_fact) in own_postconditions:
+            fact = parsed_fact
+    if fact is None:
+        for raw in (target or {}).get("postconditions") or []:
+            candidate_fact, _error = parse_fact(str(raw))
+            if candidate_fact is None:
+                continue
+            if candidates_for(candidate_fact.predicate):
+                fact = candidate_fact
+                break
+    if fact is None:
+        return None
+    candidates = candidates_for(fact.predicate)
     if not candidates:
         return None
     chosen = candidates[0]
     target_obj = target_obj or str((target or {}).get("object") or "")
     target_loc = target_loc or str((target or {}).get("location") or "")
-    chosen_step = _escape_step_for(chosen, fact, target_obj, target_loc, failed_plans)
+    chosen_step = _escape_step_for(
+        chosen, fact, target_obj, target_loc, failed_plans,
+        ancestor_loc=_nearest_ancestor_location(target, all_targets),
+        verified_loc=_verified_at_robot_location(facts),
+    )
     if chosen_step is None:
         return None
-    steps: List[Dict[str, Any]] = []
-    for req_template in ACTION_CONTRACTS[chosen].requires:
-        req_predicate, _, req_arglist = req_template.partition("(")
-        # Names as used INSIDE `chosen`'s own `requires` template (e.g.
-        # grasp requires `object_seen(object)` -> ["object"]).
-        requires_own_arg_names = [
-            a.strip() for a in req_arglist.rstrip(")").split(",") if a.strip()
-        ]
-        req_action = _ESTABLISHER_FOR_PREDICATE.get(req_predicate)
-        if not req_action or req_action == chosen:
-            continue
-        # Names the canonical establisher's OWN `establishes` template uses
-        # for that same predicate (e.g. find_object establishes
-        # `object_seen(object)` -> ["object"]).
-        req_establish_arg_names = _establish_arg_names(req_action, req_predicate)
-        if not req_establish_arg_names or len(req_establish_arg_names) != len(requires_own_arg_names):
-            return None
-        req_params = {}
-        for establish_name, requires_name in zip(req_establish_arg_names, requires_own_arg_names):
-            # The registry names the same logical param identically across an
-            # action's `requires` and its OWN `establishes` templates (e.g.
-            # grasp's own `held(object)` and its `requires` `object_seen(object)`
-            # both use `object`) -- reuse chosen_step's value for that name.
-            # Give up on the whole escape rather than guess if that ever
-            # stops holding.
-            if requires_name not in chosen_step["params"]:
-                return None
-            req_params[establish_name] = chosen_step["params"][requires_name]
-        steps.append({"action": req_action, "params": req_params})
-    steps.append(chosen_step)
-    return steps
+    return [chosen_step]
 
 
 def _deterministic_target_intent(target: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -800,8 +880,24 @@ def _drop_foreign_contract_steps(
         all_targets[:pos] if (include_ancestors and pos is not None) else []
     )
     foreign_post_canon: set = set()
-    for other in successor_targets + ancestor_targets:
+    for other in successor_targets:
         foreign_post_canon |= _canonical_postconditions(other)
+    if ancestor_targets:
+        # M1 (Task D review): ancestors' facts are only "guaranteed" if they
+        # SURVIVE to this target -- apply_fact_transitions retracts held(obj)
+        # once placed(obj,..)/delivered(obj,..) is established for it, so a
+        # later ancestor's postcondition can drop an earlier ancestor's
+        # (e.g. "take the spam to the table, then bring it to me": t0
+        # held(spam), t1 placed(spam,table) retracts it -- t2's initial plan
+        # legitimately re-grasps). Run the ancestors' RAW postconditions
+        # through the same transition ledger the runtime uses, in order, so
+        # a retracted fact never lands in the foreign set. Successors keep
+        # the plain union above -- they have not executed yet, so nothing of
+        # theirs has been retracted.
+        ancestor_raw_postconditions = [
+            pc for other in ancestor_targets for pc in (other.get("postconditions") or [])
+        ]
+        foreign_post_canon |= set(apply_fact_transitions([], ancestor_raw_postconditions))
     kept: List[Dict[str, Any]] = []
     dropped: List[str] = []
     for step in plan or []:
@@ -868,6 +964,7 @@ def _build_lower_layer_user_prompt(
     verified_facts: Optional[List[str]] = None,
     contract: Optional[Dict[str, Any]] = None,
     all_targets: Optional[List[Dict[str, Any]]] = None,
+    include_ancestors: Optional[bool] = None,
 ) -> str:
     """Build the lower-layer user prompt WITH full-command + prior-target context.
 
@@ -876,6 +973,19 @@ def _build_lower_layer_user_prompt(
     (so the worker plans only its delta), the action catalogue, and the known
     arena data. ``LOWER_LAYER_SYSTEM_PROMPT`` supplies the plan JSON contract
     and the hard rules; this supplies the situation.
+
+    ``include_ancestors`` (M2/N1, Task D review) mirrors
+    ``_drop_foreign_contract_steps``'s parameter of the same name and MUST be
+    driven by the SAME predicate the caller uses for that guard
+    (``plan_target`` passes ``not failure_reason`` for both). Left ``None``
+    (the default, used by callers/tests that don't carry the distinction) it
+    falls back to ``failure_msg is None`` — but ``plan_target`` must NEVER
+    rely on that fallback: ``failure_msg`` there is ``last_reason``, which
+    goes non-None as soon as attempt 1 of the INITIAL plan is rejected for
+    ANY reason (a validator rejection, an empty plan, ...), which would
+    silently flip the "owned by" block to the replan rule mid-initial-plan
+    even though the guard (keyed on the original ``failure_reason`` argument)
+    has not.
     """
     from datetime import datetime
     known_loc = ", ".join(sorted(KNOWN_LOCATIONS.keys())) or "(none)"
@@ -888,8 +998,10 @@ def _build_lower_layer_user_prompt(
         f"Full command (the whole instruction this target belongs to):\n{command}\n\n"
         f"Current target to plan:\n{desc}\n\n"
     )
+    if include_ancestors is None:
+        include_ancestors = failure_msg is None
     contract_block = _render_contract_block(
-        contract, all_targets, include_ancestors=(failure_msg is None),
+        contract, all_targets, include_ancestors=include_ancestors,
     )
     if contract_block:
         body += contract_block + "\n"
@@ -1318,6 +1430,7 @@ class GPSRPlanner:
                 verified_facts=self.get_facts(slot),
                 contract=target,
                 all_targets=all_targets,
+                include_ancestors=not failure_reason,
             )
             parsed, err = _call_llm(
                 client, LOWER_LAYER_SYSTEM_PROMPT, user_prompt, temperature,
@@ -1329,7 +1442,7 @@ class GPSRPlanner:
                 continue
             cleaned, dropped = _clean_plan(parsed.get("plan", []))
             cleaned, contract_dropped = _drop_foreign_contract_steps(
-                cleaned, target, all_targets, include_ancestors=(failure_reason is None),
+                cleaned, target, all_targets, include_ancestors=not failure_reason,
             )
             dropped = list(dropped) + contract_dropped
             raw_actions = [
@@ -1409,10 +1522,12 @@ class GPSRPlanner:
                 escape = _escape_plan(
                     target, target_obj, target_loc, identical_marker_reason,
                     self._failed_plans(slot, index),
+                    all_targets=all_targets,
+                    facts=self.get_facts(slot),
                 )
                 if escape is not None:
-                    escape_guarded, _escape_dropped = _drop_foreign_contract_steps(
-                        escape, target, all_targets, include_ancestors=(failure_reason is None),
+                    escape_guarded, escape_dropped = _drop_foreign_contract_steps(
+                        escape, target, all_targets, include_ancestors=not failure_reason,
                     )
                     escape_ok, escape_reason = validate_plan(
                         escape_guarded, desc or "", known_actions,
@@ -1431,7 +1546,8 @@ class GPSRPlanner:
                         print(f"[plan:{slot}:{index}] deterministic escape REJECTED: {escape_reason}")
                     if escape_subtree is not None:
                         print(f"[plan:{slot}:{index}] LLM stuck on an identical plan -> "
-                              f"deterministic escape {[s['action'] for s in escape_guarded]}")
+                              f"deterministic escape {[s['action'] for s in escape_guarded]} "
+                              f"dropped {escape_dropped}")
                         self._store(slot, index, desc, escape_guarded, escape_subtree, None)
                         return
             # Accepted — build the subtree on this (worker) thread, then cache.

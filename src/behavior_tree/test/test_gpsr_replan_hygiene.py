@@ -109,12 +109,13 @@ def test_alternatives_for_reason_lists_registry_establishers():
 # ---------------------------------------------------------------------------
 
 def test_escape_plan_object_seen_after_find_object_tries_search_object():
+    target = {"id": "t0", "postconditions": ["object_seen(pudding_box)"]}
     failed_plans = [[
         {"action": "goto", "params": {"location": "living_room"}},
         {"action": "find_object", "params": {"object": "pudding_box", "location": "living_room"}},
     ]]
     plan = planner_mod._escape_plan(
-        {"id": "t0"}, "pudding_box", "",
+        target, "pudding_box", "",
         "postcondition unmet: object_seen(pudding_box) (UNKNOWN)", failed_plans,
     )
     assert plan == [
@@ -125,6 +126,7 @@ def test_escape_plan_object_seen_after_find_object_tries_search_object():
 def test_escape_plan_object_seen_returns_none_when_both_establishers_tried():
     # find_object AND search_object both already failed -- object_seen has
     # no other registry establisher, so there is nothing left to try.
+    target = {"id": "t0", "postconditions": ["object_seen(pudding_box)"]}
     failed_plans = [
         [{"action": "goto", "params": {"location": "living_room"}},
          {"action": "find_object", "params": {"object": "pudding_box", "location": "living_room"}}],
@@ -132,7 +134,7 @@ def test_escape_plan_object_seen_returns_none_when_both_establishers_tried():
          {"action": "search_object", "params": {"object": "pudding_box", "location": "living_room"}}],
     ]
     plan = planner_mod._escape_plan(
-        {"id": "t0"}, "pudding_box", "",
+        target, "pudding_box", "",
         "postcondition unmet: object_seen(pudding_box) (UNKNOWN)", failed_plans,
     )
     assert plan is None
@@ -141,9 +143,10 @@ def test_escape_plan_object_seen_returns_none_when_both_establishers_tried():
 def test_escape_plan_person_found_after_find_person_has_no_untried_establisher():
     # person_found is established ONLY by find_person -- there is no second
     # strategy to escape to.
+    target = {"id": "t0", "postconditions": ["person_found(waving_person)"]}
     failed_plans = [[{"action": "find_person", "params": {"person": "waving_person"}}]]
     plan = planner_mod._escape_plan(
-        {"id": "t0"}, "", "",
+        target, "", "",
         "postcondition unmet: person_found(waving_person) (UNKNOWN)", failed_plans,
     )
     assert plan is None
@@ -152,45 +155,82 @@ def test_escape_plan_person_found_after_find_person_has_no_untried_establisher()
 def test_escape_plan_held_after_grasp_has_no_untried_establisher():
     # `held` is established ONLY by `grasp`, which is already in the failed
     # history -- so there is no untried establisher and _escape_plan returns
-    # None. This is DESPITE grasp itself `requires` object_seen: the
-    # requires-chaining ("prepend its canonical establisher") logic only
-    # runs once a CANDIDATE has been chosen -- with zero candidates here it
-    # never triggers. See
-    # test_escape_plan_prepends_canonical_establisher_for_an_untried_requires
-    # below for the chaining logic actually firing.
+    # None. `held(spam)` is also NOT one of this target's own postconditions
+    # (its postcondition is delivered(spam,me)) -- M3 (Task D review): the
+    # escape is postcondition-only, so this reason ("precondition unmet:
+    # held(spam)") is skipped by case (1) even before the used-establisher
+    # check matters, and case (2) (iterating the target's OWN postconditions)
+    # never considers `held` either. The requires-chaining logic this test
+    # used to exercise ("prepend grasp's canonical establisher") has been
+    # REMOVED entirely (M3) -- the escape never chains anymore.
+    target = {"id": "t0", "postconditions": ["delivered(spam,me)"]}
     failed_plans = [[
         {"action": "find_object", "params": {"object": "spam"}},
         {"action": "grasp", "params": {"object": "spam"}},
     ]]
     plan = planner_mod._escape_plan(
-        {"id": "t0"}, "spam", "",
+        target, "spam", "",
         "precondition unmet: held(spam) (invalid)", failed_plans,
     )
     assert plan is None
 
 
-def test_escape_plan_prepends_canonical_establisher_for_an_untried_requires():
-    # grasp itself is untried, but it `requires` object_seen(object), which
-    # is not yet established anywhere in the failed history (no
-    # find_object/search_object) -- its canonical establisher (find_object)
-    # must be prepended so the escape plan is actually executable.
+def test_escape_plan_derives_predicate_from_target_when_reason_has_no_fact():
+    # H1 (battery run 004, Task D review): the leaf's raw feedback message
+    # never contains a pred(args) fact at all (unlike a structured
+    # postcondition-gate reason) -- case (1)'s regex/parse finds nothing, so
+    # _escape_plan must fall back to the TARGET's own declared postconditions
+    # (case (2)) and pick the first with an untried, eligible establisher.
+    target = {
+        "id": "t1", "desc": "locate a pudding_box in the bedroom",
+        "object": "pudding_box", "location": "bedroom", "depends_on": [],
+        "preconditions": [], "postconditions": ["object_seen(pudding_box)"],
+    }
     failed_plans = [[
-        {"action": "goto", "params": {"location": "laundry_desk"}},
-        {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
+        {"action": "find_object", "params": {"object": "pudding_box", "location": "bedroom"}},
     ]]
+    reason = (
+        'ScanForGeneralist for brown pudding box failed status=1: '
+        'no matches for "brown pudding box" via vlm_sam'
+    )
+    plan = planner_mod._escape_plan(target, "pudding_box", "bedroom", reason, failed_plans)
+    assert plan == [
+        {"action": "search_object", "params": {"object": "pudding_box", "location": "bedroom"}},
+    ]
+
+
+def test_escape_plan_resolves_location_from_nearest_ancestor():
+    # L2 (Task D review): t1's own failed plan never navigated (the goto
+    # lived in ancestor t0's plan instead) and t1 itself has no assigned
+    # location -- the escape must fall back to the nearest dependency
+    # ancestor's own `location` for the self-navigating `search_object` step.
+    t0 = {
+        "id": "t0", "desc": "go to the bedroom", "object": "", "location": "bedroom",
+        "depends_on": [], "preconditions": [], "postconditions": ["at_robot(bedroom)"],
+    }
+    t1 = {
+        "id": "t1", "desc": "locate a pudding_box", "object": "pudding_box", "location": "",
+        "depends_on": ["t0"], "preconditions": [], "postconditions": ["object_seen(pudding_box)"],
+    }
+    failed_plans = [[{"action": "find_object", "params": {"object": "pudding_box"}}]]
     plan = planner_mod._escape_plan(
-        {"id": "t0"}, "spam", "",
-        "precondition unmet: held(spam) (invalid)", failed_plans,
+        t1, "pudding_box", "",
+        "postcondition unmet: object_seen(pudding_box) (UNKNOWN)",
+        failed_plans, all_targets=[t0, t1],
     )
     assert plan == [
-        {"action": "find_object", "params": {"object": "spam"}},
-        {"action": "grasp", "params": {"object": "spam"}},
+        {"action": "search_object", "params": {"object": "pudding_box", "location": "bedroom"}},
     ]
 
 
 def test_escape_plan_returns_none_when_failure_reason_has_no_fact():
-    assert planner_mod._escape_plan({"id": "t0"}, "", "", "child FAILURE", []) is None
-    assert planner_mod._escape_plan({"id": "t0"}, "", "", "", []) is None
+    # No fact parses out of the reason (case 1) AND the target itself
+    # declares no postconditions to fall back to (case 2 has nothing to
+    # iterate) -- there is nothing for _escape_plan to derive a predicate
+    # from either way.
+    target = {"id": "t0"}
+    assert planner_mod._escape_plan(target, "", "", "child FAILURE", []) is None
+    assert planner_mod._escape_plan(target, "", "", "", []) is None
 
 
 def test_plan_target_final_identical_attempt_escapes_to_untried_action(monkeypatch, capsys):
@@ -202,7 +242,13 @@ def test_plan_target_final_identical_attempt_escapes_to_untried_action(monkeypat
     p = planner_mod.GPSRPlanner(max_attempts=2)
     monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
     monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
-    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    # H1 (Task D review): the escape now derives from the TARGET's own
+    # declared postconditions (M3: postcondition-only), so this target must
+    # carry object_seen(pudding_box) -- matching the real run-004 target --
+    # for the escape to fire at all.
+    target = {"id": "t0", "desc": "d", "object": "", "location": "",
+              "depends_on": [], "preconditions": [], "postconditions": ["object_seen(pudding_box)"]}
+    p._slot_context[0] = {"command": "c", "targets": [target]}
     same = {"plan": [{"action": "goto", "params": {"location": "living_room"}},
                      {"action": "find_object", "params": {"object": "pudding_box", "location": "living_room"}}]}
     monkeypatch.setattr(planner_mod, "_call_llm", lambda *a, **k: (same, None))
@@ -210,7 +256,8 @@ def test_plan_target_final_identical_attempt_escapes_to_untried_action(monkeypat
     monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
     p._store(0, 0, "d", same["plan"], py_trees.behaviours.Success("old"), None)
     p._invalidate(0, 0)
-    p.plan_target(0, 0, "d", command="c", failure_reason="postcondition unmet: object_seen(pudding_box) (UNKNOWN)")
+    p.plan_target(0, 0, "d", command="c", failure_reason="postcondition unmet: object_seen(pudding_box) (UNKNOWN)",
+                  target=target, all_targets=[target])
     assert p.is_target_ready(0, 0)
     plan = p.get_action_plan(0, 0)
     assert [s["action"] for s in plan] == ["search_object"]
@@ -219,6 +266,7 @@ def test_plan_target_final_identical_attempt_escapes_to_untried_action(monkeypat
     assert p.get_error(0, 0) is None
     out = capsys.readouterr().out
     assert "LLM stuck on an identical plan -> deterministic escape" in out
+    assert "dropped []" in out
 
 
 def test_plan_target_final_identical_attempt_keeps_marker_when_escape_exhausted(monkeypatch):
@@ -228,7 +276,9 @@ def test_plan_target_final_identical_attempt_keeps_marker_when_escape_exhausted(
     p = planner_mod.GPSRPlanner(max_attempts=2)
     monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
     monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
-    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    target = {"id": "t0", "desc": "d", "object": "", "location": "",
+              "depends_on": [], "preconditions": [], "postconditions": ["object_seen(pudding_box)"]}
+    p._slot_context[0] = {"command": "c", "targets": [target]}
     earlier = [{"action": "goto", "params": {"location": "living_room"}},
                {"action": "search_object", "params": {"object": "pudding_box", "location": "living_room"}}]
     same = {"plan": [{"action": "goto", "params": {"location": "living_room"}},
@@ -240,7 +290,8 @@ def test_plan_target_final_identical_attempt_keeps_marker_when_escape_exhausted(
     p._invalidate(0, 0)
     p._store(0, 0, "d", same["plan"], py_trees.behaviours.Success("s"), None)
     p._invalidate(0, 0)
-    p.plan_target(0, 0, "d", command="c", failure_reason="postcondition unmet: object_seen(pudding_box) (UNKNOWN)")
+    p.plan_target(0, 0, "d", command="c", failure_reason="postcondition unmet: object_seen(pudding_box) (UNKNOWN)",
+                  target=target, all_targets=[target])
     assert p.is_target_ready(0, 0)
     assert [s["action"] for s in p.get_action_plan(0, 0)] == ["goto", "find_object"]
     err = p.get_error(0, 0)

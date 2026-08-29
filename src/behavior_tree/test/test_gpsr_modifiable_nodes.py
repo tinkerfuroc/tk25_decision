@@ -380,5 +380,14 @@ def test_mod_param_spec_constructs_under_no_gpsr_trace_fallback(monkeypatch):
         assert not plain.accepts(3)
     finally:
         # Restore the real gpsr_trace-backed module for every other test.
+        # N2 (Task D review): if THIS reload raises, `mn` is left in the
+        # fallback state inside sys.modules for every later test (reload
+        # mutates the existing module object in place; nothing else in the
+        # suite would reload it back) -- fail loudly and unambiguously here
+        # rather than let that raise bare (which could be swallowed by, or
+        # confused with, an exception already propagating from the try body).
         monkeypatch.undo()
-        importlib.reload(mn)
+        try:
+            importlib.reload(mn)
+        except Exception as exc:  # noqa: BLE001 — surfaced via pytest.fail below
+            pytest.fail(f"failed to restore behavior_tree.GPSR.modifiable_nodes: {exc!r}")
