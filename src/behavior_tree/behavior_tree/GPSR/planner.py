@@ -1133,10 +1133,16 @@ class GPSRPlanner:
         target = targets[index] if 0 <= index < len(targets) and isinstance(targets[index], dict) else {}
         preconditions = target.get("preconditions") or []
         postconditions = target.get("postconditions") or []
+        # The gates reason over the WHOLE target plan: on a supervisor
+        # replacement swap the already-executed prefix (``completed_steps``)
+        # still establishes facts (e.g. place(kitchen_table) -> at_robot), so
+        # the precondition gate must keep deferring them rather than checking
+        # them at re-entry and failing on UNKNOWN.
+        full_plan = list(completed_steps or []) + list(action_plan)
         if preconditions:
             seq.add_child(BtNode_TargetPreconditionCheck(
                 f"precondition gate:{slot}:{index}", preconditions, index,
-                action_plan=action_plan,
+                action_plan=full_plan,
             ))
         seq.add_child(BtNode_AnnounceFromBB(
             f"announce target:{slot}:{index}",
@@ -1172,7 +1178,7 @@ class GPSRPlanner:
                 f"supervisor barrier:{slot}:{index}:{k}",
             ))
             seq.add_child(step_seq)
-        deferred_possible = any(self_established_facts(s) for s in action_plan)
+        deferred_possible = any(self_established_facts(s) for s in full_plan)
         if postconditions or (preconditions and deferred_possible):
             seq.add_child(BtNode_TargetPostconditionCheck(
                 f"postcondition gate:{slot}:{index}",

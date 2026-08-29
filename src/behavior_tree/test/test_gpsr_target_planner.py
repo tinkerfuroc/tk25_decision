@@ -230,6 +230,28 @@ def test_build_target_subtree_post_gate_includes_preserved_prefix_without_execut
     assert sum("step0" in child.name for child in tree.children) == 1
 
 
+def test_build_target_subtree_pre_gate_sees_self_establishers_in_preserved_prefix():
+    # Supervisor replacement: place(kitchen_table) already ran, only [announce]
+    # remains. The precondition gate must still treat at_robot(kitchen_table)
+    # as self-established (deferred), not check it at entry and fail.
+    planner = GPSRPlanner()
+    with planner._lock:
+        planner._slot_context[0] = {"command": "cmd", "targets": [{
+            "id": "t0", "desc": "place coke", "object": "coke", "location": "kitchen_table",
+            "depends_on": [], "preconditions": ["at_robot(kitchen_table)"],
+            "postconditions": [],
+        }]}
+    prefix = [{"action": "place", "params": {"location": "kitchen_table"}}]
+    remainder = [{"action": "announce", "params": {"text": "done"}}]
+    tree = planner.build_target_subtree(0, 0, remainder, completed_steps=prefix)
+    pre = tree.children[0]
+    assert type(pre).__name__ == "BtNode_TargetPreconditionCheck"
+    assert "at_robot(kitchen_table)" in pre._self_established
+    post = tree.children[-1]
+    assert type(post).__name__ == "BtNode_TargetPostconditionCheck"
+    assert post._action_plan == prefix + remainder
+
+
 def test_build_target_subtree_defensively_copies_preserved_prefix():
     planner = GPSRPlanner()
     with planner._lock:
