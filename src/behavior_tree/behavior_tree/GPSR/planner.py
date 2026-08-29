@@ -671,6 +671,17 @@ def _escape_plan(
     ``_escape_step_for``, which bails out (``None``) when the resolved
     self-navigating location has no known pose — see that function's
     docstring.
+
+    M-5 (round-2 review): this only ever materialises ONE step (see the
+    ``return [chosen_step]`` below) — ``_ESCAPE_ALLOWED_ARG_NAMES`` plus
+    single-step materialisation mean a target whose postconditions are e.g.
+    ``[object_seen(x), held(x)]`` escapes to a lone ``search_object``, which
+    then fails coverage (``held`` still uncovered) and falls to the marker
+    path anyway. In practice this only ever fires as the
+    ``find_object``<->``search_object`` swap the evidence run needed; a
+    multi-step escape (append the failed plan's tail, or chain further
+    establishers) is a real widening, not a bug fix, and is intentionally
+    out of scope here.
     """
     used_actions = {
         str(step.get("action"))
@@ -1342,6 +1353,20 @@ class GPSRPlanner:
             }
 
     def _get_desc(self, slot, index) -> Optional[str]:
+        """M-8 (round-2 review, pre-existing): ``entry`` is read (``.get(...)``
+        below) AFTER ``_lock`` is released, while ``_invalidate`` mutates the
+        SAME dict object in place under the lock (``entry["ready"] = False``,
+        etc.) — a benign, pre-existing race (worst case: this read observes
+        a value ``_invalidate`` is mid-way through updating, e.g. ``ready``
+        already False but ``error`` not yet cleared). ``get_action_plan`` and
+        ``get_error`` below share this same pattern. Nothing on this branch
+        worsens it (see the whole-branch review's interaction-check (c)):
+        ``_failed_plan``/``_failed_plans`` copy under the lock (513b218),
+        the guard/prompt/escape helpers only read the shared ``norm_targets``
+        dicts (never mutated after ``request_plan_all``), ``replace_target_plan``
+        builds fresh step/params dicts, and ``_store`` replaces the cache
+        entry wholesale.
+        """
         with self._lock:
             entry = self._cache.get((slot, index))
         return entry.get("desc") if entry else None
@@ -1963,6 +1988,7 @@ class GPSRPlanner:
         return entry.get("subtree")
 
     def get_action_plan(self, slot: int, index: int) -> List[Dict[str, Any]]:
+        """M-8 (round-2 review): pre-existing lock-scope note — see ``_get_desc``."""
         with self._lock:
             entry = self._cache.get((slot, index))
         if not entry:
@@ -1970,7 +1996,10 @@ class GPSRPlanner:
         return list(entry.get("plan") or [])
 
     def get_error(self, slot: int, index: int) -> Optional[str]:
-        """The cache entry's ``error`` (None when absent or ready with no error)."""
+        """The cache entry's ``error`` (None when absent or ready with no error).
+
+        M-8 (round-2 review): pre-existing lock-scope note — see ``_get_desc``.
+        """
         with self._lock:
             entry = self._cache.get((slot, index))
         return entry.get("error") if entry else None

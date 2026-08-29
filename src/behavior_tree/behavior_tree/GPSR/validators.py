@@ -433,6 +433,15 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
         # count also establishes answered(question) now (H1: "how many ..."
         # is a spoken-answer target too) -- mirror the `counted` branch above
         # and accept a bare count_value artifact, same as any other answer key.
+        #
+        # M-7 (round-2 review): `evidence` (the Blackboard FACTS mirror) is
+        # cleared only on target ADVANCE (orchestrator.py ~2095-2099), not
+        # per-step -- so a target that counted, then asked an unrelated
+        # question whose ask_person failed, then replanned to a bare
+        # announce, could still see this old count_value here and verdict
+        # VALID via a stale artifact instead of the failed ask. Negligible in
+        # practice (a target rarely mixes count + ask_person for two
+        # DIFFERENT `answered(...)` facts), not fixed here.
         has_answer_artifact = (
             any(isinstance(evidence.get(key), str) and evidence[key].strip() for key in answer_keys)
             or "count_value" in evidence
