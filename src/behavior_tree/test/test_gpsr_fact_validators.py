@@ -160,6 +160,59 @@ def test_recognizable_detection_labels_must_match_requested_fact(
     assert result.verdict is expected
 
 
+@pytest.mark.parametrize(
+    ("label", "requested", "expected"),
+    [
+        # run 005: specialist find_person label "person Liam" -> normalized
+        # "person_liam"; requested name "liam" is one of its '_'-tokens.
+        ("person_liam", "liam", True),
+        # run 003: category-prompted object detection label
+        # "kitchen item.round white table" -> normalized
+        # "kitchen_item.round_white_table"; requested "kitchen_item" is the
+        # label's class prefix (text before the first '.').
+        ("kitchen_item.round_white_table", "kitchen_item", True),
+        ("drink.coke", "drink", True),
+        ("person_bob", "liam", False),
+        # token rule is pinned VALID: "red" is a whole '_'-token of
+        # "red_jacket".
+        ("red_jacket", "red", True),
+        # but never a substring match: "red" is not a whole token of
+        # "bred_jacket".
+        ("bred_jacket", "red", False),
+        ("cup", "cup", True),
+        ("cup", "bottle", False),
+    ],
+)
+def test_label_matches_equality_class_prefix_and_token_rules(label, requested, expected):
+    assert validators._label_matches(label, requested) is expected
+
+
+def test_person_found_matches_specialist_name_token_label():
+    """run 005 evidence: specialist find_person reported "person Liam"."""
+    result, _ = _check(
+        "person_found(Liam)",
+        evidence={"person_detection": {"objects": [{"label": "person Liam"}]}},
+    )
+    assert result.verdict is Verdict.VALID
+
+
+def test_object_seen_matches_category_prompted_class_prefix_label():
+    """run 003 evidence: search_object reported three kitchen-item instances."""
+    result, _ = _check(
+        "object_seen(kitchen item)",
+        evidence={
+            "object_detection": {
+                "objects": [
+                    {"label": "kitchen item.round white table"},
+                    {"label": "kitchen item.trash can"},
+                    {"label": "kitchen item.refrigerator"},
+                ]
+            }
+        },
+    )
+    assert result.verdict is Verdict.VALID
+
+
 def test_opaque_nonempty_detection_keeps_weak_v1_validity():
     result, _ = _check(
         "object_seen(bottle)",

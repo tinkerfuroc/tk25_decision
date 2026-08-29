@@ -51,6 +51,22 @@ def test_flag_on_person_label_is_valid_with_sim_reason(monkeypatch):
     assert result.evidence == "sim mode: person detected; name identity is not modelled in sim"
 
 
+def test_flag_on_named_person_label_relaxes_via_class_token(monkeypatch):
+    # A specialist label like "person_liam" carries a class token ("person")
+    # plus a name token that isn't the requested one -- the relaxation must
+    # key off ANY token of ANY label being in the person-class set, not
+    # equality of the whole label with a bare "person"/"human"/... string.
+    result = _check(
+        "person_found(sarah)",
+        evidence={"person_detection": {"objects": [{"label": "person_liam"}]}},
+        env={"GPSR_SIM_IDENTITY_RELAXED": "1"},
+        monkeypatch=monkeypatch,
+    )
+    assert result.verdict is Verdict.VALID
+    assert result.confidence == 0.6
+    assert result.evidence == "sim mode: person detected; name identity is not modelled in sim"
+
+
 def test_flag_on_non_person_labels_stay_invalid(monkeypatch):
     result = _check(
         "person_found(sarah)",

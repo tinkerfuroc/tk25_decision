@@ -240,6 +240,35 @@ def _norm_match(left: Any, right: str) -> bool:
     return _normalize(str(left)) == right
 
 
+def _label_tokens(label: str) -> list[str]:
+    return re.split(r"[_.]", label)
+
+
+def _label_matches(label: str, requested: str) -> bool:
+    """label/requested already normalised.
+
+    True when equal, when the label's class prefix (text before the first
+    '.') equals requested, or when requested is one of the label's
+    '_'/'.'-separated tokens (person names: 'liam' in 'person_liam').
+
+    Detector labels follow two grammars: `<class>.<instance>` (category-prompted
+    object detection, e.g. "kitchen_item.round_white_table") and `<class> <name>`
+    (person specialist, e.g. "person_liam" after normalization). The token rule
+    is deliberately conservative: `requested` must be a WHOLE token -- never a
+    substring -- so "red" matches "red_jacket" but not "bred_jacket". A
+    multi-word `requested` (itself containing '_') only matches by equality or
+    class-prefix; its own tokens are never split against the label's tokens.
+    """
+    if label == requested:
+        return True
+    class_prefix = label.split(".", 1)[0]
+    if class_prefix == requested:
+        return True
+    if "_" not in requested and requested in _label_tokens(label):
+        return True
+    return False
+
+
 def _step_action(step: Mapping[str, Any]) -> str:
     action = step.get("action", step.get("name", step.get("type", "")))
     return _normalize(str(action))
@@ -400,13 +429,18 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
         ):
             return _result(Verdict.VALID, "waving-specialist person artifact matches descriptor provenance")
         if labels:
-            if _normalize(fact.args[0]) in labels:
+            requested_label = _normalize(fact.args[0])
+            if any(_label_matches(label, requested_label) for label in labels):
                 return _result(Verdict.VALID, f"{detection_key} label matches requested target")
             if (
                 fact.predicate == "person_found"
                 and _sim_identity_relaxed_enabled()
                 and _is_person_name_arg(fact.args[0])
-                and (labels & _SIM_PERSON_CLASS_LABELS)
+                and any(
+                    token in _SIM_PERSON_CLASS_LABELS
+                    for label in labels
+                    for token in _label_tokens(label)
+                )
             ):
                 return _result(
                     Verdict.VALID,
