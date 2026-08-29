@@ -422,6 +422,27 @@ for _name, _contract in ACTION_CONTRACTS.items():
         _ESTABLISHER_FOR_PREDICATE.setdefault(_pred, _name)
 
 
+def _canonical_param_value(v: Any) -> str:
+    """Canonical string form of one param value for ``_canonical_plan``.
+
+    LOW-1 (round-2 review, task H, 2026-08-29): a plain ``str(v)`` treats a
+    dict-valued param with a different key insertion order as "different"
+    even though dict key order is never semantically meaningful here --
+    ``json.dumps(v, sort_keys=True)`` normalises that (recursively, for any
+    nested dicts too) while leaving list/tuple ELEMENT order untouched, since
+    a list genuinely encodes an ordered sequence (e.g. ``pan_deg: [-90, 90]``
+    vs ``[90, -90]`` are legitimately different sweeps) -- that half of the
+    pattern is a known, non-blocking gap the review flagged, not something
+    this can safely resolve without per-param semantics. Values ``json``
+    can't serialise (rare for a plan param) fall back to plain ``str(v)``,
+    matching the prior behaviour exactly.
+    """
+    try:
+        return json.dumps(v, sort_keys=True, default=str)
+    except TypeError:
+        return str(v)
+
+
 def _canonical_plan(
     plan: List[Dict[str, Any]],
     modifications: Optional[List[Dict[str, Any]]] = None,
@@ -446,14 +467,15 @@ def _canonical_plan(
     every existing plan-only caller's identity unchanged.
     """
     plan_part = tuple(
-        (str(s.get("action")), tuple(sorted((str(k), str(v)) for k, v in (s.get("params") or {}).items())))
+        (str(s.get("action")),
+         tuple(sorted((str(k), _canonical_param_value(v)) for k, v in (s.get("params") or {}).items())))
         for s in plan or []
     )
     mods_part = tuple(sorted(
         (
             str(m.get("template")),
             str(m.get("target_node_id")),
-            tuple(sorted((str(k), str(v)) for k, v in (m.get("params") or {}).items())),
+            tuple(sorted((str(k), _canonical_param_value(v)) for k, v in (m.get("params") or {}).items())),
         )
         for m in (modifications or [])
         if isinstance(m, dict)

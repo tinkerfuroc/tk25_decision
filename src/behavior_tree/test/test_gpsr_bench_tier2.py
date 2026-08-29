@@ -382,6 +382,72 @@ def test_scan_planner_exhaustion_keeps_override_when_no_events_file_is_given(tmp
     assert split_fell_back is False
 
 
+# -- MEDIUM-1 (round-2 review, task H, 2026-08-29): the exhaustion override must be scoped
+# PER TARGET, not to the run's globally last event -- a multi-target command where an EARLIER
+# target exhausted (hollow fallback `announce`) must not have its FAIL overridden away just
+# because a LATER, unrelated target genuinely succeeded and happens to be the run's last event.
+# ------------------------------------------------------------------------------------------
+
+def test_scan_planner_exhaustion_keeps_override_when_a_different_target_later_succeeds(tmp_path):
+    """Target 0 (`[plan:0:0]`) exhausts and only ever gets the fallback's own hollow
+    `announce`; target 1 is a separate, real target whose own steps all succeed and are the
+    run's last events. Pre-MEDIUM-1 this scored a false PASS (globally-last-event check saw
+    only target 1's success); scoped per target, target 0's own last evidence is still the
+    hollow announce, so the override must stand."""
+    log_path = tmp_path / "orchestrator.log"
+    log_path.write_text("\n".join(_EXHAUSTED_LOG_LINES) + "\n")
+    events_path = tmp_path / "events.jsonl"
+    events = [
+        {"event_type": "plan.materialized", "task_id": "traj-1/task-1",
+         "payload": {"slot": 0, "target_index": 0}},
+        {"event_type": "step.finished", "task_id": "traj-1/task-1", "payload": {
+            "action": "announce", "outcome": "succeeded", "params": {"acknowledgement": True}}},
+        {"event_type": "plan.materialized", "task_id": "traj-1/task-1",
+         "payload": {"slot": 0, "target_index": 1}},
+        {"event_type": "step.finished", "task_id": "traj-1/task-1",
+         "payload": {"action": "goto", "outcome": "succeeded"}},
+        {"event_type": "step.finished", "task_id": "traj-1/task-1",
+         "payload": {"action": "place", "outcome": "succeeded"}},
+    ]
+    events_path.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+
+    exhausted, split_fell_back = tier2._scan_planner_exhaustion(log_path, events_path)
+    assert exhausted is True
+    assert split_fell_back is False
+
+
+def test_scan_planner_exhaustion_drops_override_when_the_same_exhausted_target_recovers(tmp_path):
+    """Target 0 exhausts, its hollow fallback `announce` runs, but THEN target 0 itself is
+    replanned again and genuinely recovers (`search_object` succeeding) before target 1 also
+    succeeds. Target 0's own LAST evidence is now a real success, so the override drops --
+    same as the single-target recovery case, just scoped to the target that actually
+    exhausted."""
+    log_path = tmp_path / "orchestrator.log"
+    log_path.write_text("\n".join(_EXHAUSTED_LOG_LINES) + "\n")
+    events_path = tmp_path / "events.jsonl"
+    events = [
+        {"event_type": "plan.materialized", "task_id": "traj-1/task-1",
+         "payload": {"slot": 0, "target_index": 0}},
+        {"event_type": "step.finished", "task_id": "traj-1/task-1", "payload": {
+            "action": "announce", "outcome": "succeeded", "params": {"acknowledgement": True}}},
+        {"event_type": "plan.materialized", "task_id": "traj-1/task-1",
+         "payload": {"slot": 0, "target_index": 0}},
+        {"event_type": "step.finished", "task_id": "traj-1/task-1",
+         "payload": {"action": "search_object", "outcome": "succeeded"}},
+        {"event_type": "plan.materialized", "task_id": "traj-1/task-1",
+         "payload": {"slot": 0, "target_index": 1}},
+        {"event_type": "step.finished", "task_id": "traj-1/task-1",
+         "payload": {"action": "goto", "outcome": "succeeded"}},
+        {"event_type": "step.finished", "task_id": "traj-1/task-1",
+         "payload": {"action": "place", "outcome": "succeeded"}},
+    ]
+    events_path.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+
+    exhausted, split_fell_back = tier2._scan_planner_exhaustion(log_path, events_path)
+    assert exhausted is False
+    assert split_fell_back is False
+
+
 def test_tier2_split_stage_fallback_alone_annotates_detail_but_stays_pass(tmp_path):
     """A deterministic split fallback (`[split] all N attempts failed`) does NOT by itself
     mean planning failed -- the deterministic split can still be planned normally -- so it

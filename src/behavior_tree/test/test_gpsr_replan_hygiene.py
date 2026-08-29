@@ -77,6 +77,31 @@ def test_canonical_plan_modification_param_order_and_dict_key_order_ignored():
     assert planner_mod._canonical_plan(plan, mod_a) == planner_mod._canonical_plan(plan, mod_b)
 
 
+# ---------------------------------------------------------------------------
+# LOW-1 (round-2 review, task H, 2026-08-29): a plain `str(v)` canonicalises
+# a nested dict-valued param by its repr, so two params equal in every key
+# and value but built with a different insertion order compared as
+# "different" -- dict key order is never semantically meaningful, so this
+# must not defeat identical-plan detection. List element order, in
+# contrast, genuinely encodes an ordered sequence (e.g. a wider vs.
+# narrower pan-tilt sweep) and is deliberately left alone -- a known,
+# non-blocking gap the review flagged.
+# ---------------------------------------------------------------------------
+
+def test_canonical_plan_step_param_nested_dict_key_order_ignored():
+    a = [{"action": "search_object", "params": {
+        "object": "spam", "region": {"x_min": -1, "x_max": 1, "y_min": -1, "y_max": 1}}}]
+    b = [{"action": "search_object", "params": {
+        "object": "spam", "region": {"y_max": 1, "y_min": -1, "x_max": 1, "x_min": -1}}}]
+    assert planner_mod._canonical_plan(a) == planner_mod._canonical_plan(b)
+
+
+def test_canonical_plan_list_valued_param_order_still_distinguishes_plans():
+    a = [{"action": "pan_tilt_sweep", "params": {"pan_deg": [-90, 90]}}]
+    b = [{"action": "pan_tilt_sweep", "params": {"pan_deg": [90, -90]}}]
+    assert planner_mod._canonical_plan(a) != planner_mod._canonical_plan(b)
+
+
 def test_plan_target_regenerated_plan_with_new_modification_is_not_identical(monkeypatch):
     # Sim run 003: replan attempt 3 returned the SAME [goto, find_object]
     # steps as the just-failed plan, but WITH a pan-tilt-sweep modification

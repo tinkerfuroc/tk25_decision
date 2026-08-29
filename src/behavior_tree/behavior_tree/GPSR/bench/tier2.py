@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Sequence
 
 from behavior_tree.GPSR.bench.corpus import CorpusEntry
-from behavior_tree.GPSR.bench.events import parse_events
+from behavior_tree.GPSR.bench.events import parse_events, slot_of
 from behavior_tree.GPSR.bench.report import BenchResult
 from behavior_tree.GPSR.bench.tier1 import DEFAULT_LAUNCHER, _events_file, _stop, bench_env
 
@@ -33,11 +33,21 @@ TIER = 2
 # NOT mean this: the deterministic split fallback can still be planned normally, so it is
 # recorded as a detail annotation only.
 _PLAN_ATTEMPTS_EXHAUSTED_RE = re.compile(r"all \d+ attempts failed")
+_PLAN_TARGET_RE = re.compile(r"\[plan:(\d+):(\d+)\]")
 _FALLBACK_PLAN_MARKER = "could not work out a complete plan"
 PLANNER_EXHAUSTED_DETAIL = "planner exhausted attempts (fallback plan executed)"
 
+# LOW-2 (round-2 review, task H, 2026-08-29): tier2 runs exactly one task (task id 1) per
+# orchestrator process/events file -- this is the slot ``slot_of()`` derives from that
+# task's ``task_id`` (e.g. "traj-1/task-1"). Not the same axis as a multi-target command's
+# per-TARGET ``(slot, index)`` scoping above (MEDIUM-1): this guards against a run dir that
+# ever accumulated events from a SECOND TASK mixing into a single-task tier2 check.
+_TIER2_TASK_SLOT = 1
 
-def _events_show_recovery(events_path: Path) -> bool:
+
+def _events_show_recovery(
+    events_path: Path, exhausted_targets: "set[tuple[int, int]] | None" = None,
+) -> bool:
     """H2 (round-2 review, sim run 003, 2026-08-29): True when the LAST target-outcome
     evidence recorded in ``events_path`` (a ``step.finished`` or ``target.failed`` telemetry
     event -- ``bench/events.py``'s ``parse_events`` folds these into ``TaskResult``, but this
@@ -62,7 +72,28 @@ def _events_show_recovery(events_path: Path) -> bool:
 
     The events JSONL is append-only and single-writer, so file order is already
     chronological: no cross-file timestamp correlation with the orchestrator.log scan below
-    is needed, only "what was the LAST thing that happened".
+    is needed, only "what was the LAST thing that happened" -- PER TARGET, see below.
+
+    MEDIUM-1 (round-2 review, task H, 2026-08-29): a tier2 run is one orchestrator process,
+    but a single GPSR command can carry several TARGETS, each independently materialised and
+    executed in sequence by the same executor slot. Looking only at the run's globally last
+    outcome let a command where target 0 exhausted (hollow ``announce`` fallback) and target 1
+    was real and genuinely succeeded LAST score as full recovery, even though target 0's own
+    fallback was never actually completed -- a false PASS the exhaustion override should have
+    caught. When ``exhausted_targets`` (the ``(slot, index)`` pairs the log's
+    ``[plan:slot:index] all N attempts failed`` lines named, slot already converted to
+    ``slot_of``'s 1-based ``/task-N`` numbering -- see ``_scan_planner_exhaustion``) is
+    non-empty AND at least one ``plan.materialized`` event is actually present in the file,
+    this instead tracks the CURRENT target as it walks events in order (each
+    ``plan.materialized`` event names the target it just swapped in, via its own ``task_id``
+    -- ``slot_of`` -- and ``payload["target_index"]``) and remembers the last genuine-success
+    verdict PER TARGET; recovery then holds only when EVERY exhausted target's own last
+    evidence is a genuine success. ``exhausted_targets=None``/empty (no ``[plan:slot:index]``
+    line could be attributed -- e.g. exhaustion was only signalled by the free-text fallback
+    marker) or an events file with no ``plan.materialized`` events at all (nothing to scope
+    by -- a live run always emits these from ``_swap_in``, orchestrator.py, but a synthetic
+    events file need not) falls back to the original whole-file "what was the last thing that
+    happened" check, preserving prior behaviour exactly.
 
     A trailing failure (``target.failed``, or a ``step.finished`` with
     ``outcome != "succeeded"``), a trailing hollow ``announce`` (the fallback's own
@@ -73,6 +104,9 @@ def _events_show_recovery(events_path: Path) -> bool:
     if not path.is_file():
         return False
     last_ok = False
+    per_target: dict[tuple[int, int], bool] = {}
+    current_target: tuple[int, int] | None = None
+    saw_materialized = False
     try:
         with path.open("r", encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -83,19 +117,34 @@ def _events_show_recovery(events_path: Path) -> bool:
                     event = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                task_slot = slot_of(event.get("task_id"))
+                if task_slot is not None and task_slot != _TIER2_TASK_SLOT:
+                    continue
                 kind = event.get("event_type")
                 payload = event.get("payload") or {}
-                if kind == "step.finished":
+                if kind == "plan.materialized":
+                    slot = slot_of(event.get("task_id"))
+                    target_index = payload.get("target_index")
+                    if slot is not None and target_index is not None:
+                        current_target = (slot, int(target_index))
+                        saw_materialized = True
+                elif kind == "step.finished":
                     succeeded = payload.get("outcome") == "succeeded"
                     is_hollow_announce = (
                         str(payload.get("action")) == "announce"
                         and bool((payload.get("params") or {}).get("acknowledgement"))
                     )
                     last_ok = succeeded and not is_hollow_announce
+                    if current_target is not None:
+                        per_target[current_target] = last_ok
                 elif kind == "target.failed":
                     last_ok = False
+                    if current_target is not None:
+                        per_target[current_target] = last_ok
     except OSError:
         return False
+    if exhausted_targets and saw_materialized:
+        return all(per_target.get(target, False) for target in exhausted_targets)
     return last_ok
 
 
@@ -117,6 +166,20 @@ def _scan_planner_exhaustion(
     still carries the earlier exhaustion evidence -- the fallback was NOT this run's final
     outcome. ``events_path=None`` (a caller with no events file to offer) keeps the pre-H2
     behaviour: any exhaustion evidence still overrides.
+
+    MEDIUM-1 (round-2 review, task H, 2026-08-29): each ``[plan:{slot}:{index}] all N
+    attempts failed`` line names the exact target that exhausted (planner.py's ``slot``/
+    ``index`` are the same 0-based ``self._slot``/target index the orchestrator passes to
+    ``get_target_subtree``); these are collected into ``exhausted_targets`` (slot converted
+    to ``slot_of``'s 1-based ``/task-N`` numbering, so it lines up with what
+    ``_events_show_recovery`` reads off each ``plan.materialized`` event's own ``task_id``)
+    and handed to ``_events_show_recovery`` so recovery is scoped PER TARGET rather than to
+    the run's globally last event -- see that function's docstring for why (a multi-target
+    command where an earlier target exhausted and a later, unrelated target genuinely
+    succeeded must not let the later target's success paper over the earlier one's hollow
+    fallback). A line whose ``[plan:...]`` prefix can't be parsed contributes to ``exhausted``
+    but not to ``exhausted_targets``, so an empty ``exhausted_targets`` transparently falls
+    back to the pre-MEDIUM-1 whole-file check inside ``_events_show_recovery``.
     """
     if not log_path.is_file():
         return False, False
@@ -130,6 +193,7 @@ def _scan_planner_exhaustion(
         return False, False
 
     exhausted = _FALLBACK_PLAN_MARKER in text
+    exhausted_targets: set[tuple[int, int]] = set()
     split_fell_back = False
     for line in text.splitlines():
         if not _PLAN_ATTEMPTS_EXHAUSTED_RE.search(line):
@@ -138,7 +202,10 @@ def _scan_planner_exhaustion(
             split_fell_back = True
         elif "[plan:" in line:
             exhausted = True
-    if exhausted and events_path is not None and _events_show_recovery(events_path):
+            match = _PLAN_TARGET_RE.search(line)
+            if match:
+                exhausted_targets.add((int(match.group(1)) + 1, int(match.group(2))))
+    if exhausted and events_path is not None and _events_show_recovery(events_path, exhausted_targets):
         exhausted = False
     return exhausted, split_fell_back
 
