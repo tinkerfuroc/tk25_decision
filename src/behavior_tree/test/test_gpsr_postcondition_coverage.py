@@ -134,6 +134,31 @@ def test_at_robot_excused_when_a_step_self_navigates_there():
     assert ok, reason
 
 
+def test_at_robot_coverage_requires_matching_destination_not_any_goto():
+    # M-3 (round-2 review): uncovered_postcondition_reason's at_robot special
+    # case was predicate-level ONLY (any self-navigating step anywhere
+    # satisfied at_robot(X) for every X) -- a guard-reduced
+    # [goto(laundry_desk)] passed coverage for at_robot(kitchen) just as
+    # easily as at_robot(laundry_desk), only to fail the RUNTIME gate later
+    # (last_nav_location mismatch). The destination must actually match.
+    plan = [{"action": "goto", "params": {"location": "laundry_desk"}}]
+    ok, reason = validate_plan(
+        plan, "go to the kitchen", {"goto"},
+        postconditions=["at_robot(kitchen)"],
+    )
+    assert not ok
+    assert "at_robot(kitchen)" in reason
+
+
+def test_at_robot_coverage_accepts_matching_goto_destination():
+    plan = [{"action": "goto", "params": {"location": "kitchen"}}]
+    ok, reason = validate_plan(
+        plan, "go to the kitchen", {"goto"},
+        postconditions=["at_robot(kitchen)"],
+    )
+    assert ok, reason
+
+
 def test_no_postconditions_kwarg_is_unchanged_behaviour():
     plan = [{"action": "follow", "params": {"person": "sarah"}}]
     ok, reason = validate_plan(plan, "follow sarah", {"follow"})

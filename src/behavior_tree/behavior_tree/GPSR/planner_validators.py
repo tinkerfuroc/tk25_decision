@@ -259,15 +259,18 @@ def uncovered_postcondition_reason(
     left to the runtime gate, which has execution evidence this static check
     does not.
 
-    ``at_robot`` is special-cased: any step that self-navigates to *some*
-    location (``goto``/``search_object``/``place``/``deliver`` — anything
-    with ``at_robot`` in ``self_establishes``, per ``self_established_facts``)
-    satisfies it, without needing an exact destination match here. ``goto``
-    already appears in ``established_predicates`` via its own
-    ``establishes=("at_robot(location)",)``, so this special case only
-    changes the outcome for the OTHER self-navigators — search_object/place/
-    deliver — whose ``establishes`` tuple does not otherwise name
-    ``at_robot``.
+    ``at_robot`` is special-cased: a step that self-navigates to a location
+    (``goto``/``search_object``/``place``/``deliver`` — anything with
+    ``at_robot`` in ``self_establishes``, per ``self_established_facts``)
+    satisfies ``at_robot(X)`` ONLY when its own destination matches ``X``
+    (normalised — M-3, round-2 review: a guard-reduced
+    ``[goto(laundry_desk)]`` must NOT satisfy ``at_robot(kitchen)`` just
+    because SOME goto exists; that plan passes this static check and then
+    fails the RUNTIME gate instead, on a mismatched
+    ``last_nav_location``). ``goto`` already appears in ``established``
+    (predicate-level) via its own ``establishes=("at_robot(location)",))``,
+    but that generic branch is skipped entirely for ``at_robot`` (below) so
+    it can never re-introduce the any-destination bug for ``goto`` either.
 
     Returns ``None`` when every parsable postcondition is covered (or there
     are none); otherwise the FIRST uncovered postcondition's rejection
@@ -275,20 +278,27 @@ def uncovered_postcondition_reason(
     collect every miss), naming every registry establisher for its predicate.
     """
     established = _established_predicates(plan)
-    self_at_robot = any(
-        f.startswith("at_robot(")
+    self_nav_destinations = {
+        nav_fact.args[0]
         for step in plan
         if isinstance(step, dict)
         for f in self_established_facts(step)
-    )
+        for nav_fact, _err in (parse_fact(f),)
+        if nav_fact is not None and nav_fact.predicate == "at_robot" and nav_fact.args
+    }
 
     for condition in postconditions or []:
         fact, _error = parse_fact(condition)
         if fact is None:
             continue
-        if fact.predicate == "at_robot" and self_at_robot:
-            continue
-        if fact.predicate in established:
+        if fact.predicate == "at_robot":
+            # Destination match ONLY -- never falls through to the generic
+            # `established` check below, which would re-introduce the
+            # any-destination bug via goto's own
+            # establishes=("at_robot(location)",).
+            if fact.args and fact.args[0] in self_nav_destinations:
+                continue
+        elif fact.predicate in established:
             continue
         establishers = [
             name for name, c in ACTION_CONTRACTS.items()
