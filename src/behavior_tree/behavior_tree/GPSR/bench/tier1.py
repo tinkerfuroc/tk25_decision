@@ -33,6 +33,10 @@ def bench_env(*, mock_config: Path, constants: Path, plan_dir: Path, commands: S
         "BT_GPSR_PLAN_DIR": str(plan_dir),
         "GPSR_DEBUG_TELEMETRY": "1",
         "BT_LISTEN_MOCK_TYPED": "0",
+        # Sim persons carry no name identity -- every tier-2 run is
+        # against the sim, so this is always on here (never set for a
+        # real-robot launch, which does not go through bench_env at all).
+        "GPSR_SIM_IDENTITY_RELAXED": "1",
     })
     return env
 

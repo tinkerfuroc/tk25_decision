@@ -127,6 +127,42 @@ def _reset(reset_cmd: Sequence[str]) -> str | None:
     return None
 
 
+def _run_spawn_cmd(spawn_cmd: Sequence[str], mapping: dict[str, str]) -> str | None:
+    """Run the scene-spawn command for one run; return an error detail
+    string, or None on success. Mirrors _reset's shape."""
+    cmd = _substitute(spawn_cmd, mapping)
+    try:
+        result = subprocess.run(cmd, timeout=120, capture_output=True, text=True)
+    except subprocess.TimeoutExpired:
+        return "spawn failed: timed out after 120s"
+    except OSError as exc:
+        return f"spawn failed: {exc}"
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        tail = stderr[-2000:]
+        suffix = f": {tail}" if tail else ""
+        return f"spawn failed: exit code {result.returncode}{suffix}"
+    return None
+
+
+def _run_clear_cmd(clear_cmd: Sequence[str], mapping: dict[str, str]) -> str | None:
+    """Run the scene-clear command for one run; return an error detail
+    string, or None on success."""
+    cmd = _substitute(clear_cmd, mapping)
+    try:
+        result = subprocess.run(cmd, timeout=60, capture_output=True, text=True)
+    except subprocess.TimeoutExpired:
+        return "clear failed: timed out after 60s"
+    except OSError as exc:
+        return f"clear failed: {exc}"
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        tail = stderr[-2000:]
+        suffix = f": {tail}" if tail else ""
+        return f"clear failed: exit code {result.returncode}{suffix}"
+    return None
+
+
 def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[str],
                       timeout_s: float, poll_s: float = 1.0) -> tuple[str, str, float, list[str]]:
     """Launch the orchestrator for a single command and score task id 1.
@@ -226,6 +262,13 @@ def _write_run_json(run_dir: Path, entry: CorpusEntry, tier_label: str, result: 
         "feasibility": entry.feasibility, "tier": tier_label, "verdict": result.verdict,
         "detail": result.detail, "seconds": result.seconds,
     }
+    scene = {}
+    if (run_dir / "scene-plan.json").is_file():
+        scene["plan"] = "scene-plan.json"
+    if (run_dir / "spawned.json").is_file():
+        scene["spawned"] = "spawned.json"
+    if scene:
+        data["scene"] = scene
     (run_dir / "run.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
@@ -245,6 +288,8 @@ def run_tier2(entries: Sequence[CorpusEntry], *, mock_config: Path, constants: P
               launcher: Sequence[str] = DEFAULT_LAUNCHER, reset_cmd: Sequence[str] = DEFAULT_RESET_CMD,
               recorder_cmd: list[str] | None = None,
               sheet_cmd: list[str] | None = None,
+              spawn_cmd: list[str] | None = None,
+              clear_cmd: list[str] | None = None,
               settle_s: float = 10.0, halt_after_errors: int = 3,
               live_llm: bool = True, llm_check: bool = True) -> list[BenchResult]:
     out_dir = Path(out_dir)
@@ -275,8 +320,24 @@ def run_tier2(entries: Sequence[CorpusEntry], *, mock_config: Path, constants: P
         if settle_s > 0:
             time.sleep(settle_s)
 
+        scene_mapping = {
+            "run_dir": str(run_dir), "command": entry.text, "seed": str(entry.seed),
+            "plan": str(run_dir / "scene-plan.json"), "manifest": str(run_dir / "spawned.json"),
+        }
+        if spawn_cmd:
+            spawn_error = _run_spawn_cmd(spawn_cmd, scene_mapping)
+            if spawn_error is not None:
+                result = BenchResult(entry.id, entry.template, entry.feasibility, TIER, "ERROR",
+                                     spawn_error)
+                _write_run_json(run_dir, entry, tier_label, result)
+                results.append(result)
+                if _halted(results, out_dir, halt_after_errors):
+                    break
+                continue
+
         recorder_proc = None
         recorder_log = None
+        clear_error: str | None = None
         try:
             if recorder_cmd:
                 cmd = _substitute(recorder_cmd, {"run_dir": str(run_dir)})
@@ -299,6 +360,11 @@ def run_tier2(entries: Sequence[CorpusEntry], *, mock_config: Path, constants: P
                 _stop(recorder_proc)
             if recorder_log is not None:
                 recorder_log.close()
+            if clear_cmd:
+                clear_error = _run_clear_cmd(clear_cmd, scene_mapping)
+
+        if clear_error is not None:
+            detail = (detail + " | " if detail else "") + clear_error
 
         if verdict == "PASS":
             exhausted, split_fell_back = _scan_planner_exhaustion(run_dir / "orchestrator.log")
