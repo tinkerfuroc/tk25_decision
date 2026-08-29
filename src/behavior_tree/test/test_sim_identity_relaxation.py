@@ -67,6 +67,27 @@ def test_flag_on_named_person_label_relaxes_via_class_token(monkeypatch):
     assert result.evidence == "sim mode: person detected; name identity is not modelled in sim"
 
 
+def test_flag_on_waving_persons_descriptor_label_relaxes_via_class_token(monkeypatch):
+    # L4 (round-2 review): the token-based class check (any token of any
+    # LABEL in _SIM_PERSON_CLASS_LABELS) widened the relaxation to also
+    # fire for a "waving_persons" DETECTION LABEL -- distinct from the
+    # person_found ARGUMENT naming a waving descriptor, which stays gated
+    # by _is_person_name_arg (see test_flag_on_descriptor_argument_is_
+    # unaffected below, requested="waving_person"). "waving_persons"
+    # tokenises to "waving"/"persons", and "persons" is itself one of
+    # _SIM_PERSON_CLASS_LABELS -- pinned here as ACCEPTED sim behaviour: a
+    # waving-person label is still evidence of a person.
+    result = _check(
+        "person_found(sarah)",
+        evidence={"person_detection": {"objects": [{"label": "waving_persons"}]}},
+        env={"GPSR_SIM_IDENTITY_RELAXED": "1"},
+        monkeypatch=monkeypatch,
+    )
+    assert result.verdict is Verdict.VALID
+    assert result.confidence == 0.6
+    assert result.evidence == "sim mode: person detected; name identity is not modelled in sim"
+
+
 def test_flag_on_non_person_labels_stay_invalid(monkeypatch):
     result = _check(
         "person_found(sarah)",
