@@ -97,6 +97,38 @@ def self_established_facts(step: Mapping[str, Any]) -> list[str]:
     return facts
 
 
+def established_facts(step: Mapping[str, Any]) -> list[str]:
+    """Canonical facts ``step``'s action establishes FOR OTHER TARGETS.
+
+    Mirrors ``self_established_facts`` but walks ``contract.establishes``
+    templates (``"delivered(object,recipient)"`` etc.) instead of
+    ``self_establishes``. Each template is parsed as ``pred(p1,p2,...)``; every
+    param name is looked up in ``step["params"]``. If ANY named param is
+    missing or blank, that whole template is skipped (never guess a partial
+    fact). Used by the contract-boundary guard to tell whether a step
+    establishes a fact owned by a *different* target of the same command.
+    """
+    contract = ACTION_CONTRACTS.get(str(step.get("action")))
+    if contract is None:
+        return []
+    params = step.get("params") or {}
+    facts: list[str] = []
+    for template in contract.establishes:
+        predicate, _, arglist = template.partition("(")
+        arg_names = [a.strip() for a in arglist.rstrip(")").split(",") if a.strip()]
+        values: list[str] = []
+        for name in arg_names:
+            value = params.get(name)
+            if value is None or not str(value).strip():
+                values = None  # type: ignore[assignment]
+                break
+            values.append(_normalize(str(value)))
+        if values is None:
+            continue
+        facts.append(f"{predicate}({','.join(values)})")
+    return facts
+
+
 def self_navigating_destinations() -> dict[str, str]:
     return {
         name: c.self_establishes["at_robot"]
@@ -119,5 +151,6 @@ def render_self_satisfied_rule() -> str:
 
 __all__ = [
     "ActionContract", "ACTION_CONTRACTS", "IDENTICAL_PLAN_ERROR_PREFIX", "contract_for",
-    "self_established_facts", "self_navigating_destinations", "render_self_satisfied_rule",
+    "self_established_facts", "established_facts", "self_navigating_destinations",
+    "render_self_satisfied_rule",
 ]

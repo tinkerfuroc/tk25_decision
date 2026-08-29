@@ -35,6 +35,49 @@ def test_self_established_facts_from_step():
     assert ac.self_established_facts({"action": "grasp", "params": {"object": "coke"}}) == []
 
 
+def test_established_facts_deliver_goto_grasp_place():
+    assert ac.established_facts(
+        {"action": "deliver", "params": {"object": "spam", "recipient": "me"}}
+    ) == ["delivered(spam,me)"]
+    assert ac.established_facts(
+        {"action": "goto", "params": {"location": "kitchen"}}
+    ) == ["at_robot(kitchen)"]
+    assert ac.established_facts(
+        {"action": "grasp", "params": {"object": "coke"}}
+    ) == ["held(coke)"]
+    assert ac.established_facts(
+        {"action": "place", "params": {"object": "plant", "location": "balcony"}}
+    ) == ["placed(plant,balcony)"]
+
+
+def test_established_facts_missing_param_yields_empty():
+    # deliver requires both object and recipient for its template — missing
+    # either one means the fact cannot be derived, so skip it (never guess).
+    assert ac.established_facts({"action": "deliver", "params": {"object": "spam"}}) == []
+    assert ac.established_facts({"action": "deliver", "params": {}}) == []
+    assert ac.established_facts({"action": "goto", "params": {}}) == []
+
+
+def test_established_facts_unknown_action_yields_empty():
+    assert ac.established_facts({"action": "teleport", "params": {"location": "kitchen"}}) == []
+    assert ac.established_facts({"action": None, "params": {}}) == []
+
+
+def test_established_facts_normalises_args():
+    assert ac.established_facts(
+        {"action": "goto", "params": {"location": "Laundry Desk"}}
+    ) == ["at_robot(laundry_desk)"]
+    assert ac.established_facts(
+        {"action": "deliver", "params": {"object": "  Spam  ", "recipient": "Me"}}
+    ) == ["delivered(spam,me)"]
+
+
+def test_established_facts_no_self_establish_actions_are_empty():
+    # approach_person/describe_person/etc have no `establishes` templates at all.
+    assert ac.established_facts({"action": "approach_person", "params": {}}) == []
+    assert ac.established_facts({"action": "find_person", "params": {"person": "Alex"}}) == ["person_found(alex)"]
+
+
 def test_self_navigating_destinations_excludes_goto():
     assert ac.self_navigating_destinations() == {
         "deliver": "recipient_location",
