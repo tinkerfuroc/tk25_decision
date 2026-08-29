@@ -966,7 +966,7 @@ def create_find_object(pan_deg=None, tilt_deg=None):
 
 
 class SearchObjectSelector(py_trees.composites.Selector):
-    """F2 (round-2 review): ``small/search_object``'s root.
+    """F2 (round-2 review, fix round 2): ``small/search_object``'s root.
 
     A stock memory Selector (SUCCESS on the first spot with a match, FAILURE
     only once every filled spot has been swept) EXCEPT: on terminating
@@ -988,22 +988,68 @@ class SearchObjectSelector(py_trees.composites.Selector):
     ``small/search_object/root`` -> ``search_object_sweep`` role is
     unaffected) are otherwise untouched -- structural only, no behaviour
     change on SUCCESS.
+
+    H1 (round-2 review, fix round 2): the summary MUST be computed
+    synchronously inside the tick, before this node yields itself, not
+    after ``super().tick()``'s generator returns. Under the production
+    dispatcher this node sits as the second child of a memory
+    ``Sequence`` (``create_dispatcher`` -> ``branch:search_object``).
+    ``Sequence.tick()`` closes the child's generator (``GeneratorExit`` at
+    its last ``yield``) the instant the child yields itself with a
+    non-SUCCESS status -- code written to run "after the loop" in a
+    ``tick()`` override never executes on that path, only when something
+    (e.g. a test) exhausts the generator directly. ``Selector.tick()``,
+    however, calls ``self.stop(FAILURE)`` -- which calls
+    ``self.terminate(FAILURE)`` -- BEFORE it yields itself, so computing
+    the summary in ``terminate()`` guarantees it is set before any parent
+    ever observes this node's terminal yield.
+
+    H2: the guard's status is not reliable to inspect *after* the sweep
+    finishes -- a memory Selector invalidates every child before
+    ``current_child`` at the START of each tick, so once branch N goes
+    RUNNING (a multi-tick goto/scan), branch 0..N-1's guards flip to
+    INVALID before the sweep concludes. Track which guards succeeded
+    incrementally instead: a tick() override (kept ONLY for this
+    observation, not for the summary itself) records branch index ``i``
+    into ``self._swept`` the moment ``self.children[i].children[0]`` is
+    yielded with status SUCCESS -- capturing it before any later
+    invalidation can hide it.
     """
 
     def __init__(self, name: str, capacity: int):
         super().__init__(name, memory=True)
         self._capacity = capacity
         self._client = None
+        self._swept: set[int] = set()
 
     def setup(self, **kwargs):
         super().setup(**kwargs)
         self._client = self.attach_blackboard_client(name=self.name)
         self._client.register_key(bb_keys.TARGET_LOCATION, access=Access.READ)
 
+    def initialise(self):
+        super().initialise()
+        # L2 (round-2 review): clear stale state from a prior sweep so a
+        # FAILURE -> SUCCESS re-tick doesn't leave the old "swept ... nothing
+        # found" message behind.
+        self._swept = set()
+        self.feedback_message = ""
+
     def tick(self):
+        # H2: observation-only. The actual summary is computed in
+        # terminate(), which py_trees guarantees runs before this node's
+        # own terminal yield (see class docstring).
         for node in super().tick():
+            if node.status == Status.SUCCESS:
+                for i, branch in enumerate(self.children):
+                    if branch.children and node is branch.children[0]:
+                        self._swept.add(i)
+                        break
             yield node
-        if self.status == Status.FAILURE:
+
+    def terminate(self, new_status):
+        super().terminate(new_status)
+        if new_status == Status.FAILURE:
             self._summarise_sweep()
 
     def tip(self):
@@ -1012,17 +1058,19 @@ class SearchObjectSelector(py_trees.composites.Selector):
         return super().tip()
 
     def _summarise_sweep(self) -> None:
-        swept = sum(
-            1
-            for branch in self.children
-            if branch.children and branch.children[0].status == Status.SUCCESS
-        )
         try:
             location = self._client.get(bb_keys.TARGET_LOCATION)
         except Exception:
-            location = None
+            # L2 (round-2 review): setup() was never called (e.g. a
+            # serialisation/role-audit path that never runs the tree), so
+            # _client is None. Fall back to the static blackboard accessor
+            # rather than reporting "at None".
+            try:
+                location = Blackboard.get(bb_keys.TARGET_LOCATION)
+            except Exception:
+                location = None
         self.feedback_message = (
-            f"search_object: swept {swept} of {self._capacity} spots "
+            f"search_object: swept {len(self._swept)} of {self._capacity} spots "
             f"at {location}, nothing found"
         )
 
