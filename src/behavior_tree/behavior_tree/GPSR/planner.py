@@ -51,6 +51,7 @@ from .modifiable_nodes import (
 )
 from .planner_validators import (
     validate_plan, validate_dag, uncovered_postcondition_reason, _established_predicates,
+    _norm_loc,
 )
 from .validators import apply_fact_transitions, canonical_fact, parse_fact
 from .small_trees import (
@@ -556,6 +557,7 @@ def _escape_step_for(
     failed_plans: List[List[Dict[str, Any]]],
     ancestor_loc: Optional[str] = None,
     verified_loc: Optional[str] = None,
+    known_locations: Optional[set] = None,
 ) -> Optional[Dict[str, Any]]:
     """Materialise one step for ``action`` establishing ``fact``.
 
@@ -578,6 +580,15 @@ def _escape_step_for(
     have it rejected downstream burns a validate_plan cycle for no gain; the
     caller falls straight through to the existing IDENTICAL_PLAN marker path
     instead.
+
+    M-2 (round-2 review): when ``known_locations`` is given (already
+    normalised, e.g. ``planner.py``'s ``known_loc_arg``), the RESOLVED
+    location is also checked against it — same reasoning as above: a
+    location with no known pose (e.g. only ever reached via
+    ``record_position``, never one of ``KNOWN_LOCATIONS``) makes
+    ``validate_plan``'s "unknown location" rule reject the escape step
+    downstream anyway, so bail out here (``None``) instead of burning that
+    cycle. ``known_locations=None`` (the default) skips the check entirely.
     """
     arg_names = _establish_arg_names(action, fact.predicate)
     if len(arg_names) != len(fact.args):
@@ -596,6 +607,8 @@ def _escape_step_for(
         )
         if not loc:
             return None
+        if known_locations is not None and _norm_loc(loc) not in known_locations:
+            return None
         params[loc_param] = loc
     return {"action": action, "params": params}
 
@@ -608,6 +621,7 @@ def _escape_plan(
     failed_plans: List[List[Dict[str, Any]]],
     all_targets: Optional[List[Dict[str, Any]]] = None,
     facts: Optional[List[str]] = None,
+    known_locations: Optional[set] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     """Deterministic fallback plan for a target the LLM is stuck replanning.
 
@@ -652,6 +666,11 @@ def _escape_plan(
     ``held`` (after ``find_object`` and ``grasp`` both failed) is
     established ONLY by ``grasp``, and if the plan history shows ``grasp``
     already failed too there is nothing left to try.
+
+    ``known_locations`` (M-2, round-2 review) is forwarded to
+    ``_escape_step_for``, which bails out (``None``) when the resolved
+    self-navigating location has no known pose — see that function's
+    docstring.
     """
     used_actions = {
         str(step.get("action"))
@@ -700,6 +719,7 @@ def _escape_plan(
         chosen, fact, target_obj, target_loc, failed_plans,
         ancestor_loc=_nearest_ancestor_location(target, all_targets),
         verified_loc=_verified_at_robot_location(facts),
+        known_locations=known_locations,
     )
     if chosen_step is None:
         return None
@@ -1649,6 +1669,7 @@ class GPSRPlanner:
                     self._failed_plans(slot, index),
                     all_targets=all_targets,
                     facts=self.get_facts(slot),
+                    known_locations=known_loc_arg,
                 )
                 if escape is not None:
                     escape_guarded, escape_dropped = _drop_foreign_contract_steps(

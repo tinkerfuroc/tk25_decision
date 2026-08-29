@@ -223,6 +223,45 @@ def test_escape_plan_resolves_location_from_nearest_ancestor():
     ]
 
 
+def test_escape_plan_returns_none_when_resolved_location_is_not_known():
+    # M-2 (round-2 review): the escape location is never checked against
+    # known_locations -- if the resolved location has no pose (e.g. it was
+    # reached via record_position, or is simply a typo/unrecognised room),
+    # the materialised search_object(location=...) step is DOOMED to be
+    # rejected by validate_plan's "unknown location" rule anyway. Passing
+    # known_locations lets _escape_plan bail out early (None) instead of
+    # wasting a validate_plan cycle on a step that can never pass.
+    target = {"id": "t0", "postconditions": ["object_seen(pudding_box)"]}
+    failed_plans = [[
+        {"action": "goto", "params": {"location": "attic"}},
+        {"action": "find_object", "params": {"object": "pudding_box", "location": "attic"}},
+    ]]
+    plan = planner_mod._escape_plan(
+        target, "pudding_box", "",
+        "postcondition unmet: object_seen(pudding_box) (UNKNOWN)", failed_plans,
+        known_locations={"kitchen", "living_room"},
+    )
+    assert plan is None
+
+
+def test_escape_plan_accepts_resolved_location_when_it_is_known():
+    # Same shape as the case above, but "attic" IS in known_locations --
+    # the escape must still fire normally.
+    target = {"id": "t0", "postconditions": ["object_seen(pudding_box)"]}
+    failed_plans = [[
+        {"action": "goto", "params": {"location": "attic"}},
+        {"action": "find_object", "params": {"object": "pudding_box", "location": "attic"}},
+    ]]
+    plan = planner_mod._escape_plan(
+        target, "pudding_box", "",
+        "postcondition unmet: object_seen(pudding_box) (UNKNOWN)", failed_plans,
+        known_locations={"attic", "kitchen"},
+    )
+    assert plan == [
+        {"action": "search_object", "params": {"object": "pudding_box", "location": "attic"}},
+    ]
+
+
 def test_escape_plan_returns_none_when_failure_reason_has_no_fact():
     # No fact parses out of the reason (case 1) AND the target itself
     # declares no postconditions to fall back to (case 2 has nothing to
