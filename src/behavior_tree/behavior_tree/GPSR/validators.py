@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -247,6 +248,40 @@ def _step_succeeded(step: Mapping[str, Any]) -> bool:
     return _normalize(str(status)) in {"success", "succeeded", "successful", "completed", "ok", "valid"}
 
 
+# --- sim-mode identity relaxation (GPSR_SIM_IDENTITY_RELAXED=1) ----------
+#
+# Sim persons carry no name identity: the detector always labels them
+# "person" regardless of who the scenario says is standing there. Without
+# this flag, person_found(<Name>) rejects a correct sim run purely because
+# the requested name is never among the detection labels. See _verify's
+# person_found branch below for where this is consulted -- it only
+# replaces the final INVALID return of the labelled-mismatch path, never
+# the earlier established-fact / waving-specialist / unset-evidence paths.
+_SIM_PERSON_CLASS_LABELS = {"person", "persons", "people", "human"}
+_SIM_PERSON_DESCRIPTORS = {"waving_person", "waving_persons"}
+
+
+def _sim_identity_relaxed_enabled() -> bool:
+    # Read fresh every call (not cached at import time) so tests can
+    # monkeypatch os.environ per-test without reloading the module.
+    return os.environ.get("GPSR_SIM_IDENTITY_RELAXED") == "1"
+
+
+def _is_person_name_arg(arg: str) -> bool:
+    """True when a person_found() argument names a person rather than a
+    descriptor. `arg` is already normalized (lowercase, whitespace -> "_")
+    by the time _verify sees fact.args, so "waving person" and
+    "waving_person" are indistinguishable here -- both are excluded.
+    """
+    if arg in _SIM_PERSON_DESCRIPTORS:
+        return False
+    if "_" in arg:
+        return False
+    if "person" in arg or "persons" in arg:
+        return False
+    return True
+
+
 def _action_verdict(fact: Fact, context: VerificationContext) -> Optional[VerificationResult]:
     if context.phase != "postcondition":
         return None
@@ -312,6 +347,17 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
         if labels:
             if _normalize(fact.args[0]) in labels:
                 return _result(Verdict.VALID, f"{detection_key} label matches requested target")
+            if (
+                fact.predicate == "person_found"
+                and _sim_identity_relaxed_enabled()
+                and _is_person_name_arg(fact.args[0])
+                and (labels & _SIM_PERSON_CLASS_LABELS)
+            ):
+                return _result(
+                    Verdict.VALID,
+                    "sim mode: person detected; name identity is not modelled in sim",
+                    0.6,
+                )
             return _result(Verdict.INVALID, f"{detection_key} labels do not match requested target")
         if nonempty:
             if fact.predicate == "person_found" and evidence.get("person_provenance") == "waving_specialist":
