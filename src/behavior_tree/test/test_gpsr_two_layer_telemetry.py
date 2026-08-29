@@ -341,6 +341,12 @@ def test_unrecoverable_replan_fails_target_once_with_no_further_replan(tmp_path)
     log = w.get(bb_keys.STATE_LOG)
     assert sum("UNRECOVERABLE_SKIPPED" in entry for entry in log) == 1
     assert any("SKIPPED (replan budget exceeded)" in entry for entry in log)
+    # L1 (round-2 review): the SKIPPED line itself (not just the preceding
+    # FAILED line) must carry the unrecoverable text, appended to the normal
+    # "budget exceeded" reason -- a log/bench grep on the SKIPPED line alone
+    # must be able to tell an unrecoverable skip from a plain budget skip.
+    skipped_lines = [e for e in log if "SKIPPED (replan budget exceeded)" in e]
+    assert any(planner_mod.UNRECOVERABLE_ERROR_PREFIX in e for e in skipped_lines)
     failed = [e for e in _lines(path) if e["event_type"] == "target.failed"]
     assert len(failed) == 1
     assert failed[0]["payload"]["reason"].startswith(planner_mod.UNRECOVERABLE_ERROR_PREFIX)
@@ -348,3 +354,50 @@ def test_unrecoverable_replan_fails_target_once_with_no_further_replan(tmp_path)
     # The only replan_target call is the one genuine execution failure from
     # tick 1 -- the unrecoverable marker itself never triggers another one.
     assert planner.replan_calls == 1
+    # L3 (round-2 review): the forced skip must leave the executor's own
+    # bookkeeping consistent -- budget reset, target advanced, outcome
+    # recorded -- not just "no crash".
+    assert w.get(bb_keys.TARGET_REPLAN_COUNT) == 0
+    assert w.get(bb_keys.TARGET_INDEX) == 1
+    assert ex._target_outcomes.get("t0") == "SKIPPED"
+
+
+# L1 (round-2 review): if a supervisor REPLAN_REQUEST is already pending at
+# the SAME tick an UNRECOVERABLE marker forces TARGET_REPLAN_COUNT to
+# _max_replans (tick()'s UNRECOVERABLE_SKIPPED branch, right before it calls
+# _on_target_failure), the forced count must not survive into the
+# supervisor's replacement plan -- otherwise that replacement's own first
+# genuine failure budget-skips immediately, with zero replan attempts of its
+# own. _on_target_failure's supervisor branch must reset it.
+class _SupervisorCapablePlanner(_Planner):
+    def replace_target_plan(self, slot, index, plan, reason, completed_steps=None):
+        self.plan = list(plan)
+
+
+def test_supervisor_pending_replan_resets_forced_replan_budget(tmp_path):
+    plan = [{"action": "place", "params": {"location": "kitchen_table"}}]
+    tele, path = _telemetry(tmp_path)
+    w = _seed_blackboard()
+    planner = _SupervisorCapablePlanner(plan)
+    ex = DynamicExecutor("executor task 1", 0, planner, max_replans_per_target=3)
+    ex._announce = lambda text: None
+    tree = py_trees.trees.BehaviourTree(ex)
+    ex.setup(gpsr_tree=tree, node=object())
+    tree.tick()  # initialise executor state (index 0, num_targets 1); the
+                 # leaf fails and runs one ORDINARY replan cycle.
+
+    # Simulate the race: an UNRECOVERABLE tick just forced the budget to
+    # exhausted, but a supervisor replan request landed at the same tick.
+    w.set(bb_keys.TARGET_REPLAN_COUNT, ex._max_replans, overwrite=True)
+    w.set(bb_keys.REPLAN_REQUEST, {
+        "level": "supervisor",
+        "action": "replan_remaining",
+        "replacement_plan": [{"action": "announce", "params": {"text": "recovered"}}],
+    }, overwrite=True)
+    ex._on_target_failure(
+        f"{planner_mod.UNRECOVERABLE_ERROR_PREFIX}: no untried establisher for ['object_seen(x)']"
+    )
+
+    assert w.get(bb_keys.TARGET_REPLAN_COUNT) == 0
+    tele.close(status="done")
+    telemetry_mod.set_default_telemetry(None)

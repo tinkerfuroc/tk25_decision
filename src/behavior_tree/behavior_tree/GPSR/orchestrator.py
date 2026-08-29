@@ -2187,6 +2187,14 @@ class DynamicExecutor(py_trees.composites.Composite):
             request = {}
         if request.get("level") == "supervisor":
             self._bb.set(bb_keys.REPLAN_REQUEST, {}, overwrite=True)
+            # L1 (round-2 review): a forced-to-exhausted TARGET_REPLAN_COUNT
+            # (the UNRECOVERABLE_SKIPPED branch in ``tick()`` forces it to
+            # ``_max_replans`` right before calling this method) must not
+            # survive into the supervisor's replacement plan -- otherwise
+            # that replacement's own first genuine failure would budget-skip
+            # immediately, with zero replan attempts of its own. The
+            # supervisor is handing this target a fresh start either way.
+            self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
             action = request.get("action")
             if action == "abort_and_report":
                 message = str(request.get("operator_message") or reason)
@@ -2228,8 +2236,21 @@ class DynamicExecutor(py_trees.composites.Composite):
             self._announce(f"I could not complete {self._current_desc()} after "
                            f"{self._max_replans} attempts. I will skip it.")
             self._target_outcomes[self._target_id(self._index)] = "SKIPPED"
+            # L1 (round-2 review): brief says "the normal budget exceeded
+            # reason, with the unrecoverable text appended" -- an
+            # UNRECOVERABLE_SKIPPED tick forces the budget to exhausted on
+            # THIS call (see tick()'s UNRECOVERABLE_SKIPPED branch), so this
+            # is the only way `reason` itself can already carry the
+            # unrecoverable marker text; append it so a log/bench grep on
+            # the SKIPPED line alone (not just the preceding FAILED line)
+            # can tell an unrecoverable skip from a plain budget skip.
+            skip_suffix = (
+                f" ({reason})"
+                if isinstance(reason, str) and reason.startswith(UNRECOVERABLE_ERROR_PREFIX)
+                else ""
+            )
             self._log(f"target:{self._index}:{self._current_desc()} SKIPPED "
-                      f"(replan budget exceeded)")
+                      f"(replan budget exceeded){skip_suffix}")
             self._bb.set(bb_keys.TARGET_INDEX, self._index + 1, overwrite=True)
             self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
             if self._index + 1 >= self._num_targets:
