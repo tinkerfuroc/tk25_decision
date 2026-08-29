@@ -1104,6 +1104,7 @@ class GPSRPlanner:
         if preconditions:
             seq.add_child(BtNode_TargetPreconditionCheck(
                 f"precondition gate:{slot}:{index}", preconditions, index,
+                action_plan=action_plan,
             ))
         seq.add_child(BtNode_AnnounceFromBB(
             f"announce target:{slot}:{index}",
@@ -1139,7 +1140,8 @@ class GPSRPlanner:
                 f"supervisor barrier:{slot}:{index}:{k}",
             ))
             seq.add_child(step_seq)
-        if postconditions:
+        deferred_possible = any(self_established_facts(s) for s in action_plan)
+        if postconditions or (preconditions and deferred_possible):
             seq.add_child(BtNode_TargetPostconditionCheck(
                 f"postcondition gate:{slot}:{index}",
                 postconditions,

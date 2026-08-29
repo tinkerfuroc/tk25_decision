@@ -177,6 +177,7 @@ class bb_keys:
     # Replan request channel (extension point; trigger logic to be announced).
     REPLAN_REQUEST = "gpsr/replan_request"       # dict {level: "target"|"command", index: int, reason: str}
     TARGET_REPLAN_COUNT = "gpsr/target_replan_count"  # int — per-target replan budget, reset when a target advances
+    DEFERRED_PRECONDITIONS = "gpsr/deferred_preconditions"  # list[str] — canonical preconditions the active target's own plan self-establishes; verified by the postcondition gate instead of at entry
     FACTS = "gpsr/facts"
     # list[str] — canonical facts established by successful target postcondition gates for the active command slot.
 

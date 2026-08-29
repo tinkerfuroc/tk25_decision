@@ -29,7 +29,7 @@ import textwrap
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 import py_trees
 import rclpy
@@ -66,7 +66,10 @@ from .small_trees import (
     SEARCH_POSE_KEYS,
     create_goto,
 )
-from .action_contracts import contract_for as _contract_for
+from .action_contracts import (
+    contract_for as _contract_for,
+    self_established_facts as _self_established_facts,
+)
 from .telemetry import get_default_telemetry
 from .supervision.models import SupervisionMode
 from .supervision.runtime import get_default_supervisor, wrap_action_factory
@@ -1541,22 +1544,47 @@ def _target_gate_facts(bb) -> List[str]:
 
 
 class BtNode_TargetPreconditionCheck(Behaviour):
-    """Verify a target's preconditions at its execution boundary."""
+    """Verify a target's preconditions at its execution boundary.
 
-    def __init__(self, name: str, preconditions: List[str], target_index: int):
+    A precondition the target's OWN plan establishes by itself (e.g.
+    ``at_robot(kitchen_table)`` when the plan contains ``place(location=
+    kitchen_table)``) is DEFERRED: not checked here, written to
+    ``DEFERRED_PRECONDITIONS`` and verified by the postcondition gate once the
+    establishing step has run. Checking it at entry would fail every
+    self-navigating action before it could navigate.
+    """
+
+    def __init__(self, name: str, preconditions: List[str], target_index: int,
+                 action_plan: Sequence[Mapping[str, Any]] = ()):
         super().__init__(name)
         self._preconditions = list(preconditions or [])
         self._target_index = int(target_index)
+        self._self_established = {
+            fact for step in (action_plan or []) for fact in _self_established_facts(step)
+        }
         self._bb = None
 
     def setup(self, **kwargs):
         self._bb = self.attach_blackboard_client(name=self.name)
         self._bb.register_key(bb_keys.FACTS, access=Access.READ)
+        self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.WRITE)
         for _, key in _TARGET_GATE_EVIDENCE_KEYS:
             self._bb.register_key(key, access=Access.READ)
 
     def update(self):
-        if not self._preconditions:
+        deferred: List[str] = []
+        checked: List[str] = []
+        for source in self._preconditions:
+            fact, _err = parse_fact(source)
+            canonical = canonical_fact(fact) if fact is not None else None
+            if canonical is not None and canonical in self._self_established:
+                deferred.append(canonical)
+            else:
+                checked.append(source)
+        self._bb.set(bb_keys.DEFERRED_PRECONDITIONS, deferred, overwrite=True)
+        if deferred:
+            self.feedback_message = "precondition deferred: " + ", ".join(deferred)
+        if not checked:
             return Status.SUCCESS
         context = VerificationContext(
             phase="precondition",
@@ -1565,16 +1593,13 @@ class BtNode_TargetPreconditionCheck(Behaviour):
             target_location="",
         )
         evidence = _target_gate_evidence(self._bb)
-        for source in self._preconditions:
+        for source in checked:
             try:
                 results, _ = check_all([source], evidence, context)
                 result = results[0]
             except Exception:
                 result = None
-            if result is None:
-                verdict = Verdict.INVALID
-            else:
-                verdict = result.verdict
+            verdict = Verdict.INVALID if result is None else result.verdict
             if verdict is not Verdict.VALID:
                 self.feedback_message = f"precondition unmet: {source} ({verdict.value})"
                 return Status.FAILURE
@@ -1614,11 +1639,18 @@ class BtNode_TargetPostconditionCheck(Behaviour):
         self._bb = self.attach_blackboard_client(name=self.name)
         self._bb.register_key(bb_keys.FACTS, access=Access.READ)
         self._bb.register_key(bb_keys.FACTS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.READ)
+        self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.WRITE)
         for _, key in _TARGET_GATE_EVIDENCE_KEYS:
             self._bb.register_key(key, access=Access.READ)
 
     def update(self):
-        if not self._postconditions:
+        try:
+            deferred = list(self._bb.get(bb_keys.DEFERRED_PRECONDITIONS) or [])
+        except KeyError:
+            deferred = []
+        sources = list(self._postconditions) + [d for d in deferred if d not in self._postconditions]
+        if not sources:
             return Status.SUCCESS
         context = VerificationContext(
             phase="postcondition",
@@ -1629,7 +1661,7 @@ class BtNode_TargetPostconditionCheck(Behaviour):
         )
         evidence = _target_gate_evidence(self._bb)
         parsed_facts = []
-        for source in self._postconditions:
+        for source in sources:
             try:
                 results, facts = check_all([source], evidence, context)
                 result = results[0]
@@ -1668,6 +1700,7 @@ class BtNode_TargetPostconditionCheck(Behaviour):
                 return Status.SUCCESS
             self.feedback_message = f"postcondition fact write failed: {exc}"
             return Status.FAILURE
+        self._bb.set(bb_keys.DEFERRED_PRECONDITIONS, [], overwrite=True)
         return Status.SUCCESS
 
 
@@ -1994,6 +2027,7 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.WRITE)
         self._bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+        self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.WRITE)
         self._bb.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
         self._bb.register_key(bb_keys.FACTS, access=Access.READ)
         self._bb.register_key(bb_keys.FACTS, access=Access.WRITE)
@@ -2028,6 +2062,7 @@ class DynamicExecutor(py_trees.composites.Composite):
             for evidence_name, key in _TARGET_GATE_EVIDENCE_KEYS:
                 if evidence_name != "last_nav_location":
                     self._bb.set(key, None, overwrite=True)
+            self._bb.set(bb_keys.DEFERRED_PRECONDITIONS, [], overwrite=True)
         self._active_target_index = index
         get_facts = getattr(self._planner, "get_facts", None)
         if callable(get_facts):
