@@ -159,6 +159,21 @@ def test_prompt_replan_owned_by_block_excludes_ancestors():
     assert not any("owned by t0" in line for line in prompt.splitlines())
 
 
+def test_prompt_replan_owned_by_block_is_keyed_on_declared_dependency_not_position():
+    # I-1: on a REPLAN the "owned by" exclusion must use
+    # _dependency_ancestor_targets, not bare list position -- t0 precedes t1
+    # but t1 does NOT declare t0 as a dependency, so t0's fact is NOT a
+    # guaranteed ancestor fact and must still be flagged "owned by t0" even
+    # during a replan (unlike test_prompt_replan_owned_by_block_excludes_ancestors,
+    # where T1 DOES declare T0 as a dependency and t0 is correctly excluded).
+    prompt = _build_lower_layer_user_prompt(
+        "find the spam in the kitchen", KITCHEN_T1["desc"], "spam", "kitchen",
+        [KITCHEN_T0], [], "some failure",
+        contract=KITCHEN_T1, all_targets=[KITCHEN_T0, KITCHEN_T1],
+    )
+    assert any("owned by t0" in line for line in prompt.splitlines())
+
+
 def test_prompt_requires_line_is_advisory_not_absolute():
     # MINOR-1: the old "do NOT re-establish" wording flatly contradicted a
     # replan whose failure_reason is "precondition unmet: held(spam)" (the
@@ -192,6 +207,24 @@ def test_prompt_plan_only_sentence_renders_without_sibling_facts():
     )
     assert "Plan ONLY the steps that establish the \"must establish\" facts" in prompt
     assert "owned by" not in prompt
+
+
+# The "find the spam in the kitchen" DAG (I-1, round-2 review): t1 does NOT
+# declare t0 as a dependency even though t0 precedes it in list order and
+# happens to establish at_robot(kitchen) -- the ancestor set for the guard
+# AND the prompt must come from _dependency_ancestor_targets (declared
+# depends_on only), never bare list position, or the guard wrongly assumes
+# t0's fact is guaranteed for t1 while validate_plan's prior_plan seeding
+# (also dependency-keyed) never agrees -- an unrecoverable initial plan.
+KITCHEN_T0 = {
+    "id": "t0", "desc": "Go to the kitchen", "object": "", "location": "kitchen",
+    "depends_on": [], "preconditions": [], "postconditions": ["at_robot(kitchen)"],
+}
+KITCHEN_T1 = {
+    "id": "t1", "desc": "Find the spam in the kitchen", "object": "spam",
+    "location": "kitchen", "depends_on": [],
+    "preconditions": [], "postconditions": ["object_seen(spam)"],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +308,26 @@ def test_guard_ancestor_facts_retracted_by_a_later_ancestor_are_not_foreign():
         plan, TABLE_T2, [TABLE_T0, TABLE_T1, TABLE_T2], include_ancestors=True,
     )
     assert [s["action"] for s in kept] == ["goto", "find_object", "grasp", "deliver"]
+    assert dropped == []
+
+
+def test_guard_keeps_goto_when_ancestor_is_not_a_declared_dependency():
+    # I-1 regression: t0 precedes t1 in list order and its own postcondition
+    # (at_robot(kitchen)) would be treated as a "guaranteed" ancestor fact by
+    # a bare-list-position rule -- but t1 never declares t0 as a dependency
+    # (depends_on: []), so the guard must NOT drop t1's own goto here. Before
+    # the fix this dropped `goto`, leaving `find_object(location=kitchen)`
+    # with no preceding goto -- validate_plan then rejects EVERY attempt
+    # (nothing seeds at_robot(kitchen) via prior_plan either, since that is
+    # also dependency-keyed), forcing a wasted fallback + replan cycle.
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "find_object", "params": {"object": "spam", "location": "kitchen"}},
+    ]
+    kept, dropped = _drop_foreign_contract_steps(
+        plan, KITCHEN_T1, [KITCHEN_T0, KITCHEN_T1], include_ancestors=True,
+    )
+    assert [s["action"] for s in kept] == ["goto", "find_object"]
     assert dropped == []
 
 

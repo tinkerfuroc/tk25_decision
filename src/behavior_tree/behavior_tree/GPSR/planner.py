@@ -803,11 +803,19 @@ def _render_contract_block(
     pos = next(
         (i for i, t in enumerate(targets) if _is_same_target(t, contract)), None,
     )
+    # I-1 (round-2 review): the ancestor set here must be the same one
+    # _drop_foreign_contract_steps uses -- DECLARED dependencies
+    # (_dependency_ancestor_targets), never bare list position. A target
+    # that precedes `contract` in `targets` but is NOT one of its declared
+    # dependencies is not a guaranteed-established ancestor (validate_plan's
+    # prior_plan seeding, also dependency-keyed, would not agree either), so
+    # its facts must still be flagged "owned by" during a replan too.
+    ancestor_targets = _dependency_ancestor_targets(targets, pos) if pos is not None else []
     owned_lines = []
     for i, other in enumerate(targets):
         if _is_same_target(other, contract):
             continue
-        if not include_ancestors and pos is not None and i < pos:
+        if not include_ancestors and any(_is_same_target(other, a) for a in ancestor_targets):
             continue
         other_facts = sorted(_canonical_postconditions(other) - own_post_canon)
         if other_facts:
@@ -876,8 +884,16 @@ def _drop_foreign_contract_steps(
         (i for i, t in enumerate(all_targets) if _is_same_target(t, target)), None,
     )
     successor_targets = all_targets[pos + 1:] if pos is not None else []
+    # I-1 (round-2 review): DECLARED dependencies only, never bare list
+    # position -- a target that precedes `target` in `all_targets` but is
+    # NOT one of its declared dependencies is not guaranteed already
+    # established (validate_plan's prior_plan seeding, also
+    # dependency-keyed, would not agree), so treating its facts as
+    # "guaranteed ancestor state" here can drop a step (e.g. `goto`) the
+    # replan then has no way to legitimately re-emit.
     ancestor_targets = (
-        all_targets[:pos] if (include_ancestors and pos is not None) else []
+        _dependency_ancestor_targets(all_targets, pos)
+        if (include_ancestors and pos is not None) else []
     )
     foreign_post_canon: set = set()
     for other in successor_targets:
