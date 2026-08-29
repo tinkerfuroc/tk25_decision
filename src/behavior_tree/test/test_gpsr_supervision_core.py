@@ -26,11 +26,7 @@ from behavior_tree.GPSR.supervision.models import (
     SupervisorConfig,
     VerificationDecision,
 )
-from behavior_tree.GPSR.supervision.recovery import (
-    RECOVERY_BUDGET_S,
-    RecoveryLedger,
-    recovery_budget_seconds,
-)
+from behavior_tree.GPSR.supervision.recovery import RecoveryLedger
 
 
 def _request(checkpoint_id: str = "checkpoint-1") -> CaptureRequest:
@@ -287,25 +283,6 @@ def test_recovery_ledger_counts_only_distinct_executed_failures() -> None:
         ledger.mark_result("issue", item.strategy_id, succeeded=False)
     assert ledger.failed_count("issue") == 3
     assert ledger.exhausted("issue")
-
-
-def test_recovery_budget_seconds_table_and_env_override(monkeypatch) -> None:
-    monkeypatch.delenv("GPSR_RECOVERY_BUDGET_S", raising=False)
-    assert recovery_budget_seconds("find_person") == RECOVERY_BUDGET_S["find_person"]
-    assert recovery_budget_seconds("find_object") == RECOVERY_BUDGET_S["find_object"]
-    assert recovery_budget_seconds("search_object") == RECOVERY_BUDGET_S["search_object"]
-    assert recovery_budget_seconds("some_unlisted_action") == RECOVERY_BUDGET_S["*"]
-
-    monkeypatch.setenv("GPSR_RECOVERY_BUDGET_S", "5")
-    assert recovery_budget_seconds("find_person") == 5.0
-    assert recovery_budget_seconds("some_unlisted_action") == 5.0
-
-    # Malformed/non-positive overrides fall back to the table instead of
-    # silently producing a zero or negative deadline.
-    monkeypatch.setenv("GPSR_RECOVERY_BUDGET_S", "not-a-number")
-    assert recovery_budget_seconds("find_person") == RECOVERY_BUDGET_S["find_person"]
-    monkeypatch.setenv("GPSR_RECOVERY_BUDGET_S", "-1")
-    assert recovery_budget_seconds("find_person") == RECOVERY_BUDGET_S["find_person"]
 
 
 def test_verification_schema_rejects_stale_shapes() -> None:

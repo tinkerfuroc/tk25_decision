@@ -4,7 +4,6 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import hashlib
 import json
-import os
 import threading
 from typing import Any, Callable, Mapping
 
@@ -15,41 +14,6 @@ from .models import (
     RecoveryProposal,
     SchemaError,
 )
-
-
-# F1.2 (round-2 review): structural wall-clock ceiling on a SupervisedSubtaskSlot's
-# WHOLE lifetime for one subtask activation -- first attempt plus every
-# local_recovery rebuild cycle combined -- independent of whatever the
-# RecoveryLedger's distinct-failure accounting decides (F1.1 found that
-# accounting already correct: see test_local_recovery_exhausts_after_three_
-# identical_failures_and_escalates in test_gpsr_supervision_runtime.py). Values
-# are seconds; ``"*"`` is the fallback for any action not listed.
-RECOVERY_BUDGET_S: dict[str, float] = {
-    "find_person": 120.0,
-    "find_object": 120.0,
-    "search_object": 180.0,
-    "*": 90.0,
-}
-
-
-def recovery_budget_seconds(action_name: str) -> float:
-    """Wall-clock budget (seconds) for one slot's full recovery lifetime.
-
-    Looked up from :data:`RECOVERY_BUDGET_S` by ``action_name`` (falling back
-    to ``"*"``). ``GPSR_RECOVERY_BUDGET_S``, when set to a positive number,
-    overrides the table outright with that single global value for every
-    action -- the one knob a bench run or test sets instead of editing the
-    per-action table.
-    """
-    override = os.environ.get("GPSR_RECOVERY_BUDGET_S", "").strip()
-    if override:
-        try:
-            value = float(override)
-        except ValueError:
-            value = None
-        if value is not None and value > 0:
-            return value
-    return RECOVERY_BUDGET_S.get(action_name, RECOVERY_BUDGET_S["*"])
 
 
 _ALLOWED_ARGUMENTS = {
@@ -303,11 +267,9 @@ def _nonempty_text(value: Any, label: str) -> str:
 
 
 __all__ = [
-    "RECOVERY_BUDGET_S",
     "RecoveryAttempt",
     "RecoveryLedger",
     "RecoveryMacroCompiler",
-    "recovery_budget_seconds",
     "recovery_fingerprint",
     "validate_global_decision",
     "validate_recovery_macro",
