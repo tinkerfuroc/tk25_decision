@@ -1853,16 +1853,21 @@ class GPSRPlanner:
         if contract_dropped:
             print(f"[replace:{slot}:{index}] contract-boundary dropped {contract_dropped}")
         if cleaned and not guarded:
-            # The guard stripped every step -- never install an empty plan.
-            # Keep the original (unfiltered) supervisor plan instead; this is
-            # a defensive fallback, not the expected case (the guard only
-            # drops steps establishing a LATER target's fact, so an
-            # all-dropped plan means the supervisor's replacement plan did
-            # nothing but reach ahead into a sibling's work).
+            # M-1 (round-2 review): the guard stripped every step -- that IS
+            # the correct outcome, not a defect to paper over. A supervisor
+            # plan that only established a LATER target's fact (e.g. a bare
+            # `deliver` for t0 that is really t1's premature delivery) is
+            # exactly the double-execution the guard exists to remove;
+            # re-installing the unfiltered plan re-creates it. Install the
+            # guarded (empty) plan instead -- its postcondition gate (if the
+            # target declares one) then fails cleanly on the next tick and
+            # the normal replan path takes over, same as any other
+            # under-specified plan. Still log the warning already emitted.
             print(f"[replace:{slot}:{index}] contract-boundary guard emptied the plan "
-                  f"-- keeping the original (unfiltered) plan instead of installing []")
-        else:
-            cleaned = guarded
+                  f"-- installing it anyway (the postcondition gate will fail "
+                  f"cleanly and trigger a replan) instead of re-installing the "
+                  f"unfiltered plan")
+        cleaned = guarded
         # M2: this synchronous path is supervisor RECOVERY, never an answer
         # attempt -- GLOBAL_REPLAN explicitly allows installing an
         # announce(text=...) step (supervision/prompts.py), and unlike

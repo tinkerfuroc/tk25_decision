@@ -648,11 +648,16 @@ def test_plan_target_initial_plan_attempt_two_still_lists_ancestors_as_owned(mon
     assert any("owned by t0" in line for line in prompts[1].splitlines())
 
 
-def test_replace_target_plan_keeps_original_plan_when_guard_empties_it(monkeypatch, capsys):
-    # MINOR-7: a supervisor replacement plan for t0 that ONLY establishes
-    # t1's fact (a premature deliver) would be dropped down to []. Installing
-    # an empty plan is never acceptable -- keep the original (unfiltered)
-    # plan instead and log a warning.
+def test_replace_target_plan_installs_the_guarded_empty_plan(monkeypatch, capsys):
+    # M-1 (round-2 review): a supervisor replacement plan for t0 that ONLY
+    # establishes t1's fact (a premature deliver) is dropped down to [] by
+    # the contract-boundary guard -- exactly the premature-sibling-step
+    # duplication the guard exists to remove. Re-installing the ORIGINAL
+    # (unfiltered) plan here would re-create the double-delivery defect the
+    # guard closes; install the guarded (empty) plan instead -- its
+    # postcondition gate then fails cleanly (t0's own held(spam) is never
+    # established) and the normal replan path takes over. Still logs the
+    # same warning.
     p = GPSRPlanner(max_attempts=2)
     monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
     p._slot_context[0] = {
@@ -663,6 +668,6 @@ def test_replace_target_plan_keeps_original_plan_when_guard_empties_it(monkeypat
 
     p.replace_target_plan(0, 0, plan, reason="supervisor global replan")
 
-    assert [s["action"] for s in p.get_action_plan(0, 0)] == ["deliver"]
+    assert p.get_action_plan(0, 0) == []
     out = capsys.readouterr().out
     assert "contract-boundary guard emptied the plan" in out
