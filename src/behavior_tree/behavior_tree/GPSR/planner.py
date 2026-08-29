@@ -49,7 +49,7 @@ from .modifiable_nodes import (
     group_modifications_by_step,
     validate_plan_modifications,
 )
-from .planner_validators import validate_plan, validate_dag
+from .planner_validators import validate_plan, validate_dag, _uncovered_postcondition_reason
 from .validators import apply_fact_transitions, canonical_fact, parse_fact
 from .small_trees import (
     ACTION_FACTORIES,
@@ -1164,6 +1164,7 @@ class GPSRPlanner:
                 cleaned, desc or "", known_actions,
                 known_locations=known_loc_arg,
                 prior_plan=prior_plan,
+                postconditions=(target or {}).get("postconditions"),
             )
             if not ok:
                 # The contract-boundary guard may have just removed the step(s)
@@ -1331,6 +1332,13 @@ class GPSRPlanner:
         (e.g. a premature ``deliver``). The target/all-targets context is
         available here from this planner's own slot context — no caller
         change needed.
+
+        Also checks (log-only, see body) that the installed plan plus
+        ``completed_steps`` together cover the target's declared
+        postconditions -- the same coverage rule ``plan_target`` enforces via
+        ``validate_plan(..., postconditions=...)``, but not a hard rejection
+        here since this synchronous path has no retry loop to hand a
+        rejection reason back to.
         """
         desc = self._get_desc(slot, index) or f"target {index}"
         cleaned, _ = _clean_plan(plan)
@@ -1350,6 +1358,35 @@ class GPSRPlanner:
                   f"-- keeping the original (unfiltered) plan instead of installing []")
         else:
             cleaned = guarded
+        # Postcondition coverage: the supervisor's plan is the REMAINING
+        # steps after `completed_steps`, so a postcondition a completed step
+        # already established must not be demanded again from the remaining
+        # plan. This is a warning, not a rejection -- unlike plan_target,
+        # this synchronous one-shot path has no retry loop to feed a
+        # rejection reason back into, so blocking here would either strand
+        # the target with a stale subtree or force installing an even worse
+        # fallback. Surfacing it in the log keeps the assumption checkable.
+        target_postconditions = (target or {}).get("postconditions") if target else None
+        if target_postconditions:
+            completed_established: set = set()
+            for step in completed_steps or []:
+                if not isinstance(step, dict):
+                    continue
+                contract = ACTION_CONTRACTS.get(step.get("action"))
+                if contract is not None:
+                    completed_established.update(
+                        t.split("(", 1)[0] for t in contract.establishes
+                    )
+            remaining_postconditions = [
+                cond for cond in target_postconditions
+                if (parse_fact(cond)[0] is None
+                    or parse_fact(cond)[0].predicate not in completed_established)
+            ]
+            coverage_reason = _uncovered_postcondition_reason(cleaned, remaining_postconditions)
+            if coverage_reason is not None:
+                print(f"[replace:{slot}:{index}] WARNING: {coverage_reason} "
+                      "(supervisor replacement plan installed anyway -- no "
+                      "retry path in replace_target_plan)")
         subtree = self.build_target_subtree(
             slot, index, cleaned, completed_steps=completed_steps,
         )

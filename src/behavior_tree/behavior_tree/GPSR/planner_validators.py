@@ -39,7 +39,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from .action_contracts import self_navigating_destinations
+from .action_contracts import ACTION_CONTRACTS, self_established_facts, self_navigating_destinations
+from .validators import canonical_fact, parse_fact
 
 
 # Match anything that looks like an unresolved template token: <day>, <country>,
@@ -225,6 +226,59 @@ def _same_object(a: str, b: str) -> bool:
     return False
 
 
+def _uncovered_postcondition_reason(
+    plan: List[Dict[str, Any]], postconditions: Iterable[str],
+) -> Optional[str]:
+    """Rejection message when ``plan`` establishes none of ``postconditions``.
+
+    Predicate-level match only: a step's action counts as an establisher of a
+    postcondition's predicate if that predicate appears among
+    ``ACTION_CONTRACTS[action].establishes`` — the actual argument identity
+    (e.g. ``person_found(sarah)`` vs. a step scanning for someone else) is
+    left to the runtime gate, which has execution evidence this static check
+    does not.
+
+    ``at_robot`` is special-cased: any step that self-navigates to *some*
+    location (``goto``/``search_object``/``place``/``deliver`` — anything
+    with ``at_robot`` in ``self_establishes``, per ``self_established_facts``)
+    satisfies it, without needing an exact destination match here.
+
+    Returns ``None`` when every parsable postcondition is covered (or there
+    are none); otherwise the first uncovered postcondition's rejection
+    message, naming every registry establisher for its predicate.
+    """
+    established_predicates: set = set()
+    self_at_robot = False
+    for step in plan:
+        if not isinstance(step, dict):
+            continue
+        contract = ACTION_CONTRACTS.get(step.get("action"))
+        if contract is not None:
+            established_predicates.update(
+                t.split("(", 1)[0] for t in contract.establishes
+            )
+        if any(f.startswith("at_robot(") for f in self_established_facts(step)):
+            self_at_robot = True
+
+    for condition in postconditions or []:
+        fact, _error = parse_fact(condition)
+        if fact is None:
+            continue
+        if fact.predicate == "at_robot" and self_at_robot:
+            continue
+        if fact.predicate in established_predicates:
+            continue
+        establishers = [
+            name for name, c in ACTION_CONTRACTS.items()
+            if any(t.split("(", 1)[0] == fact.predicate for t in c.establishes)
+        ]
+        return (
+            f"plan establishes nothing for postcondition {canonical_fact(fact)}; "
+            "add one of: " + ", ".join(establishers)
+        )
+    return None
+
+
 def validate_plan(
     plan: List[Dict[str, Any]],
     command: str,
@@ -232,6 +286,7 @@ def validate_plan(
     category_words: Iterable[str] = DEFAULT_CATEGORY_WORDS,
     known_locations: Optional[Iterable[str]] = None,
     prior_plan: Optional[Iterable[Dict[str, Any]]] = None,
+    postconditions: Optional[Iterable[str]] = None,
 ) -> Tuple[bool, Optional[str]]:
     """Apply post-checks to a planner-returned plan.
 
@@ -242,6 +297,13 @@ def validate_plan(
     at a location an earlier ``goto`` already reached, or a ``goto`` to a label
     an earlier ``record_position`` fixed. Only the prior STEPS are seeded —
     the current ``plan`` is validated on its own.
+
+    ``postconditions`` (optional) is the target's own declared postcondition
+    list (``target["postconditions"]``). When given, every parsable
+    postcondition must be named by at least one step's contract
+    (``ACTION_CONTRACTS[action].establishes``) — see
+    ``_uncovered_postcondition_reason``. This is the LAST check applied, so
+    it never pre-empts an earlier, more specific rejection.
 
     Returns (True, None) if the plan passes, (False, reason) otherwise.
     Empty plans are accepted here — callers decide whether emptiness is a
@@ -498,5 +560,13 @@ def validate_plan(
                 f"goto(location={dest!r}) step was emitted. Append a goto "
                 "after the follow so the robot can reach the destination."
             )
+
+    # Rule: the plan must cover its target's declared postconditions. Run
+    # LAST so every earlier, more specific rejection keeps precedence over
+    # this coarser one.
+    if postconditions:
+        reason = _uncovered_postcondition_reason(plan, postconditions)
+        if reason is not None:
+            return False, reason
 
     return True, None
