@@ -35,6 +35,111 @@ def test_canonical_plan_ignores_param_order():
     assert planner_mod._canonical_plan(a) == planner_mod._canonical_plan(b)
 
 
+# ---------------------------------------------------------------------------
+# H1 (round-2 review, sim run 003, 2026-08-29): the identical-plan check must
+# include a canonical form of the plan's MODIFICATIONS, not just its plain
+# action/params steps -- a replan that keeps [goto, find_object] but attaches
+# a genuinely different strategy (e.g. a pan-tilt-sweep) is NOT identical,
+# even though `_canonical_plan`'s old plan-only form said it was.
+# ---------------------------------------------------------------------------
+
+def test_canonical_plan_same_steps_new_modification_is_not_identical():
+    plan = [{"action": "find_object", "params": {"object": "pudding_box"}}]
+    no_mods = planner_mod._canonical_plan(plan)
+    with_mod = planner_mod._canonical_plan(plan, [
+        {"template": "pan-tilt-sweep", "target_node_id": "n1",
+         "params": {"pan_deg": [-90, 90], "tilt_deg": [-20, 20]},
+         "reason": "widen the sweep"},
+    ])
+    assert no_mods != with_mod
+
+
+def test_canonical_plan_same_steps_same_modification_different_reason_is_identical():
+    plan = [{"action": "find_object", "params": {"object": "pudding_box"}}]
+    mod_a = [{"template": "pan-tilt-sweep", "target_node_id": "n1",
+              "params": {"pan_deg": [-90, 90], "tilt_deg": [-20, 20]},
+              "reason": "widen the sweep"}]
+    mod_b = [{"template": "pan-tilt-sweep", "target_node_id": "n1",
+              "params": {"pan_deg": [-90, 90], "tilt_deg": [-20, 20]},
+              "reason": "a completely different explanation"}]
+    assert (
+        planner_mod._canonical_plan(plan, mod_a)
+        == planner_mod._canonical_plan(plan, mod_b)
+    )
+
+
+def test_canonical_plan_modification_param_order_and_dict_key_order_ignored():
+    plan = [{"action": "find_object", "params": {"object": "pudding_box"}}]
+    mod_a = [{"template": "pan-tilt-sweep", "target_node_id": "n1",
+              "params": {"pan_deg": [-90, 90], "tilt_deg": [-20, 20]}}]
+    mod_b = [{"params": {"tilt_deg": [-20, 20], "pan_deg": [-90, 90]},
+              "target_node_id": "n1", "template": "pan-tilt-sweep"}]
+    assert planner_mod._canonical_plan(plan, mod_a) == planner_mod._canonical_plan(plan, mod_b)
+
+
+def test_plan_target_regenerated_plan_with_new_modification_is_not_identical(monkeypatch):
+    # Sim run 003: replan attempt 3 returned the SAME [goto, find_object]
+    # steps as the just-failed plan, but WITH a pan-tilt-sweep modification
+    # -- a legitimately different strategy. It must be accepted, not
+    # rejected as "identical to failed plan".
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    failed_plan = [{"action": "goto", "params": {"location": "bedroom"}},
+                   {"action": "find_object", "params": {"object": "pudding_box", "location": "bedroom"}}]
+    new_response = {
+        "plan": [{"action": "goto", "params": {"location": "bedroom"}},
+                 {"action": "find_object", "params": {"object": "pudding_box", "location": "bedroom"}}],
+        "modifications": [
+            {"action": "find_object", "template": "pan-tilt-sweep", "target_node_id": "n1",
+             "params": {"pan_deg": [-90, 90], "tilt_deg": [-20, 20]},
+             "reason": "widen the sweep after a narrow miss"},
+        ],
+    }
+    monkeypatch.setattr(planner_mod, "_call_llm", lambda *a, **k: (new_response, None))
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    # Seed the cache as if `failed_plan` (no modifications) had just failed.
+    p._store(0, 0, "d", failed_plan, py_trees.behaviours.Success("old"), None)
+    p._invalidate(0, 0)
+    p.plan_target(0, 0, "d", command="c", failure_reason="postcondition unmet: object_seen(pudding_box) (UNKNOWN)")
+    assert p.get_action_plan(0, 0) == new_response["plan"]
+    assert p.get_error(0, 0) is None  # accepted, not marked IDENTICAL
+
+
+def test_plan_target_regenerated_plan_with_same_modification_is_identical(monkeypatch):
+    # Same steps AND the same modification (only the free-text `reason`
+    # differs) must still be rejected as identical.
+    p = planner_mod.GPSRPlanner(max_attempts=3)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    steps = [{"action": "goto", "params": {"location": "bedroom"}},
+             {"action": "find_object", "params": {"object": "pudding_box", "location": "bedroom"}}]
+    mod = {"action": "find_object", "template": "pan-tilt-sweep", "target_node_id": "n1",
+           "params": {"pan_deg": [-90, 90], "tilt_deg": [-20, 20]}}
+    same_response = {"plan": steps, "modifications": [dict(mod, reason="widen the sweep")]}
+    different_response = {"plan": [{"action": "vlm_fallback", "params": {"question": "where is it"}}]}
+    responses = iter([same_response, same_response, different_response])
+
+    def fake_call(client, system, user, temperature):
+        return next(responses), None
+
+    monkeypatch.setattr(planner_mod, "_call_llm", fake_call)
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    # Seed the cache with the SAME steps + SAME modification (different
+    # reason text) as an already-failed plan.
+    p._store(0, 0, "d", steps, py_trees.behaviours.Success("old"), None,
+              modifications=planner_mod.group_modifications_by_step(
+                  steps, [dict(mod, reason="a prior, unrelated explanation")],
+              ))
+    p._invalidate(0, 0)
+    p.plan_target(0, 0, "d", command="c", failure_reason="postcondition unmet: object_seen(pudding_box) (UNKNOWN)")
+    assert p.get_action_plan(0, 0) == different_response["plan"]
+
+
 class _StubClient:  # never used; plan_target is driven via monkeypatched _call_llm
     pass
 

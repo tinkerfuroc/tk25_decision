@@ -422,18 +422,43 @@ for _name, _contract in ACTION_CONTRACTS.items():
         _ESTABLISHER_FOR_PREDICATE.setdefault(_pred, _name)
 
 
-def _canonical_plan(plan: List[Dict[str, Any]]) -> tuple:
+def _canonical_plan(
+    plan: List[Dict[str, Any]],
+    modifications: Optional[List[Dict[str, Any]]] = None,
+) -> tuple:
     """Order/param-order-insensitive-within-a-step identity for a plan.
 
     Used to detect a regenerated replan that is IDENTICAL to the plan that
     just failed, so `plan_target` can reject it and force the model to
     actually change something instead of burning the replan budget re-running
     the same doomed steps.
+
+    H1 (round-2 review, sim run 003, 2026-08-29): also folds in a canonical
+    form of ``modifications`` (a RAW directive list -- the flat form
+    ``parsed.get("modifications")`` carries, or `_flatten_modifications`'s
+    view of the grouped form `_store` caches) -- a regenerated plan that
+    repeats the same steps but attaches a genuinely different modification
+    (e.g. a wider pan-tilt-sweep) is a legitimately different strategy and
+    must NOT be rejected as identical. Each directive canonicalises to
+    ``(template, target_node_id, sorted params items)`` -- the free-text
+    ``reason`` is deliberately excluded (same reason, worded differently, is
+    still the same strategy). ``modifications=None`` (the default) keeps
+    every existing plan-only caller's identity unchanged.
     """
-    return tuple(
+    plan_part = tuple(
         (str(s.get("action")), tuple(sorted((str(k), str(v)) for k, v in (s.get("params") or {}).items())))
         for s in plan or []
     )
+    mods_part = tuple(sorted(
+        (
+            str(m.get("template")),
+            str(m.get("target_node_id")),
+            tuple(sorted((str(k), str(v)) for k, v in (m.get("params") or {}).items())),
+        )
+        for m in (modifications or [])
+        if isinstance(m, dict)
+    ))
+    return (plan_part, mods_part)
 
 
 def _alternatives_for_reason(failure_reason: str) -> str:
@@ -503,6 +528,28 @@ def _last_goto_location(failed_plans: List[List[Dict[str, Any]]]) -> Optional[st
 # `parse_fact` has already lower-cased/underscored away by the time a fact
 # reaches here; escaping to it would emit a garbled param (see L1 finding).
 _ESCAPE_ALLOWED_ARG_NAMES = {"object", "person", "location"}
+
+
+def _flatten_modifications(
+    grouped: Optional[Any],
+) -> List[Dict[str, Any]]:
+    """H1 (round-2 review): flatten `_store`'s per-step-grouped modifications
+    (``dict[step_index -> list[directive]]``, as ``group_modifications_by_step``
+    produces and the cache stores) back into one raw directive list, in
+    step-index order -- the canonicalisable form `_canonical_plan`'s
+    ``modifications`` argument expects. Also accepts an already-flat list
+    (passed through unchanged, dicts only) so a caller need not know which
+    shape a cache entry's ``"modifications"`` happens to hold. ``None``/empty
+    -> ``[]``.
+    """
+    if not grouped:
+        return []
+    if isinstance(grouped, dict):
+        flat: List[Dict[str, Any]] = []
+        for idx in sorted(grouped.keys()):
+            flat.extend(m for m in (grouped.get(idx) or []) if isinstance(m, dict))
+        return flat
+    return [m for m in grouped if isinstance(m, dict)]
 
 
 def _used_actions(failed_plans: List[List[Dict[str, Any]]]) -> set:
@@ -1488,7 +1535,16 @@ class GPSRPlanner:
     def _invalidate(self, slot, index) -> None:
         """Mark (slot, index) not-ready so an in-flight replan's OLD subtree is
         never re-swapped in while the fresh plan is still being produced, and
-        remember the plan that just failed so the replan can refuse to repeat it."""
+        remember the plan that just failed so the replan can refuse to repeat it.
+
+        H1 (round-2 review, sim run 003, 2026-08-29): ``failed_plans`` entries
+        are now ``(plan, modifications)`` pairs -- ``modifications`` a flat,
+        canonicalisable directive list derived (`_flatten_modifications`) from
+        the grouped form `_store` caches -- so the identical-plan check
+        (`plan_target`) can tell a regenerated plan with a genuinely new
+        modification apart from a truly identical repeat. Dedup now compares
+        the COMBINED ``(plan, modifications)`` canonical.
+        """
         with self._lock:
             entry = self._cache.get((slot, index))
             if entry:
@@ -1498,11 +1554,12 @@ class GPSRPlanner:
                 entry["error"] = None
                 failed_plan = list(entry.get("plan") or [])
                 entry["failed_plan"] = failed_plan
+                failed_mods = _flatten_modifications(entry.get("modifications"))
                 failed_plans = entry.setdefault("failed_plans", [])
-                if failed_plan and _canonical_plan(failed_plan) not in {
-                    _canonical_plan(p) for p in failed_plans
+                if failed_plan and _canonical_plan(failed_plan, failed_mods) not in {
+                    _canonical_plan(p, m) for p, m in failed_plans
                 }:
-                    failed_plans.append(failed_plan)
+                    failed_plans.append((failed_plan, failed_mods))
 
     def _failed_plan(self, slot, index) -> Optional[List[Dict[str, Any]]]:
         with self._lock:
@@ -1510,9 +1567,28 @@ class GPSRPlanner:
             return list(entry["failed_plan"]) if entry and entry.get("failed_plan") else None
 
     def _failed_plans(self, slot, index) -> List[List[Dict[str, Any]]]:
+        """The plan part only of each failed-plans entry -- what the escape
+        path (`_escape_plan`, `_escape_no_untried_establisher_reason`) and
+        `_used_actions` need (H1, round-2 review: they keep working on
+        actions/steps only, never modifications). See
+        `_failed_plans_with_mods` for the pair form the identical-plan check
+        (`plan_target`) needs instead."""
         with self._lock:
             entry = self._cache.get((slot, index))
-            return [list(p) for p in (entry.get("failed_plans") or [])] if entry else []
+            return [list(p) for p, _m in (entry.get("failed_plans") or [])] if entry else []
+
+    def _failed_plans_with_mods(
+        self, slot, index,
+    ) -> List[Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
+        """H1 (round-2 review): like `_failed_plans` but pairs each failed
+        plan with its canonicalisable (flat, ungrouped) modifications --
+        used ONLY by `plan_target`'s identical-plan check."""
+        with self._lock:
+            entry = self._cache.get((slot, index))
+            return (
+                [(list(p), list(m)) for p, m in (entry.get("failed_plans") or [])]
+                if entry else []
+            )
 
     def _tried_escapes(self, slot, index) -> set:
         """M2 (round-2 review): action names of escape candidates THIS
@@ -1914,8 +1990,15 @@ class GPSRPlanner:
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"REJECTED: {last_reason}")
                 continue
-            failed_canonicals = {_canonical_plan(p) for p in self._failed_plans(slot, index)}
-            identical = _canonical_plan(cleaned) in failed_canonicals
+            # H1 (round-2 review, sim run 003, 2026-08-29): the identical
+            # check includes each failed entry's modifications too -- a
+            # regenerated plan repeating the same steps but attaching a
+            # genuinely new modification (e.g. a wider pan-tilt-sweep) is a
+            # legitimately different strategy, not a doomed repeat.
+            failed_canonicals = {
+                _canonical_plan(p, m) for p, m in self._failed_plans_with_mods(slot, index)
+            }
+            identical = _canonical_plan(cleaned, mods) in failed_canonicals
             if identical and attempt < self._max_attempts - 1:
                 last_reason = (
                     "the regenerated plan was IDENTICAL to the plan that just failed "
