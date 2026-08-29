@@ -280,6 +280,16 @@ class MissionSupervisor:
             self._exhausted_issues.add(issue_id)
             return False
 
+    def emit(self, event: str, payload: Mapping[str, Any]) -> None:
+        """Public passthrough onto :meth:`_emit`.
+
+        Lets callers outside this module (``SupervisedSubtaskSlot`` in
+        ``runtime.py``, e.g. its budget-exhausted telemetry) reuse the exact
+        same sink/format as the supervisor's own checkpoint/recovery events,
+        instead of poking the private ``_emit``.
+        """
+        self._emit(event, payload)
+
     def record(self, checkpoint_id: str) -> CheckpointRecord | None:
         with self._lock:
             return self._records.get(checkpoint_id)

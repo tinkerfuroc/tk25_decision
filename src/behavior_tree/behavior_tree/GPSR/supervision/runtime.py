@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from typing import Any, Callable, Mapping
 
 import py_trees
@@ -32,6 +33,7 @@ from .models import (
 )
 from .recovery import (
     RecoveryMacroCompiler,
+    recovery_budget_seconds,
     validate_global_decision,
 )
 
@@ -276,12 +278,25 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         self._active_recovery: RecoveryProposal | None = None
         self._hard_stop_reason: str | None = None
         self._release_after_global = False
+        self._deadline: float | None = None
+        self._activation_started_at: float | None = None
+        self._recovery_budget_s: float | None = None
         child = self._materialize_subtask()
         super().__init__(name=f"adaptive:{action_name}", child=child)
         self._adaptive_slot = True
 
     def setup(self, **kwargs) -> None:
         self._setup_kwargs = dict(kwargs)
+
+    def initialise(self) -> None:
+        # F1.2: one wall-clock deadline per fresh activation of this slot,
+        # covering the first attempt PLUS every local_recovery rebuild cycle
+        # that follows -- rebuilds (_apply_intervention) never call
+        # initialise() again (the slot's own status stays RUNNING across
+        # them), so the deadline is not reset by a rebuild.
+        self._deadline = None
+        self._activation_started_at = None
+        self._recovery_budget_s = None
 
     def current_subtask_id(self) -> str:
         task_id = str(_bb_get("gpsr/task_id", "task"))
@@ -363,11 +378,29 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         self.logger.debug("%s.tick()" % self.__class__.__name__)
         if self.status != Status.RUNNING:
             self.initialise()
+        if self._deadline is None:
+            # First activation of this slot's effect (see initialise()): mirrors
+            # the `deadline = time.monotonic() + timeout_s` pattern already used
+            # for the verifier RPC (controller.py wait_for_idle).
+            self._recovery_budget_s = recovery_budget_seconds(self.action_name)
+            self._activation_started_at = time.monotonic()
+            self._deadline = self._activation_started_at + self._recovery_budget_s
         self.supervisor.poll()
         current_subtask = self.current_subtask_id()
         intervention = self.supervisor.consume_intervention(subtask_id=current_subtask)
         if intervention is not None:
             self._apply_intervention(intervention)
+
+        if (
+            self._hard_stop_reason is None
+            and not self._release_after_global
+            and time.monotonic() >= self._deadline
+        ):
+            # F1.2: structural ceiling regardless of the ledger's own
+            # distinct-failure accounting -- stop honouring further
+            # local_recovery for this slot and force the same hard-stop
+            # escalation path used elsewhere in this method.
+            self._force_budget_exhausted()
 
         if self._hard_stop_reason is not None:
             self.status = Status.RUNNING
@@ -414,6 +447,28 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
 
     def update(self) -> Status:  # pragma: no cover - custom tick owns status
         return self.status
+
+    def _force_budget_exhausted(self) -> None:
+        """F1.2: the recovery-budget ceiling tripped -- stop honouring further
+        local_recovery for this slot and force the same hard-stop escalation
+        path an unrecognised/`stop` intervention uses (see the tail of
+        ``_apply_intervention``)."""
+        if self._active_recovery is not None:
+            self.supervisor.recovery_finished(self._active_recovery, succeeded=False)
+            self._active_recovery = None
+        elapsed = time.monotonic() - (self._activation_started_at or 0.0)
+        reason = f"recovery budget exhausted after {elapsed:.0f}s"
+        current_subtask = self.current_subtask_id()
+        self.supervisor.emit(
+            "supervision.budget_exhausted",
+            {
+                "slot": current_subtask,
+                "action": self.action_name,
+                "elapsed_s": elapsed,
+            },
+        )
+        _set_supervisor_outcome("stopped", reason, subtask_id=current_subtask)
+        self._hard_stop_reason = reason
 
     def _apply_intervention(self, intervention: SupervisorIntervention) -> None:
         if self._active_recovery is not None:

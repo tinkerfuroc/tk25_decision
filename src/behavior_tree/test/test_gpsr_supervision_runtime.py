@@ -681,6 +681,133 @@ def test_local_recovery_exhausts_after_three_identical_failures_and_escalates():
         supervisor.close()
 
 
+def test_recovery_budget_ceiling_forces_escalation_after_wall_clock_exhaustion(
+    monkeypatch,
+):
+    """F1.2: the wall-clock budget is a ceiling independent of the ledger --
+    once the deadline for this slot's activation has passed, a pending
+    local_recovery is no longer honoured and the slot force-escalates with
+    ``recovery budget exhausted after ...s``, emitting one
+    ``supervision.budget_exhausted`` event."""
+    import behavior_tree.GPSR.supervision.runtime as runtime_module
+
+    _seed_blackboard()
+    monkeypatch.setenv("GPSR_RECOVERY_BUDGET_S", "10")
+    real_monotonic = time.monotonic
+    offset = [0.0]
+    monkeypatch.setattr(runtime_module.time, "monotonic", lambda: real_monotonic() + offset[0])
+
+    first_checkpoint = "task/plan-r1/step-0000:demo/tree-r1/demo/root/activation-0001"
+    second_checkpoint = "task/plan-r1/step-0000:demo/tree-r2/demo/root/activation-0001"
+    verification = {
+        **_decision(first_checkpoint, verdict="recoverable"),
+        "subtask_status": "not_achieved",
+        "escalation": "local_recovery",
+        "failure_category": "target_not_visible",
+    }
+
+    def _slow_second_verification():
+        # Only runtime_module.time.monotonic is patched below, not this
+        # file's own time.sleep -- a real sleep, keeping this 2nd verify()
+        # pending long enough for the deadline check to fire first. The
+        # tree-r2 rebuild's own checkpoint still gets submitted
+        # (SupervisedEffect doesn't know about the slot's budget), so a
+        # scripted response must exist for it, but it must never resolve
+        # into an applied local_recovery.
+        time.sleep(0.05)
+        return {
+            **_decision(second_checkpoint, verdict="recoverable"),
+            "subtask_status": "not_achieved",
+            "escalation": "local_recovery",
+            "failure_category": "target_not_visible",
+        }
+
+    client = ScriptedSupervisorClient(
+        verifications=[verification, _slow_second_verification],
+        recoveries=[
+            {
+                "checkpoint_id": first_checkpoint,
+                "issue_id": "filled-by-test",
+                "strategy_id": "look-left",
+                "kind": "scan_views",
+                "arguments": {"angles": [[-30, 10]], "perception_action": "find_object"},
+                "rationale": "try a new view",
+                "expected_evidence": ["target visible"],
+                "stop_conditions": ["target absent"],
+            }
+        ],
+    )
+    original = client.plan_local_recovery
+
+    def local(snapshot, verification_decision, issue_id):
+        client._recoveries[0]["issue_id"] = issue_id
+        return original(snapshot, verification_decision, issue_id)
+
+    client.plan_local_recovery = local
+    events: list[tuple[str, dict]] = []
+
+    class _Recorder:
+        def emit(self, event, payload, **kwargs):
+            events.append((event, dict(payload)))
+
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+        telemetry=_Recorder(),
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect",
+                "perception",
+                EffectRisk.OBSERVATION,
+                "target was observed",
+            )
+        ]
+    )
+    compiler = RecoveryMacroCompiler(
+        {
+            RecoveryKind.SCAN_VIEWS: lambda proposal: py_trees.behaviours.Success(
+                name=f"macro:{proposal.strategy_id}"
+            )
+        }
+    )
+    slot = SupervisedSubtaskSlot(
+        action_name="demo",
+        factory=lambda: FakeEffect("scan", py_trees.common.Status.FAILURE, []),
+        supervisor=supervisor,
+        registry=registry,
+        recovery_compiler=compiler,
+    )
+    try:
+        jumped = False
+        for _ in range(500):
+            slot.tick_once()
+            if not jumped and slot.tree_revision == 2:
+                # The first local_recovery rebuild has happened; jump the
+                # clock far past the 10s budget before it can resolve again.
+                offset[0] = 10_000.0
+                jumped = True
+            if slot._hard_stop_reason is not None:
+                break
+            time.sleep(0.005)
+        assert jumped
+        assert slot._hard_stop_reason is not None
+        assert slot._hard_stop_reason.startswith("recovery budget exhausted after")
+        assert slot.tree_revision == 2  # never reached a 3rd rebuild
+        outcome = py_trees.blackboard.Blackboard.get("gpsr/task_outcome")
+        assert outcome["status"] == "stopped"
+        assert outcome["reason"] == slot._hard_stop_reason
+        budget_events = [e for e in events if e[0] == "supervision.budget_exhausted"]
+        assert len(budget_events) == 1
+        payload = budget_events[0][1]
+        assert payload["action"] == "demo"
+        assert payload["elapsed_s"] >= 10.0
+    finally:
+        supervisor.close()
+
+
 def test_destructive_failure_aborts_and_records_operator_message():
     _seed_blackboard()
     py_trees.blackboard.Blackboard.set("gpsr/plan", [{"action": "grasp", "params": {}}])
