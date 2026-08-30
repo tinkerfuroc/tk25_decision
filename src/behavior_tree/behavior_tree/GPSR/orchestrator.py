@@ -2484,6 +2484,9 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._bb.register_key(bb_keys.CURRENT_ACTION, access=Access.READ)
         self._bb.register_key(bb_keys.CURRENT_PARAMS, access=Access.READ)
         self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.READ)
+        # N-1 (round-3 fix2 review): _swap_in resets PLAN_INDEX to 0 on a
+        # target advance (below) -- write access is needed for that.
+        self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
         for _, key in _TARGET_GATE_EVIDENCE_KEYS:
             self._bb.register_key(key, access=Access.WRITE)
         self._bb.register_key(bb_keys.SAVED_TARGETS_PREFIX + str(self._slot),
@@ -2529,6 +2532,13 @@ class DynamicExecutor(py_trees.composites.Composite):
                     self._bb.set(key, None, overwrite=True)
             self._bb.set(bb_keys.DEFERRED_PRECONDITIONS, [], overwrite=True)
             self._bb.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
+            # N-1 (round-3 fix2 review): PLAN_INDEX is otherwise never reset
+            # on a target advance (only BtNode_MaterialiseStep and
+            # _reset_task_state touch it) -- a stale value left over from
+            # the PREVIOUS target's last successful step must never be read
+            # by _on_target_failure's state-log derivation for a NEW
+            # target's gate failure.
+            self._bb.set(bb_keys.PLAN_INDEX, 0, overwrite=True)
             self._swap_count = 0
         else:
             # I1: a same-target replan/continuation retains perception/count
@@ -2778,7 +2788,28 @@ class DynamicExecutor(py_trees.composites.Composite):
             gate_completed = list(self._bb.get(bb_keys.GATE_COMPLETED_STEPS) or [])
         except KeyError:
             gate_completed = []
-        if not gate_completed:
+        reason_text = str(reason or "")
+        # N-1 (round-3 fix2 review): the state-log derivation below is only
+        # valid when this failure is a genuine STEP failure -- a plan
+        # Sequence child failing mid-execution, which necessarily ran the
+        # candidate prefix to SUCCESS this attempt. A precondition/
+        # postcondition GATE failure (``reason`` starts with one of
+        # ``_GATE_REASON_PREFIXES``) never ran this target's plan at all
+        # (precondition gate) or already reasoned over completed+plan and
+        # committed everything verifiable (postcondition gate, whose own
+        # commit already lives in GATE_COMPLETED_STEPS) -- deriving from
+        # PLAN_INDEX/STATE_LOG there either reads a STALE PLAN_INDEX left
+        # over from an earlier target/attempt, or marks the whole plan
+        # "completed" although its postconditions were never verified. An
+        # IDENTICAL_PLAN/UNRECOVERABLE marker skip is, by definition, a plan
+        # that was never run THIS attempt (it is being skipped, not
+        # executed) -- its STATE_LOG lines belong to a PRIOR attempt.
+        skip_markers = (IDENTICAL_PLAN_ERROR_PREFIX, UNRECOVERABLE_ERROR_PREFIX)
+        if (
+            not gate_completed
+            and not reason_text.startswith(self._GATE_REASON_PREFIXES)
+            and not reason_text.startswith(skip_markers)
+        ):
             # M-2: no postcondition gate ran (or it committed nothing) for
             # this failure -- fall back to deriving the completed prefix
             # from PLAN_INDEX + STATE_LOG so a plain step failure later in

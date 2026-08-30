@@ -16,6 +16,10 @@ from behavior_tree.GPSR.orchestrator import (
 )
 from behavior_tree.GPSR.validators import register_tier2_hook
 from behavior_tree.GPSR.small_trees import bb_keys
+from behavior_tree.GPSR.action_contracts import (
+    IDENTICAL_PLAN_ERROR_PREFIX,
+    UNRECOVERABLE_ERROR_PREFIX,
+)
 
 
 def _setup(node):
@@ -918,6 +922,232 @@ def test_on_target_failure_derives_completed_steps_from_state_log_when_gate_neve
     executor._on_target_failure("place small tree failed")
 
     assert planner.replan_calls == [[{"action": "grasp", "params": {"object": "spam"}}]]
+
+
+def test_on_target_failure_real_step_failure_at_index_two_derives_two_steps():
+    # N-1 (round-3 fix2 review): regression -- a genuine step failure later
+    # in a longer plan must still derive the full completed prefix (the
+    # guard added for N-1 must not narrow the M-2 case it was built for).
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+        {"action": "place", "params": {"location": "table"}},
+    ]
+    planner = _StepFailurePlanner(plan)
+    executor, _tree = _executor(planner)
+    writer = py_trees.blackboard.Client(name="n1-real-step-failure")
+    writer.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
+    writer.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
+    writer.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
+    writer.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+    writer.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+    # The failing step is index 2 (place) -> PLAN_INDEX=3; goto and grasp
+    # (indices 0, 1) already succeeded.
+    writer.set(bb_keys.PLAN_INDEX, 3, overwrite=True)
+    writer.set(
+        bb_keys.STATE_LOG,
+        [
+            "goto({'location': 'kitchen'}) SUCCEEDED",
+            "grasp({'object': 'spam'}) SUCCEEDED",
+            "place({'location': 'table'}) FAILED",
+        ],
+        overwrite=True,
+    )
+    writer.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
+
+    executor._on_target_failure("place small tree failed")
+
+    assert planner.replan_calls == [[
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+    ]]
+
+
+# ---------------------------------------------------------------------------
+# N-1 (round-3 fix2 review): the M-2 derivation above must fire ONLY for a
+# genuine step failure -- a postcondition gate that committed nothing, a
+# precondition gate failure (whose stale PLAN_INDEX may belong to an
+# EARLIER target/attempt), and an IDENTICAL_PLAN/UNRECOVERABLE marker skip
+# (whose plan never ran this attempt at all) must all hand the replan `[]`
+# rather than mis-marking every executed/logged step "completed".
+# ---------------------------------------------------------------------------
+
+def test_on_target_failure_zero_commit_postcondition_gate_failure_derives_nothing():
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "find_person", "params": {"name": "sarah"}},
+    ]
+    planner = _StepFailurePlanner(plan)
+    executor, _tree = _executor(planner)
+    writer = py_trees.blackboard.Client(name="n1-zero-commit-post-gate")
+    writer.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
+    writer.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
+    writer.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
+    writer.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+    writer.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+    # The postcondition gate ran after every step SUCCEEDED (PLAN_INDEX ==
+    # len(plan)) but committed nothing -- every step of the plan has a
+    # SUCCEEDED state-log line, so a naive derivation would (wrongly) mark
+    # the WHOLE plan "completed" even though its effects were never
+    # verified (that is exactly why the gate failed).
+    writer.set(bb_keys.PLAN_INDEX, 2, overwrite=True)
+    writer.set(
+        bb_keys.STATE_LOG,
+        [
+            "goto({'location': 'kitchen'}) SUCCEEDED",
+            "find_person({'name': 'sarah'}) SUCCEEDED",
+        ],
+        overwrite=True,
+    )
+    writer.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
+
+    executor._on_target_failure("postcondition unmet: person_found(sarah) (INVALID)")
+
+    assert planner.replan_calls == [[]]
+
+
+def test_on_target_failure_precondition_gate_failure_with_stale_plan_index_derives_nothing():
+    plan = [
+        {"action": "goto", "params": {"location": "office"}},
+        {"action": "grasp", "params": {"object": "mug"}},
+    ]
+    planner = _StepFailurePlanner(plan)
+    executor, _tree = _executor(planner)
+    writer = py_trees.blackboard.Client(name="n1-precondition-gate-stale-index")
+    writer.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
+    writer.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
+    writer.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
+    writer.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+    writer.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+    # PLAN_INDEX=3 is STALE -- left over from an EARLIER target/attempt's
+    # last successful step, never reset before this target's precondition
+    # gate ran (and failed before any step of THIS target executed).
+    # STATE_LOG still carries that earlier target's SUCCEEDED line, which
+    # happens to text-match this target's own first step.
+    writer.set(bb_keys.PLAN_INDEX, 3, overwrite=True)
+    writer.set(
+        bb_keys.STATE_LOG,
+        [
+            "goto({'location': 'office'}) SUCCEEDED",
+            "grasp({'object': 'mug'}) SUCCEEDED",
+            "deliver({'recipient': 'operator'}) SUCCEEDED",
+        ],
+        overwrite=True,
+    )
+    writer.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
+
+    executor._on_target_failure("precondition unmet: object_seen(mug) (UNKNOWN)")
+
+    assert planner.replan_calls == [[]]
+
+
+def test_on_target_failure_identical_plan_marker_skip_derives_nothing():
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+    ]
+    planner = _StepFailurePlanner(plan)
+    executor, _tree = _executor(planner)
+    writer = py_trees.blackboard.Client(name="n1-identical-plan-skip")
+    writer.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
+    writer.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
+    writer.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
+    writer.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+    # The marked plan is BY DEFINITION identical to the plan that just
+    # failed, whose SUCCEEDED lines are in STATE_LOG -- but it was never
+    # run THIS attempt (it is being skipped, not executed).
+    writer.set(bb_keys.PLAN_INDEX, 2, overwrite=True)
+    writer.set(
+        bb_keys.STATE_LOG,
+        [
+            "goto({'location': 'kitchen'}) SUCCEEDED",
+            "grasp({'object': 'spam'}) SUCCEEDED",
+        ],
+        overwrite=True,
+    )
+    writer.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
+    writer.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+
+    executor._on_target_failure(
+        f"{IDENTICAL_PLAN_ERROR_PREFIX}: the regenerated plan was IDENTICAL"
+    )
+
+    assert planner.replan_calls == [[]]
+
+
+def test_on_target_failure_unrecoverable_marker_skip_derives_nothing():
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "grasp", "params": {"object": "spam"}},
+    ]
+    planner = _StepFailurePlanner(plan)
+    executor, _tree = _executor(planner)
+    writer = py_trees.blackboard.Client(name="n1-unrecoverable-skip")
+    writer.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
+    writer.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
+    writer.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
+    writer.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+    writer.set(bb_keys.PLAN_INDEX, 2, overwrite=True)
+    writer.set(
+        bb_keys.STATE_LOG,
+        [
+            "goto({'location': 'kitchen'}) SUCCEEDED",
+            "grasp({'object': 'spam'}) SUCCEEDED",
+        ],
+        overwrite=True,
+    )
+    writer.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
+    # Directly exercise _on_target_failure's own guard (below the budget
+    # check tick() applies before reaching this call for a real
+    # UNRECOVERABLE tick) -- replans stays under budget so the reason-prefix
+    # guard, not the SKIP branch, is what is under test here.
+    writer.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+
+    executor._on_target_failure(
+        f"{UNRECOVERABLE_ERROR_PREFIX}: no untried establisher exists"
+    )
+
+    assert planner.replan_calls == [[]]
+
+
+# ---------------------------------------------------------------------------
+# N-1 (round-3 fix2 review): PLAN_INDEX must never survive a target advance
+# -- otherwise a NEW target's precondition/postcondition gate failure (or
+# any future caller of the derivation path) could read a stale value left
+# by the PREVIOUS target's last successful step.
+# ---------------------------------------------------------------------------
+
+def test_swap_in_resets_plan_index_on_target_advance():
+    bb = _bb("plan-index-target-advance")
+    bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.WRITE)
+    bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.WRITE)
+    bb.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+    bb.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
+    bb.set(bb_keys.PLAN_INDEX, 3, overwrite=True)
+    executor, _tree = _executor(_PlannerWithoutFacts())
+    executor.status = Status.RUNNING
+    executor._state = "REQUESTING"
+    executor._index = 1
+    # _active_target_index starts as None (fresh executor) -> 1 != None is a
+    # target advance.
+    executor._swap_in(1)
+    assert bb.get(bb_keys.PLAN_INDEX) == 0
+
+
+def test_swap_in_preserves_plan_index_on_same_target_swap():
+    bb = _bb("plan-index-same-target")
+    bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.WRITE)
+    bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.WRITE)
+    bb.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+    bb.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
+    bb.set(bb_keys.PLAN_INDEX, 2, overwrite=True)
+    executor, _tree = _executor(_PlannerWithoutFacts())
+    executor.status = Status.RUNNING
+    executor._state = "REQUESTING"
+    executor._index = 0
+    executor._active_target_index = 0
+    executor._swap_in(0)
+    assert bb.get(bb_keys.PLAN_INDEX) == 2
 
 
 # ---------------------------------------------------------------------------
