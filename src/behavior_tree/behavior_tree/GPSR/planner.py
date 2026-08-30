@@ -347,13 +347,20 @@ def _normalise_targets(raw: List[Any]) -> List[Dict[str, Any]]:
 
     # Per the split prompt contract, a target precondition is only meaningful
     # as cross-target sequencing: it must be established by an EARLIER
-    # target's postconditions (written to the ledger when that target
-    # completes). A precondition no earlier target establishes can never be
-    # satisfied by the runtime gate (which runs before the target's own
-    # steps), so it must be dropped here. Unparseable conditions are left
+    # target's postconditions AND still be alive at this point in the
+    # command's fact timeline. J1 (round-3 adversarial review, H4): the
+    # ledger is not a monotonic union -- ``validators.apply_fact_transitions``
+    # applies the SAME retraction rules the runtime gate uses (placing/
+    # delivering an object retracts ``held(object)``; re-holding it retracts
+    # a stale ``placed``/``delivered``), so a precondition an ancestor
+    # target established but a LATER ancestor then retracted is not an
+    # acceptable precondition either -- the plan must re-establish it, not
+    # rely on a fact that is no longer true. Unparseable conditions are left
     # alone -- ``_validate_target_contract`` rejects those with a retry.
-    established: set[str] = set()
-    for i, target in enumerate(normalized):
+    ledger: list[str] = []
+    retracted_by: dict[str, tuple[str, str]] = {}
+    for target in normalized:
+        alive = set(ledger)
         preconditions = target.get("preconditions")
         if isinstance(preconditions, list):
             kept: list[Any] = []
@@ -365,18 +372,59 @@ def _normalise_targets(raw: List[Any]) -> List[Dict[str, Any]]:
                 if fact is None:
                     kept.append(condition)
                     continue
-                if canonical_fact(fact) in established:
+                canonical = canonical_fact(fact)
+                if canonical in alive:
                     kept.append(condition)
+                elif canonical in retracted_by:
+                    retractor_id, retract_fact = retracted_by[canonical]
+                    print(
+                        f"[split] target {target['id']} precondition {canonical} "
+                        f"retracted by {retractor_id} {retract_fact} — dropped "
+                        "(plan must re-establish)"
+                    )
+                    dropped.append(condition)
                 else:
                     dropped.append(condition)
             if dropped:
-                print(f"[split] target {i}: dropped unestablishable precondition(s): {dropped}")
+                print(f"[split] target {target['id']}: dropped unestablishable precondition(s): {dropped}")
             target["preconditions"] = kept
 
-        if isinstance(target.get("postconditions"), list):
-            established |= _canonical_postconditions(target)
+        postconditions = target.get("postconditions")
+        if isinstance(postconditions, list):
+            post_texts = [str(item) for item in postconditions if isinstance(item, str)]
+            new_ledger = apply_fact_transitions(ledger, post_texts)
+            removed = [item for item in ledger if item not in new_ledger]
+            for removed_fact in removed:
+                retract_text = _retracting_addition(removed_fact, post_texts) or "?"
+                retracted_by[removed_fact] = (target["id"], retract_text)
+            ledger = new_ledger
 
     return normalized
+
+
+def _retracting_addition(removed_fact: str, additions: List[str]) -> Optional[str]:
+    """Find which of ``additions`` caused ``removed_fact`` to be retracted.
+
+    Mirrors ``validators.apply_fact_transitions``'s own retraction rules
+    (place/deliver retract held(object); re-holding retracts a stale
+    placed/delivered(object,..); a new at_robot(..) retracts the old one) —
+    used only to make the ``_normalise_targets`` drop log legible.
+    """
+    removed, _ = parse_fact(removed_fact)
+    if removed is None:
+        return None
+    for text in additions:
+        fact, _error = parse_fact(text)
+        if fact is None:
+            continue
+        canonical = canonical_fact(fact)
+        if removed.predicate == "held" and fact.predicate in {"placed", "delivered"} and fact.args[0] == removed.args[0]:
+            return canonical
+        if removed.predicate in {"placed", "delivered"} and fact.predicate == "held" and fact.args[0] == removed.args[0]:
+            return canonical
+        if removed.predicate == "at_robot" and fact.predicate == "at_robot":
+            return canonical
+    return None
 
 
 def _validate_target_contract(targets: List[Dict[str, Any]]) -> Tuple[bool, Optional[str]]:

@@ -86,7 +86,7 @@ This registry is deliberately **not** merged into `supervision/contracts.py`. Th
 `BtNode_TargetPreconditionCheck` gains an `action_plan` argument (the target's cleaned plan; the builder at `planner.py` already has it when it constructs the gate).
 
 At `update()`:
-1. Partition preconditions into `deferred` and `checked`: a precondition is deferred when its predicate is in `contract_for(step.action).self_establishes` for some step in `action_plan`.
+1. Partition preconditions into `deferred` and `checked`: a precondition is deferred when either (a) its canonical fact is in `self_established_facts(step)` (the `self_establishes` case, e.g. `at_robot(kitchen_table)` when `step.action == "place"` and `step.params["location"] == "kitchen_table"`) for some step in `action_plan`, or (b) its PREDICATE is in `contract_for(step.action).establishes` for some step in `action_plan` (J1, round-3 adversarial review: a `grasp` step defers any `held(...)` precondition, `find_object` defers `object_seen(...)`, regardless of the step's own params — the object identity is verified later, at the postcondition gate, from the step that actually ran). `self_establishes` stays the mechanism for `at_robot`, matched exactly; every other predicate is matched at predicate level via `establishes`.
 2. Check only `checked` at entry, as today.
 3. Write `deferred` to a new BB key `bb_keys.DEFERRED_PRECONDITIONS` (`"gpsr/deferred_preconditions"`, list[str], target-scoped) and log `precondition deferred: at_robot(kitchen_table) (satisfied by place)`.
 

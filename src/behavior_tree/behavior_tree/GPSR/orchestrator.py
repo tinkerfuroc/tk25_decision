@@ -67,6 +67,7 @@ from .small_trees import (
     create_goto,
 )
 from .action_contracts import (
+    ACTION_CONTRACTS,
     IDENTICAL_PLAN_ERROR_PREFIX,
     UNRECOVERABLE_ERROR_PREFIX,
     contract_for as _contract_for,
@@ -1625,6 +1626,31 @@ def _emit_gate_verified(
         pass
 
 
+def _plan_established_predicates(action_plan: Sequence[Mapping[str, Any]]) -> set:
+    """Predicates ANY step of ``action_plan`` establishes, per its contract.
+
+    J1(b) (round-3 adversarial review, H4): deferral is not limited to the
+    at_robot/self_establishes case -- a precondition whose PREDICATE some
+    step of the target's own plan establishes (a `grasp` step establishes
+    `held`, `find_object` establishes `object_seen`, ...) is deferred too,
+    verified at the postcondition gate once that step has actually run.
+    Predicate-level (not exact-fact) on purpose: the plan may not resolve
+    the establishing step's params until it runs (e.g. an implicit `object`
+    on `place`/`deliver` -- see J10), so matching on the predicate alone is
+    what makes the deferral fire for the cases it exists for.
+    """
+    predicates: set = set()
+    for step in action_plan or []:
+        if not isinstance(step, Mapping):
+            continue
+        contract = ACTION_CONTRACTS.get(str(step.get("action")))
+        if contract is None:
+            continue
+        for template in contract.establishes:
+            predicates.add(template.split("(", 1)[0])
+    return predicates
+
+
 class BtNode_TargetPreconditionCheck(Behaviour):
     """Verify a target's preconditions at its execution boundary.
 
@@ -1633,7 +1659,11 @@ class BtNode_TargetPreconditionCheck(Behaviour):
     kitchen_table)``) is DEFERRED: not checked here, written to
     ``DEFERRED_PRECONDITIONS`` and verified by the postcondition gate once the
     establishing step has run. Checking it at entry would fail every
-    self-navigating action before it could navigate.
+    self-navigating action before it could navigate. The same deferral
+    applies, at PREDICATE level, to any precondition some step of the
+    target's own plan establishes per its action contract (a `grasp` step
+    defers `held`, `find_object` defers `object_seen`) -- see
+    ``_plan_established_predicates``.
     """
 
     def __init__(self, name: str, preconditions: List[str], target_index: int,
@@ -1645,6 +1675,7 @@ class BtNode_TargetPreconditionCheck(Behaviour):
         self._self_established = {
             fact for step in (action_plan or []) for fact in _self_established_facts(step)
         }
+        self._plan_established_predicates = _plan_established_predicates(action_plan)
         self._bb = None
 
     def setup(self, **kwargs):
@@ -1661,7 +1692,10 @@ class BtNode_TargetPreconditionCheck(Behaviour):
         for source in self._preconditions:
             fact, _err = parse_fact(source)
             canonical = canonical_fact(fact) if fact is not None else None
-            if canonical is not None and canonical in self._self_established:
+            if canonical is not None and (
+                canonical in self._self_established
+                or fact.predicate in self._plan_established_predicates
+            ):
                 deferred.append(canonical)
             else:
                 checked.append(source)
