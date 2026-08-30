@@ -704,7 +704,7 @@ def _reject_person_object_handling(
 
 
 def _self_navigates_toward(target: Dict[str, Any], y: str) -> bool:
-    """J11: does ``target``'s own postcondition establisher self-navigate to ``y``?
+    r"""J11: does ``target``'s own postcondition establisher self-navigate to ``y``?
 
     A ``placed(_,Y)`` postcondition is established by ``place``, self-
     navigating to its own ``location`` param -- true when that Y matches. A
@@ -712,8 +712,14 @@ def _self_navigates_toward(target: Dict[str, Any], y: str) -> bool:
     navigating to ``recipient_location`` -- since the split has no lower-
     layer params yet, matched against the recipient arg itself (a location-
     shaped recipient, e.g. "bring the spam to the laundry_room"), the
-    target's own top-layer-assigned ``location``, or the location's name
-    appearing in the target's desc.
+    target's own top-layer-assigned ``location``, or (advisory: L-2, round-3
+    fix review) Y named as the desc's DESTINATION preposition phrase.
+
+    L-2: the desc match used to fire on Y appearing ANYWHERE in the desc --
+    "bring me the coke from the kitchen" (Y = kitchen is the SOURCE, not the
+    destination) would also match. Tightened to
+    ``\b(to|at|on|onto)\s+(the\s+)?Y\b`` so only a genuine destination
+    phrase counts.
     """
     y_norm = _norm_loc(y)
     for condition in target.get("postconditions") or []:
@@ -732,7 +738,11 @@ def _self_navigates_toward(target: Dict[str, Any], y: str) -> bool:
             if loc and _norm_loc(loc) == y_norm:
                 return True
             desc = str(target.get("desc") or "")
-            if re.search(re.escape(y_norm).replace("_", r"[_\s]"), desc, re.IGNORECASE):
+            y_pattern = re.escape(y_norm).replace("_", r"[_\s]")
+            if re.search(
+                r"\b(?:to|at|on|onto)\s+(?:the\s+)?" + y_pattern + r"\b",
+                desc, re.IGNORECASE,
+            ):
                 return True
     return False
 

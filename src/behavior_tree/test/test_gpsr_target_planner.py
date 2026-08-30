@@ -14,6 +14,7 @@ from behavior_tree.GPSR.planner import (
     _merge_transport_targets,
     _normalise_targets,
     _reject_person_object_handling,
+    _self_navigates_toward,
 )
 from behavior_tree.GPSR.planner_validators import validate_dag
 
@@ -413,6 +414,26 @@ def test_j11_deliver_to_a_room_shaped_recipient_merges_too():
     result = _merge_transport_targets(targets)
     assert [t["id"] for t in result] == ["t0", "t2"]
     assert result[-1]["depends_on"] == ["t0"]
+
+
+def test_l2_self_navigates_toward_desc_fallback_requires_a_destination_preposition():
+    # L-2 (round-3 fix review): the desc-fallback match used to fire on Y
+    # appearing ANYWHERE in the desc -- "bring me the coke from the
+    # kitchen" (Y = kitchen is the SOURCE, not the destination) would also
+    # match. Tightened to `\b(to|at|on|onto)\s+(the\s+)?Y\b`. Recipient arg
+    # and target["location"] are both deliberately non-matching here so
+    # only the desc fallback is exercised.
+    target = {
+        "desc": "Deliver the spam to the kitchen", "location": "",
+        "postconditions": ["delivered(spam,someone)"],
+    }
+    assert _self_navigates_toward(target, "kitchen") is True
+
+    target_source = {
+        "desc": "Bring me the coke from the kitchen", "location": "",
+        "postconditions": ["delivered(coke,someone)"],
+    }
+    assert _self_navigates_toward(target_source, "kitchen") is False
 
 
 def test_j11_transport_followed_by_find_object_is_not_merged():
