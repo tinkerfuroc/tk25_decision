@@ -152,15 +152,23 @@ NO_GRASP_LOCATIONS: set = {"shelf", "cabinet", "coat_rack"} | ALWAYS_NO_GRASP
 # Names the planner may use for "where the robot stood when it received the
 # command". Resolved from the blackboard (bb_keys.START_POSE, captured by
 # create_record_position at command start) instead of constants.json.
-# I5 (round-3 adversarial review, M2): "me"/"the user"/"the operator"/
-# "command point" are common ways the split layer's own postconditions name
-# the SAME destination -- kept in sync with
-# planner_validators.START_LOCATION_WORDS (that module's is_start_alias is
-# the single source of truth other code should prefer; this set additionally
-# drives runtime pose resolution, resolve_pose() below).
+# I5 (round-3 adversarial review, M2): "me"/"the user"/"the operator" are
+# common ways the split layer's own postconditions name the SAME
+# destination -- kept in sync with planner_validators.START_LOCATION_WORDS
+# (that module's is_start_alias is the single source of truth other code
+# should prefer; this set additionally drives runtime pose resolution,
+# resolve_pose() below).
+# H-1 (round-3 fix review): "command_point" is deliberately NOT in this
+# runtime set. Unlike "me"/"the operator" it names a real, designed map
+# waypoint (constants.json possible_poses.command_point) -- routing it to
+# the pose captured when the command was spoken would send the robot to
+# wherever the operator happened to be standing instead of the configured
+# point. It stays in planner_validators.START_LOCATION_WORDS for
+# gate/coverage equivalence only (deferred at_robot()/goto() reasoning,
+# never pose resolution).
 START_LOCATION_ALIASES = {
     "start_position", "instruction_point", "start", "operator",
-    "me", "the_user", "the_operator", "command_point",
+    "me", "the_user", "the_operator",
 }
 
 
@@ -631,19 +639,26 @@ def _build_planner_user_prompt(
     return body
 
 
-def _clean_plan(plan_raw: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Keep only well-formed {action, params} steps using known actions.
+def _clean_plan_core(
+    plan_raw: Any,
+) -> Tuple[List[Dict[str, Any]], List[str], List[int]]:
+    """Core of ``_clean_plan``, additionally returning each kept step's raw index.
 
-    Consecutive identical steps (same action AND params) are collapsed to one:
-    a replan that emits ``place, place`` would execute the second against a
-    now-empty gripper and fail for a reason that has nothing to do with the
-    command.
+    M-1 (round-3 fix review): ``_clean_plan`` builds brand-new ``{action,
+    params}`` dicts for every kept step, so a caller cannot recover "which raw
+    index did this cleaned step come from" by object identity the way
+    ``_kept_indices`` does for the (identity-preserving) contract-boundary /
+    dangling-goto drops. A modification's ``step_index`` is bound to the raw
+    LLM plan array, so remapping it through the FULL drop chain (this
+    function's caller, ``planner._remap_modification_step_indices``) needs
+    this raw-index list as the first leg of that chain.
     """
     cleaned: List[Dict[str, Any]] = []
     dropped: List[str] = []
+    kept_raw_indices: List[int] = []
     if not isinstance(plan_raw, list):
-        return cleaned, [f"<{type(plan_raw).__name__}>"]
-    for step in plan_raw:
+        return cleaned, [f"<{type(plan_raw).__name__}>"], kept_raw_indices
+    for i, step in enumerate(plan_raw):
         if not isinstance(step, dict):
             dropped.append(f"<{type(step).__name__}>")
             continue
@@ -656,6 +671,19 @@ def _clean_plan(plan_raw: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
             dropped.append(f"duplicate:{action}")
             continue
         cleaned.append({"action": action, "params": params})
+        kept_raw_indices.append(i)
+    return cleaned, dropped, kept_raw_indices
+
+
+def _clean_plan(plan_raw: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Keep only well-formed {action, params} steps using known actions.
+
+    Consecutive identical steps (same action AND params) are collapsed to one:
+    a replan that emits ``place, place`` would execute the second against a
+    now-empty gripper and fail for a reason that has nothing to do with the
+    command.
+    """
+    cleaned, dropped, _ = _clean_plan_core(plan_raw)
     return cleaned, dropped
 
 
@@ -1038,16 +1066,29 @@ def resolve_pose(bb_client, name: Any) -> Optional[PoseStamped]:
     if not name:
         return None
     key = _norm_loc(name)
-    if key in START_LOCATION_ALIASES:
+
+    def _known_pose() -> Optional[PoseStamped]:
+        if name in KNOWN_LOCATIONS:
+            return KNOWN_LOCATIONS.get(name)
+        for known_name, pose in KNOWN_LOCATIONS.items():
+            if _norm_loc(known_name) == key:
+                return pose
+        return None
+
+    # H-1 (round-3 fix review): a KNOWN_LOCATIONS pose wins over an alias
+    # even for names not (or no longer) in START_LOCATION_ALIASES --
+    # defensive in case a future constants file ever defines a pose for
+    # "me"/"the_user"/"the_operator" too. command_point is the concrete
+    # case: it is never in START_LOCATION_ALIASES, so this branch is
+    # belt-and-suspenders for that one, but keeps the same rule for all.
+    known = _known_pose()
+    if key in START_LOCATION_ALIASES and known is None:
         try:
             return bb_client.get(bb_keys.START_POSE)
         except KeyError:
             return None
-    if name in KNOWN_LOCATIONS:
-        return KNOWN_LOCATIONS.get(name)
-    for known_name, pose in KNOWN_LOCATIONS.items():
-        if _norm_loc(known_name) == key:
-            return pose
+    if known is not None:
+        return known
     try:
         registry = bb_client.get(bb_keys.DYNAMIC_LOCATIONS) or {}
     except KeyError:

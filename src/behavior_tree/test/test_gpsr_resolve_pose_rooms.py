@@ -85,6 +85,54 @@ def test_known_room_outranks_poisoned_dynamic_registration(_rcw2026_locations, m
     assert orch_mod.resolve_pose(bb, "living_room") is _rcw2026_locations["sofa"]
 
 
+def test_command_point_resolves_to_constants_pose_not_start_pose():
+    """H-1 (round-3 fix review): command_point is a real map waypoint, not
+    the pose captured when the operator spoke the command. Loading the
+    rcw2026 constants must resolve it via KNOWN_LOCATIONS, never
+    START_POSE — even though "command_point" used to be (and, in
+    planner_validators.START_LOCATION_WORDS, still is, for gate/coverage
+    equivalence only) treated as a start-position alias.
+    """
+    from pathlib import Path
+    from behavior_tree.GPSR import orchestrator as orch_mod
+
+    assert "command_point" not in orch_mod.START_LOCATION_ALIASES
+
+    constants = Path(orch_mod.__file__).parent / "constants.rcw2026.json"
+    orch_mod.load_knowledge_from_constants(str(constants))
+    try:
+        assert "command_point" in orch_mod.KNOWN_LOCATIONS
+
+        class _ExplodingBB:
+            """START_POSE must never even be consulted."""
+
+            def get(self, key):
+                raise AssertionError(f"resolve_pose consulted the blackboard for {key!r}")
+
+        pose = orch_mod.resolve_pose(_ExplodingBB(), "command_point")
+        assert pose is orch_mod.KNOWN_LOCATIONS["command_point"]
+    finally:
+        orch_mod.load_knowledge_from_constants(str(constants))
+
+
+def test_resolve_pose_prefers_known_location_over_alias_defensively(_rcw2026_locations, monkeypatch):
+    """H-1 defensive branch: if a future constants file ever defines a pose
+    for a name that's ALSO in START_LOCATION_ALIASES (e.g. "operator"), the
+    map pose wins over the captured start pose.
+    """
+    from behavior_tree.GPSR import orchestrator as orch_mod
+
+    sentinel = object()
+    monkeypatch.setitem(orch_mod.KNOWN_LOCATIONS, "operator", sentinel)
+    assert "operator" in orch_mod.START_LOCATION_ALIASES
+
+    class _ExplodingBB:
+        def get(self, key):
+            raise AssertionError("should not consult START_POSE when a known pose exists")
+
+    assert orch_mod.resolve_pose(_ExplodingBB(), "operator") is sentinel
+
+
 def test_loader_aliases_rcw2026_rooms_to_search_spot_poses():
     from pathlib import Path
     from behavior_tree.GPSR import orchestrator as orch_mod
