@@ -633,7 +633,12 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
                 return _result(Verdict.VALID, "count artifact target provenance matches")
             return _result(Verdict.VALID, "count artifact contains count_value; target identity unavailable")
     elif fact.predicate == "answered":
-        answer_keys = ("qa_answer", "person_answer", "llm_answer", "vlm_answer")
+        # X2 (round-3 fix review): describe_person's ONLY answer artifact is
+        # REPORT_INFO (it speaks + buffers a description, never writing
+        # qa_answer/llm_answer/...) -- without this key, coverage accepting
+        # describe_person as an answered() establisher (action_contracts.py)
+        # still had no runtime artifact to VALID against.
+        answer_keys = ("qa_answer", "person_answer", "llm_answer", "vlm_answer", "report_info")
         # count also establishes answered(question) now (H1: "how many ..."
         # is a spoken-answer target too) -- mirror the `counted` branch above
         # and accept a bare count_value artifact, same as any other answer key.

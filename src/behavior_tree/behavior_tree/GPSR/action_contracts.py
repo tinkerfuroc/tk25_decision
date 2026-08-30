@@ -97,7 +97,21 @@ ACTION_CONTRACTS: dict[str, ActionContract] = {
         _c("count", establishes=("counted(object)", "answered(question)"),
            records=("count_value", "count_target")),
         _c("approach_person"),
-        _c("describe_person"),
+        # X2 (round-3 fix review, source-pinned tier0 sweep): describe_person
+        # (small_trees.create_describe_person) speaks + BUFFERS a person
+        # description into REPORT_INFO -- it establishes answered(question)
+        # exactly like ask_person/count/announce (registered here AFTER
+        # ask_person/answer_question so _ESTABLISHER_FOR_PREDICATE["answered"]
+        # still resolves to ask_person, per the ordering comment above).
+        # Without this, "identify the gesture of the person at shelf_02" ->
+        # answered(gesture_of_person_at_shelf_02) rejected EVERY
+        # [goto, find_person, describe_person] plan (describe_person
+        # established nothing) -> fallback. `records=("report_info",)` lets
+        # the runtime gate see the buffered description as an answer
+        # artifact (validators.py's `answered` branch, orchestrator.py's
+        # `_TARGET_GATE_EVIDENCE_KEYS`).
+        _c("describe_person", establishes=("answered(question)",),
+           records=("report_info",)),
         _c("follow"),
         # M-4 (round-2 review): guide navigates to `location` itself
         # (small_trees.create_guide, "retry guide goto") but previously

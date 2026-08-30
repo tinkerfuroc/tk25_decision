@@ -475,8 +475,9 @@ def test_escape_unrecoverable_reason_is_none_for_answered_with_only_ask_person_t
 
 
 def test_escape_unrecoverable_reason_fires_for_answered_when_every_establisher_tried():
-    # All six of answered(question)'s registry establishers have been tried
-    # -- NOW the ladder really is exhausted.
+    # All seven of answered(question)'s registry establishers have been
+    # tried -- NOW the ladder really is exhausted. X2 (round-3 fix review)
+    # added describe_person as an eighth-turned-seventh establisher.
     target = {"id": "t0", "postconditions": ["answered(what_is_your_name)"]}
     failed_plans = [[
         {"action": "ask_person", "params": {"question": "q"}},
@@ -485,6 +486,7 @@ def test_escape_unrecoverable_reason_fires_for_answered_when_every_establisher_t
         {"action": "announce", "params": {"question": "q"}},
         {"action": "vlm_fallback", "params": {"question": "q"}},
         {"action": "llm_fallback", "params": {"question": "q"}},
+        {"action": "describe_person", "params": {"question": "q"}},
     ]]
     reason = planner_mod._escape_no_untried_establisher_reason(target, failed_plans)
     assert reason is not None

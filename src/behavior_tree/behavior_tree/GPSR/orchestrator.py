@@ -1640,6 +1640,12 @@ _TARGET_GATE_EVIDENCE_KEYS = (
     ("person_answer", bb_keys.PERSON_ANSWER),
     ("llm_answer", bb_keys.LLM_ANSWER),
     ("vlm_answer", bb_keys.VLM_ANSWER),
+    # X2 (round-3 fix review): describe_person's ONLY answer artifact --
+    # it buffers its spoken description into REPORT_INFO, never
+    # qa_answer/llm_answer/... -- an answer key, not a question key, so
+    # (like the others above) it follows the cross-target clearing only,
+    # never L-1's same-target QUESTION-only clear below.
+    ("report_info", bb_keys.REPORT_INFO),
     ("qa_question", bb_keys.QA_QUESTION),
     ("ask_question", bb_keys.ASK_QUESTION),
     ("vlm_question", bb_keys.VLM_QUESTION),

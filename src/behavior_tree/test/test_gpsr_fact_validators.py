@@ -444,6 +444,17 @@ def test_answered_provenance_generic_fact_words_never_invalid():
         assert result.verdict is Verdict.VALID, fact_text
 
 
+def test_answered_valid_from_a_report_info_artifact_x2():
+    # X2 (round-3 fix review): describe_person's ONLY answer artifact is
+    # REPORT_INFO (BtNode_SetReportInfo), never qa_answer/llm_answer/... --
+    # the gate must VALID an answered(...) postcondition from it alone.
+    result, _ = _check(
+        "answered(gesture of the person)",
+        evidence={"report_info": "Here is what the person looks like. Waving."},
+    )
+    assert result.verdict is Verdict.VALID
+
+
 def test_answered_provenance_normalizes_whitespace_and_underscores():
     result, _ = _check(
         "answered(what color)",

@@ -81,6 +81,26 @@ def test_llm_fallback_alone_covers_answered_postcondition():
     assert ok, reason
 
 
+def test_describe_person_covers_answered_postcondition_x2():
+    # X2 (round-3 fix review, source-pinned tier0 sweep): "identify the
+    # gesture of the person at shelf_02" split into
+    # answered(gesture_of_person_at_shelf_02), but describe_person
+    # (action_contracts.py) established NOTHING -- coverage rejected EVERY
+    # [goto, find_person, describe_person] plan -> fallback. describe_person
+    # now establishes answered(question) like ask_person/count/announce.
+    plan = [
+        {"action": "goto", "params": {"location": "shelf_02"}},
+        {"action": "find_person", "params": {}},
+        {"action": "describe_person", "params": {}},
+    ]
+    ok, reason = validate_plan(
+        plan, "identify the gesture of the person at shelf_02",
+        {"goto", "find_person", "describe_person"},
+        postconditions=["answered(gesture of the person at shelf_02)"],
+    )
+    assert ok, reason
+
+
 def test_goto_vlm_fallback_covers_answered_postcondition():
     plan = [
         {"action": "goto", "params": {"location": "kitchen"}},
