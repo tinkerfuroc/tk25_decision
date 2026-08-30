@@ -1892,6 +1892,7 @@ def _remap_modification_step_indices(
     mods: Optional[List[Dict[str, Any]]],
     old_to_new: Dict[int, int],
     cleaned: List[Dict[str, Any]],
+    raw_len: int = 0,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Translate each modification's ``step_index`` through the guard drops.
 
@@ -1922,6 +1923,14 @@ def _remap_modification_step_indices(
     mod's own ``action`` field against a UNIQUE step of that action in
     ``cleaned`` — the pre-I3 ``modifiable_nodes._step_index_for`` behaviour.
     Ambiguous (0 or >1 matches) still drops the modification.
+
+    M-1-L2 (round-3 fix2 review): that action-field fallback applies ONLY
+    when ``old_index`` was never valid in the RAW plan to begin with (out
+    of range for ``raw_len``) — never when it WAS a valid raw index whose
+    step the guard genuinely dropped. The pre-I3 behaviour this mirrors had
+    no guard-drop concept to distinguish from; blindly re-applying it to a
+    genuinely-dropped step's modification would silently misapply it to an
+    unrelated same-action survivor instead of dropping it with its step.
     """
     remapped: List[Dict[str, Any]] = []
     dropped: List[str] = []
@@ -1935,16 +1944,18 @@ def _remap_modification_step_indices(
             continue
         new_index = old_to_new.get(old_index)
         if new_index is None:
-            action = str(mod.get("action") or "")
-            matches = [
-                i for i, step in enumerate(cleaned)
-                if isinstance(step, dict) and str(step.get("action") or "") == action
-            ]
-            if action and len(matches) == 1:
-                new_mod = dict(mod)
-                new_mod["step_index"] = matches[0]
-                remapped.append(new_mod)
-                continue
+            out_of_range = old_index < 0 or old_index >= raw_len
+            if out_of_range:
+                action = str(mod.get("action") or "")
+                matches = [
+                    i for i, step in enumerate(cleaned)
+                    if isinstance(step, dict) and str(step.get("action") or "") == action
+                ]
+                if action and len(matches) == 1:
+                    new_mod = dict(mod)
+                    new_mod["step_index"] = matches[0]
+                    remapped.append(new_mod)
+                    continue
             dropped.append(f"mod:{mod.get('template', '?')}@{old_index}")
             continue
         new_mod = dict(mod)
@@ -2822,6 +2833,7 @@ class GPSRPlanner:
             # dangling-goto drop before validating/grouping against `cleaned`.
             mods, mod_index_dropped = _remap_modification_step_indices(
                 parsed.get("modifications"), mod_old_to_new, cleaned,
+                raw_len=len(raw_actions),
             )
             if mod_index_dropped:
                 dropped = dropped + mod_index_dropped

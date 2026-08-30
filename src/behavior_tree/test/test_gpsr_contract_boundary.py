@@ -22,6 +22,7 @@ from behavior_tree.GPSR.planner import (
     _build_lower_layer_user_prompt,
     _drop_dangling_goto_before_self_nav,
     _drop_foreign_contract_steps,
+    _remap_modification_step_indices,
 )
 
 
@@ -623,6 +624,52 @@ def test_plan_target_initial_plan_drops_ancestors_grasp_step(monkeypatch, capsys
     out = capsys.readouterr().out
     assert "contract:grasp->held(spam)" in out
     assert "contract:goto->dangling" in out
+
+
+# ---------------------------------------------------------------------------
+# M-1-L2 (round-3 fix2 review): the action-field fallback (unique same-
+# action step in `cleaned`) must apply ONLY to a step_index that was never
+# valid in the RAW plan (out of range) -- never to an index that WAS valid
+# there but whose step the guard genuinely dropped. The latter's
+# modification must be dropped with its step, never silently re-targeted at
+# an unrelated same-action survivor.
+# ---------------------------------------------------------------------------
+
+def test_remap_action_fallback_not_applied_for_a_genuinely_dropped_step_m1l2():
+    # Raw plan: [goto(kitchen) <- dropped by guard>, grasp(plant),
+    # goto(balcony)]. A mod at raw index 0 targets the DROPPED goto. Old
+    # index 0 was VALID in the raw (3-step) plan, so this must NOT fall
+    # back to the surviving goto(balcony) at cleaned index 1 -- it must be
+    # dropped, logged as `mod:<template>@<old_index>`.
+    cleaned = [
+        {"action": "grasp", "params": {"object": "plant"}},
+        {"action": "goto", "params": {"location": "balcony"}},
+    ]
+    old_to_new = {1: 0, 2: 1}  # raw index 0 (the dropped goto) has no entry
+    mods = [{
+        "step_index": 0, "action": "goto", "template": "goto-wide-gate",
+        "target_node_id": "goto_gate", "params": {},
+    }]
+    remapped, dropped = _remap_modification_step_indices(mods, old_to_new, cleaned, raw_len=3)
+    assert remapped == []
+    assert dropped == ["mod:goto-wide-gate@0"]
+
+
+def test_remap_action_fallback_still_applies_for_a_truly_out_of_range_index_m1l2():
+    # An index the LLM's raw plan never had (miscounted) still gets the
+    # unique-action fallback -- unaffected by the M-1-L2 tightening.
+    cleaned = [
+        {"action": "goto", "params": {"location": "bedroom"}},
+        {"action": "find_person", "params": {}},
+    ]
+    old_to_new = {0: 0, 1: 1}
+    mods = [{
+        "step_index": 99, "action": "find_person", "template": "person-specialist",
+        "target_node_id": "find_person_sweep", "params": {"name": "alex"},
+    }]
+    remapped, dropped = _remap_modification_step_indices(mods, old_to_new, cleaned, raw_len=2)
+    assert remapped == [{**mods[0], "step_index": 1}]
+    assert dropped == []
 
 
 def test_plan_target_modification_step_index_remapped_through_contract_guard(monkeypatch, capsys):
