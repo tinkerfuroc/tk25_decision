@@ -104,6 +104,31 @@ def test_normalise_targets_drops_preconditions_no_earlier_target_establishes():
     assert targets[1]["preconditions"] == ["held(spam)"]
 
 
+def test_retracting_addition_guards_zero_arity_facts_m6(monkeypatch):
+    # M-6 (round-3 fix review): `_retracting_addition` indexes
+    # `fact.args[0]`/`removed.args[0]` for held/placed/delivered -- safe
+    # today only because `parse_fact` enforces arity for every predicate in
+    # its closed vocabulary, but this is called on raw postcondition text
+    # BEFORE `_validate_target_contract` runs, so it must never crash on a
+    # malformed/zero-arity fact even if `parse_fact`'s vocabulary ever
+    # widens. Monkeypatch parse_fact to simulate a parseable-yet-zero-arity
+    # `held`/`placed` fact and confirm no IndexError.
+    from behavior_tree.GPSR.validators import Fact
+
+    def fake_parse_fact(text):
+        if text == "held()":
+            return Fact("held", (), text), None
+        if text == "placed(x,t)":
+            return Fact("placed", ("x", "t"), text), None
+        return None, "unparseable"
+
+    monkeypatch.setattr(planner_module, "parse_fact", fake_parse_fact)
+    # removed fact has no args -- must not IndexError on removed.args[0]
+    assert planner_module._retracting_addition("held()", ["placed(x,t)"]) is None
+    # addition has no args -- must not IndexError on fact.args[0]
+    assert planner_module._retracting_addition("placed(x,t)", ["held()"]) is None
+
+
 # ---------------------------------------------------------------------------
 # J8: counted()/answered() results must be reported to the operator
 # ---------------------------------------------------------------------------

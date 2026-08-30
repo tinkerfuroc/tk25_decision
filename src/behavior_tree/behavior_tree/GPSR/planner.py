@@ -446,6 +446,13 @@ def _retracting_addition(removed_fact: str, additions: List[str]) -> Optional[st
     (place/deliver retract held(object); re-holding retracts a stale
     placed/delivered(object,..); a new at_robot(..) retracts the old one) —
     used only to make the ``_normalise_targets`` drop log legible.
+
+    M-6 (round-3 fix review): safe today only because ``parse_fact``
+    enforces arity for every predicate in its closed vocabulary -- but this
+    runs on raw postcondition text BEFORE ``_validate_target_contract``, so
+    a zero-arity/malformed-yet-parseable fact (should the vocabulary ever
+    widen) must never ``IndexError`` here; guard ``args`` length before
+    indexing ``[0]``.
     """
     removed, _ = parse_fact(removed_fact)
     if removed is None:
@@ -455,9 +462,11 @@ def _retracting_addition(removed_fact: str, additions: List[str]) -> Optional[st
         if fact is None:
             continue
         canonical = canonical_fact(fact)
-        if removed.predicate == "held" and fact.predicate in {"placed", "delivered"} and fact.args[0] == removed.args[0]:
+        if (removed.predicate == "held" and fact.predicate in {"placed", "delivered"}
+                and removed.args and fact.args and fact.args[0] == removed.args[0]):
             return canonical
-        if removed.predicate in {"placed", "delivered"} and fact.predicate == "held" and fact.args[0] == removed.args[0]:
+        if (removed.predicate in {"placed", "delivered"} and fact.predicate == "held"
+                and removed.args and fact.args and fact.args[0] == removed.args[0]):
             return canonical
         if removed.predicate == "at_robot" and fact.predicate == "at_robot":
             return canonical
