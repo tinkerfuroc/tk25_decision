@@ -142,7 +142,16 @@ NO_GRASP_LOCATIONS: set = {"shelf", "cabinet", "coat_rack"} | ALWAYS_NO_GRASP
 # Names the planner may use for "where the robot stood when it received the
 # command". Resolved from the blackboard (bb_keys.START_POSE, captured by
 # create_record_position at command start) instead of constants.json.
-START_LOCATION_ALIASES = {"start_position", "instruction_point", "start", "operator"}
+# I5 (round-3 adversarial review, M2): "me"/"the user"/"the operator"/
+# "command point" are common ways the split layer's own postconditions name
+# the SAME destination -- kept in sync with
+# planner_validators.START_LOCATION_WORDS (that module's is_start_alias is
+# the single source of truth other code should prefer; this set additionally
+# drives runtime pose resolution, resolve_pose() below).
+START_LOCATION_ALIASES = {
+    "start_position", "instruction_point", "start", "operator",
+    "me", "the_user", "the_operator", "command_point",
+}
 
 
 def _target_desc(t: Any) -> str:

@@ -141,7 +141,11 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
        at_robot(location), object_seen(object), person_found(person),
        held(object), placed(object,location), delivered(object,recipient),
        counted(object), answered(question). Validators, not the LLM, determine
-       whether conditions are true. Empty condition lists are allowed.
+       whether conditions are true. Empty condition lists are allowed. The
+       operator's own location (where the robot received the command) is
+       "start_position" — always write at_robot(start_position) for a
+       "bring/tell/report to ME" postcondition, never at_robot(me) or
+       another wording.
     5. Keep each target as close to the original wording as possible; do not
        invent actions, locations, or details not present in the command.
     6. Split by DISTINCT EXECUTABLE JOBS, not by sentence connectives. A

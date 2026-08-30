@@ -475,6 +475,28 @@ def test_at_robot_matching_navigation_intent_is_low_confidence_valid():
     assert "intent/action" in result.evidence
 
 
+def test_at_robot_gate_treats_operator_aliases_as_the_same_destination_i5():
+    # I5 (round-3 adversarial review, M2): a postcondition fact
+    # at_robot(operator) verified against last_nav_location "start_position"
+    # (the canonical destination the lower layer actually navigates to) must
+    # VALIDate -- they name the same place.
+    result, _ = _check(
+        "at_robot(operator)",
+        evidence={"last_nav_location": "start_position"},
+        context=_context(phase="postcondition"),
+    )
+    assert result.verdict is Verdict.VALID
+
+
+def test_at_robot_gate_alias_mismatch_against_a_real_location_stays_invalid():
+    result, _ = _check(
+        "at_robot(operator)",
+        evidence={"last_nav_location": "kitchen"},
+    )
+    assert result.verdict is Verdict.INVALID
+    assert "mismatch" in result.evidence
+
+
 def test_tier2_result_is_authoritative_and_invalid_overrides_action_verdict():
     hook_result = VerificationResult(Verdict.INVALID, 0.9, "tier2 says grasp failed")
     register_tier2_hook("held", lambda fact, evidence, context: hook_result)

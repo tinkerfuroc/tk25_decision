@@ -258,6 +258,19 @@ def _norm_match(left: Any, right: str) -> bool:
     return _normalize(str(left)) == right
 
 
+# I5 (round-3 adversarial review, M2): "me"/"the operator"/"command point"/
+# ... are all the SAME destination as the canonical "start_position" the
+# lower layer actually navigates to (see planner_validators.is_start_alias,
+# the single source of truth shared with uncovered_postcondition_reason).
+# Lazy-imported below (validators.py cannot import planner_validators at
+# module level -- planner_validators already imports validators).
+def _at_robot_match(nav_location: Any, requested: str) -> bool:
+    if _norm_match(nav_location, requested):
+        return True
+    from .planner_validators import is_start_alias  # lazy: avoid import cycle
+    return is_start_alias(nav_location) and is_start_alias(requested)
+
+
 def _label_tokens(label: str) -> list[str]:
     return re.split(r"[_.]", label)
 
@@ -464,7 +477,7 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
     established = {_normalize_established(item) for item in context.established_facts}
     if fact.predicate == "at_robot":
         if "last_nav_location" in evidence and evidence["last_nav_location"] is not None:
-            if not _norm_match(evidence["last_nav_location"], fact.args[0]):
+            if not _at_robot_match(evidence["last_nav_location"], fact.args[0]):
                 return _result(Verdict.INVALID, "navigation location mismatch")
         if canonical in established:
             return _result(Verdict.VALID, f"established fact: {canonical}")
@@ -555,7 +568,7 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
             return _result(Verdict.VALID, "answer artifact contains a nonempty answer; question identity unavailable")
     elif fact.predicate == "at_robot":
         if "last_nav_location" in evidence and evidence["last_nav_location"] is not None:
-            if not _norm_match(evidence["last_nav_location"], fact.args[0]):
+            if not _at_robot_match(evidence["last_nav_location"], fact.args[0]):
                 return _result(Verdict.INVALID, "navigation location mismatch")
             if context.phase == "postcondition":
                 return _result(Verdict.VALID, "intent/action evidence: matching last navigation location", 0.5)

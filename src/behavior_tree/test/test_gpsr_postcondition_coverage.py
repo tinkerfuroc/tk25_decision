@@ -18,6 +18,7 @@ import pytest
 from behavior_tree.GPSR import planner as planner_module
 from behavior_tree.GPSR.planner_validators import (
     validate_plan, uncovered_postcondition_reason, established_predicates,
+    is_start_alias,
 )
 
 
@@ -159,6 +160,38 @@ def test_at_robot_coverage_accepts_matching_goto_destination():
         postconditions=["at_robot(kitchen)"],
     )
     assert ok, reason
+
+
+@pytest.mark.parametrize("alias", [
+    "operator", "me", "the user", "the operator", "command point",
+    "instruction point", "start_position", "start",
+])
+def test_is_start_alias_recognises_every_operator_synonym(alias):
+    assert is_start_alias(alias) is True
+
+
+@pytest.mark.parametrize("not_alias", ["kitchen", "laundry_desk", "bedroom", ""])
+def test_is_start_alias_rejects_real_locations(not_alias):
+    assert is_start_alias(not_alias) is False
+
+
+@pytest.mark.parametrize("alias", ["operator", "me", "instruction point", "command point", "start_position"])
+def test_at_robot_coverage_treats_operator_aliases_as_one_destination(alias):
+    # I5 (round-3 adversarial review, M2): the split layer's own
+    # postcondition can name the operator's location as "me"/"the operator"/
+    # "command point"/... while the lower layer always navigates to the
+    # canonical "start_position" (per the TOP_LAYER_SYSTEM_PROMPT rule) --
+    # every alias must be treated as the SAME destination for coverage.
+    plan = [{"action": "goto", "params": {"location": "start_position"}}]
+    reason = uncovered_postcondition_reason(plan, [f"at_robot({alias})"])
+    assert reason is None, reason
+
+
+def test_at_robot_coverage_still_rejects_a_genuinely_different_destination():
+    plan = [{"action": "goto", "params": {"location": "laundry_desk"}}]
+    reason = uncovered_postcondition_reason(plan, ["at_robot(operator)"])
+    assert reason is not None
+    assert "at_robot(operator)" in reason
 
 
 def test_no_postconditions_kwarg_is_unchanged_behaviour():

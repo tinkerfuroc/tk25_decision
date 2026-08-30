@@ -44,7 +44,7 @@ from .validators import canonical_fact, parse_fact
 
 __all__ = [
     "validate_dag", "validate_plan", "uncovered_postcondition_reason",
-    "established_predicates",
+    "established_predicates", "is_start_alias",
 ]
 
 
@@ -55,9 +55,32 @@ PLACEHOLDER_RE = re.compile(r"<[A-Za-z_][\w \-]*>")
 
 # Location names that mean "where the robot received the command" (≈ the
 # operator). Kept in sync with orchestrator.START_LOCATION_ALIASES.
+# I5 (round-3 adversarial review, M2): "me"/"the user"/"the operator"/
+# "command point" are common split-layer wordings for the SAME destination
+# ("bring ME the spam", "report to the operator") that were previously
+# missing -- every entry here is already normalised (lowercase, spaces ->
+# underscores, matching `_norm_loc`/`parse_fact`'s own normalisation).
 START_LOCATION_WORDS = frozenset({
     "start_position", "instruction_point", "start", "operator",
+    "me", "the_user", "the_operator", "command_point",
 })
+
+
+def is_start_alias(value: Any) -> bool:
+    """True when ``value`` names "wherever the robot received the command".
+
+    I5: the split layer's own postcondition can address the operator by any
+    of several synonyms (``me``, ``the user``, ``the operator``, ``command
+    point``, ...) while the lower layer's plan always navigates to the
+    canonical ``start_position`` -- every alias in ``START_LOCATION_WORDS``
+    must be treated as ONE destination, both by
+    ``uncovered_postcondition_reason`` (below) and by the runtime gate's
+    ``at_robot`` provenance check (``validators._verify``, lazy-imported
+    from there to avoid the validators<->planner_validators import cycle).
+    Single source of truth so the two can never disagree about which words
+    mean "the operator".
+    """
+    return _norm_loc(value) in START_LOCATION_WORDS
 
 # Descriptor words that can follow "follow ... to the" in a person's pointing
 # gesture ("pointing to the left/right") but are NOT destinations — the
@@ -299,7 +322,15 @@ def uncovered_postcondition_reason(
             # `established` check below, which would re-introduce the
             # any-destination bug via goto's own
             # establishes=("at_robot(location)",).
-            if fact.args and fact.args[0] in self_nav_destinations:
+            # I5: an operator-alias postcondition (at_robot(me)/at_robot(the
+            # operator)/...) is covered by a goto to ANY operator alias
+            # (typically start_position, per the split prompt) -- not just
+            # an exact string match.
+            if fact.args and (
+                fact.args[0] in self_nav_destinations
+                or (is_start_alias(fact.args[0])
+                    and any(is_start_alias(dest) for dest in self_nav_destinations))
+            ):
                 continue
         elif fact.predicate in established:
             continue
