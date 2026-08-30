@@ -1874,6 +1874,7 @@ class BtNode_TargetPreconditionCheck(Behaviour):
 
 def _steps_establishing(
     action_plan: Sequence[Mapping[str, Any]], canonical_facts: Sequence[str],
+    target_object: str = "",
 ) -> List[Dict[str, Any]]:
     """The steps of ``action_plan`` whose contract established any of ``canonical_facts``.
 
@@ -1882,6 +1883,11 @@ def _steps_establishing(
     NEXT replan which of the target's own already-run steps produced one of
     the just-committed facts -- so ``plan_target`` can feed it back as
     ``completed_steps`` and the model is told not to repeat it.
+
+    L-1 (round-3 fix review): ``target_object`` is passed through to
+    ``established_facts`` (J10's fallback) -- an object-less ``place``/
+    ``deliver`` step (the held object is implicit) otherwise never appears
+    in ``GATE_COMPLETED_STEPS`` even when its fact was just committed.
     """
     wanted = set(canonical_facts)
     if not wanted:
@@ -1890,7 +1896,10 @@ def _steps_establishing(
     for step in action_plan or []:
         if not isinstance(step, Mapping):
             continue
-        produced = set(_step_established_facts(step)) | set(_self_established_facts(step))
+        produced = (
+            set(_step_established_facts(step, target_object))
+            | set(_self_established_facts(step))
+        )
         if produced & wanted:
             matched.append(dict(step))
     return matched
@@ -2086,7 +2095,9 @@ class BtNode_TargetPostconditionCheck(Behaviour):
             print(log_line)
 
         if unmet:
-            committed_steps = _steps_establishing(self._action_plan, canonical)
+            committed_steps = _steps_establishing(
+                self._action_plan, canonical, self._target_object,
+            )
             self._bb.set(bb_keys.GATE_COMPLETED_STEPS, committed_steps, overwrite=True)
             self.feedback_message = "postcondition unmet: " + ", ".join(unmet)
             return Status.FAILURE

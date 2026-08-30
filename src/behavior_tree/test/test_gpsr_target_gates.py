@@ -11,6 +11,7 @@ from behavior_tree.GPSR.orchestrator import (
     materialise_params,
     record_nav_on_success,
     _create_plan_and_save_new,
+    _steps_establishing,
     _target_gate_evidence,
 )
 from behavior_tree.GPSR.validators import register_tier2_hook
@@ -261,6 +262,35 @@ def test_post_partial_success_commits_valid_facts_before_failure():
     assert written == [["held(plant_pot)"]]
     assert bb.get(bb_keys.FACTS) == ["at_robot(kitchen)", "held(plant_pot)"]
     assert bb.get(bb_keys.GATE_COMPLETED_STEPS) == [grasp_step]
+
+
+def test_steps_establishing_applies_j10_target_object_fallback_l1():
+    # L-1 (round-3 fix review): `_steps_establishing` used to call
+    # `established_facts(step)` with no `target_object` -- an object-less
+    # place/deliver step (the held object is implicit) never appeared in
+    # GATE_COMPLETED_STEPS even though its fact was just committed.
+    place_step = {"action": "place", "params": {"location": "table"}}
+    result = _steps_establishing([place_step], ["placed(plant_pot,table)"], "plant_pot")
+    assert result == [place_step]
+    # Without the target_object fallback, nothing would match.
+    assert _steps_establishing([place_step], ["placed(plant_pot,table)"]) == []
+
+
+def test_post_partial_success_derives_completed_steps_for_object_less_place_l1():
+    # End-to-end via the postcondition gate: an object-less place step's
+    # fact is committed, and GATE_COMPLETED_STEPS must include that step so
+    # a replan is told it already happened.
+    bb = _bb("post-l1")
+    bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
+    bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.READ)
+    bb.set(bb_keys.FACTS, [], overwrite=True)
+    place_step = {"action": "place", "params": {"location": "table"}}
+    node = _setup(BtNode_TargetPostconditionCheck(
+        "post", ["placed(plant_pot,table)", "held(unrelated_item)"], 0,
+        [place_step], target_object="plant_pot",
+    ))
+    assert node.update() is Status.FAILURE
+    assert bb.get(bb_keys.GATE_COMPLETED_STEPS) == [place_step]
 
 
 def test_post_own_postcondition_already_in_ledger_needs_its_own_evidence():
