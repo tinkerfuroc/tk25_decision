@@ -229,6 +229,26 @@ def test_j4_succeeded_goto_verifies_at_robot_valid():
     assert bb.get(bb_keys.FACTS) == ["at_robot(kitchen)"]
 
 
+def test_l4_succeeded_guide_records_last_nav_location():
+    # L-4 (round-3 fix review): `guide` never declared `records=
+    # ("last_nav_location",)` -- record_nav_on_success requires it (per
+    # J4), so a target like [goto(sofa), find_person, guide(location=
+    # kitchen)] with post at_robot(kitchen) kept LAST_NAV_LOCATION=sofa
+    # and INVALIDated "navigation location mismatch" before the guide
+    # self_establishes action-verdict could even apply.
+    bb = _bb("post-l4-guide")
+    bb.set(bb_keys.FACTS, [], overwrite=True)
+    bb.set(bb_keys.LAST_NAV_LOCATION, "sofa", overwrite=True)
+    record_nav_on_success(bb, "guide", {"location": "kitchen"})
+    assert bb.get(bb_keys.LAST_NAV_LOCATION) == "kitchen"
+    node = _setup(BtNode_TargetPostconditionCheck(
+        "post", ["at_robot(kitchen)"], 0,
+        [{"action": "guide", "params": {"location": "kitchen"}}],
+    ))
+    assert node.update() is Status.SUCCESS
+    assert bb.get(bb_keys.FACTS) == ["at_robot(kitchen)"]
+
+
 def test_post_mismatching_action_is_unknown_failure():
     bb = _bb("post-mismatch")
     bb.set(bb_keys.FACTS, [], overwrite=True)

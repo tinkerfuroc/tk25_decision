@@ -123,7 +123,17 @@ ACTION_CONTRACTS: dict[str, ActionContract] = {
         # apply to guide too, same as goto/place/deliver/search_object.
         # Param name "location" per ACTION_CATALOGUE_DESCRIPTION
         # (orchestrator.py) and materialise_params.
-        _c("guide", self_establishes={"at_robot": "location"}, self_navigating=True),
+        #
+        # L-4 (round-3 fix review): `records=("last_nav_location",)`, same
+        # as every other navigating leaf (goto/search_object/place/deliver)
+        # -- without it, `record_nav_on_success` never writes
+        # LAST_NAV_LOCATION on a successful guide, so a target like
+        # `[goto(sofa), find_person, guide(location=kitchen)]` with post
+        # `at_robot(kitchen)` keeps LAST_NAV_LOCATION=sofa and the gate's
+        # navigation-location-mismatch check fails before the guide
+        # action-verdict fallback (self_establishes) can even apply.
+        _c("guide", self_establishes={"at_robot": "location"},
+           records=("last_nav_location",), self_navigating=True),
         _c("open"),
         # `announce` has no `question` param (only `text`), so
         # established_facts() for it stays [] — the establishes template can
