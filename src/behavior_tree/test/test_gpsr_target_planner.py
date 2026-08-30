@@ -657,6 +657,89 @@ def test_replan_target_threads_completed_steps_to_plan_target(monkeypatch):
     assert captured["kwargs"]["completed_steps"] == completed
 
 
+def test_plan_target_threads_completed_steps_to_build_target_subtree_on_accept(monkeypatch):
+    # H-3 (round-3 fix review): unlike replace_target_plan, plan_target's
+    # ACCEPTED path never passed completed_steps into build_target_subtree
+    # -- the gates for an LLM-produced replan then never saw the target's
+    # own already-succeeded steps, so an own postcondition they establish
+    # (J2: no ledger shortcut for a target's own postconditions) could never
+    # verify and the target looped to SKIP.
+    planner = GPSRPlanner()
+    planner._offline_mock = False
+    monkeypatch.setattr(planner, "_new_client", lambda: object())
+    monkeypatch.setattr(planner_module, "_call_llm", lambda *a: (
+        {"plan": [{"action": "announce", "params": {"text": "ok", "acknowledgement": True}}]}, None,
+    ))
+    monkeypatch.setattr(planner_module, "validate_plan", lambda *a, **k: (True, None))
+    captured = {}
+    original_build = planner.build_target_subtree
+
+    def capture_build(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return original_build(*args, **kwargs)
+
+    monkeypatch.setattr(planner, "build_target_subtree", capture_build)
+    completed = [{"action": "grasp", "params": {"object": "spam"}}]
+    planner.plan_target(0, 0, "place spam", completed_steps=completed)
+    assert captured["kwargs"].get("completed_steps") == completed
+
+
+def test_plan_target_threads_completed_steps_to_build_target_subtree_on_fallback(monkeypatch):
+    # H-3: same threading on the "every attempt failed" deterministic
+    # fallback path.
+    planner = GPSRPlanner(max_attempts=1)
+    planner._offline_mock = False
+    monkeypatch.setattr(planner, "_new_client", lambda: object())
+    monkeypatch.setattr(planner_module, "_call_llm", lambda *a: (None, "boom"))
+    captured = {}
+    original_build = planner.build_target_subtree
+
+    def capture_build(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return original_build(*args, **kwargs)
+
+    monkeypatch.setattr(planner, "build_target_subtree", capture_build)
+    completed = [{"action": "grasp", "params": {"object": "spam"}}]
+    planner.plan_target(0, 0, "place spam", completed_steps=completed)
+    assert captured["kwargs"].get("completed_steps") == completed
+
+
+def test_drop_completed_duplicate_steps_drops_a_reemitted_completed_step():
+    # H-3: a re-emitted step element-wise identical to an already-completed
+    # one (e.g. a replan re-grasping an object the target already holds) is
+    # dropped, tagged `contract:completed-step` like the other deterministic
+    # guard drops.
+    completed = [{"action": "grasp", "params": {"object": "x"}}]
+    plan = [
+        {"action": "grasp", "params": {"object": "x"}},
+        {"action": "place", "params": {"location": "t"}},
+    ]
+    kept, dropped = planner_module._drop_completed_duplicate_steps(plan, completed)
+    assert kept == [{"action": "place", "params": {"location": "t"}}]
+    assert dropped == ["contract:completed-step"]
+
+
+def test_drop_completed_duplicate_steps_is_a_no_op_without_completed_steps():
+    plan = [{"action": "grasp", "params": {"object": "x"}}]
+    kept, dropped = planner_module._drop_completed_duplicate_steps(plan, None)
+    assert kept == plan
+    assert dropped == []
+
+
+def test_drop_completed_duplicate_steps_only_consumes_one_match_per_completed_step():
+    # A plan that legitimately repeats the SAME action twice (e.g. grasp,
+    # place at A, then re-grasp for a second delivery) is not over-dropped
+    # -- only as many matching re-emissions as there are completed steps.
+    completed = [{"action": "grasp", "params": {"object": "x"}}]
+    plan = [
+        {"action": "grasp", "params": {"object": "x"}},
+        {"action": "grasp", "params": {"object": "x"}},
+    ]
+    kept, dropped = planner_module._drop_completed_duplicate_steps(plan, completed)
+    assert kept == [{"action": "grasp", "params": {"object": "x"}}]
+    assert dropped == ["contract:completed-step"]
+
+
 def test_request_plan_all_rejects_invalid_contract_before_mutating_or_spawning(monkeypatch):
     planner = GPSRPlanner()
     planner.record_facts(4, ["held(old)"])

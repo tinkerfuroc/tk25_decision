@@ -149,6 +149,32 @@ def test_postcondition_gate_fails_deferred_without_nav_evidence():
     assert "at_robot(kitchen_table)" in gate.feedback_message
 
 
+def test_h3_postcondition_gate_passes_own_held_from_a_completed_grasp():
+    # H-3 (round-3 fix review) gate test: post [held(x), placed(x,t)], plan
+    # [goto, place], completed [grasp(x)] -> SUCCESS. Before the fix,
+    # `plan_target` never threaded `completed_steps` into
+    # `build_target_subtree`, so this target's own `held(x)` postcondition
+    # (J2: an OWN postcondition cannot use the established-fact ledger
+    # shortcut) had no evidence at all after a replan -- it stayed UNKNOWN
+    # forever and the target could never pass its own post gate.
+    w = _writer()
+    plan = [
+        {"action": "goto", "params": {"location": "t"}},
+        {"action": "place", "params": {"location": "t"}},
+    ]
+    completed = [{"action": "grasp", "params": {"object": "x"}}]
+    gate = BtNode_TargetPostconditionCheck(
+        "post", ["held(x)", "placed(x,t)"], 0, plan,
+        target_object="x", completed_steps=completed,
+    )
+    assert _tick(gate) is Status.SUCCESS
+    # M-5 documents that placed(x,t)'s commit retracts held(x) from the
+    # ledger (you can't be holding something you just placed) -- that is the
+    # CORRECT final state, not asserted here; what H-3 fixes is that the
+    # target reaches SUCCESS at all.
+    assert "placed(x,t)" in w.get(bb_keys.FACTS)
+
+
 def test_j1_three_target_command_drops_retracted_precondition_end_to_end():
     # J1: "take a spam from the laundry_desk, put it on the kitchen_table,
     # then bring it to me" -- t2's held(spam) precondition was established by

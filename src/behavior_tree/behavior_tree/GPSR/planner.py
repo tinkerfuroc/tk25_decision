@@ -1670,6 +1670,54 @@ def _drop_dangling_goto_before_self_nav(
     return kept, dropped
 
 
+def _step_canonical(step: Any) -> Optional[tuple]:
+    if not isinstance(step, dict):
+        return None
+    return (
+        str(step.get("action")),
+        tuple(sorted((str(k), _canonical_param_value(v))
+                      for k, v in (step.get("params") or {}).items())),
+    )
+
+
+def _drop_completed_duplicate_steps(
+    plan: List[Dict[str, Any]],
+    completed_steps: Optional[List[Dict[str, Any]]],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """H-3 (round-3 fix review): drop a re-emitted step element-wise IDENTICAL
+    to one of this target's own already-completed steps.
+
+    ``completed_steps`` (J3, M8) is the postcondition gate's partial commit
+    from a PRIOR attempt of this same target -- e.g. a fully successful
+    ``grasp(x)`` before ``place(x,t)`` failed. Nothing else enforced "a
+    completed grasp is not re-emitted": ``_drop_foreign_contract_steps``
+    only removes steps establishing a SIBLING target's fact, and
+    ``validate_plan``'s prompt just asks nicely. A replan that ignores the
+    prompt and re-grasps would grasp with an already-full gripper. Compared
+    the same way ``_canonical_plan`` compares a whole plan for identity --
+    action + param values, order-insensitive within a step -- and only the
+    FIRST matching completed step per re-emitted duplicate is consumed (a
+    plan that legitimately repeats an action twice, e.g. two separate
+    grasps, is not over-dropped).
+    """
+    completed_canon = [
+        c for c in (_step_canonical(s) for s in (completed_steps or [])) if c is not None
+    ]
+    if not completed_canon:
+        return list(plan or []), []
+    remaining = list(completed_canon)
+    kept: List[Dict[str, Any]] = []
+    dropped: List[str] = []
+    for step in plan or []:
+        canon = _step_canonical(step)
+        if canon is not None and canon in remaining:
+            remaining.remove(canon)
+            dropped.append("contract:completed-step")
+            continue
+        kept.append(step)
+    return kept, dropped
+
+
 def _contract_drop_note(
     dropped: List[str],
     target: Optional[Dict[str, Any]],
@@ -2566,16 +2614,27 @@ class GPSRPlanner:
             # `contract_dropped`, not this cleanup's entries -- a dangling
             # goto has no "owning" sibling target to name.
             cleaned, dangling_dropped = _drop_dangling_goto_before_self_nav(cleaned)
-            dropped = list(dropped) + contract_dropped + dangling_dropped
+            post_dangling_plan = cleaned
+            # H-3 (round-3 fix review): a re-emitted step element-wise
+            # identical to one of THIS target's own already-completed steps
+            # (a partial postcondition-gate commit from a prior attempt,
+            # threaded through as `completed_steps`) is dropped too -- e.g.
+            # a replan after `[held(x), placed(x,t)]` partially committed
+            # must not re-grasp an already-held object.
+            cleaned, completed_dup_dropped = _drop_completed_duplicate_steps(
+                cleaned, completed_steps,
+            )
+            dropped = list(dropped) + contract_dropped + dangling_dropped + completed_dup_dropped
             # I3/M-1: compose the raw(LLM JSON)->new(final `cleaned`) index
-            # map through all three drops: `_clean_plan_core`'s raw-index
-            # list, then by identity through the two guard drops (see
+            # map through all four drops: `_clean_plan_core`'s raw-index
+            # list, then by identity through the three guard drops (see
             # `_kept_indices`).
             contract_kept_idx = _kept_indices(pre_guard_plan, post_guard_plan)
-            dangling_kept_idx = _kept_indices(post_guard_plan, cleaned)
+            dangling_kept_idx = _kept_indices(post_guard_plan, post_dangling_plan)
+            completed_kept_idx = _kept_indices(post_dangling_plan, cleaned)
             mod_old_to_new = {
-                clean_kept_raw_idx[contract_kept_idx[i]]: new
-                for new, i in enumerate(dangling_kept_idx)
+                clean_kept_raw_idx[contract_kept_idx[dangling_kept_idx[i]]]: new
+                for new, i in enumerate(completed_kept_idx)
             }
             raw_actions = [
                 s.get("action") if isinstance(s, dict) else f"<{type(s).__name__}>"
@@ -2677,8 +2736,17 @@ class GPSRPlanner:
                 if handled:
                     return
             # Accepted — build the subtree on this (worker) thread, then cache.
+            # H-3 (round-3 fix review): `completed_steps` must reach the
+            # subtree's gates the same way `replace_target_plan` already
+            # threads it -- otherwise the gate reasons only over the NEW
+            # plan, so a fact an earlier (already-succeeded) step of THIS
+            # target established (e.g. `held(x)` from a completed grasp) has
+            # no evidence and the target can never pass its own post gate.
             try:
-                subtree = self.build_target_subtree(slot, index, cleaned, modifications=mods)
+                subtree = self.build_target_subtree(
+                    slot, index, cleaned, modifications=mods,
+                    completed_steps=completed_steps,
+                )
             except Exception as exc:  # noqa: BLE001 — surface for retry
                 last_reason = f"subtree build failed: {exc!r}"
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
@@ -2708,8 +2776,12 @@ class GPSRPlanner:
                         modifications=group_modifications_by_step(cleaned, mods or []))
             return
         # Every attempt failed -> guaranteed non-empty fallback plan.
+        # H-3 (round-3 fix review): same completed_steps threading as the
+        # accepted path above -- a fallback for a target with prior
+        # completed steps must still gate over the whole (completed +
+        # fallback) plan, not just the fallback acknowledgement.
         plan = _fallback_plan(desc)
-        subtree = self.build_target_subtree(slot, index, plan)
+        subtree = self.build_target_subtree(slot, index, plan, completed_steps=completed_steps)
         reason = f"all {self._max_attempts} attempts failed (last reason: {last_reason})"
         print(f"[plan:{slot}:{index}] {reason} -> fallback acknowledgement plan")
         self._store(slot, index, desc, plan, subtree, reason)
