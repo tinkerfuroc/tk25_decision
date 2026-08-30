@@ -564,6 +564,102 @@ def _reject_person_object_handling(
     return None
 
 
+def _self_navigates_toward(target: Dict[str, Any], y: str) -> bool:
+    """J11: does ``target``'s own postcondition establisher self-navigate to ``y``?
+
+    A ``placed(_,Y)`` postcondition is established by ``place``, self-
+    navigating to its own ``location`` param -- true when that Y matches. A
+    ``delivered(_,r)`` postcondition is established by ``deliver``, self-
+    navigating to ``recipient_location`` -- since the split has no lower-
+    layer params yet, matched against the recipient arg itself (a location-
+    shaped recipient, e.g. "bring the spam to the laundry_room"), the
+    target's own top-layer-assigned ``location``, or the location's name
+    appearing in the target's desc.
+    """
+    y_norm = _norm_loc(y)
+    for condition in target.get("postconditions") or []:
+        if not isinstance(condition, str):
+            continue
+        fact, _err = parse_fact(condition)
+        if fact is None or len(fact.args) != 2:
+            continue
+        if fact.predicate == "placed":
+            if _norm_loc(fact.args[1]) == y_norm:
+                return True
+        elif fact.predicate == "delivered":
+            if _norm_loc(fact.args[1]) == y_norm:
+                return True
+            loc = str(target.get("location") or "")
+            if loc and _norm_loc(loc) == y_norm:
+                return True
+            desc = str(target.get("desc") or "")
+            if re.search(re.escape(y_norm).replace("_", r"[_\s]"), desc, re.IGNORECASE):
+                return True
+    return False
+
+
+def _merge_transport_targets(targets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """J11 (round-3 adversarial review, tier0 #1/#2): fold a pure-transport
+    target into the self-navigating place/deliver target that follows it.
+
+    Rule 7 splits "take X to Y then place it on Y" into a transport target
+    (postcondition only ``at_robot(Y)``) followed by a place/deliver target
+    at Y — but nothing stops the lower layer from planning the TRANSPORT
+    target itself as the self-navigating place/deliver (003/004: both
+    targets planned ``place``, a duplicate ``placed()``; 035: duplicate
+    ``deliver()``; 029: "bring the spam to the laundry_room" planned as a
+    recipient-less deliver — 4 rejections then fallback).
+
+    When target N's postconditions are ONLY ``at_robot(Y)``, target N+1
+    depends on N, and N+1's own postcondition establisher self-navigates to
+    the SAME Y, N is pure duplicate work: drop it, keep N+1's contract
+    (desc/pre/postconditions untouched), and re-point ``depends_on`` — N+1
+    absorbs N's own dependencies, and anything else that depended on N now
+    depends on N+1 instead.
+    """
+    merged = list(targets)
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(merged) - 1):
+            target_n = merged[i]
+            target_n1 = merged[i + 1]
+            post_n = [c for c in target_n.get("postconditions") or [] if isinstance(c, str)]
+            if len(post_n) != 1:
+                continue
+            fact_n, _err = parse_fact(post_n[0])
+            if fact_n is None or fact_n.predicate != "at_robot":
+                continue
+            y = fact_n.args[0]
+            n_id = str(target_n.get("id"))
+            n1_deps = [str(d) for d in (target_n1.get("depends_on") or [])]
+            if n_id not in n1_deps:
+                continue
+            if not _self_navigates_toward(target_n1, y):
+                continue
+            new_n1_deps = [d for d in n1_deps if d != n_id]
+            for dep in target_n.get("depends_on") or []:
+                dep = str(dep)
+                if dep not in new_n1_deps:
+                    new_n1_deps.append(dep)
+            target_n1["depends_on"] = new_n1_deps
+            n1_id = str(target_n1.get("id"))
+            for other in merged:
+                if other is target_n or other is target_n1:
+                    continue
+                deps = other.get("depends_on")
+                if isinstance(deps, list) and n_id in [str(d) for d in deps]:
+                    other["depends_on"] = [
+                        n1_id if str(d) == n_id else d for d in deps
+                    ]
+            print(f"[split] merged transport target {n_id} into {n1_id} "
+                  "(self-navigating place/deliver)")
+            merged = [t for t in merged if t is not target_n]
+            changed = True
+            break
+    return merged
+
+
 def _dependency_ancestor_targets(
     targets: List[Dict[str, Any]], index: int,
 ) -> List[Dict[str, Any]]:
@@ -1978,6 +2074,7 @@ class GPSRPlanner:
                 print(f"[split] attempt {attempt+1}/{self._max_attempts} REJECTED: "
                       f"{last_reason}")
                 continue
+            targets = _merge_transport_targets(targets)
             ok, reason = _validate_target_contract(targets)
             if not ok:
                 last_reason = f"your target graph/conditions are invalid: {reason}"

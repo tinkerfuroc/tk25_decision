@@ -10,6 +10,7 @@ from behavior_tree.GPSR.planner import (
     TOP_LAYER_SYSTEM_PROMPT,
     _append_report_target_if_needed,
     _build_lower_layer_user_prompt,
+    _merge_transport_targets,
     _normalise_targets,
     _reject_person_object_handling,
 )
@@ -210,6 +211,67 @@ def test_j9_ordinary_object_handling_target_passes():
          "postconditions": ["held(coke)"]},
     ]
     assert _reject_person_object_handling(targets) is None
+
+
+# ---------------------------------------------------------------------------
+# J11: merge a pure-transport target into the following self-navigating
+# place/deliver target
+# ---------------------------------------------------------------------------
+
+def test_j11_003_shaped_4_target_split_merges_to_3():
+    targets = [
+        {"id": "t0", "desc": "Locate the kitchen item in the room", "object": "kitchen_item",
+         "location": "", "depends_on": [], "preconditions": [],
+         "postconditions": ["object_seen(kitchen_item)"]},
+        {"id": "t1", "desc": "Grasp the kitchen item", "object": "kitchen_item",
+         "location": "", "depends_on": ["t0"], "preconditions": ["object_seen(kitchen_item)"],
+         "postconditions": ["held(kitchen_item)"]},
+        {"id": "t2", "desc": "Take the kitchen item to the kitchen_table", "object": "kitchen_item",
+         "location": "kitchen_table", "depends_on": ["t1"], "preconditions": ["held(kitchen_item)"],
+         "postconditions": ["at_robot(kitchen_table)"]},
+        {"id": "t3", "desc": "Place the kitchen item on the kitchen_table", "object": "kitchen_item",
+         "location": "kitchen_table", "depends_on": ["t2"],
+         "preconditions": ["held(kitchen_item)", "at_robot(kitchen_table)"],
+         "postconditions": ["placed(kitchen_item,kitchen_table)"]},
+    ]
+    result = _merge_transport_targets(targets)
+    assert [t["id"] for t in result] == ["t0", "t1", "t3"]
+    merged_target = result[-1]
+    assert merged_target["depends_on"] == ["t1"]
+    assert merged_target["postconditions"] == ["placed(kitchen_item,kitchen_table)"]
+    assert merged_target["desc"] == "Place the kitchen item on the kitchen_table"
+
+
+def test_j11_deliver_to_a_room_shaped_recipient_merges_too():
+    # 029: "bring the spam to the laundry_room" -- the transport target's
+    # destination Y ("laundry_room") IS the deliver's recipient argument.
+    targets = [
+        {"id": "t0", "desc": "Grasp the spam", "object": "spam", "location": "",
+         "depends_on": [], "preconditions": [], "postconditions": ["held(spam)"]},
+        {"id": "t1", "desc": "Take the spam to the laundry_room", "object": "spam",
+         "location": "laundry_room", "depends_on": ["t0"], "preconditions": ["held(spam)"],
+         "postconditions": ["at_robot(laundry_room)"]},
+        {"id": "t2", "desc": "Deliver the spam to the laundry_room", "object": "spam",
+         "location": "laundry_room", "depends_on": ["t1"], "preconditions": ["held(spam)"],
+         "postconditions": ["delivered(spam,laundry_room)"]},
+    ]
+    result = _merge_transport_targets(targets)
+    assert [t["id"] for t in result] == ["t0", "t2"]
+    assert result[-1]["depends_on"] == ["t0"]
+
+
+def test_j11_transport_followed_by_find_object_is_not_merged():
+    # find_object is not self-navigating -- nothing to merge.
+    targets = [
+        {"id": "t0", "desc": "Go to the kitchen_table with the kitchen item",
+         "object": "kitchen_item", "location": "kitchen_table", "depends_on": [],
+         "preconditions": [], "postconditions": ["at_robot(kitchen_table)"]},
+        {"id": "t1", "desc": "Find another item at the kitchen_table",
+         "object": "item2", "location": "kitchen_table", "depends_on": ["t0"],
+         "preconditions": ["at_robot(kitchen_table)"], "postconditions": ["object_seen(item2)"]},
+    ]
+    result = _merge_transport_targets(targets)
+    assert result == targets
 
 
 def test_fact_store_applies_transitions_and_returns_defensive_copies():
