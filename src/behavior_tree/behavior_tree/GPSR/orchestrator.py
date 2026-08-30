@@ -1901,7 +1901,20 @@ class BtNode_SplitCommand(Behaviour):
         self.feedback_message = "splitting command into targets..."
 
     def _split_worker(self, command: str):
-        self._targets = self._planner.split_command(command)
+        # I4 (round-3 adversarial review, M7): an unhandled exception in
+        # `split_command` used to leave `self._targets` at its `None`
+        # sentinel forever -- `update()` above spins RUNNING indefinitely
+        # ("splitting command into targets...") with no telemetry
+        # distinguishing that from a slow, still-in-flight split. Never let
+        # this daemon thread die silently: fall back to the same
+        # deterministic split `split_command` itself uses when every LLM
+        # attempt fails.
+        try:
+            self._targets = self._planner.split_command(command)
+        except Exception as exc:  # noqa: BLE001 -- I4: never leave the split not-ready
+            print(f"[split] split_command crashed: {exc!r} -> deterministic fallback split")
+            from .planner import _offline_mock_targets  # lazy: planner.py imports this module
+            self._targets = _offline_mock_targets(command)
 
     def update(self):
         if self._targets is None:

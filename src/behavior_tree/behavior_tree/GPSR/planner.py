@@ -42,6 +42,7 @@ from .config import (
     OPENAI_MODEL,
     OPENAI_TEMPERATURE,
     OPENAI_MAX_TOKENS,
+    LLM_TIMEOUT_S,
 )
 from .modifiable_nodes import (
     TEMPLATES,
@@ -1561,9 +1562,17 @@ class GPSRPlanner:
     def _new_client(self) -> Optional[openai.OpenAI]:
         if self._offline_mock:
             return None
+        # I4 (round-3 adversarial review, M7): no timeout + openai's default
+        # (unbounded) retries meant an OpenRouter stall could hang a
+        # planning attempt indefinitely, and code AFTER this call in
+        # `plan_target` (grouping, fallback subtree build) is what actually
+        # protects the daemon planning thread -- see the try/except wrapping
+        # the whole method body below.
         return openai.OpenAI(
             api_key=OPENAI_API_KEY,
             base_url="https://openrouter.ai/api/v1",
+            timeout=LLM_TIMEOUT_S,
+            max_retries=1,
         )
 
     # -- cache ---------------------------------------------------------------
@@ -1943,7 +1952,48 @@ class GPSRPlanner:
         Called from worker threads (request_plan_all / replan_target). Validates
         the plan the same way the legacy single-command planner did, then builds
         and caches the target's executing subtree. Never touches the Blackboard.
+
+        I4 (round-3 adversarial review, M7): everything below is a thin
+        try/except around ``_plan_target_impl`` — an unhandled exception
+        ANYWHERE in that body (grouping, subtree build, ...) used to kill
+        this call's daemon thread silently, leaving the cache entry
+        never-ready and the executor spinning RUNNING forever ("waiting for
+        target N plan..."). On ANY exception here the target is instead
+        stored READY with the guaranteed fallback plan and an error of
+        ``f"planner crashed: {exc!r}"`` — the entry is never left not-ready.
         """
+        try:
+            self._plan_target_impl(
+                slot, index, desc, command=command, target_obj=target_obj,
+                target_loc=target_loc, prior_targets=prior_targets,
+                failure_reason=failure_reason, target=target, all_targets=all_targets,
+            )
+        except Exception as exc:  # noqa: BLE001 -- I4: never leave the entry not-ready
+            error = f"planner crashed: {exc!r}"
+            print(f"[plan:{slot}:{index}] {error} -> fallback acknowledgement plan")
+            try:
+                plan = _fallback_plan(desc)
+                subtree = self.build_target_subtree(slot, index, plan)
+            except Exception as build_exc:  # noqa: BLE001
+                print(f"[plan:{slot}:{index}] fallback subtree build ALSO failed: "
+                      f"{build_exc!r} -- entry left not-ready")
+                return
+            self._store(slot, index, desc, plan, subtree, error)
+
+    def _plan_target_impl(
+        self,
+        slot: int,
+        index: int,
+        desc: str,
+        command: Optional[str] = None,
+        target_obj: str = "",
+        target_loc: str = "",
+        prior_targets: Optional[List[Dict[str, Any]]] = None,
+        failure_reason: Optional[str] = None,
+        target: Optional[Dict[str, Any]] = None,
+        all_targets: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """The actual planning body of ``plan_target`` -- see that docstring."""
         if self._offline_mock:
             plan = _offline_mock_plan(desc)
             subtree = self.build_target_subtree(slot, index, plan)

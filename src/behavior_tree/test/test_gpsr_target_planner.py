@@ -445,3 +445,64 @@ def test_two_layer_planner_honours_offline_planner_override(monkeypatch):
 
     monkeypatch.setenv("GPSR_OFFLINE_PLANNER", "1")
     assert planner_mod.GPSRPlanner()._offline_mock is True
+
+
+# ---------------------------------------------------------------------------
+# I4 (round-3 adversarial review, M7): a planning deadline + a daemon thread
+# that never dies silently.
+# ---------------------------------------------------------------------------
+
+def test_llm_timeout_s_defaults_and_reads_env_override(monkeypatch):
+    from behavior_tree.GPSR import config as config_module
+
+    monkeypatch.delenv("GPSR_LLM_TIMEOUT_S", raising=False)
+    assert config_module._resolve_llm_timeout_s() == 45.0
+
+    monkeypatch.setenv("GPSR_LLM_TIMEOUT_S", "12.5")
+    assert config_module._resolve_llm_timeout_s() == 12.5
+
+    monkeypatch.setenv("GPSR_LLM_TIMEOUT_S", "not-a-number")
+    assert config_module._resolve_llm_timeout_s() == 45.0
+
+
+def test_new_client_passes_timeout_and_bounded_retries(monkeypatch):
+    planner = GPSRPlanner()
+    planner._offline_mock = False
+    captured = {}
+
+    class _FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(planner_module.openai, "OpenAI", _FakeOpenAI)
+
+    planner._new_client()
+
+    assert captured.get("timeout") == planner_module.LLM_TIMEOUT_S
+    assert captured.get("max_retries") == 1
+
+
+def test_plan_target_survives_a_crashing_call_llm_with_fallback_and_error(monkeypatch):
+    # I4: code AFTER `_call_llm` (grouping, fallback subtree build) is not
+    # the only thing that can raise -- ANY exception in the planning body
+    # must leave the cache entry READY with the guaranteed fallback plan and
+    # `error` set, never not-ready forever.
+    planner = GPSRPlanner(max_attempts=2)
+    planner._offline_mock = False
+    monkeypatch.setattr(planner, "_new_client", lambda: object())
+
+    def _crashing_call_llm(*args, **kwargs):
+        raise RuntimeError("boom: LLM call crashed")
+
+    monkeypatch.setattr(planner_module, "_call_llm", _crashing_call_llm)
+
+    planner.plan_target(0, 0, "tell me what day it is", command="tell me what day it is")
+
+    assert planner.is_target_ready(0, 0) is True
+    error = planner.get_error(0, 0)
+    assert error is not None
+    assert error.startswith("planner crashed: ")
+    assert "boom: LLM call crashed" in error
+    plan = planner.get_action_plan(0, 0)
+    assert plan and plan[0]["action"] == "announce"
+    assert plan[0]["params"].get("acknowledgement") is True

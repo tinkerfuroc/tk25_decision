@@ -4,6 +4,7 @@ import py_trees
 from py_trees.common import Access, Status
 
 from behavior_tree.GPSR.orchestrator import (
+    BtNode_SplitCommand,
     BtNode_TargetPostconditionCheck,
     BtNode_TargetPreconditionCheck,
     DynamicExecutor,
@@ -598,3 +599,37 @@ def test_all_success_dependency_chain_ends_success():
     assert planner.requested == [0, 1]
     assert planner.ticked == [0, 1]
     assert executor.status is Status.SUCCESS
+
+
+# ---------------------------------------------------------------------------
+# I4 (round-3 adversarial review, M7): split_command's worker thread must
+# never leave BtNode_SplitCommand.update() spinning RUNNING forever when
+# `planner.split_command` raises -- it falls back to the same deterministic
+# split `split_command` itself uses when every LLM attempt fails.
+# ---------------------------------------------------------------------------
+
+class _CrashingSplitPlanner:
+    def split_command(self, command):
+        raise RuntimeError("boom: split_command crashed")
+
+
+def test_split_worker_falls_back_to_deterministic_split_on_crash():
+    from behavior_tree.GPSR.planner import _offline_mock_targets
+
+    bb = py_trees.blackboard.Client(name="split-crash")
+    for key in (bb_keys.COMMAND, bb_keys.TARGETS, bb_keys.NUM_TARGETS, bb_keys.REPLAN_REQUEST):
+        bb.register_key(key, access=Access.WRITE)
+        bb.register_key(key, access=Access.READ)
+    bb.set(bb_keys.COMMAND, "first | second", overwrite=True)
+
+    node = BtNode_SplitCommand("split", _CrashingSplitPlanner())
+    py_trees.trees.setup(root=node)
+    list(node.tick())
+    assert node._thread is not None
+    node._thread.join(timeout=5)
+    assert not node._thread.is_alive()
+    result = list(node.tick())[-1]
+
+    assert result.status is Status.SUCCESS
+    assert bb.get(bb_keys.TARGETS) == _offline_mock_targets("first | second")
+    assert bb.get(bb_keys.NUM_TARGETS) == 2

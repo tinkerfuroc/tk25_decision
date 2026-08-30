@@ -80,3 +80,26 @@ OPENAI_VISION_MODEL = _resolve_model(("LLM_MODEL",), "openai/gpt-4.1")
 OPENAI_FALLBACK_MODEL = _resolve_model(("GPSR_FALLBACK_MODEL", "LLM_MODEL"), "openai/gpt-4.1")
 OPENAI_TEMPERATURE = 0.2
 OPENAI_MAX_TOKENS = 256
+
+
+def _resolve_llm_timeout_s(default: float = 45.0) -> float:
+    """Read GPSR_LLM_TIMEOUT_S (process env only); fall back to ``default``.
+
+    I4 (round-3 adversarial review, M7): the planner client is built with no
+    timeout and default (unbounded) retries, so an OpenRouter stall can hang
+    a planning attempt indefinitely -- this bounds every request the
+    planner's ``openai.OpenAI`` client makes.
+    """
+    raw = os.environ.get("GPSR_LLM_TIMEOUT_S")
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return default
+
+
+# I4: seconds before an openai.OpenAI(...) request to the planner/fallback
+# LLM gives up -- see GPSRPlanner._new_client (planner.py). Overridable via
+# GPSR_LLM_TIMEOUT_S for tests/tuning.
+LLM_TIMEOUT_S = _resolve_llm_timeout_s()
