@@ -196,18 +196,28 @@ def test_post_mismatching_action_is_unknown_failure():
     assert node.feedback_message == "postcondition unmet: held(plant pot) (UNKNOWN)"
 
 
-def test_post_all_or_nothing_on_second_failure():
-    bb = _bb("post-aon")
+def test_post_partial_success_commits_valid_facts_before_failure():
+    # J3 (round-3 adversarial review, M8): the gate used to fail-fast on the
+    # FIRST unmet fact and commit nothing. It now verifies every declared
+    # postcondition and commits whatever verified VALID (held(plant pot),
+    # from the successful grasp) even though placed(...) is still unmet --
+    # so a replan does not have to redo the grasp.
+    bb = _bb("post-partial")
+    bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
+    bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.READ)
     bb.set(bb_keys.FACTS, ["at_robot(kitchen)"], overwrite=True)
     written = []
+    grasp_step = {"action": "grasp", "params": {"object": "plant pot"}}
     node = _setup(BtNode_TargetPostconditionCheck(
         "post", ["held(plant pot)", "placed(plant pot,table)"], 0,
-        [{"action": "grasp", "params": {"object": "plant pot"}}],
+        [grasp_step],
         facts_writer=written.append,
     ))
     assert node.update() is Status.FAILURE
-    assert written == []
-    assert bb.get(bb_keys.FACTS) == ["at_robot(kitchen)"]
+    assert node.feedback_message == "postcondition unmet: placed(plant pot,table) (UNKNOWN)"
+    assert written == [["held(plant_pot)"]]
+    assert bb.get(bb_keys.FACTS) == ["at_robot(kitchen)", "held(plant_pot)"]
+    assert bb.get(bb_keys.GATE_COMPLETED_STEPS) == [grasp_step]
 
 
 def test_post_own_postcondition_already_in_ledger_needs_its_own_evidence():
@@ -318,15 +328,25 @@ def test_post_verifier_exception_blames_exact_later_source():
 
 
 def test_post_malformed_middle_maps_feedback_to_original_source():
+    # J3: the gate now checks every source instead of stopping at the first
+    # failure, so BOTH the malformed fact and the unresolved at_robot(kitchen)
+    # (nothing in this plan navigates there) end up unmet -- feedback lists
+    # both, in source order.
     bb = _bb("post-malformed-middle")
     bb.set(bb_keys.FACTS, [], overwrite=True)
+    # The blackboard is process-global -- explicitly clear any stale
+    # LAST_NAV_LOCATION an earlier test in this module left behind, so
+    # at_robot(kitchen) genuinely has no evidence here.
+    bb.set(bb_keys.LAST_NAV_LOCATION, None, overwrite=True)
     malformed = "not a fact"
     node = _setup(BtNode_TargetPostconditionCheck(
         "post", ["held(plant pot)", malformed, "at_robot(kitchen)"], 0,
         [{"action": "grasp", "params": {"object": "plant pot"}}],
     ))
     assert node.update() is Status.FAILURE
-    assert node.feedback_message == f"postcondition unmet: {malformed} (INVALID)"
+    assert node.feedback_message == (
+        f"postcondition unmet: {malformed} (INVALID), at_robot(kitchen) (UNKNOWN)"
+    )
 
 
 def test_dynamic_executor_last_child_feedback_uses_leaf_tip():
@@ -586,7 +606,7 @@ class _DependencyPlanner:
     def _get_desc(self, slot, index):
         return self.targets[index]["desc"]
 
-    def replan_target(self, slot, index, reason):
+    def replan_target(self, slot, index, reason, completed_steps=None):
         pass
 
 

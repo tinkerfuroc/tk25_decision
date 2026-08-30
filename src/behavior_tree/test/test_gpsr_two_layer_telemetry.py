@@ -81,7 +81,7 @@ class _Planner:
     def get_facts(self, slot):
         return []
 
-    def replan_target(self, slot, index, reason):
+    def replan_target(self, slot, index, reason, completed_steps=None):
         pass
 
 
@@ -389,7 +389,7 @@ class _UnrecoverableAfterFirstPlanner(_Planner):
         return (planner_mod.UNRECOVERABLE_ERROR_PREFIX
                 + ": no untried establisher for ['object_seen(x)']")
 
-    def replan_target(self, slot, index, reason):
+    def replan_target(self, slot, index, reason, completed_steps=None):
         self.replan_calls += 1
 
 

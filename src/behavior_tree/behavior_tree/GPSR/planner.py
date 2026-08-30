@@ -1395,6 +1395,7 @@ def _build_lower_layer_user_prompt(
     contract: Optional[Dict[str, Any]] = None,
     all_targets: Optional[List[Dict[str, Any]]] = None,
     include_ancestors: Optional[bool] = None,
+    completed_steps: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Build the lower-layer user prompt WITH full-command + prior-target context.
 
@@ -1455,6 +1456,17 @@ def _build_lower_layer_user_prompt(
         )
         for i, t in enumerate(prior_targets):
             body += f"  T{i} {t.get('desc') or ''}\n"
+        body += "\n"
+    # J3 (round-3 adversarial review, M8): steps of THIS target's own plan
+    # that already succeeded and had a fact committed for them (a
+    # postcondition gate's partial commit before a LATER fact of the same
+    # target failed) -- do not repeat them on replan.
+    if completed_steps:
+        body += "Already completed in this target (do not repeat):\n"
+        for step in completed_steps:
+            action = step.get("action") if isinstance(step, dict) else step
+            params = step.get("params", {}) if isinstance(step, dict) else {}
+            body += f"  - {action}({params})\n"
         body += "\n"
     facts = list(verified_facts or [])
     body += "Verified world-state facts\n(established by successful deterministic target gates — treat as true):\n"
@@ -1981,6 +1993,7 @@ class GPSRPlanner:
         failure_reason: Optional[str] = None,
         target: Optional[Dict[str, Any]] = None,
         all_targets: Optional[List[Dict[str, Any]]] = None,
+        completed_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """LOWER LAYER. Blocking: plan ONE target and pre-build its subtree.
 
@@ -2019,6 +2032,7 @@ class GPSRPlanner:
                 slot, index, desc, command=command, target_obj=target_obj,
                 target_loc=target_loc, prior_targets=prior_targets,
                 failure_reason=failure_reason, target=target, all_targets=all_targets,
+                completed_steps=completed_steps,
             )
         except Exception as exc:  # noqa: BLE001 -- I4: never leave the entry not-ready
             error = f"planner crashed: {exc!r}"
@@ -2044,6 +2058,7 @@ class GPSRPlanner:
         failure_reason: Optional[str] = None,
         target: Optional[Dict[str, Any]] = None,
         all_targets: Optional[List[Dict[str, Any]]] = None,
+        completed_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """The actual planning body of ``plan_target`` -- see that docstring."""
         if self._offline_mock:
@@ -2091,6 +2106,7 @@ class GPSRPlanner:
                 contract=target,
                 all_targets=all_targets,
                 include_ancestors=not failure_reason,
+                completed_steps=completed_steps,
             )
             parsed, err = _call_llm(
                 client, LOWER_LAYER_SYSTEM_PROMPT, user_prompt, temperature,
@@ -2155,7 +2171,12 @@ class GPSRPlanner:
                     "refusal, never an answer."
                 )
                 continue
-            prior_plan = _flatten_prior_plans(self, slot, index)
+            # J3 (round-3 adversarial review, M8): this target's own already-
+            # completed steps (a postcondition gate's partial commit) seed
+            # validate_plan's cross-target state the same way an ancestor
+            # target's plan does -- e.g. a preserved grasp means a fresh
+            # place() is not rejected for "no held(x)".
+            prior_plan = _flatten_prior_plans(self, slot, index) + list(completed_steps or [])
             ok, reason = validate_plan(
                 cleaned, desc or "", known_actions,
                 known_locations=known_loc_arg,
@@ -2318,7 +2339,10 @@ class GPSRPlanner:
                 daemon=True,
             ).start()
 
-    def replan_target(self, slot: int, index: int, reason: str = "") -> None:
+    def replan_target(
+        self, slot: int, index: int, reason: str = "",
+        completed_steps: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
         """Re-plan ONE target on a fresh daemon thread (lower-layer scope only).
 
         Invalidates the cached entry first so the OLD subtree is never re-swapped
@@ -2326,6 +2350,11 @@ class GPSRPlanner:
         are untouched — a failing target re-plans only itself. The replan keeps
         the same full-command context (command / object / location / prior
         targets) so a delta re-plan does not lose the assigned location.
+
+        ``completed_steps`` (J3, round-3 adversarial review, M8): steps of
+        THIS target's own plan that already succeeded (the postcondition
+        gate's partial commit before it failed) — threaded through to
+        ``plan_target`` so the fresh plan does not redo them.
         """
         desc = self._get_desc(slot, index)
         if desc is None:
@@ -2342,7 +2371,10 @@ class GPSRPlanner:
                 str(t.get("location") or ""),
                 [dict(x) for x in _dependency_ancestor_targets(targets, index)],
             ),
-            kwargs={"failure_reason": reason, "target": t, "all_targets": targets},
+            kwargs={
+                "failure_reason": reason, "target": t, "all_targets": targets,
+                "completed_steps": completed_steps,
+            },
             daemon=True,
         ).start()
 

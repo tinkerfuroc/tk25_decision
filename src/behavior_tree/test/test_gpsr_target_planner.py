@@ -149,6 +149,22 @@ def test_lower_prompt_includes_verified_facts_or_none():
     assert "(none yet)" in _build_lower_layer_user_prompt("cmd", "target", "", "", [], [])
 
 
+def test_lower_prompt_lists_completed_steps_when_given():
+    # J3: the postcondition gate's partial commit (a completed grasp) must be
+    # rendered so a replan does not repeat it.
+    prompt = _build_lower_layer_user_prompt(
+        "cmd", "target", "spam", "", [], [],
+        completed_steps=[{"action": "grasp", "params": {"object": "spam"}}],
+    )
+    assert "Already completed in this target (do not repeat):" in prompt
+    assert "grasp({'object': 'spam'})" in prompt
+
+
+def test_lower_prompt_omits_completed_steps_block_when_none():
+    prompt = _build_lower_layer_user_prompt("cmd", "target", "", "", [], [])
+    assert "Already completed in this target" not in prompt
+
+
 @pytest.mark.parametrize("bad_targets", [123, "target", {"desc": "target"}, ("target",)])
 def test_split_retries_non_list_targets_then_accepts_valid(monkeypatch, bad_targets):
     planner = GPSRPlanner(max_attempts=2)
@@ -317,6 +333,29 @@ def test_request_plan_all_same_command_replan_preserves_facts(monkeypatch):
     planner.record_facts(4, ["at_robot(kitchen)"])
     planner.replan_target(4, 0, "retry")
     assert planner.get_facts(4) == ["at_robot(kitchen)"]
+
+
+def test_replan_target_threads_completed_steps_to_plan_target(monkeypatch):
+    # J3: the postcondition gate's partial commit (steps that already
+    # succeeded) must reach plan_target's completed_steps kwarg so the
+    # lower-layer prompt can list them and the plan-validator can seed them.
+    planner = GPSRPlanner()
+    monkeypatch.setattr(planner, "plan_target", lambda *args, **kwargs: None)
+    planner.request_plan_all(4, ["get the spam"], command="cmd")
+
+    captured = {}
+    done = threading.Event()
+
+    def fake_plan_target(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        done.set()
+
+    monkeypatch.setattr(planner, "plan_target", fake_plan_target)
+    completed = [{"action": "grasp", "params": {"object": "spam"}}]
+    planner.replan_target(4, 0, "postcondition unmet: placed(spam,table) (UNKNOWN)",
+                           completed_steps=completed)
+    assert done.wait(timeout=2.0)
+    assert captured["kwargs"]["completed_steps"] == completed
 
 
 def test_request_plan_all_rejects_invalid_contract_before_mutating_or_spawning(monkeypatch):

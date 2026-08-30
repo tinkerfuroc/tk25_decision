@@ -50,6 +50,7 @@ from .config import (
 from ..config import is_full_mock_mode
 from .planner_validators import validate_plan
 from .validators import (
+    Fact,
     VerificationContext,
     Verdict,
     apply_fact_transitions,
@@ -71,6 +72,7 @@ from .action_contracts import (
     IDENTICAL_PLAN_ERROR_PREFIX,
     UNRECOVERABLE_ERROR_PREFIX,
     contract_for as _contract_for,
+    established_facts as _step_established_facts,
     self_established_facts as _self_established_facts,
 )
 from .telemetry import get_default_telemetry
@@ -1732,6 +1734,30 @@ class BtNode_TargetPreconditionCheck(Behaviour):
         return Status.SUCCESS
 
 
+def _steps_establishing(
+    action_plan: Sequence[Mapping[str, Any]], canonical_facts: Sequence[str],
+) -> List[Dict[str, Any]]:
+    """The steps of ``action_plan`` whose contract established any of ``canonical_facts``.
+
+    J3 (round-3 adversarial review, M8): when the postcondition gate commits
+    a subset of a target's declared facts before failing, this tells the
+    NEXT replan which of the target's own already-run steps produced one of
+    the just-committed facts -- so ``plan_target`` can feed it back as
+    ``completed_steps`` and the model is told not to repeat it.
+    """
+    wanted = set(canonical_facts)
+    if not wanted:
+        return []
+    matched: List[Dict[str, Any]] = []
+    for step in action_plan or []:
+        if not isinstance(step, Mapping):
+            continue
+        produced = set(_step_established_facts(step)) | set(_self_established_facts(step))
+        if produced & wanted:
+            matched.append(dict(step))
+    return matched
+
+
 class BtNode_TargetPostconditionCheck(Behaviour):
     """Verify and publish target facts under the v1 fact-store contract.
 
@@ -1769,6 +1795,7 @@ class BtNode_TargetPostconditionCheck(Behaviour):
         self._bb.register_key(bb_keys.FACTS, access=Access.WRITE)
         self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.READ)
         self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
         self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
         for _, key in _TARGET_GATE_EVIDENCE_KEYS:
             self._bb.register_key(key, access=Access.READ)
@@ -1795,7 +1822,14 @@ class BtNode_TargetPostconditionCheck(Behaviour):
             own_postconditions=frozenset(own_postconditions),
         )
         evidence = _target_gate_evidence(self._bb)
-        parsed_facts = []
+        # J3 (round-3 adversarial review, M8): verify EVERY fact -- no more
+        # fail-fast on the first unmet one -- so the VALID ones can still be
+        # committed even when the target overall fails. Telemetry is
+        # therefore emitted for every source now, not just up to the first
+        # failure (this intentionally widens the I6 comment's old "fail-fast
+        # semantics unchanged" note).
+        valid_facts: List[Fact] = []
+        unmet: List[str] = []
         for source in sources:
             try:
                 results, facts = check_all([source], evidence, context)
@@ -1808,42 +1842,53 @@ class BtNode_TargetPostconditionCheck(Behaviour):
                 verdict = result.verdict
             reason = "verifier exception" if result is None else result.evidence
             confidence = 0.0 if result is None else result.confidence
-            # I6: telemetry per checked fact -- fail-fast semantics unchanged,
-            # so a fact after the first failure is never reached/emitted.
             _emit_gate_verified(
                 self._bb, self._slot, self._target_index, "postcondition",
                 source, verdict, confidence, reason,
             )
-            if verdict is not Verdict.VALID:
-                self.feedback_message = f"postcondition unmet: {source} ({verdict.value})"
-                return Status.FAILURE
-            parsed_facts.extend(facts)
+            if verdict is Verdict.VALID:
+                valid_facts.extend(facts)
+            else:
+                unmet.append(f"{source} ({verdict.value})")
 
         canonical = []
         seen = set()
-        for fact in parsed_facts:
+        for fact in valid_facts:
             value = canonical_fact(fact)
             if value not in seen:
                 seen.add(value)
                 canonical.append(value)
-        try:
-            if self._facts_writer is not None:
-                self._facts_writer(canonical)
-        except Exception as exc:
-            self.feedback_message = f"postcondition fact write failed: {exc}"
+
+        if canonical:
+            try:
+                if self._facts_writer is not None:
+                    self._facts_writer(canonical)
+            except Exception as exc:
+                self.feedback_message = f"postcondition fact write failed: {exc}"
+                return Status.FAILURE
+
+            current = _target_gate_facts(self._bb)
+            merged = apply_fact_transitions(current, canonical)
+            try:
+                self._bb.set(bb_keys.FACTS, merged, overwrite=True)
+            except Exception as exc:
+                if self._facts_writer is not None:
+                    self.feedback_message = f"postcondition fact mirror write failed: {exc}"
+                else:
+                    self.feedback_message = f"postcondition fact write failed: {exc}"
+                    return Status.FAILURE
+
+        if unmet:
+            committed_steps = _steps_establishing(self._action_plan, canonical)
+            self._bb.set(bb_keys.GATE_COMPLETED_STEPS, committed_steps, overwrite=True)
+            print(
+                f"gate:{self._target_index}:post committed {canonical} unmet {unmet}"
+            )
+            self.feedback_message = "postcondition unmet: " + ", ".join(unmet)
             return Status.FAILURE
 
-        current = _target_gate_facts(self._bb)
-        merged = apply_fact_transitions(current, canonical)
-        try:
-            self._bb.set(bb_keys.FACTS, merged, overwrite=True)
-        except Exception as exc:
-            if self._facts_writer is not None:
-                self.feedback_message = f"postcondition fact mirror write failed: {exc}"
-                return Status.SUCCESS
-            self.feedback_message = f"postcondition fact write failed: {exc}"
-            return Status.FAILURE
         self._bb.set(bb_keys.DEFERRED_PRECONDITIONS, [], overwrite=True)
+        self._bb.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
         return Status.SUCCESS
 
 
@@ -2185,6 +2230,8 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
         self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.READ)
+        self._bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
         self._bb.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
         self._bb.register_key(bb_keys.FACTS, access=Access.READ)
         self._bb.register_key(bb_keys.FACTS, access=Access.WRITE)
@@ -2229,6 +2276,7 @@ class DynamicExecutor(py_trees.composites.Composite):
                 if evidence_name != "last_nav_location":
                     self._bb.set(key, None, overwrite=True)
             self._bb.set(bb_keys.DEFERRED_PRECONDITIONS, [], overwrite=True)
+            self._bb.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
             self._swap_count = 0
         else:
             # I1: a same-target replan/continuation retains perception/count
@@ -2431,7 +2479,15 @@ class DynamicExecutor(py_trees.composites.Composite):
         # and the other targets are untouched. Command-level replan becomes a
         # stub writing REPLAN_REQUEST={"level":"command",...} when the trigger
         # mechanism is announced.
-        self._planner.replan_target(self._slot, self._index, reason)
+        # J3: hand the replan whatever the postcondition gate just committed
+        # (GATE_COMPLETED_STEPS) so it does not redo work that already
+        # succeeded (e.g. a grasp) just because a LATER postcondition of the
+        # same target failed.
+        try:
+            gate_completed = list(self._bb.get(bb_keys.GATE_COMPLETED_STEPS) or [])
+        except KeyError:
+            gate_completed = []
+        self._planner.replan_target(self._slot, self._index, reason, completed_steps=gate_completed)
         self._bb.set(bb_keys.REPLAN_REQUEST,
                      {"level": "target", "index": self._index, "reason": reason},
                      overwrite=True)

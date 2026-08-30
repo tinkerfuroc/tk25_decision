@@ -178,6 +178,7 @@ class bb_keys:
     REPLAN_REQUEST = "gpsr/replan_request"       # dict {level: "target"|"command", index: int, reason: str}
     TARGET_REPLAN_COUNT = "gpsr/target_replan_count"  # int — per-target replan budget, reset when a target advances
     DEFERRED_PRECONDITIONS = "gpsr/deferred_preconditions"  # list[str] — canonical preconditions the active target's own plan self-establishes; verified by the postcondition gate instead of at entry
+    GATE_COMPLETED_STEPS = "gpsr/gate_completed_steps"  # list[dict] — the active target's own plan steps whose established facts the postcondition gate just committed (J3): fed to the next replan as completed_steps so it is not repeated
     FACTS = "gpsr/facts"
     # list[str] — canonical facts established by successful target postcondition gates for the active command slot.
 
