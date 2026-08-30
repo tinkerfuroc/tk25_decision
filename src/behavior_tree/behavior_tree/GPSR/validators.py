@@ -595,6 +595,24 @@ def _action_verdict(fact: Fact, context: VerificationContext) -> Optional[Verifi
     return None
 
 
+def _completed_step_records(context: VerificationContext, evidence_name: str) -> bool:
+    """True when a succeeded step in ``context.completed_steps`` has a
+    contract whose ``records`` includes ``evidence_name``.
+
+    X2-H1 (round-3 fix2 review): used as the staleness guard for a bare
+    ``report_info`` artifact in the ``answered`` branch below -- see its
+    call site.
+    """
+    from .action_contracts import ACTION_CONTRACTS  # lazy: action_contracts imports this module
+    for step in context.completed_steps:
+        if not isinstance(step, Mapping) or not _step_succeeded(step):
+            continue
+        contract = ACTION_CONTRACTS.get(_step_action(step))
+        if contract is not None and evidence_name in contract.records:
+            return True
+    return False
+
+
 def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContext) -> VerificationResult:
     hook = _TIER2_HOOKS.get(fact.predicate)
     if hook is not None:
@@ -728,7 +746,25 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
                 return _result(
                     Verdict.VALID, "answer artifact question provenance partially matches", 0.6
                 )
-            return _result(Verdict.VALID, "answer artifact contains a nonempty answer; question identity unavailable")
+            # X2-H1 (round-3 fix2 review): report_info is exempt from
+            # `_swap_in`'s cross-target clear (orchestrator.py) -- it is a
+            # deliberately cross-target buffer so a LATER target's announce
+            # can report an EARLIER target's gathered result. But that means
+            # a BARE report_info artifact (no question provenance, reached
+            # here) can also be STALE for an UNRELATED later target with its
+            # own answered() postcondition. Accept it here only when THIS
+            # target itself recorded report_info (a describe_person step in
+            # context.completed_steps); otherwise fall through past this
+            # elif chain to `_action_verdict` below -- the GENUINE
+            # cross-target report target (J8's synthetic [goto, announce]
+            # target) still VALIDs there, via its own completed announce
+            # step establishing answered().
+            other_answer_present = any(
+                isinstance(evidence.get(key), str) and evidence[key].strip()
+                for key in ("qa_answer", "person_answer", "llm_answer", "vlm_answer")
+            ) or "count_value" in evidence
+            if other_answer_present or _completed_step_records(context, "report_info"):
+                return _result(Verdict.VALID, "answer artifact contains a nonempty answer; question identity unavailable")
     elif fact.predicate == "at_robot":
         if "last_nav_location" in evidence and evidence["last_nav_location"] is not None:
             if not _at_robot_match(evidence["last_nav_location"], fact.args[0]):

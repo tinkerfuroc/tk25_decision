@@ -51,6 +51,8 @@ def _bb(name="target_gates"):
         bb_keys.TARGET_OBJECT_NAME,
         bb_keys.TARGET_LOCATION,
         bb_keys.TARGET_POSE,
+        bb_keys.REPORT_INFO,
+        bb_keys.ANNOUNCE_TEXT,
     ):
         bb.register_key(key, access=Access.WRITE)
     return bb
@@ -551,6 +553,10 @@ def test_swap_in_clears_target_local_evidence_and_preserves_facts_budget():
         bb_keys.PERSON_ANSWER: "old person",
         bb_keys.LLM_ANSWER: "old llm",
         bb_keys.VLM_ANSWER: "old vlm",
+        # X2-H1 (round-3 fix2 review): report_info is exempt from the
+        # cross-target clear, same as last_nav_location -- a later target's
+        # announce can legitimately report an earlier target's result.
+        bb_keys.REPORT_INFO: "old report",
     }
     for key, value in local_values.items():
         bb.set(key, value, overwrite=True)
@@ -562,8 +568,9 @@ def test_swap_in_clears_target_local_evidence_and_preserves_facts_budget():
     assert executor._planner.calls == [(0,)]
     assert bb.get(bb_keys.TARGET_REPLAN_COUNT) == 2
     assert bb.get(bb_keys.LAST_NAV_LOCATION) == "old"
+    assert bb.get(bb_keys.REPORT_INFO) == "old report"
     for key in local_values:
-        if key != bb_keys.LAST_NAV_LOCATION:
+        if key not in (bb_keys.LAST_NAV_LOCATION, bb_keys.REPORT_INFO):
             assert bb.get(key) is None
 
 
@@ -640,6 +647,10 @@ def test_new_target_swap_clears_target_evidence_but_retains_last_nav():
         bb_keys.PERSON_ANSWER: "Alex",
         bb_keys.LLM_ANSWER: "answer",
         bb_keys.VLM_ANSWER: "vision",
+        # X2-H1 (round-3 fix2 review): report_info is exempt from the
+        # cross-target clear -- a LATER target's announce can legitimately
+        # speak an EARLIER target's gathered result.
+        bb_keys.REPORT_INFO: "There are three mugs.",
     }
     for key, value in values.items():
         bb.set(key, value, overwrite=True)
@@ -649,9 +660,32 @@ def test_new_target_swap_clears_target_evidence_but_retains_last_nav():
     executor._index = 1
     executor._swap_in(1)
     assert bb.get(bb_keys.LAST_NAV_LOCATION) == "kitchen_shelf"
+    assert bb.get(bb_keys.REPORT_INFO) == "There are three mugs."
     for key in values:
-        if key != bb_keys.LAST_NAV_LOCATION:
+        if key not in (bb_keys.LAST_NAV_LOCATION, bb_keys.REPORT_INFO):
             assert bb.get(key) is None
+
+
+def test_report_target_announce_speaks_cross_target_report_info_x2h1():
+    # X2-H1 (round-3 fix2 review): the J8 synthetic report target's own
+    # completed steps are just [goto, announce] -- it has NO describe_person
+    # of its own. The report_info buffered by an EARLIER (gatherer) target
+    # must still survive the cross-target swap and be spoken back by a
+    # text-less announce, via materialise_params reading REPORT_INFO
+    # directly (orchestrator.py:1274-1281).
+    bb = _bb("cross-target-report-info")
+    bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.WRITE)
+    bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.WRITE)
+    bb.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+    bb.set(bb_keys.REPORT_INFO, "There are three mugs.", overwrite=True)
+    executor, _tree = _executor(_PlannerWithoutFacts())
+    executor.status = Status.RUNNING
+    executor._state = "REQUESTING"
+    executor._index = 1
+    executor._swap_in(1)
+    assert bb.get(bb_keys.REPORT_INFO) == "There are three mugs."
+    materialise_params(bb, "announce", {})
+    assert bb.get(bb_keys.ANNOUNCE_TEXT) == "There are three mugs."
 
 
 def test_swap_in_without_get_facts_does_not_crash():

@@ -1643,8 +1643,11 @@ _TARGET_GATE_EVIDENCE_KEYS = (
     # X2 (round-3 fix review): describe_person's ONLY answer artifact --
     # it buffers its spoken description into REPORT_INFO, never
     # qa_answer/llm_answer/... -- an answer key, not a question key, so
-    # (like the others above) it follows the cross-target clearing only,
-    # never L-1's same-target QUESTION-only clear below.
+    # (like the others above) it is never touched by L-1's same-target
+    # QUESTION-only clear below. X2-H1 (round-3 fix2 review): unlike the
+    # other answer keys, it is ALSO exempt from the cross-target clear
+    # (`_swap_in` below) -- it is a deliberately cross-target buffer, see
+    # that exemption's comment.
     ("report_info", bb_keys.REPORT_INFO),
     ("qa_question", bb_keys.QA_QUESTION),
     ("ask_question", bb_keys.ASK_QUESTION),
@@ -2494,7 +2497,19 @@ class DynamicExecutor(py_trees.composites.Composite):
         # state for subsequent grasp materialisation.
         if self._active_target_index != index:
             for evidence_name, key in _TARGET_GATE_EVIDENCE_KEYS:
-                if evidence_name != "last_nav_location":
+                # X2-H1 (round-3 fix2 review): report_info is exempt from
+                # this cross-target clear too, same as last_nav_location --
+                # it is by design a CROSS-TARGET buffer (a LATER target's
+                # text-less announce speaks back an EARLIER target's
+                # gathered result, see materialise_params's announce branch
+                # and the J8 synthetic report target). Clearing it here made
+                # every such report target announce an empty string. The
+                # staleness risk this creates for an UNRELATED later
+                # answered() target is closed in validators._verify's
+                # answered branch instead (requires this target's own
+                # completed_steps to have recorded report_info before
+                # accepting a bare report_info artifact).
+                if evidence_name not in ("last_nav_location", "report_info"):
                     self._bb.set(key, None, overwrite=True)
             self._bb.set(bb_keys.DEFERRED_PRECONDITIONS, [], overwrite=True)
             self._bb.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)

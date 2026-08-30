@@ -508,11 +508,49 @@ def test_answered_valid_from_a_report_info_artifact_x2():
     # X2 (round-3 fix review): describe_person's ONLY answer artifact is
     # REPORT_INFO (BtNode_SetReportInfo), never qa_answer/llm_answer/... --
     # the gate must VALID an answered(...) postcondition from it alone.
+    # X2-H1 (round-3 fix2 review): report_info is now exempt from the
+    # cross-target clear, so a BARE report_info artifact (no question
+    # provenance) is only accepted for THIS target when a describe_person
+    # step actually recorded it here (context.completed_steps) -- see the
+    # staleness-guard tests below for the unrelated-target negative case.
     result, _ = _check(
         "answered(gesture of the person)",
         evidence={"report_info": "Here is what the person looks like. Waving."},
+        context=_context(completed_steps=(_step("describe_person", descriptor="gesture"),)),
     )
     assert result.verdict is Verdict.VALID
+
+
+def test_answered_unknown_from_stale_cross_target_report_info_without_recording_step_x2h1():
+    # X2-H1 (round-3 fix2 review): report_info surviving the cross-target
+    # clear (see orchestrator.py's `_swap_in`) means an UNRELATED later
+    # target's own answered() postcondition could otherwise pick up an
+    # EARLIER target's leftover report_info just because the key is still
+    # set. Without a describe_person step recorded in THIS target's own
+    # completed_steps, a bare report_info artifact must not VALID here.
+    result, _ = _check(
+        "answered(what colour is the box)",
+        evidence={"report_info": "Here is what the person looks like. Waving."},
+    )
+    assert result.verdict is not Verdict.VALID
+
+
+def test_answered_valid_report_target_via_action_verdict_not_bare_report_info_x2h1():
+    # X2-H1 (round-3 fix2 review): the GENUINE cross-target report target
+    # (J8's synthetic [goto, announce] target) has no describe_person step
+    # of its own -- it still VALIDs, but via `_action_verdict`'s
+    # announce-establishes-answered fallback (its own completed announce
+    # step), never via the bare report_info artifact path.
+    result, _ = _check(
+        "answered(question)",
+        evidence={"report_info": "There are three mugs."},
+        context=_context(
+            phase="postcondition",
+            completed_steps=(_step("announce", text=""),),
+        ),
+    )
+    assert result.verdict is Verdict.VALID
+    assert "action-verdict fallback" in result.evidence
 
 
 def test_answered_provenance_normalizes_whitespace_and_underscores():
