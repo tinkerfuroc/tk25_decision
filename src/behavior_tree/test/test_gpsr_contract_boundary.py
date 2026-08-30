@@ -550,6 +550,102 @@ def test_plan_target_initial_plan_drops_ancestors_grasp_step(monkeypatch, capsys
     assert "contract:goto->dangling" in out
 
 
+def test_plan_target_modification_step_index_remapped_through_contract_guard(monkeypatch, capsys):
+    # I3 (round-3 adversarial review, M6): `step_index` is bound to the RAW
+    # plan the LLM wrote -- [goto, grasp, find_person, deliver], mod at raw
+    # index 2 (find_person). The contract guard then drops `grasp` (t0's
+    # ancestor already guarantees held(spam), same shape as
+    # test_plan_target_initial_plan_drops_ancestors_grasp_step above),
+    # leaving [goto, find_person, deliver]. The mod must land on
+    # find_person's NEW index (1), not be rejected as "could not be
+    # matched" or silently misapplied to a different step.
+    p = GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    captured: dict = {}
+
+    def _fake_build(slot, index, action_plan, *, modifications=None, completed_steps=None):
+        captured["plan"] = action_plan
+        captured["modifications"] = modifications
+        return py_trees.behaviours.Success("stub")
+
+    monkeypatch.setattr(p, "build_target_subtree", _fake_build)
+    p._slot_context[0] = {
+        "command": "bring me a spam from the laundry_desk",
+        "targets": [T0, T1],
+    }
+    mod = {
+        "step_index": 2, "action": "find_person", "template": "person-specialist",
+        "target_node_id": "find_person_sweep", "params": {"name": "alex"},
+    }
+    llm_plan = {
+        "plan": [
+            {"action": "goto", "params": {"location": "laundry_desk"}},
+            {"action": "grasp", "params": {"object": "spam"}},
+            {"action": "find_person", "params": {}},
+            {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
+        ],
+        "modifications": [mod],
+    }
+    monkeypatch.setattr(planner_module, "_call_llm", lambda *a, **k: (llm_plan, None))
+    monkeypatch.setattr(planner_module, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_module, "validate_plan_modifications", lambda *a, **k: (True, ""))
+
+    p.plan_target(
+        0, 1, T1["desc"], command="bring me a spam from the laundry_desk",
+        target_obj="spam", target_loc="", target=T1, all_targets=[T0, T1],
+    )
+
+    assert [s["action"] for s in captured["plan"]] == ["goto", "find_person", "deliver"]
+    assert captured["modifications"] == [{**mod, "step_index": 1}]
+    out = capsys.readouterr().out
+    assert "contract:grasp->held(spam)" in out
+
+
+def test_plan_target_modification_dropped_when_its_own_step_is_removed(monkeypatch, capsys):
+    # I3: a modification targeting the DROPPED step (grasp, raw index 1)
+    # cannot be translated to any surviving step -- it must be dropped,
+    # logged as `mod:<template>@<old_index>`, never silently misapplied.
+    p = GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    captured: dict = {}
+
+    def _fake_build(slot, index, action_plan, *, modifications=None, completed_steps=None):
+        captured["plan"] = action_plan
+        captured["modifications"] = modifications
+        return py_trees.behaviours.Success("stub")
+
+    monkeypatch.setattr(p, "build_target_subtree", _fake_build)
+    p._slot_context[0] = {
+        "command": "bring me a spam from the laundry_desk",
+        "targets": [T0, T1],
+    }
+    llm_plan = {
+        "plan": [
+            {"action": "goto", "params": {"location": "laundry_desk"}},
+            {"action": "grasp", "params": {"object": "spam"}},
+            {"action": "find_person", "params": {}},
+            {"action": "deliver", "params": {"object": "spam", "recipient": "me"}},
+        ],
+        "modifications": [{
+            "step_index": 1, "action": "grasp", "template": "grasp-wider-gate",
+            "target_node_id": "grasp_gate", "params": {},
+        }],
+    }
+    monkeypatch.setattr(planner_module, "_call_llm", lambda *a, **k: (llm_plan, None))
+    monkeypatch.setattr(planner_module, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_module, "validate_plan_modifications", lambda *a, **k: (True, ""))
+
+    p.plan_target(
+        0, 1, T1["desc"], command="bring me a spam from the laundry_desk",
+        target_obj="spam", target_loc="", target=T1, all_targets=[T0, T1],
+    )
+
+    assert [s["action"] for s in captured["plan"]] == ["goto", "find_person", "deliver"]
+    assert captured["modifications"] == []
+    out = capsys.readouterr().out
+    assert "mod:grasp-wider-gate@1" in out
+
+
 def test_plan_target_replan_keeps_ancestors_grasp_step(monkeypatch, capsys):
     # D2: the SAME plan, but as a REPLAN (failure_reason set) -- e.g. the
     # precondition gate rejected with "precondition unmet: held(spam)"

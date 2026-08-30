@@ -1275,6 +1275,60 @@ def _contract_drop_note(
     )
 
 
+def _kept_indices(before: List[Dict[str, Any]], after: List[Dict[str, Any]]) -> List[int]:
+    """Return, for each step in ``after``, its index in ``before``.
+
+    I3 (round-3 adversarial review, M6): ``_drop_foreign_contract_steps`` and
+    ``_drop_dangling_goto_before_self_nav`` both keep steps by APPENDING THE
+    SAME step object references from their input plan (never copies) — so
+    the surviving original index for each kept step can be recovered by
+    identity, without changing either function's return signature (both are
+    exercised directly by many existing tests as a 2-tuple). Matched by
+    ``id()``, not equality, so two structurally-identical steps at different
+    positions are never confused.
+    """
+    before_ids = [id(step) for step in before]
+    return [before_ids.index(id(step)) for step in after]
+
+
+def _remap_modification_step_indices(
+    mods: Optional[List[Dict[str, Any]]],
+    old_to_new: Dict[int, int],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Translate each modification's ``step_index`` through the guard drops.
+
+    I3 (round-3 adversarial review, M6): the LLM's ``step_index`` is bound to
+    the plan IT wrote, but modifications are validated/grouped against
+    ``cleaned`` AFTER the contract-boundary guard and the dangling-goto drop
+    removed steps — every mod whose target step survived at a DIFFERENT
+    index was rejected "could not be matched" (burning the whole attempt),
+    or worse silently misapplied to an unrelated same-action step. A
+    modification whose OWN step was dropped is dropped too here (logged as
+    ``mod:<template>@<old_index>`` in the returned list, mirroring the
+    ``contract:``/``duplicate:`` entries in the plan-step ``dropped`` list).
+    A modification without an integer ``step_index`` (action-only matching)
+    passes through unchanged — there is no index to remap.
+    """
+    remapped: List[Dict[str, Any]] = []
+    dropped: List[str] = []
+    for mod in mods or []:
+        if not isinstance(mod, dict):
+            remapped.append(mod)
+            continue
+        old_index = mod.get("step_index")
+        if not isinstance(old_index, int) or isinstance(old_index, bool):
+            remapped.append(dict(mod))
+            continue
+        new_index = old_to_new.get(old_index)
+        if new_index is None:
+            dropped.append(f"mod:{mod.get('template', '?')}@{old_index}")
+            continue
+        new_mod = dict(mod)
+        new_mod["step_index"] = new_index
+        remapped.append(new_mod)
+    return remapped, dropped
+
+
 def _build_lower_layer_user_prompt(
     command: str,
     desc: str,
@@ -1945,9 +1999,16 @@ class GPSRPlanner:
                       f"-> {err}")
                 continue
             cleaned, dropped = _clean_plan(parsed.get("plan", []))
+            # I3 (round-3 adversarial review, M6): the LLM's modifications
+            # index into THIS plan (post `_clean_plan`, pre-guard) — capture
+            # it before the contract guard / dangling-goto drop reduce it
+            # further, so a modification's step_index can be translated
+            # through both drops below.
+            pre_guard_plan = cleaned
             cleaned, contract_dropped = _drop_foreign_contract_steps(
                 cleaned, target, all_targets, include_ancestors=not failure_reason,
             )
+            post_guard_plan = cleaned
             # I-4 (round-2 review): repair a plan the guard just reduced to
             # e.g. [goto, deliver] -- validate_plan's goto-before-self-nav
             # rule would otherwise always reject it, burning an LLM
@@ -1956,6 +2017,13 @@ class GPSRPlanner:
             # goto has no "owning" sibling target to name.
             cleaned, dangling_dropped = _drop_dangling_goto_before_self_nav(cleaned)
             dropped = list(dropped) + contract_dropped + dangling_dropped
+            # I3: compose the old(pre-guard)->new(final `cleaned`) index map
+            # by identity through both drops (see `_kept_indices`).
+            contract_kept_idx = _kept_indices(pre_guard_plan, post_guard_plan)
+            dangling_kept_idx = _kept_indices(post_guard_plan, cleaned)
+            mod_old_to_new = {
+                contract_kept_idx[i]: new for new, i in enumerate(dangling_kept_idx)
+            }
             raw_actions = [
                 s.get("action") if isinstance(s, dict) else f"<{type(s).__name__}>"
                 for s in (parsed.get("plan", []) or [])
@@ -2005,7 +2073,17 @@ class GPSRPlanner:
             # directives to plan steps. Validate them against the step small
             # trees — an invalid modification rejects the WHOLE attempt (never
             # partially applied), feeding the reason back into the next prompt.
-            mods = parsed.get("modifications")
+            # I3: step_index is bound to the plan the LLM wrote (pre-guard) —
+            # translate it through the contract-boundary guard and the
+            # dangling-goto drop before validating/grouping against `cleaned`.
+            mods, mod_index_dropped = _remap_modification_step_indices(
+                parsed.get("modifications"), mod_old_to_new,
+            )
+            if mod_index_dropped:
+                dropped = dropped + mod_index_dropped
+                print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
+                      f"modification step_index dropped (step removed by guard): "
+                      f"{mod_index_dropped}")
             ok, reason = validate_plan_modifications(mods, cleaned)
             if not ok:
                 last_reason = f"invalid modifications: {reason}"
