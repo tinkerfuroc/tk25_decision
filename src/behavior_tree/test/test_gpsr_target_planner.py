@@ -215,6 +215,68 @@ def test_j9_ordinary_object_handling_target_passes():
 
 
 # ---------------------------------------------------------------------------
+# X1 (round-3 fix review, source-pinned tier0 sweep): held/placed/delivered
+# are for PHYSICAL OBJECTS only -- "tell <info> to <person>" must use
+# answered(<what>), never delivered(<information>, <person>).
+# ---------------------------------------------------------------------------
+
+def test_x1_delivered_country_to_person_is_rejected(monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", set())
+    monkeypatch.setattr(planner_module, "KNOWN_OBJECT_NAMES", set())
+    targets = [
+        {"id": "t0", "desc": "tell the person raising their left arm the country",
+         "object": "", "location": "", "depends_on": [], "preconditions": [],
+         "postconditions": ["delivered(country,person_raising_their_left_arm)"]},
+    ]
+    ok, reason = planner_module._validate_target_contract(targets)
+    assert ok is False
+    assert "delivered/placed/held are for physical objects" in reason
+    assert "answered(<what>)" in reason
+
+
+def test_x1_delivered_gesture_to_person_is_rejected(monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", set())
+    monkeypatch.setattr(planner_module, "KNOWN_OBJECT_NAMES", set())
+    targets = [
+        {"id": "t0", "desc": "tell the person at the sofa the gesture",
+         "object": "", "location": "", "depends_on": [], "preconditions": [],
+         "postconditions": ["delivered(gesture,person_at_sofa)"]},
+    ]
+    reason = planner_module._reject_non_object_delivery(targets)
+    assert reason is not None
+    assert "delivered/placed/held are for physical objects" in reason
+
+
+def test_x1_delivered_known_object_to_operator_passes(monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", {"spam"})
+    monkeypatch.setattr(planner_module, "KNOWN_OBJECT_NAMES", {"spam"})
+    targets = [
+        {"id": "t0", "desc": "bring me the spam", "object": "spam", "location": "",
+         "depends_on": [], "preconditions": [], "postconditions": ["delivered(spam,me)"]},
+    ]
+    assert planner_module._reject_non_object_delivery(targets) is None
+    ok, _reason = planner_module._validate_target_contract(targets)
+    assert ok is True
+
+
+def test_x1_delivered_generic_kitchen_item_passes(monkeypatch):
+    # "item" is a generic object noun (not a specific arena name), but still
+    # names a graspable THING, unlike "country"/"gesture".
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", set())
+    monkeypatch.setattr(planner_module, "KNOWN_OBJECT_NAMES", set())
+    targets = [
+        {"id": "t0", "desc": "bring emma a kitchen item", "object": "kitchen item",
+         "location": "", "depends_on": [], "preconditions": [],
+         "postconditions": ["delivered(kitchen item,emma)"]},
+    ]
+    assert planner_module._reject_non_object_delivery(targets) is None
+
+
+# ---------------------------------------------------------------------------
 # J11: merge a pure-transport target into the following self-navigating
 # place/deliver target
 # ---------------------------------------------------------------------------
@@ -411,7 +473,11 @@ def test_split_retries_invalid_graph_or_condition_then_accepts_valid(monkeypatch
     planner._offline_mock = False
     responses = [
         {"targets": [{"id": "a", "desc": "bad", "depends_on": ["missing"], "postconditions": ["unknown(x)"]}]},
-        {"targets": [{"id": "a", "desc": "good", "depends_on": [], "preconditions": [], "postconditions": ["held(cup)"]}]},
+        # "item" (not "cup") -- X1's held/placed/delivered-are-for-physical-
+        # objects check accepts the generic object noun regardless of
+        # whether KNOWN_OBJECT_NAMES happens to be populated in this test's
+        # process, keeping this test about retry mechanics, not X1.
+        {"targets": [{"id": "a", "desc": "good", "depends_on": [], "preconditions": [], "postconditions": ["held(item)"]}]},
     ]
     reasons = []
     monkeypatch.setattr(planner, "_new_client", lambda: object())

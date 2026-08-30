@@ -52,7 +52,7 @@ from .modifiable_nodes import (
 )
 from .planner_validators import (
     validate_plan, validate_dag, uncovered_postcondition_reason, established_predicates,
-    _norm_loc,
+    _norm_loc, DEFAULT_CATEGORY_WORDS,
 )
 from .validators import apply_fact_transitions, canonical_fact, parse_fact
 from .small_trees import (
@@ -76,6 +76,7 @@ from .orchestrator import (
     SYSTEM_PROMPT,
     KNOWN_LOCATIONS,
     KNOWN_OBJECT_PROMPTS,
+    KNOWN_OBJECT_NAMES,
     DEFAULT_OBJECT_LOCATIONS,
     ACTION_CATALOGUE_DESCRIPTION,
     START_LOCATION_ALIASES,
@@ -189,6 +190,10 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
         about a person (named or described, e.g. "the person wearing a gray
         jacket") must use postconditions person_found(<p>)/at_robot(<dest>)
         (find_person + guide), never held(...)/placed(...)/delivered(...).
+    13. held(x)/placed(x,l)/delivered(x,p) are for PHYSICAL OBJECTS only: to
+        TELL someone information (a country, a gesture, a count, an answer),
+        use answered(<what>), never held/placed/delivered with a non-object
+        argument like held(country) or delivered(gesture,person).
 """).strip().replace("__SELF_SATISFIED_RULE__", render_self_satisfied_rule())
 
 
@@ -443,6 +448,65 @@ def _retracting_addition(removed_fact: str, additions: List[str]) -> Optional[st
     return None
 
 
+# X1 (round-3 fix review, source-pinned tier0 sweep): generic words that
+# name "some physical thing" without a specific noun -- a fact like
+# held(item) or delivered(kitchen_item, emma) is still a claim about an
+# OBJECT, just an unresolved/categorical one, unlike delivered(country, ...)
+# or delivered(gesture, ...) (a piece of INFORMATION, never a graspable
+# thing). Checked per-token so a compound arg like "kitchen_item" (one of
+# its words is "item") still counts as an object reference.
+_GENERIC_OBJECT_WORDS = frozenset({"object", "it", "item", "items", "thing", "things"})
+
+
+def _is_physical_object_arg(value: str) -> bool:
+    """True when ``value`` (a normalized held/placed/delivered fact arg)
+    names something a robot can actually grasp -- a known arena object, a
+    category word, or a generic object noun -- as opposed to a piece of
+    INFORMATION (a country, a gesture, a colour, ...).
+    """
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return False
+    if normalized in KNOWN_OBJECT_NAMES:
+        return True
+    tokens = [t for t in re.split(r"[_\s]+", normalized) if t]
+    return any(
+        token in KNOWN_OBJECT_NAMES or token in DEFAULT_CATEGORY_WORDS
+        or token in _GENERIC_OBJECT_WORDS
+        for token in tokens
+    )
+
+
+def _reject_non_object_delivery(
+    targets: List[Dict[str, Any]],
+) -> Optional[str]:
+    """X1 (round-3 fix review, source-pinned tier0 sweep): held/placed/
+    delivered are for PHYSICAL OBJECTS only. The split produced
+    ``delivered(country, person_raising_their_left_arm)`` and
+    ``delivered(gesture, person_at_sofa)`` for "tell <info> to <person>"
+    commands, and the coverage validator then forced a physical ``deliver``
+    step the lower layer could never plan (there is no country/gesture to
+    grasp) -- returns a rejection reason (fed back into the split retry
+    loop), or None when every held/placed/delivered fact names an object.
+    """
+    for target in targets:
+        for field in ("preconditions", "postconditions"):
+            for condition in target.get(field) or []:
+                if not isinstance(condition, str):
+                    continue
+                fact, _err = parse_fact(condition)
+                if fact is None or fact.predicate not in ("held", "placed", "delivered"):
+                    continue
+                obj_arg = fact.args[0]
+                if not _is_physical_object_arg(obj_arg):
+                    return (
+                        f"target {target.get('id')!r} {field} {condition!r}: "
+                        "delivered/placed/held are for physical objects; to "
+                        "tell information use answered(<what>)"
+                    )
+    return None
+
+
 def _validate_target_contract(targets: List[Dict[str, Any]]) -> Tuple[bool, Optional[str]]:
     ok, reason = validate_dag(targets)
     if not ok:
@@ -456,6 +520,9 @@ def _validate_target_contract(targets: List[Dict[str, Any]]) -> Tuple[bool, Opti
                 _fact, error = parse_fact(condition)
                 if error:
                     return False, f"target {index} {field} invalid fact {condition!r}: {error}"
+    non_object_reason = _reject_non_object_delivery(targets)
+    if non_object_reason is not None:
+        return False, non_object_reason
     return True, None
 
 
