@@ -167,6 +167,52 @@ def test_j8_no_counted_or_answered_facts_gets_no_report_target():
     assert result == targets
 
 
+def test_j8_answered_with_no_speech_verb_or_addressee_gets_a_report_target():
+    # M-1 (round-3 fix review): an answered() whose target desc neither
+    # addresses a person nor uses a speech verb is exactly the "gathered but
+    # never spoken" case J8 exists for (e.g. "find out what day it is").
+    targets = [
+        {"id": "t0", "desc": "find out what day it is",
+         "object": "", "location": "", "depends_on": [],
+         "preconditions": [], "postconditions": ["answered(the day)"]},
+    ]
+    result = _append_report_target_if_needed(targets)
+    assert len(result) == 2
+    assert result[1]["depends_on"] == ["t0"]
+    assert result[1]["preconditions"] == ["answered(the day)"]
+
+
+def test_j8_meet_and_say_your_teams_name_gets_no_report_target():
+    # M-1 (round-3 fix review): negative test from the ruling -- "meet Alex
+    # in the laundry_room and say your teams name" encodes the speech act as
+    # answered(...) (that's how the split represents "say ..."), but "say"
+    # IS the spoken delivery -- appending a synthetic report target would
+    # send the robot back to start_position to re-announce to nobody.
+    targets = [
+        {"id": "t0", "desc": "meet Alex in the laundry_room",
+         "object": "", "location": "laundry_room", "depends_on": [],
+         "preconditions": [], "postconditions": ["person_found(alex)"]},
+        {"id": "t1", "desc": "say your teams name",
+         "object": "", "location": "", "depends_on": ["t0"],
+         "preconditions": ["person_found(alex)"], "postconditions": ["answered(teams name)"]},
+    ]
+    result = _append_report_target_if_needed(targets)
+    assert result == targets
+
+
+def test_j8_answered_addressed_to_a_person_by_preposition_gets_no_report_target():
+    # M-1: the desc need not use one of the speech verbs -- addressing the
+    # answered() at a person by "to/for (the) person/someone/guest/<name>"
+    # is on its own evidence the answer was already spoken to them.
+    targets = [
+        {"id": "t0", "desc": "reply to the person raising their right arm",
+         "object": "", "location": "", "depends_on": [],
+         "preconditions": [], "postconditions": ["answered(the requested information)"]},
+    ]
+    result = _append_report_target_if_needed(targets)
+    assert result == targets
+
+
 # ---------------------------------------------------------------------------
 # J9: persons are never object-handled (held/placed/delivered)
 # ---------------------------------------------------------------------------

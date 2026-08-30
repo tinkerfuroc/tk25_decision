@@ -526,9 +526,39 @@ def _validate_target_contract(targets: List[Dict[str, Any]]) -> Tuple[bool, Opti
     return True, None
 
 
+# J9 (round-3 adversarial review, edge corpus guideClothPrs): mirrors
+# bench/corpus.py's ``Knowledge.names`` -- the canonical GPSR arena name
+# list this repo's corpus generator draws from -- kept here as a plain
+# set (no import of bench/, which depends on planner.py, not the reverse).
+# Also used by M-1's answered()-already-spoken check below.
+_ARENA_PERSON_NAMES = frozenset({
+    "alex", "sarah", "john", "emma", "liam", "olivia",
+})
+
 _REPORT_KEYWORDS_RE = re.compile(
     r"\b(tell|report|inform|let\s+me\s+know)\b", re.IGNORECASE
 )
+# M-1 (round-3 fix review): an `answered(...)` postcondition is how the
+# split ALSO encodes an ordinary speech act ("say your teams name",
+# "introduce yourself to Emma", "greet the person") -- not only a genuine
+# gather-then-never-speak count/question. A target whose own desc already
+# addresses a person, or uses one of these speech verbs, has already spoken
+# its answer; appending a synthetic report target for it sends the robot
+# back to start_position to re-announce to nobody.
+_ANSWERED_ADDRESSES_A_PERSON_RE = re.compile(
+    r"\b(to|for)\s+(the\s+)?(person|someone|guest|" + "|".join(_ARENA_PERSON_NAMES) + r")\b",
+    re.IGNORECASE,
+)
+_ANSWERED_SPEECH_VERB_RE = re.compile(
+    r"\b(say|introduce|greet|salute|answer)\b", re.IGNORECASE
+)
+
+
+def _answered_already_spoken(desc: str) -> bool:
+    return bool(
+        _ANSWERED_ADDRESSES_A_PERSON_RE.search(desc)
+        or _ANSWERED_SPEECH_VERB_RE.search(desc)
+    )
 
 
 def _append_report_target_if_needed(
@@ -544,14 +574,16 @@ def _append_report_target_if_needed(
     postconditions call for it.
 
     Deterministic split-time post-check: if ANY target's postconditions
-    establish ``counted(...)``/``answered(...)`` and NO target's desc
-    already signals a report to the operator ("tell me", "report", ...),
-    append a synthetic target whose plan will be ``goto(start_position),
-    announce()`` (a text-less announce reads the latest gathered count/
-    answer off the blackboard -- see ``materialise_params``'s ``announce``
-    branch). Depends on every target that established one of those facts;
-    those facts become its own preconditions so the runtime gate demands
-    them before the announce.
+    establish ``counted(...)``, or ``answered(...)`` when that target's OWN
+    desc neither addresses a person nor uses a speech verb (M-1: otherwise
+    the answered() is an ordinary "say .../introduce .../greet ..." that was
+    already spoken), and NO target's desc already signals a report to the
+    operator ("tell me", "report", ...), append a synthetic target whose
+    plan will be ``goto(start_position), announce()`` (a text-less announce
+    reads the latest gathered count/answer off the blackboard -- see
+    ``materialise_params``'s ``announce`` branch). Depends on every target
+    that established one of those facts; those facts become its own
+    preconditions so the runtime gate demands them before the announce.
     """
     if any(_REPORT_KEYWORDS_RE.search(str(t.get("desc") or "")) for t in targets):
         return targets
@@ -559,11 +591,17 @@ def _append_report_target_if_needed(
     reporting_ids: List[str] = []
     for target in targets:
         target_reports = False
+        desc = str(target.get("desc") or "")
         for condition in target.get("postconditions") or []:
             if not isinstance(condition, str):
                 continue
             fact, _err = parse_fact(condition)
-            if fact is not None and fact.predicate in {"counted", "answered"}:
+            if fact is None:
+                continue
+            if fact.predicate == "counted":
+                reporting_facts.append(condition)
+                target_reports = True
+            elif fact.predicate == "answered" and not _answered_already_spoken(desc):
                 reporting_facts.append(condition)
                 target_reports = True
         if target_reports:
@@ -584,13 +622,6 @@ def _append_report_target_if_needed(
     return targets + [report_target]
 
 
-# J9 (round-3 adversarial review, edge corpus guideClothPrs): mirrors
-# bench/corpus.py's ``Knowledge.names`` -- the canonical GPSR arena name
-# list this repo's corpus generator draws from -- kept here as a plain
-# set (no import of bench/, which depends on planner.py, not the reverse).
-_ARENA_PERSON_NAMES = frozenset({
-    "alex", "sarah", "john", "emma", "liam", "olivia",
-})
 _GENERIC_PERSON_WORDS_RE = re.compile(r"\b(person|persons|someone|guest)\b", re.IGNORECASE)
 
 
