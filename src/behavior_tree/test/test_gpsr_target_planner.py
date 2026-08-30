@@ -387,6 +387,57 @@ def test_x1_delivered_generic_kitchen_item_passes(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# X1-L1 (round-3 fix2 review): strip +s/+es (and the irregular map from
+# _same_object) before the known-object lookup; accept partial known names
+# by token containment (a single-token query that names one component of a
+# compound known name, e.g. sugar -> sugar_box).
+# ---------------------------------------------------------------------------
+
+_X1L1_KNOWN_NAMES = {"sugar_box", "pudding_box", "cheez_it", "bowl", "mug"}
+
+
+@pytest.mark.parametrize("arg", ["bowls", "mugs"])
+def test_x1l1_plural_of_a_known_object_is_accepted(monkeypatch, arg):
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", _X1L1_KNOWN_NAMES)
+    monkeypatch.setattr(planner_module, "KNOWN_OBJECT_NAMES", _X1L1_KNOWN_NAMES)
+    assert planner_module._is_physical_object_arg(arg) is True
+
+
+@pytest.mark.parametrize("arg", ["sugar", "pudding"])
+def test_x1l1_partial_known_name_by_token_containment_is_accepted(monkeypatch, arg):
+    # "sugar" is one of "sugar_box"'s own tokens -- a legitimate partial
+    # reference to the known compound object name, not a specific-but-wrong
+    # object.
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", _X1L1_KNOWN_NAMES)
+    monkeypatch.setattr(planner_module, "KNOWN_OBJECT_NAMES", _X1L1_KNOWN_NAMES)
+    assert planner_module._is_physical_object_arg(arg) is True
+
+
+def test_x1l1_cracker_box_stays_invalid_not_a_known_token(monkeypatch):
+    # "cracker_box" is NOT a known key (the real known key for this item is
+    # "cheez_it") -- its own sub-tokens ("cracker", "box") must not be
+    # decomposed and matched against OTHER known names' tokens (that would
+    # false-positive-match "box" against sugar_box/pudding_box).
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", _X1L1_KNOWN_NAMES)
+    monkeypatch.setattr(planner_module, "KNOWN_OBJECT_NAMES", _X1L1_KNOWN_NAMES)
+    assert planner_module._is_physical_object_arg("cracker_box") is False
+
+
+def test_x1l1_delivered_plural_known_object_passes_contract(monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", _X1L1_KNOWN_NAMES)
+    monkeypatch.setattr(planner_module, "KNOWN_OBJECT_NAMES", _X1L1_KNOWN_NAMES)
+    targets = [
+        {"id": "t0", "desc": "bring me the bowls", "object": "bowls", "location": "",
+         "depends_on": [], "preconditions": [], "postconditions": ["delivered(bowls,me)"]},
+    ]
+    assert planner_module._reject_non_object_delivery(targets) is None
+
+
+# ---------------------------------------------------------------------------
 # J11: merge a pure-transport target into the following self-navigating
 # place/deliver target
 # ---------------------------------------------------------------------------

@@ -764,7 +764,10 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
                 for key in ("qa_answer", "person_answer", "llm_answer", "vlm_answer")
             ) or "count_value" in evidence
             if other_answer_present or _completed_step_records(context, "report_info"):
-                return _result(Verdict.VALID, "answer artifact contains a nonempty answer; question identity unavailable")
+                return _result(
+                    Verdict.VALID,
+                    "answer artifact contains a nonempty answer; question identity unavailable",
+                )
     elif fact.predicate == "at_robot":
         if "last_nav_location" in evidence and evidence["last_nav_location"] is not None:
             if not _at_robot_match(evidence["last_nav_location"], fact.args[0]):

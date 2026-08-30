@@ -52,7 +52,7 @@ from .modifiable_nodes import (
 )
 from .planner_validators import (
     validate_plan, validate_dag, uncovered_postcondition_reason, established_predicates,
-    _norm_loc, DEFAULT_CATEGORY_WORDS,
+    _norm_loc, DEFAULT_CATEGORY_WORDS, _IRREGULAR_PLURALS,
 )
 from .validators import apply_fact_transitions, canonical_fact, parse_fact
 from .small_trees import (
@@ -483,21 +483,51 @@ def _retracting_addition(removed_fact: str, additions: List[str]) -> Optional[st
 _GENERIC_OBJECT_WORDS = frozenset({"object", "it", "item", "items", "thing", "things"})
 
 
+def _singular_candidates(word: str) -> set:
+    """X1-L1 (round-3 fix2 review): candidate singular forms of ``word`` --
+    the irregular map ``_same_object`` uses (people -> person, ...) plus the
+    plain +s/+es strip -- so a plural like "bowls"/"boxes" matches a known
+    singular object name the same way ``_same_object`` already tolerates it
+    for count/held provenance.
+    """
+    candidates = {word}
+    irregular = _IRREGULAR_PLURALS.get(word)
+    if irregular:
+        candidates.add(irregular)
+    if word.endswith("es") and len(word) > 2:
+        candidates.add(word[:-2])
+    if word.endswith("s") and len(word) > 1:
+        candidates.add(word[:-1])
+    return candidates
+
+
 def _is_physical_object_arg(value: str) -> bool:
     """True when ``value`` (a normalized held/placed/delivered fact arg)
     names something a robot can actually grasp -- a known arena object, a
     category word, or a generic object noun -- as opposed to a piece of
     INFORMATION (a country, a gesture, a colour, ...).
+
+    X1-L1 (round-3 fix2 review): a plural of a known object name
+    (held(bowls)) and a single-word PARTIAL known name (held(sugar) for the
+    known "sugar_box") are also accepted -- singularized before the known-
+    name lookup, and (single-token queries only, so a compound like
+    "cracker_box" is never decomposed into "cracker"/"box" and false-
+    positive-matched against an unrelated known name's own "box" token)
+    matched by containment against each known name's own tokens.
     """
     normalized = str(value).strip().lower()
     if not normalized:
         return False
-    if normalized in KNOWN_OBJECT_NAMES:
-        return True
     tokens = [t for t in re.split(r"[_\s]+", normalized) if t]
+    if any(cand in KNOWN_OBJECT_NAMES for cand in _singular_candidates(normalized)):
+        return True
+    if len(tokens) == 1:
+        for cand in _singular_candidates(tokens[0]):
+            if any(cand in known.split("_") for known in KNOWN_OBJECT_NAMES):
+                return True
     return any(
-        token in KNOWN_OBJECT_NAMES or token in DEFAULT_CATEGORY_WORDS
-        or token in _GENERIC_OBJECT_WORDS
+        any(cand in KNOWN_OBJECT_NAMES or cand in DEFAULT_CATEGORY_WORDS
+            or cand in _GENERIC_OBJECT_WORDS for cand in _singular_candidates(token))
         for token in tokens
     )
 
