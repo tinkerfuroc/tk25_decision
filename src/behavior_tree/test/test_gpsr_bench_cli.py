@@ -38,6 +38,40 @@ def test_knowledge_includes_start_location_aliases():
     assert "goto" in known_actions
 
 
+def test_knowledge_includes_room_search_spot_aliases_i7():
+    # I7 (round-3 adversarial review): the live orchestrator's
+    # load_knowledge_from_constants aliases every search_spots room without
+    # its own pose to its first spot (bedroom -> side_table_02, laundry_room
+    # -> laundry_desk, ...) so goto(bedroom)/deliver(recipient_location=
+    # laundry_room) resolve. gpsr_bench._knowledge must call that SAME
+    # function (not a possible_poses-only reimplementation) so tier0/tier1
+    # see the identical known-location set the sim orchestrator does --
+    # otherwise tier0 rejects a plan the real robot accepts (corpus 029).
+    known_actions, known_locations = gpsr_bench._knowledge(CONSTANTS)
+    assert "bedroom" in known_locations
+    assert "laundry_room" in known_locations
+
+
+def test_knowledge_calls_the_shared_orchestrator_loader(monkeypatch):
+    # I7: guard against a future regression back to a separate/parallel
+    # possible-poses-only loader -- _knowledge must be backed by
+    # orchestrator.load_knowledge_from_constants itself (byte-identical
+    # KNOWN_LOCATIONS/DEFAULT_OBJECT_LOCATIONS/ROOM_SEARCH_SPOTS by
+    # construction), not a bench-local reimplementation.
+    from behavior_tree.GPSR import orchestrator
+
+    calls = []
+    original = orchestrator.load_knowledge_from_constants
+
+    def _spy(path):
+        calls.append(path)
+        return original(path)
+
+    monkeypatch.setattr(orchestrator, "load_knowledge_from_constants", _spy)
+    gpsr_bench._knowledge(CONSTANTS)
+    assert calls == [str(CONSTANTS)]
+
+
 def test_only_class_filters_entries(tmp_path, monkeypatch):
     corpus = tmp_path / "corpus.jsonl"
     gpsr_bench.main(["gen", "--seed", "1", "--per-template", "1", "--constants", str(CONSTANTS), "--out", str(corpus)])
