@@ -150,7 +150,7 @@ def self_established_facts(step: Mapping[str, Any]) -> list[str]:
     return facts
 
 
-def established_facts(step: Mapping[str, Any]) -> list[str]:
+def established_facts(step: Mapping[str, Any], target_object: str = "") -> list[str]:
     """Canonical facts ``step``'s action establishes FOR OTHER TARGETS.
 
     Mirrors ``self_established_facts`` but walks ``contract.establishes``
@@ -158,8 +158,15 @@ def established_facts(step: Mapping[str, Any]) -> list[str]:
     ``self_establishes``. Each template is parsed as ``pred(p1,p2,...)``; every
     param name is looked up in ``step["params"]``. If ANY named param is
     missing or blank, that whole template is skipped (never guess a partial
-    fact). Used by the contract-boundary guard to tell whether a step
-    establishes a fact owned by a *different* target of the same command.
+    fact) -- EXCEPT ``object`` (J10, round-3 adversarial review, tier0 #2):
+    when the step's own params omit it, ``target_object`` (the TARGET's
+    declared object) is used instead, the SAME fallback
+    ``validators._action_verdict`` already applies. ``place``/``deliver``
+    plans routinely omit ``object`` (the held object is implicit), so
+    without this fallback the contract-boundary guard was blind to exactly
+    the duplicate ``place,place``/``deliver,deliver`` it exists to catch.
+    Used by the contract-boundary guard to tell whether a step establishes a
+    fact owned by a *different* target of the same command.
 
     Facts are compared EXACTLY (canonicalised argument text only) — e.g. the
     top layer's ``delivered(spam,me)`` vs. a lower-layer step that emits
@@ -185,6 +192,8 @@ def established_facts(step: Mapping[str, Any]) -> list[str]:
         skip = False
         for name in arg_names:
             value = params.get(name)
+            if (value is None or not str(value).strip()) and name == "object":
+                value = target_object
             if value is None or not str(value).strip():
                 skip = True
                 break

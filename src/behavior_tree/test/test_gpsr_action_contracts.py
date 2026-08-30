@@ -58,6 +58,31 @@ def test_established_facts_missing_param_yields_empty():
     assert ac.established_facts({"action": "goto", "params": {}}) == []
 
 
+def test_established_facts_falls_back_to_target_object_for_object_param():
+    # J10 (round-3 adversarial review, tier0 #2): place/deliver plans
+    # routinely omit `object` (the held object is implicit) -- without the
+    # target_object fallback, established_facts() was blind to exactly the
+    # duplicate place/place or deliver/deliver the contract-boundary guard
+    # exists to catch.
+    assert ac.established_facts(
+        {"action": "place", "params": {"location": "kitchen_table"}},
+        "kitchen_item",
+    ) == ["placed(kitchen_item,kitchen_table)"]
+    assert ac.established_facts(
+        {"action": "deliver", "params": {"recipient": "me"}},
+        "spam",
+    ) == ["delivered(spam,me)"]
+    # An explicit object param still wins over the fallback.
+    assert ac.established_facts(
+        {"action": "place", "params": {"object": "coke", "location": "table"}},
+        "kitchen_item",
+    ) == ["placed(coke,table)"]
+    # No target_object given (default "") -- unchanged (empty) behaviour.
+    assert ac.established_facts(
+        {"action": "place", "params": {"location": "kitchen_table"}},
+    ) == []
+
+
 def test_established_facts_unknown_action_yields_empty():
     assert ac.established_facts({"action": "teleport", "params": {"location": "kitchen"}}) == []
     assert ac.established_facts({"action": None, "params": {}}) == []

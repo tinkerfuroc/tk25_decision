@@ -1361,8 +1361,12 @@ def _drop_foreign_contract_steps(
     )
     kept: List[Dict[str, Any]] = []
     dropped: List[str] = []
+    # J10: fall back to the TARGET's own declared object when a step omits
+    # it (place/deliver routinely do -- the held object is implicit) so the
+    # guard is not blind to a duplicate place/place or deliver/deliver.
+    target_object = str((target or {}).get("object") or "")
     for step in plan or []:
-        facts = established_facts(step) if isinstance(step, dict) else []
+        facts = established_facts(step, target_object) if isinstance(step, dict) else []
         foreign_fact = next(
             (f for f in facts if f not in own_post_canon and f in foreign_post_canon),
             None,

@@ -255,6 +255,23 @@ KITCHEN_T1 = {
 }
 
 
+# J10 (round-3 adversarial review, tier0 #2, runs 003/004/035): a pure-
+# transport target whose own plan omits `object` (place/deliver imply the
+# held object) -- the guard must still recognise its `place` step as
+# establishing the SUCCESSOR's placed(...) fact.
+J10_TRANSPORT_T = {
+    "id": "t0", "desc": "Take the kitchen item to the kitchen_table",
+    "object": "kitchen_item", "location": "kitchen_table", "depends_on": [],
+    "preconditions": [], "postconditions": ["at_robot(kitchen_table)"],
+}
+J10_PLACE_T = {
+    "id": "t1", "desc": "Place the kitchen item on the kitchen_table",
+    "object": "kitchen_item", "location": "kitchen_table", "depends_on": ["t0"],
+    "preconditions": ["at_robot(kitchen_table)"],
+    "postconditions": ["placed(kitchen_item,kitchen_table)"],
+}
+
+
 # ---------------------------------------------------------------------------
 # 2. Deterministic guard: _drop_foreign_contract_steps.
 # ---------------------------------------------------------------------------
@@ -268,6 +285,19 @@ def test_guard_drops_deliver_from_t0_plan():
     kept, dropped = _drop_foreign_contract_steps(plan, T0, [T0, T1])
     assert [s["action"] for s in kept] == ["goto", "grasp"]
     assert dropped == ["contract:deliver->delivered(spam,me)"]
+
+
+def test_guard_drops_object_less_place_step_via_target_object_fallback():
+    # J10: t_transport's plan omits `object` on its place() step -- the
+    # guard must still see it as establishing placed(kitchen_item,
+    # kitchen_table), which is t1's (successor's) own postcondition, so it
+    # is a foreign duplicate and gets dropped.
+    plan = [{"action": "place", "params": {"location": "kitchen_table"}}]
+    kept, dropped = _drop_foreign_contract_steps(
+        plan, J10_TRANSPORT_T, [J10_TRANSPORT_T, J10_PLACE_T],
+    )
+    assert kept == []
+    assert dropped == ["contract:place->placed(kitchen_item,kitchen_table)"]
 
 
 def test_guard_keeps_t1_deliver_plan_untouched():
