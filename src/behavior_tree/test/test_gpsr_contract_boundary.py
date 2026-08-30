@@ -721,6 +721,102 @@ def test_plan_target_modification_dropped_when_its_own_step_is_removed(monkeypat
     assert "mod:grasp-wider-gate@1" in out
 
 
+def test_plan_target_modification_step_index_remapped_through_clean_plan_dup_drop(monkeypatch, capsys):
+    # M-1 (round-3 fix review): the "old" frame for step_index remapping
+    # must be the RAW LLM plan, not the plan AFTER `_clean_plan` collapsed
+    # consecutive duplicates. Regression case from the review: raw
+    # [goto(bedroom), goto(bedroom), find_person] with a mod at RAW index 2
+    # (find_person) -- pre-I3 `_step_index_for`'s action fallback caught
+    # this (2 >= len(cleaned)==2, unique find_person -> correctly applied).
+    # The I3 remap (keyed only on the post-`_clean_plan` frame, where index
+    # 2 was never a valid key) silently DROPPED the mod instead, turning a
+    # self-healing path into a silent loss of the specialist modification.
+    p = GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    captured: dict = {}
+
+    def _fake_build(slot, index, action_plan, *, modifications=None, completed_steps=None):
+        captured["plan"] = action_plan
+        captured["modifications"] = modifications
+        return py_trees.behaviours.Success("stub")
+
+    monkeypatch.setattr(p, "build_target_subtree", _fake_build)
+    p._slot_context[0] = {
+        "command": "find the person in the bedroom",
+        "targets": [T0, T1],
+    }
+    mod = {
+        "step_index": 2, "action": "find_person", "template": "person-specialist",
+        "target_node_id": "find_person_sweep", "params": {"name": "alex"},
+    }
+    llm_plan = {
+        "plan": [
+            {"action": "goto", "params": {"location": "bedroom"}},
+            {"action": "goto", "params": {"location": "bedroom"}},
+            {"action": "find_person", "params": {}},
+        ],
+        "modifications": [mod],
+    }
+    monkeypatch.setattr(planner_module, "_call_llm", lambda *a, **k: (llm_plan, None))
+    monkeypatch.setattr(planner_module, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_module, "validate_plan_modifications", lambda *a, **k: (True, ""))
+
+    p.plan_target(
+        0, 1, T1["desc"], command="find the person in the bedroom",
+        target_obj="", target_loc="", target=T1, all_targets=[T0, T1],
+    )
+
+    assert [s["action"] for s in captured["plan"]] == ["goto", "find_person"]
+    # The mod MUST survive (not silently dropped) and land on find_person's
+    # final index (1) -- never on a wrong step, never a no-op modification.
+    assert captured["modifications"] == [{**mod, "step_index": 1}]
+    out = capsys.readouterr().out
+    assert "duplicate:goto" in out
+
+
+def test_plan_target_modification_out_of_range_step_index_falls_back_to_unique_action(monkeypatch, capsys):
+    # M-1 (round-3 fix review): a step_index that was never valid in ANY
+    # frame (the LLM miscounted) must not just be silently dropped when the
+    # mod's own `action` field uniquely identifies a step in the final plan
+    # -- mirrors the pre-I3 `modifiable_nodes._step_index_for` fallback.
+    p = GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    captured: dict = {}
+
+    def _fake_build(slot, index, action_plan, *, modifications=None, completed_steps=None):
+        captured["plan"] = action_plan
+        captured["modifications"] = modifications
+        return py_trees.behaviours.Success("stub")
+
+    monkeypatch.setattr(p, "build_target_subtree", _fake_build)
+    p._slot_context[0] = {
+        "command": "find the person in the bedroom",
+        "targets": [T0, T1],
+    }
+    mod = {
+        "step_index": 99, "action": "find_person", "template": "person-specialist",
+        "target_node_id": "find_person_sweep", "params": {"name": "alex"},
+    }
+    llm_plan = {
+        "plan": [
+            {"action": "goto", "params": {"location": "bedroom"}},
+            {"action": "find_person", "params": {}},
+        ],
+        "modifications": [mod],
+    }
+    monkeypatch.setattr(planner_module, "_call_llm", lambda *a, **k: (llm_plan, None))
+    monkeypatch.setattr(planner_module, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_module, "validate_plan_modifications", lambda *a, **k: (True, ""))
+
+    p.plan_target(
+        0, 1, T1["desc"], command="find the person in the bedroom",
+        target_obj="", target_loc="", target=T1, all_targets=[T0, T1],
+    )
+
+    assert [s["action"] for s in captured["plan"]] == ["goto", "find_person"]
+    assert captured["modifications"] == [{**mod, "step_index": 1}]
+
+
 def test_plan_target_replan_keeps_ancestors_grasp_step(monkeypatch, capsys):
     # D2: the SAME plan, but as a REPLAN (failure_reason set) -- e.g. the
     # precondition gate rejected with "precondition unmet: held(spam)"

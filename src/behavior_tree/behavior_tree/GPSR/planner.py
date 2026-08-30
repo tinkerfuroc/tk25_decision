@@ -86,6 +86,7 @@ from .orchestrator import (
     BtNode_TargetPostconditionCheck,
     _build_planner_user_prompt,
     _clean_plan,
+    _clean_plan_core,
     _offline_planner_enabled,
     _extract_json_object,
     _fallback_plan,
@@ -1646,20 +1647,37 @@ def _kept_indices(before: List[Dict[str, Any]], after: List[Dict[str, Any]]) -> 
 def _remap_modification_step_indices(
     mods: Optional[List[Dict[str, Any]]],
     old_to_new: Dict[int, int],
+    cleaned: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Translate each modification's ``step_index`` through the guard drops.
 
     I3 (round-3 adversarial review, M6): the LLM's ``step_index`` is bound to
     the plan IT wrote, but modifications are validated/grouped against
-    ``cleaned`` AFTER the contract-boundary guard and the dangling-goto drop
-    removed steps — every mod whose target step survived at a DIFFERENT
-    index was rejected "could not be matched" (burning the whole attempt),
-    or worse silently misapplied to an unrelated same-action step. A
-    modification whose OWN step was dropped is dropped too here (logged as
-    ``mod:<template>@<old_index>`` in the returned list, mirroring the
-    ``contract:``/``duplicate:`` entries in the plan-step ``dropped`` list).
-    A modification without an integer ``step_index`` (action-only matching)
-    passes through unchanged — there is no index to remap.
+    ``cleaned`` AFTER ``_clean_plan``, the contract-boundary guard, and the
+    dangling-goto drop removed steps — every mod whose target step survived
+    at a DIFFERENT index was rejected "could not be matched" (burning the
+    whole attempt), or worse silently misapplied to an unrelated same-action
+    step. A modification whose OWN step was dropped is dropped too here
+    (logged as ``mod:<template>@<old_index>`` in the returned list,
+    mirroring the ``contract:``/``duplicate:`` entries in the plan-step
+    ``dropped`` list). A modification without an integer ``step_index``
+    (action-only matching) passes through unchanged — there is no index to
+    remap.
+
+    ``old_to_new`` must map RAW (as-written-by-the-LLM) indices to the final
+    ``cleaned`` plan's indices — the caller composes this through
+    ``_clean_plan_core``'s kept-raw-index list AND both guard drops (M-1,
+    round-3 fix review: the "old" frame is the raw LLM plan, not the plan
+    AFTER ``_clean_plan``, since ``_clean_plan`` itself can drop
+    steps — e.g. consecutive duplicates — that the LLM's ``step_index``
+    still counts).
+
+    M-1: when ``old_index`` has no entry in ``old_to_new`` (its step was
+    truly dropped, OR the LLM's index was never valid to begin with — e.g.
+    out of range for the raw plan it wrote), fall back to matching the
+    mod's own ``action`` field against a UNIQUE step of that action in
+    ``cleaned`` — the pre-I3 ``modifiable_nodes._step_index_for`` behaviour.
+    Ambiguous (0 or >1 matches) still drops the modification.
     """
     remapped: List[Dict[str, Any]] = []
     dropped: List[str] = []
@@ -1673,6 +1691,16 @@ def _remap_modification_step_indices(
             continue
         new_index = old_to_new.get(old_index)
         if new_index is None:
+            action = str(mod.get("action") or "")
+            matches = [
+                i for i, step in enumerate(cleaned)
+                if isinstance(step, dict) and str(step.get("action") or "") == action
+            ]
+            if action and len(matches) == 1:
+                new_mod = dict(mod)
+                new_mod["step_index"] = matches[0]
+                remapped.append(new_mod)
+                continue
             dropped.append(f"mod:{mod.get('template', '?')}@{old_index}")
             continue
         new_mod = dict(mod)
@@ -2432,7 +2460,14 @@ class GPSRPlanner:
                 print(f"[plan:{slot}:{index}] attempt {attempt+1}/{self._max_attempts} "
                       f"-> {err}")
                 continue
-            cleaned, dropped = _clean_plan(parsed.get("plan", []))
+            # M-1 (round-3 fix review): the LLM's step_index is bound to its
+            # RAW plan array (parsed.get("plan", [])), not the post-
+            # `_clean_plan` frame -- `_clean_plan` itself can drop steps
+            # (unknown action, consecutive duplicates), so the "old" frame
+            # for remapping must start there too. `_clean_plan_core` returns
+            # each kept step's raw index as the first leg of the composed
+            # raw->final map built below.
+            cleaned, dropped, clean_kept_raw_idx = _clean_plan_core(parsed.get("plan", []))
             # I3 (round-3 adversarial review, M6): the LLM's modifications
             # index into THIS plan (post `_clean_plan`, pre-guard) — capture
             # it before the contract guard / dangling-goto drop reduce it
@@ -2451,12 +2486,15 @@ class GPSRPlanner:
             # goto has no "owning" sibling target to name.
             cleaned, dangling_dropped = _drop_dangling_goto_before_self_nav(cleaned)
             dropped = list(dropped) + contract_dropped + dangling_dropped
-            # I3: compose the old(pre-guard)->new(final `cleaned`) index map
-            # by identity through both drops (see `_kept_indices`).
+            # I3/M-1: compose the raw(LLM JSON)->new(final `cleaned`) index
+            # map through all three drops: `_clean_plan_core`'s raw-index
+            # list, then by identity through the two guard drops (see
+            # `_kept_indices`).
             contract_kept_idx = _kept_indices(pre_guard_plan, post_guard_plan)
             dangling_kept_idx = _kept_indices(post_guard_plan, cleaned)
             mod_old_to_new = {
-                contract_kept_idx[i]: new for new, i in enumerate(dangling_kept_idx)
+                clean_kept_raw_idx[contract_kept_idx[i]]: new
+                for new, i in enumerate(dangling_kept_idx)
             }
             raw_actions = [
                 s.get("action") if isinstance(s, dict) else f"<{type(s).__name__}>"
@@ -2516,7 +2554,7 @@ class GPSRPlanner:
             # translate it through the contract-boundary guard and the
             # dangling-goto drop before validating/grouping against `cleaned`.
             mods, mod_index_dropped = _remap_modification_step_indices(
-                parsed.get("modifications"), mod_old_to_new,
+                parsed.get("modifications"), mod_old_to_new, cleaned,
             )
             if mod_index_dropped:
                 dropped = dropped + mod_index_dropped
