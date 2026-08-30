@@ -9,6 +9,7 @@ from behavior_tree.GPSR.orchestrator import (
     BtNode_TargetPreconditionCheck,
     DynamicExecutor,
     materialise_params,
+    record_nav_on_success,
     _target_gate_evidence,
 )
 from behavior_tree.GPSR.validators import register_tier2_hook
@@ -177,6 +178,47 @@ def test_post_supervisor_replacement_uses_preserved_prefix_for_gate_only():
 def test_post_matching_goto_establishes_at_robot():
     bb = _bb("post-goto")
     bb.set(bb_keys.FACTS, [], overwrite=True)
+    node = _setup(BtNode_TargetPostconditionCheck(
+        "post", ["at_robot(kitchen)"], 0,
+        [{"action": "goto", "params": {"location": "kitchen"}}],
+    ))
+    assert node.update() is Status.SUCCESS
+    assert bb.get(bb_keys.FACTS) == ["at_robot(kitchen)"]
+
+
+def test_j4_failed_goto_does_not_verify_at_robot_valid():
+    # J4 (round-3 adversarial review, M10): materialise_params records only
+    # the INTENDED destination (PENDING_NAV_LOCATION), never the gate's
+    # LAST_NAV_LOCATION evidence -- a goto that materialised but never
+    # actually SUCCEEDED must not verify at_robot(<dest>) VALID.
+    bb = _bb("post-j4-failed-goto")
+    bb.set(bb_keys.FACTS, [], overwrite=True)
+    bb.set(bb_keys.LAST_NAV_LOCATION, None, overwrite=True)
+    bb.register_key(bb_keys.PENDING_NAV_LOCATION, access=Access.WRITE)
+    bb.register_key(bb_keys.PENDING_NAV_LOCATION, access=Access.READ)
+    materialise_params(bb, "goto", {"location": "kitchen"})
+    assert bb.get(bb_keys.PENDING_NAV_LOCATION) == "kitchen"
+    # record_nav_on_success is never called -- the step FAILED. The
+    # completed_steps entry is marked failed too, so the action-verdict
+    # fallback path agrees.
+    node = _setup(BtNode_TargetPostconditionCheck(
+        "post", ["at_robot(kitchen)"], 0,
+        [{"action": "goto", "params": {"location": "kitchen"}, "status": "failed"}],
+    ))
+    assert node.update() is Status.FAILURE
+    assert node.feedback_message == "postcondition unmet: at_robot(kitchen) (UNKNOWN)"
+
+
+def test_j4_succeeded_goto_verifies_at_robot_valid():
+    bb = _bb("post-j4-succeeded-goto")
+    bb.set(bb_keys.FACTS, [], overwrite=True)
+    bb.set(bb_keys.LAST_NAV_LOCATION, None, overwrite=True)
+    bb.register_key(bb_keys.PENDING_NAV_LOCATION, access=Access.WRITE)
+    bb.register_key(bb_keys.PENDING_NAV_LOCATION, access=Access.READ)
+    materialise_params(bb, "goto", {"location": "kitchen"})
+    # The step-finished path records success.
+    record_nav_on_success(bb, "goto", {"location": "kitchen"})
+    assert bb.get(bb_keys.LAST_NAV_LOCATION) == "kitchen"
     node = _setup(BtNode_TargetPostconditionCheck(
         "post", ["at_robot(kitchen)"], 0,
         [{"action": "goto", "params": {"location": "kitchen"}}],

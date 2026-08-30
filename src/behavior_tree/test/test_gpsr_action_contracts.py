@@ -154,7 +154,8 @@ def _clear_blackboard_after_materialise_tests():
 def _bb():
     py_trees.blackboard.Blackboard.clear()
     bb = py_trees.blackboard.Client(name="t")
-    for key in (bb_keys.LAST_NAV_LOCATION, bb_keys.TARGET_LOCATION, bb_keys.TARGET_POSE,
+    for key in (bb_keys.LAST_NAV_LOCATION, bb_keys.PENDING_NAV_LOCATION,
+                bb_keys.TARGET_LOCATION, bb_keys.TARGET_POSE,
                 bb_keys.GRASP_ASK_REFEREE, bb_keys.GRASP_REFEREE_LOCATION,
                 bb_keys.GRASP_REFEREE_POSE, bb_keys.GRASP_REFEREE_IS_APPLIANCE,
                 bb_keys.TARGET_OBJECT_NAME, bb_keys.TARGET_OBJECT_PROMPT,
@@ -168,33 +169,65 @@ def _bb():
     for key in SEARCH_POSE_KEYS:
         bb.register_key(key, access=Access.WRITE)
     bb.set(bb_keys.LAST_NAV_LOCATION, "", overwrite=True)
+    bb.set(bb_keys.PENDING_NAV_LOCATION, "", overwrite=True)
     return bb
 
 
+# J4 (round-3 adversarial review, M10): materialise_params now records the
+# INTENDED nav destination to PENDING_NAV_LOCATION only -- never to
+# LAST_NAV_LOCATION, which is the at_robot() gate's evidence and must only
+# ever reflect a step that actually SUCCEEDED (record_nav_on_success,
+# called from the step-finished path). These three tests previously
+# asserted materialise_params wrote LAST_NAV_LOCATION directly; updated to
+# match the ruling -- see test_record_nav_on_success_* below for the new
+# success-gated behaviour.
 @pytest.mark.parametrize("action,params,expected", [
     ("goto", {"location": "kitchen_table"}, "kitchen_table"),
     ("place", {"location": "kitchen_table"}, "kitchen_table"),
     ("deliver", {"object": "coke", "recipient": "Susan", "recipient_location": "living_room"}, "living_room"),
     ("search_object", {"object": "coke", "location": "kitchen"}, "kitchen"),
 ])
-def test_materialise_records_last_nav_for_self_navigators(action, params, expected):
+def test_materialise_records_pending_nav_for_self_navigators(action, params, expected):
     bb = _bb()
     materialise_params(bb, action, params)
-    assert bb.get(bb_keys.LAST_NAV_LOCATION) == expected
+    assert bb.get(bb_keys.PENDING_NAV_LOCATION) == expected
+    # Never touched until the step actually succeeds.
+    assert bb.get(bb_keys.LAST_NAV_LOCATION) == ""
 
 
-def test_materialise_does_not_touch_last_nav_for_grasp():
+def test_materialise_does_not_touch_pending_nav_for_grasp():
     bb = _bb()
-    bb.set(bb_keys.LAST_NAV_LOCATION, "shelf", overwrite=True)
+    bb.set(bb_keys.PENDING_NAV_LOCATION, "shelf", overwrite=True)
     materialise_params(bb, "grasp", {"object": "coke"})
-    assert bb.get(bb_keys.LAST_NAV_LOCATION) == "shelf"
+    assert bb.get(bb_keys.PENDING_NAV_LOCATION) == "shelf"
 
 
-def test_materialise_deliver_without_location_leaves_last_nav():
+def test_materialise_deliver_without_location_leaves_pending_nav():
     bb = _bb()
-    bb.set(bb_keys.LAST_NAV_LOCATION, "office", overwrite=True)
+    bb.set(bb_keys.PENDING_NAV_LOCATION, "office", overwrite=True)
     materialise_params(bb, "deliver", {"object": "coke", "recipient": "Susan"})
-    assert bb.get(bb_keys.LAST_NAV_LOCATION) == "office"
+    assert bb.get(bb_keys.PENDING_NAV_LOCATION) == "office"
+
+
+from behavior_tree.GPSR.orchestrator import record_nav_on_success
+
+
+def test_record_nav_on_success_writes_last_nav_location():
+    bb = _bb()
+    record_nav_on_success(bb, "goto", {"location": "kitchen_table"})
+    assert bb.get(bb_keys.LAST_NAV_LOCATION) == "kitchen_table"
+
+
+def test_record_nav_on_success_ignores_non_navigating_action():
+    bb = _bb()
+    record_nav_on_success(bb, "grasp", {"object": "coke"})
+    assert bb.get(bb_keys.LAST_NAV_LOCATION) == ""
+
+
+def test_record_nav_on_success_ignores_missing_nav_param():
+    bb = _bb()
+    record_nav_on_success(bb, "deliver", {"object": "coke", "recipient": "Susan"})
+    assert bb.get(bb_keys.LAST_NAV_LOCATION) == ""
 
 
 from behavior_tree.GPSR.planner_validators import validate_plan

@@ -1108,10 +1108,18 @@ def materialise_params(bb_client, action: str, params: Dict[str, Any]) -> None:
             pose = resolve_pose(bb_client, spot_names[i]) if i < len(spot_names) else None
             bb_client.set(search_key, pose, overwrite=True)
 
-    # Track where the robot navigates so a following grasp can tell it is a
-    # shelf grasp, and so at_robot(<dest>) can verify after ANY action that
-    # navigates itself (goto / place / deliver / search_object). Which actions
-    # and which param is the action contract's business, not this function's.
+    # Track where the robot is ABOUT TO navigate, so a following grasp can
+    # tell it is a shelf grasp even before that navigation finishes. Which
+    # actions and which param is the action contract's business, not this
+    # function's.
+    #
+    # J4 (round-3 adversarial review, M10): this is PENDING_NAV_LOCATION, not
+    # LAST_NAV_LOCATION -- materialisation happens before the step has run,
+    # so writing the gate-evidence key here let a goto/self-navigating action
+    # that never actually succeeded still verify at_robot(<dest>) VALID.
+    # LAST_NAV_LOCATION (the at_robot() gate's evidence) is written only on
+    # the step-finished path once the step actually SUCCEEDS -- see
+    # ``record_nav_on_success`` / ``BtNode_LogStepResult``.
     try:
         contract = _contract_for(action)
     except KeyError:
@@ -1120,7 +1128,7 @@ def materialise_params(bb_client, action: str, params: Dict[str, Any]) -> None:
         nav_param = contract.self_establishes.get("at_robot")
         nav_value = params.get(nav_param) if nav_param else None
         if nav_value is not None and str(nav_value).strip():
-            bb_client.set(bb_keys.LAST_NAV_LOCATION, str(nav_value), overwrite=True)
+            bb_client.set(bb_keys.PENDING_NAV_LOCATION, str(nav_value), overwrite=True)
 
     # grasp: decide whether to bypass the real grasp and ask a referee. The
     # robot cannot safely grasp from a shelf, cabinet, or coat rack. Truthy
@@ -1134,7 +1142,11 @@ def materialise_params(bb_client, action: str, params: Dict[str, Any]) -> None:
             return any(loc in s or loc.replace("_", " ") in s
                        for loc in NO_GRASP_LOCATIONS)
         try:
-            last_nav = bb_client.get(bb_keys.LAST_NAV_LOCATION)
+            # J4: shelf/no-grasp inference is an intent check, not a fact
+            # verification -- it deliberately still reads the materialised
+            # (pending) nav target rather than waiting on step-finished
+            # success, same as before this change.
+            last_nav = bb_client.get(bb_keys.PENDING_NAV_LOCATION)
         except KeyError:
             last_nav = ""
         ask_referee = bool(
@@ -1238,6 +1250,29 @@ def materialise_params(bb_client, action: str, params: Dict[str, Any]) -> None:
         )
 
 
+def record_nav_on_success(bb_client, action: str, params: Dict[str, Any]) -> None:
+    """Write LAST_NAV_LOCATION -- the at_robot() gate's evidence -- iff a
+    navigating step actually SUCCEEDED.
+
+    J4 (round-3 adversarial review, M10): called from the step-finished path
+    (``BtNode_LogStepResult``), never at materialisation (``materialise_params``
+    only ever records the INTENDED destination, to ``PENDING_NAV_LOCATION``).
+    Without this split, a goto/self-navigating action that failed still left
+    the materialised destination in the gate's evidence, so at_robot(<dest>)
+    verified VALID for a navigation that never happened.
+    """
+    try:
+        contract = _contract_for(action)
+    except KeyError:
+        contract = None
+    if contract is None or "last_nav_location" not in contract.records:
+        return
+    nav_param = contract.self_establishes.get("at_robot")
+    nav_value = params.get(nav_param) if nav_param else None
+    if nav_value is not None and str(nav_value).strip():
+        bb_client.set(bb_keys.LAST_NAV_LOCATION, str(nav_value), overwrite=True)
+
+
 class BtNode_PopNextAction(Behaviour):
     """Pop ``plan[plan_index]``, resolve its params into BB targets.
 
@@ -1272,9 +1307,11 @@ class BtNode_PopNextAction(Behaviour):
         self._bb.register_key(bb_keys.START_POSE, access=Access.READ)
         self._bb.register_key(bb_keys.DYNAMIC_LOCATIONS, access=Access.READ)
         self._bb.register_key(bb_keys.CURRENT_DYNLABEL, access=Access.WRITE)
-        # written by goto/search_object, read back by grasp (shelf inference)
-        self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.WRITE)
-        self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.READ)
+        # written by goto/search_object at materialisation, read back by
+        # grasp (shelf inference) -- J4: the intended-destination signal, not
+        # the at_robot() gate's success-only LAST_NAV_LOCATION.
+        self._bb.register_key(bb_keys.PENDING_NAV_LOCATION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.PENDING_NAV_LOCATION, access=Access.READ)
         self._bb.register_key(bb_keys.GRASP_ASK_REFEREE, access=Access.WRITE)
         self._bb.register_key(bb_keys.GRASP_REFEREE_LOCATION, access=Access.WRITE)
         self._bb.register_key(bb_keys.GRASP_REFEREE_POSE, access=Access.WRITE)
@@ -1369,9 +1406,11 @@ class BtNode_MaterialiseStep(Behaviour):
         self._bb.register_key(bb_keys.START_POSE, access=Access.READ)
         self._bb.register_key(bb_keys.DYNAMIC_LOCATIONS, access=Access.READ)
         self._bb.register_key(bb_keys.CURRENT_DYNLABEL, access=Access.WRITE)
-        # written by goto/search_object, read back by grasp (shelf inference)
-        self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.WRITE)
-        self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.READ)
+        # written by goto/search_object at materialisation, read back by
+        # grasp (shelf inference) -- J4: the intended-destination signal, not
+        # the at_robot() gate's success-only LAST_NAV_LOCATION.
+        self._bb.register_key(bb_keys.PENDING_NAV_LOCATION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.PENDING_NAV_LOCATION, access=Access.READ)
         self._bb.register_key(bb_keys.GRASP_ASK_REFEREE, access=Access.WRITE)
         self._bb.register_key(bb_keys.GRASP_REFEREE_LOCATION, access=Access.WRITE)
         self._bb.register_key(bb_keys.GRASP_REFEREE_POSE, access=Access.WRITE)
@@ -1444,6 +1483,9 @@ class BtNode_LogStepResult(Behaviour):
         self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.READ)
         self._bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.READ)
         self._bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.WRITE)
+        # J4: the step-finished path is where at_robot() gate evidence is
+        # actually written -- only once the step SUCCEEDED.
+        self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.WRITE)
 
     def update(self):
         try:
@@ -1451,6 +1493,8 @@ class BtNode_LogStepResult(Behaviour):
             params = self._bb.get(bb_keys.CURRENT_PARAMS)
         except KeyError:
             action, params = "unknown", {}
+        if self._succeeded and action != "unknown":
+            record_nav_on_success(self._bb, action, params)
         try:
             log = self._bb.get(bb_keys.STATE_LOG)
         except KeyError:
@@ -3096,6 +3140,7 @@ def _reset_task_state(seq: py_trees.composites.Sequence) -> None:
         "reset supervisor disposition", bb_keys.SUPERVISOR_STEP_DISPOSITION, None,
     ))
     seq.add_child(BtNode_BlackboardSet("reset nav location", bb_keys.LAST_NAV_LOCATION, ""))
+    seq.add_child(BtNode_BlackboardSet("reset pending nav location", bb_keys.PENDING_NAV_LOCATION, ""))
     seq.add_child(BtNode_BlackboardSet("reset grasp-referee", bb_keys.GRASP_ASK_REFEREE, False))
     seq.add_child(BtNode_BlackboardSet("reset appliance-opened", bb_keys.APPLIANCE_OPENED, False))
     seq.add_child(BtNode_BlackboardSet("reset plan_index", bb_keys.PLAN_INDEX, 0))

@@ -124,10 +124,14 @@ class bb_keys:
                                            #   stow pose for navigation (replaces
                                            #   arm_pos_navigating). NOT the arm
                                            #   RealSense grasp scan (uses ARM_SCAN).
+    PENDING_NAV_LOCATION = "gpsr/pending_nav_location"  # str — location a self-navigating step's params NAME, written at materialisation time (before the step has run). J4 (round-3 adversarial review, M10): the at_robot() gate must never trust this -- read only by consumers that need the intended destination early (grasp's no-grasp/shelf inference), never by fact verification.
     LAST_NAV_LOCATION = "gpsr/last_nav_location"  # str — location the robot most
-                                           #   recently navigated to (goto /
-                                           #   search_object); lets a later grasp
-                                           #   infer a shelf grasp.
+                                           #   recently SUCCESSFULLY navigated to
+                                           #   (goto / any self-navigating action);
+                                           #   written by the step-finished path
+                                           #   (BtNode_LogStepResult), never at
+                                           #   materialisation -- this is the
+                                           #   at_robot() gate's evidence (J4).
     GRASP_ASK_REFEREE = "gpsr/grasp_ask_referee"  # bool — the object is on
                                            #   furniture the robot must NOT grasp
                                            #   from (shelf / cabinet / coat_rack):
