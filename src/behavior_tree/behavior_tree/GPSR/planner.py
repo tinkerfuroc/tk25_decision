@@ -174,6 +174,15 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
     10. Every postcondition must be meaningful and checkable under the closed
         vocabulary above. If a clause cannot be resolved into concrete work,
         keep it as a target anyway — the lower layer will plan an announcement.
+    11. A command that COUNTS or ASKS something (any target postcondition
+        counted(...)/answered(...)) must end with a target that reports the
+        result to the operator, UNLESS a target's own wording already says so
+        ("tell me", "report", ...). "count how many mugs are on the shelf and
+        then on the side table" MUST get a final target like {"desc": "report
+        the result to the operator", "depends_on": [the counting targets' ids],
+        "preconditions": [the counted(...) facts], "postconditions":
+        ["at_robot(start_position)", "answered(...)"]} — a plan that gathers a
+        count/answer without ever speaking it is incomplete.
 """).strip().replace("__SELF_SATISFIED_RULE__", render_self_satisfied_rule())
 
 
@@ -442,6 +451,64 @@ def _validate_target_contract(targets: List[Dict[str, Any]]) -> Tuple[bool, Opti
                 if error:
                     return False, f"target {index} {field} invalid fact {condition!r}: {error}"
     return True, None
+
+
+_REPORT_KEYWORDS_RE = re.compile(
+    r"\b(tell|report|inform|let\s+me\s+know)\b", re.IGNORECASE
+)
+
+
+def _append_report_target_if_needed(
+    targets: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """J8 (round-3 adversarial review, edge corpus e05/e06): a command that
+    only COUNTS or ASKS something never speaks the result.
+
+    "count how many mugs are on the shelf and then on the side table"
+    planned ``[goto, count, goto, count]``; "go to the laundry desk and
+    count the mugs on the side table" planned ``[goto, goto, count]`` --
+    the counts are gathered but never announced, because no target's
+    postconditions call for it.
+
+    Deterministic split-time post-check: if ANY target's postconditions
+    establish ``counted(...)``/``answered(...)`` and NO target's desc
+    already signals a report to the operator ("tell me", "report", ...),
+    append a synthetic target whose plan will be ``goto(start_position),
+    announce()`` (a text-less announce reads the latest gathered count/
+    answer off the blackboard -- see ``materialise_params``'s ``announce``
+    branch). Depends on every target that established one of those facts;
+    those facts become its own preconditions so the runtime gate demands
+    them before the announce.
+    """
+    if any(_REPORT_KEYWORDS_RE.search(str(t.get("desc") or "")) for t in targets):
+        return targets
+    reporting_facts: List[str] = []
+    reporting_ids: List[str] = []
+    for target in targets:
+        target_reports = False
+        for condition in target.get("postconditions") or []:
+            if not isinstance(condition, str):
+                continue
+            fact, _err = parse_fact(condition)
+            if fact is not None and fact.predicate in {"counted", "answered"}:
+                reporting_facts.append(condition)
+                target_reports = True
+        if target_reports:
+            reporting_ids.append(str(target.get("id")))
+    if not reporting_facts:
+        return targets
+    new_id = f"t{len(targets)}"
+    report_target = {
+        "id": new_id,
+        "desc": "report the result to the operator",
+        "object": "",
+        "location": "start_position",
+        "depends_on": reporting_ids,
+        "preconditions": reporting_facts,
+        "postconditions": ["at_robot(start_position)", "answered(the requested information)"],
+    }
+    print(f"[split] appended report target {new_id} (depends_on {reporting_ids})")
+    return targets + [report_target]
 
 
 def _dependency_ancestor_targets(
@@ -1847,6 +1914,7 @@ class GPSRPlanner:
                 print(f"[split] attempt {attempt+1}/{self._max_attempts} REJECTED: "
                       f"{last_reason}")
                 continue
+            targets = _append_report_target_if_needed(targets)
             ok, reason = _validate_target_contract(targets)
             if not ok:
                 last_reason = f"your target graph/conditions are invalid: {reason}"

@@ -8,6 +8,7 @@ from behavior_tree.GPSR import planner as planner_module
 from behavior_tree.GPSR.planner import (
     GPSRPlanner,
     TOP_LAYER_SYSTEM_PROMPT,
+    _append_report_target_if_needed,
     _build_lower_layer_user_prompt,
     _normalise_targets,
 )
@@ -98,6 +99,69 @@ def test_normalise_targets_drops_preconditions_no_earlier_target_establishes():
     ])
     assert targets[0]["preconditions"] == []
     assert targets[1]["preconditions"] == ["held(spam)"]
+
+
+# ---------------------------------------------------------------------------
+# J8: counted()/answered() results must be reported to the operator
+# ---------------------------------------------------------------------------
+
+def test_j8_two_count_targets_get_a_report_target_e05():
+    # edge corpus e05: "count how many mugs are on the shelf and then on
+    # the side table" -- both targets count, neither reports.
+    targets = [
+        {"id": "t0", "desc": "count how many mugs are on the shelf",
+         "object": "", "location": "shelf", "depends_on": [],
+         "preconditions": [], "postconditions": ["counted(mugs)"]},
+        {"id": "t1", "desc": "count how many mugs are on the side table",
+         "object": "", "location": "side_table", "depends_on": [],
+         "preconditions": [], "postconditions": ["counted(mugs)"]},
+    ]
+    result = _append_report_target_if_needed(targets)
+    assert len(result) == 3
+    report = result[2]
+    assert report["id"] == "t2"
+    assert report["desc"] == "report the result to the operator"
+    assert report["depends_on"] == ["t0", "t1"]
+    assert report["preconditions"] == ["counted(mugs)", "counted(mugs)"]
+    assert report["postconditions"] == [
+        "at_robot(start_position)", "answered(the requested information)",
+    ]
+    # the appended target's contract is well-formed on its own.
+    ok, reason = planner_module._validate_target_contract(result)
+    assert ok, reason
+
+
+def test_j8_single_count_target_gets_a_report_target_e06():
+    # edge corpus e06: "go to the laundry desk and count the mugs on the
+    # side table" -- one job, one target, no report.
+    targets = [
+        {"id": "t0", "desc": "go to the laundry desk and count the mugs on the side table",
+         "object": "mugs", "location": "side_table", "depends_on": [],
+         "preconditions": [], "postconditions": ["counted(mugs)"]},
+    ]
+    result = _append_report_target_if_needed(targets)
+    assert len(result) == 2
+    assert result[1]["depends_on"] == ["t0"]
+    assert result[1]["preconditions"] == ["counted(mugs)"]
+
+
+def test_j8_command_that_already_tells_gets_no_report_target():
+    targets = [
+        {"id": "t0", "desc": "count the mugs on the shelf and tell me the number",
+         "object": "", "location": "shelf", "depends_on": [],
+         "preconditions": [], "postconditions": ["counted(mugs)"]},
+    ]
+    result = _append_report_target_if_needed(targets)
+    assert result == targets
+
+
+def test_j8_no_counted_or_answered_facts_gets_no_report_target():
+    targets = [
+        {"id": "t0", "desc": "go to the kitchen", "object": "", "location": "kitchen",
+         "depends_on": [], "preconditions": [], "postconditions": ["at_robot(kitchen)"]},
+    ]
+    result = _append_report_target_if_needed(targets)
+    assert result == targets
 
 
 def test_fact_store_applies_transitions_and_returns_defensive_copies():
