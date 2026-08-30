@@ -435,18 +435,27 @@ def _sim_identity_relaxed_enabled() -> bool:
 
 
 def _is_person_name_arg(arg: str) -> bool:
-    """True when a person_found() argument names a person rather than a
-    descriptor. `arg` is already normalized (lowercase, whitespace -> "_")
-    by the time _verify sees fact.args, so "waving person" and
-    "waving_person" are indistinguishable here -- both are excluded.
+    """True when a person_found() argument is eligible for the generic
+    sim-relaxation degrade below (see its call site).
+
+    `arg` is already normalized (lowercase, whitespace -> "_") by the time
+    _verify sees fact.args, so "waving person" and "waving_person" are
+    indistinguishable here.
+
+    Only the SPECIALIST waving descriptor (``_SIM_PERSON_DESCRIPTORS``) is
+    excluded -- it has its own provenance-gated VALID/UNKNOWN branch above
+    (a generic "person" label with no ``waving_specialist`` provenance is
+    not itself evidence someone is waving) and must never fall through to
+    the generic degrade.
+
+    J13 (round-3 adversarial review, tier0 #4): this USED TO also exclude
+    any arg containing "_" or "person"/"persons" -- rejecting every OTHER
+    descriptor too (gesture/pose/clothing, e.g. "person raising their left
+    arm" -> "person_raising_their_left_arm") even though the sim models
+    none of those either. The sim's detector carries no more identity for
+    a descriptor than it does for a name, so the same degrade now applies.
     """
-    if arg in _SIM_PERSON_DESCRIPTORS:
-        return False
-    if "_" in arg:
-        return False
-    if "person" in arg or "persons" in arg:
-        return False
-    return True
+    return arg not in _SIM_PERSON_DESCRIPTORS
 
 
 def _action_verdict(fact: Fact, context: VerificationContext) -> Optional[VerificationResult]:
@@ -572,9 +581,11 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
                     for token in _label_tokens(label)
                 )
             ):
+                # J13: unified reason for any relaxed argument -- name or
+                # descriptor, the sim models neither.
                 return _result(
                     Verdict.VALID,
-                    "sim mode: person detected; name identity is not modelled in sim",
+                    f"sim mode: descriptor {fact.args[0]} not modelled",
                     0.6,
                 )
             # J5: give the specific reason when a label's class prefix

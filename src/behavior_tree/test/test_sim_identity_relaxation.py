@@ -4,12 +4,19 @@ Sim persons carry no name identity -- the detector always labels them
 "person" -- so a command like greetNameInRm's person_found(<Name>) gate
 was rejecting a correct sim run (battery run family s2026-005/006/007,
 2026-08-28) purely because the name wasn't in the detection labels. This
-flag relaxes ONLY that specific labelled-mismatch path, and only for a
-genuine person NAME argument (not a waving/gesture descriptor), and only
-when at least one detection label is itself a person-class label. Every
-other validator path -- object_seen, counted, and person_found's other
-branches -- is unchanged; the flag is off by default so a real-robot
-launch never sees this behaviour.
+flag relaxes ONLY that specific labelled-mismatch path, and only when at
+least one detection label is itself a person-class label.
+
+J13 (round-3 adversarial review, tier0 #4): the relaxation covers ANY
+person_found() argument the sim cannot model identity for -- a NAME
+("sarah") and a descriptor (gesture/pose/clothing, e.g. "person raising
+their left arm") alike, since the sim's detector carries no more of one
+than the other. The one exception is the SPECIALIST waving descriptor
+("waving_person"/"waving_persons"), which has its own dedicated,
+provenance-gated VALID/UNKNOWN branch and must never fall through to this
+generic one. Every other validator path -- object_seen, counted, and
+person_found's other branches -- is unchanged; the flag is off by default
+so a real-robot launch never sees this behaviour.
 
 Run with PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 (ROS pytest plugins break
 collection).
@@ -48,7 +55,10 @@ def test_flag_on_person_label_is_valid_with_sim_reason(monkeypatch):
     )
     assert result.verdict is Verdict.VALID
     assert result.confidence == 0.6
-    assert result.evidence == "sim mode: person detected; name identity is not modelled in sim"
+    # J13 (round-3 adversarial review, tier0 #4): unified reason text for
+    # any relaxed argument (name or descriptor) -- was "sim mode: person
+    # detected; name identity is not modelled in sim".
+    assert result.evidence == "sim mode: descriptor sarah not modelled"
 
 
 def test_flag_on_named_person_label_relaxes_via_class_token(monkeypatch):
@@ -64,7 +74,7 @@ def test_flag_on_named_person_label_relaxes_via_class_token(monkeypatch):
     )
     assert result.verdict is Verdict.VALID
     assert result.confidence == 0.6
-    assert result.evidence == "sim mode: person detected; name identity is not modelled in sim"
+    assert result.evidence == "sim mode: descriptor sarah not modelled"
 
 
 def test_flag_on_waving_persons_descriptor_label_relaxes_via_class_token(monkeypatch):
@@ -85,7 +95,7 @@ def test_flag_on_waving_persons_descriptor_label_relaxes_via_class_token(monkeyp
     )
     assert result.verdict is Verdict.VALID
     assert result.confidence == 0.6
-    assert result.evidence == "sim mode: person detected; name identity is not modelled in sim"
+    assert result.evidence == "sim mode: descriptor sarah not modelled"
 
 
 def test_flag_on_non_person_labels_stay_invalid(monkeypatch):
@@ -99,14 +109,44 @@ def test_flag_on_non_person_labels_stay_invalid(monkeypatch):
 
 
 def test_flag_on_descriptor_argument_is_unaffected(monkeypatch):
-    # "waving_person" is a specialist descriptor, not a name -- the
-    # relaxation must not touch this path (it already has its own
-    # provenance-gated VALID/UNKNOWN branch, tested in
+    # "waving_person" is the SPECIALIST descriptor, not a plain gesture/pose
+    # one -- the generic relaxation must not touch this path (it already
+    # has its own provenance-gated VALID/UNKNOWN branch, tested in
     # test_gpsr_fact_validators.py).
     result = _check(
         "person_found(waving_person)",
         evidence={"person_detection": {"objects": [{"label": "person"}]}},
         env={"GPSR_SIM_IDENTITY_RELAXED": "1"},
+        monkeypatch=monkeypatch,
+    )
+    assert result.verdict is Verdict.INVALID
+
+
+def test_flag_on_gesture_descriptor_argument_is_now_relaxed(monkeypatch):
+    # J13 (round-3 adversarial review, tier0 #4): "person raising their
+    # left arm" is a gesture descriptor the sim does not model at all --
+    # before this fix _is_person_name_arg rejected it purely for
+    # containing "_"/"person", so this could NEVER be VALID under the
+    # relaxation flag even though the sim's detector is exactly as blind
+    # to gestures as it is to names.
+    result = _check(
+        "person_found(person raising their left arm)",
+        evidence={"person_detection": {"objects": [{"label": "person"}]}},
+        env={"GPSR_SIM_IDENTITY_RELAXED": "1"},
+        monkeypatch=monkeypatch,
+    )
+    assert result.verdict is Verdict.VALID
+    assert result.confidence == 0.6
+    assert result.evidence == (
+        "sim mode: descriptor person_raising_their_left_arm not modelled"
+    )
+
+
+def test_flag_off_gesture_descriptor_argument_stays_invalid(monkeypatch):
+    monkeypatch.delenv("GPSR_SIM_IDENTITY_RELAXED", raising=False)
+    result = _check(
+        "person_found(person raising their left arm)",
+        evidence={"person_detection": {"objects": [{"label": "person"}]}},
         monkeypatch=monkeypatch,
     )
     assert result.verdict is Verdict.INVALID
