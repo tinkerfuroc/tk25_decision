@@ -1707,11 +1707,15 @@ def _target_gate_facts(bb) -> List[str]:
 
 
 def _gate_debug_enabled() -> bool:
-    """L-4 (round-3 fix review): ``GPSR_GATE_DEBUG=1`` prints every gate
+    """L-4 (round-3 fix review): ``GPSR_DEBUG_GATE=1`` prints every gate
     verdict (including VALID); by default only non-VALID verdicts print, so
     a healthy run's stdout is not one line per fact per tick.
+
+    L-4-L3 (round-3 fix2 review): renamed from ``GPSR_GATE_DEBUG`` to match
+    the existing ``GPSR_DEBUG_*`` convention (``GPSR_DEBUG_TELEMETRY``,
+    ``GPSR_DEBUG_STATE_DIR``, ``BT_GPSR_DEBUG_CMD``).
     """
-    return os.environ.get("GPSR_GATE_DEBUG") == "1"
+    return os.environ.get("GPSR_DEBUG_GATE") == "1"
 
 
 def _emit_gate_verified(
@@ -1729,7 +1733,7 @@ def _emit_gate_verified(
     L-4 (round-3 fix review): the print line is unconditional on every
     fact/verdict, including a healthy target's routine VALIDs -- only print
     when the verdict is NOT VALID (worth seeing without asking) or
-    ``GPSR_GATE_DEBUG=1`` (opt-in full trace). The telemetry event below is
+    ``GPSR_DEBUG_GATE=1`` (opt-in full trace). The telemetry event below is
     unaffected -- it is always emitted so bench/diagnostics still see every
     verdict.
     """

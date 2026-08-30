@@ -271,7 +271,7 @@ def test_emit_gate_verified_prints_only_non_valid_unless_debug_flag_set(monkeypa
     # L-4 (round-3 fix review): the stdout print line is noisy at one line
     # per fact per tick even on a healthy target's routine VALIDs -- only
     # print unconditionally for non-VALID verdicts; VALID prints only under
-    # GPSR_GATE_DEBUG=1. The telemetry event itself (checked elsewhere) is
+    # GPSR_DEBUG_GATE=1. The telemetry event itself (checked elsewhere) is
     # unaffected by this flag.
     from behavior_tree.GPSR import orchestrator as orch
     from behavior_tree.GPSR.validators import Verdict
@@ -281,7 +281,7 @@ def test_emit_gate_verified_prints_only_non_valid_unless_debug_flag_set(monkeypa
             raise KeyError(key)
 
     monkeypatch.setattr(orch, "get_default_telemetry", lambda: None)
-    monkeypatch.delenv("GPSR_GATE_DEBUG", raising=False)
+    monkeypatch.delenv("GPSR_DEBUG_GATE", raising=False)
 
     orch._emit_gate_verified(
         _NoTelemetryBB(), 0, 0, "postcondition", "counted(drinks)",
@@ -295,7 +295,7 @@ def test_emit_gate_verified_prints_only_non_valid_unless_debug_flag_set(monkeypa
     )
     assert "[gate:0:postcondition] counted(drinks) INVALID" in capsys.readouterr().out
 
-    monkeypatch.setenv("GPSR_GATE_DEBUG", "1")
+    monkeypatch.setenv("GPSR_DEBUG_GATE", "1")
     orch._emit_gate_verified(
         _NoTelemetryBB(), 0, 0, "postcondition", "counted(drinks)",
         Verdict.VALID, 1.0, "count artifact target provenance matches",
