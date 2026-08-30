@@ -873,17 +873,25 @@ def test_completed_steps_from_state_log_empty_plan_index_is_empty():
 
 class _StepFailurePlanner:
     """M-2: a plan with 2 steps; get_action_plan returns it, replan_target
-    records the completed_steps it was called with."""
+    records the completed_steps it was called with.
+
+    N-2 (round-3 fix2 review): ``get_completed_steps`` mirrors
+    ``GPSRPlanner.get_completed_steps`` -- empty by default (no prior
+    attempt's completed steps persisted on the entry)."""
 
     def __init__(self, plan):
         self.plan = plan
         self.replan_calls = []
+        self.completed_steps = []
 
     def get_target_subtree(self, slot, index):
         return py_trees.behaviours.Success("ready")
 
     def get_action_plan(self, slot, index):
         return self.plan
+
+    def get_completed_steps(self, slot, index):
+        return self.completed_steps
 
     def _get_desc(self, slot, index):
         return "target"
@@ -1148,6 +1156,100 @@ def test_swap_in_preserves_plan_index_on_same_target_swap():
     executor._active_target_index = 0
     executor._swap_in(0)
     assert bb.get(bb_keys.PLAN_INDEX) == 2
+
+
+# ---------------------------------------------------------------------------
+# N-2 (round-3 fix2 review): completed steps must be CUMULATIVE across
+# chained step failures of the same target -- a second step failure must
+# not forget what an earlier attempt's step failure already established.
+# ---------------------------------------------------------------------------
+
+class _ChainedStepFailurePlanner:
+    """N-2: simulates the real ``GPSRPlanner`` cache's persistence -- the
+    planner's ``plan_target``/``_store`` threads whatever ``replan_target``
+    was called with onto the entry, so the NEXT ``get_completed_steps`` call
+    returns it."""
+
+    def __init__(self, plan):
+        self.plan = plan
+        self.replan_calls = []
+        self._completed_steps = []
+
+    def get_target_subtree(self, slot, index):
+        return py_trees.behaviours.Success("ready")
+
+    def get_action_plan(self, slot, index):
+        return self.plan
+
+    def get_completed_steps(self, slot, index):
+        return self._completed_steps
+
+    def _get_desc(self, slot, index):
+        return "target"
+
+    def replan_target(self, slot, index, reason, completed_steps=None):
+        self.replan_calls.append(completed_steps)
+        self._completed_steps = list(completed_steps or [])
+
+
+def test_on_target_failure_two_consecutive_step_failures_prepends_entry_completed_steps():
+    # N-2's own scenario: attempt 1 [goto(src), grasp(x), goto(t), place]
+    # fails at goto(t) (a step failure) -- M-2 derives [goto(src), grasp(x)].
+    # Attempt 2 (re-emitted grasp dropped by H-3) plans [goto(t), place];
+    # place fails as a step too, with NO gate ever running (GATE_COMPLETED_
+    # STEPS stays []) -- the derivation over [goto(t), place] alone would
+    # yield only [goto(t)], forgetting grasp(x). The persisted entry
+    # completed_steps must be prepended.
+    goto_src = {"action": "goto", "params": {"location": "src"}}
+    grasp_x = {"action": "grasp", "params": {"object": "x"}}
+    goto_t = {"action": "goto", "params": {"location": "t"}}
+    place = {"action": "place", "params": {"location": "t"}}
+
+    attempt1_plan = [goto_src, grasp_x, goto_t, place]
+    planner = _ChainedStepFailurePlanner(attempt1_plan)
+    executor, _tree = _executor(planner)
+    writer = py_trees.blackboard.Client(name="n2-chained-step-failures")
+    writer.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
+    writer.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
+    writer.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
+    writer.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+    writer.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+
+    # Attempt 1: goto(t) (index 2) fails as a step -> PLAN_INDEX=3; goto(src)
+    # and grasp(x) (indices 0, 1) already succeeded.
+    writer.set(bb_keys.PLAN_INDEX, 3, overwrite=True)
+    writer.set(
+        bb_keys.STATE_LOG,
+        [
+            "goto({'location': 'src'}) SUCCEEDED",
+            "grasp({'object': 'x'}) SUCCEEDED",
+            "goto({'location': 't'}) FAILED",
+        ],
+        overwrite=True,
+    )
+    writer.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
+    executor._on_target_failure("goto small tree failed")
+    assert planner.replan_calls[-1] == [goto_src, grasp_x]
+
+    # Attempt 2: the fresh plan is [goto(t), place] (grasp re-emitted by the
+    # LLM was dropped by H-3's dedup before reaching this entry); place
+    # (index 1) fails as a step -> PLAN_INDEX=2, goto(t) (index 0) succeeded.
+    planner.plan = [goto_t, place]
+    writer.set(bb_keys.PLAN_INDEX, 2, overwrite=True)
+    writer.set(
+        bb_keys.STATE_LOG,
+        [
+            "goto({'location': 'src'}) SUCCEEDED",
+            "grasp({'object': 'x'}) SUCCEEDED",
+            "goto({'location': 't'}) SUCCEEDED",
+            "place({'location': 't'}) FAILED",
+        ],
+        overwrite=True,
+    )
+    writer.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
+    executor._on_target_failure("place small tree failed")
+
+    assert planner.replan_calls[-1] == [goto_src, grasp_x, goto_t]
 
 
 # ---------------------------------------------------------------------------

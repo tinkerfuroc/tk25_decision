@@ -839,3 +839,26 @@ def test_new_command_starts_with_empty_failed_plans(monkeypatch):
     monkeypatch.setattr(p, "plan_target", lambda *a, **k: None)
     p.request_plan_all(0, ["new target"], command="new command")
     assert p._failed_plans(0, 0) == []
+
+
+# ---------------------------------------------------------------------------
+# N-2 (round-3 fix2 review): `_store` persists `completed_steps` on the
+# cache entry so a LATER attempt's plain step failure can recover an
+# EARLIER attempt's completed prefix (see DynamicExecutor._on_target_failure).
+# ---------------------------------------------------------------------------
+
+def test_store_persists_completed_steps_and_get_completed_steps_returns_them():
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    completed = [{"action": "goto", "params": {"location": "src"}},
+                 {"action": "grasp", "params": {"object": "x"}}]
+    p._store(0, 0, "d", [{"action": "goto", "params": {"location": "t"}}],
+             py_trees.behaviours.Success("s"), None, completed_steps=completed)
+    assert p.get_completed_steps(0, 0) == completed
+
+
+def test_get_completed_steps_is_empty_for_an_unknown_or_unset_entry():
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    assert p.get_completed_steps(0, 0) == []
+    p._store(0, 0, "d", [{"action": "goto", "params": {"location": "t"}}],
+             py_trees.behaviours.Success("s"), None)
+    assert p.get_completed_steps(0, 0) == []

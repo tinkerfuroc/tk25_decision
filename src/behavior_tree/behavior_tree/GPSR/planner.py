@@ -2223,7 +2223,8 @@ class GPSRPlanner:
 
     # -- cache ---------------------------------------------------------------
 
-    def _store(self, slot, index, desc, plan, subtree, error, modifications=None):
+    def _store(self, slot, index, desc, plan, subtree, error, modifications=None,
+               completed_steps=None):
         with self._lock:
             prev = self._cache.get((slot, index))
             failed_plans = list(prev.get("failed_plans") or []) if prev else []
@@ -2242,6 +2243,14 @@ class GPSRPlanner:
                 "modifications": modifications,
                 "failed_plans": failed_plans,
                 "tried_escapes": tried_escapes,
+                # N-2 (round-3 fix2 review): steps of THIS target's plan that
+                # already succeeded in an EARLIER attempt, as threaded into
+                # this attempt's gates (build_target_subtree's own
+                # ``completed_steps``) -- persisted here so a LATER attempt's
+                # step failure can recover them via ``get_completed_steps``
+                # (a step failure never runs a gate, so nothing else records
+                # this attempt's completed prefix on the entry).
+                "completed_steps": list(completed_steps or []),
             }
 
     def _get_desc(self, slot, index) -> Optional[str]:
@@ -2655,7 +2664,8 @@ class GPSRPlanner:
                 print(f"[plan:{slot}:{index}] fallback subtree build ALSO failed: "
                       f"{build_exc!r} -- entry left not-ready")
                 return
-            self._store(slot, index, desc, plan, subtree, error)
+            self._store(slot, index, desc, plan, subtree, error,
+                        completed_steps=completed_steps)
 
     def _plan_target_impl(
         self,
@@ -2675,7 +2685,8 @@ class GPSRPlanner:
         if self._offline_mock:
             plan = _offline_mock_plan(desc)
             subtree = self.build_target_subtree(slot, index, plan)
-            self._store(slot, index, desc, plan, subtree, None)
+            self._store(slot, index, desc, plan, subtree, None,
+                        completed_steps=completed_steps)
             return
 
         client = self._new_client()
@@ -2912,7 +2923,8 @@ class GPSRPlanner:
             else:
                 error = None
             self._store(slot, index, desc, cleaned, subtree, error,
-                        modifications=group_modifications_by_step(cleaned, mods or []))
+                        modifications=group_modifications_by_step(cleaned, mods or []),
+                        completed_steps=completed_steps)
             return
         # Every attempt failed -> guaranteed non-empty fallback plan.
         # H-3 (round-3 fix review): same completed_steps threading as the
@@ -2923,7 +2935,8 @@ class GPSRPlanner:
         subtree = self.build_target_subtree(slot, index, plan, completed_steps=completed_steps)
         reason = f"all {self._max_attempts} attempts failed (last reason: {last_reason})"
         print(f"[plan:{slot}:{index}] {reason} -> fallback acknowledgement plan")
-        self._store(slot, index, desc, plan, subtree, reason)
+        self._store(slot, index, desc, plan, subtree, reason,
+                    completed_steps=completed_steps)
 
     def request_plan_all(
         self,
@@ -3123,7 +3136,8 @@ class GPSRPlanner:
         subtree = self.build_target_subtree(
             slot, index, cleaned, completed_steps=completed_steps,
         )
-        self._store(slot, index, desc, cleaned, subtree, reason)
+        self._store(slot, index, desc, cleaned, subtree, reason,
+                    completed_steps=completed_steps)
 
     # -- polling (executor thread) -------------------------------------------
 
@@ -3146,6 +3160,23 @@ class GPSRPlanner:
         if not entry:
             return []
         return list(entry.get("plan") or [])
+
+    def get_completed_steps(self, slot: int, index: int) -> List[Dict[str, Any]]:
+        """N-2 (round-3 fix2 review): the ``completed_steps`` this entry's
+        plan was threaded with (see ``_store``) -- steps of THIS target that
+        succeeded in an EARLIER attempt. Used by
+        ``DynamicExecutor._on_target_failure`` to prepend them ahead of
+        whatever a later plain step failure derives from PLAN_INDEX/
+        STATE_LOG, so two consecutive step failures do not forget the
+        first's completed work.
+
+        M-8 (round-2 review): pre-existing lock-scope note — see ``_get_desc``.
+        """
+        with self._lock:
+            entry = self._cache.get((slot, index))
+        if not entry:
+            return []
+        return list(entry.get("completed_steps") or [])
 
     def get_error(self, slot: int, index: int) -> Optional[str]:
         """The cache entry's ``error`` (None when absent or ready with no error).

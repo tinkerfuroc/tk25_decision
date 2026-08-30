@@ -2824,7 +2824,22 @@ class DynamicExecutor(py_trees.composites.Composite):
                 state_log = list(self._bb.get(bb_keys.STATE_LOG) or [])
             except KeyError:
                 state_log = []
-            gate_completed = self._completed_steps_from_state_log(plan, plan_index, state_log)
+            derived = self._completed_steps_from_state_log(plan, plan_index, state_log)
+            # N-2 (round-3 fix2 review): `derived` only covers THIS attempt's
+            # own plan -- an earlier step failure of the SAME target may
+            # already have persisted completed steps on the cache entry
+            # (see planner.GPSRPlanner._store/get_completed_steps); prepend
+            # them so a second consecutive step failure does not forget the
+            # first attempt's completed work (e.g. a grasp).
+            get_completed_steps = getattr(self._planner, "get_completed_steps", None)
+            try:
+                entry_completed = (
+                    list(get_completed_steps(self._slot, self._index))
+                    if callable(get_completed_steps) else []
+                )
+            except Exception:  # noqa: BLE001 -- never break the replan on this lookup
+                entry_completed = []
+            gate_completed = entry_completed + derived
         self._planner.replan_target(self._slot, self._index, reason, completed_steps=gate_completed)
         self._bb.set(bb_keys.REPLAN_REQUEST,
                      {"level": "target", "index": self._index, "reason": reason},
