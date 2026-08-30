@@ -151,13 +151,37 @@ def test_j8_two_count_targets_get_a_report_target_e05():
     assert report["id"] == "t2"
     assert report["desc"] == "report the result to the operator"
     assert report["depends_on"] == ["t0", "t1"]
-    assert report["preconditions"] == ["counted(mugs)", "counted(mugs)"]
+    # L-3 (round-3 fix review): both targets declare the identical
+    # counted(mugs) fact -- deduped, preserving first-seen order, so the
+    # gate does not check the same fact twice.
+    assert report["preconditions"] == ["counted(mugs)"]
     assert report["postconditions"] == [
         "at_robot(start_position)", "answered(the requested information)",
     ]
     # the appended target's contract is well-formed on its own.
     ok, reason = planner_module._validate_target_contract(result)
     assert ok, reason
+
+
+def test_j8_dedup_preserves_first_seen_order_l3():
+    # L-3 (round-3 fix review): a non-adjacent repeat of an EARLIER fact
+    # must not move it -- the dedup keeps first-seen order, not sorted or
+    # last-seen order.
+    targets = [
+        {"id": "t0", "desc": "count the mugs on the shelf", "object": "",
+         "location": "shelf", "depends_on": [], "preconditions": [],
+         "postconditions": ["counted(mugs)"]},
+        {"id": "t1", "desc": "count the bowls on the shelf", "object": "",
+         "location": "shelf", "depends_on": [], "preconditions": [],
+         "postconditions": ["counted(bowls)"]},
+        {"id": "t2", "desc": "count the mugs on the side table", "object": "",
+         "location": "side_table", "depends_on": [], "preconditions": [],
+         "postconditions": ["counted(mugs)"]},
+    ]
+    result = _append_report_target_if_needed(targets)
+    report = result[-1]
+    assert report["preconditions"] == ["counted(mugs)", "counted(bowls)"]
+    assert report["depends_on"] == ["t0", "t1", "t2"]
 
 
 def test_j8_single_count_target_gets_a_report_target_e06():

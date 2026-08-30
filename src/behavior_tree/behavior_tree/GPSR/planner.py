@@ -609,10 +609,24 @@ def _append_report_target_if_needed(
     ``materialise_params``'s ``announce`` branch). Depends on every target
     that established one of those facts; those facts become its own
     preconditions so the runtime gate demands them before the announce.
+
+    L-3 (round-3 fix review): the synthetic ``answered(the requested
+    information)`` postcondition is verified only through the announce
+    action-verdict (``validators.py``'s ``_action_verdict``) -- a
+    text-less announce speaks whatever ``REPORT_INFO`` currently holds
+    (``_swap_in`` clears per-target QA evidence like ``COUNT_VALUE`` but
+    not ``REPORT_INFO``), so this depends on an earlier target having
+    populated it.
     """
     if any(_REPORT_KEYWORDS_RE.search(str(t.get("desc") or "")) for t in targets):
         return targets
     reporting_facts: List[str] = []
+    # L-3 (round-3 fix review): two targets can declare the SAME counted()/
+    # answered() fact (e.g. two "count the mugs" targets both counting the
+    # same object) -- dedupe while preserving first-seen order so the
+    # synthetic target's preconditions (and the runtime gate that checks
+    # them) never carry a literal duplicate.
+    seen_facts: set = set()
     reporting_ids: List[str] = []
     for target in targets:
         target_reports = False
@@ -624,10 +638,15 @@ def _append_report_target_if_needed(
             if fact is None:
                 continue
             if fact.predicate == "counted":
-                reporting_facts.append(condition)
-                target_reports = True
+                is_reporting = True
             elif fact.predicate == "answered" and not _answered_already_spoken(desc):
-                reporting_facts.append(condition)
+                is_reporting = True
+            else:
+                is_reporting = False
+            if is_reporting:
+                if condition not in seen_facts:
+                    seen_facts.add(condition)
+                    reporting_facts.append(condition)
                 target_reports = True
         if target_reports:
             reporting_ids.append(str(target.get("id")))
