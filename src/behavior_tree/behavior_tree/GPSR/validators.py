@@ -511,6 +511,13 @@ def _is_person_name_arg(arg: str) -> bool:
     arm" -> "person_raising_their_left_arm") even though the sim models
     none of those either. The sim's detector carries no more identity for
     a descriptor than it does for a name, so the same degrade now applies.
+
+    L-5 (round-3 fix review): this also covers a plain generic-class arg
+    (e.g. ``person_found(person)``) and a specific-but-unmodelled one like
+    ``person_found(sitting_person)`` matched against a bare ``labels=
+    ["person"]`` detection -- under the flag, a wrong-pose/wrong-descriptor
+    person passes at confidence 0.6. Acceptable in sim (per the ruling);
+    ``GPSR_SIM_IDENTITY_RELAXED`` must never be set in the robot launch.
     """
     return arg not in _SIM_PERSON_DESCRIPTORS
 
