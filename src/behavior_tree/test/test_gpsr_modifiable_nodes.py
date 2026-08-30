@@ -306,6 +306,53 @@ def test_pan_tilt_sweep_rebuild():
     assert "find_object pan=+90 tilt=+0" in names
 
 
+def test_pan_tilt_sweep_rejects_oversized_pan_list_with_requirement_text():
+    # J6 (testing session 3f): pan-tilt-sweep must cap sweep pose count --
+    # a 9-value pan list is rejected, and the rejection reason names the
+    # requirement (so the replan prompt can tell the model what's wrong).
+    tree = small_trees.create_find_object()
+    sweep_id = _find_node_id(tree, "small/find_object", name_fragment="pantilt sweep")
+    mods = [{
+        "template": "pan-tilt-sweep",
+        "target_node_id": sweep_id,
+        "params": {"pan_deg": [float(i) for i in range(9)], "tilt_deg": [0.0]},
+        "reason": "wide scan",
+    }]
+    ok, reason = _validate(tree, "find_object", mods)
+    assert ok is False
+    assert "pan_deg" in reason
+    from behavior_tree.GPSR.modifiable_nodes import MAX_SWEEP_POSES_PER_AXIS
+    assert str(MAX_SWEEP_POSES_PER_AXIS) in reason
+    assert "-120" in reason and "120" in reason
+
+
+def test_pan_tilt_sweep_accepts_three_values_within_range():
+    tree = small_trees.create_find_object()
+    sweep_id = _find_node_id(tree, "small/find_object", name_fragment="pantilt sweep")
+    mods = [{
+        "template": "pan-tilt-sweep",
+        "target_node_id": sweep_id,
+        "params": {"pan_deg": [-90.0, 0.0, 90.0], "tilt_deg": [-30.0, 0.0, 45.0]},
+        "reason": "three-point scan",
+    }]
+    assert _validate(tree, "find_object", mods) == (True, "")
+
+
+def test_pan_tilt_sweep_rejects_out_of_range_tilt_value():
+    tree = small_trees.create_find_object()
+    sweep_id = _find_node_id(tree, "small/find_object", name_fragment="pantilt sweep")
+    mods = [{
+        "template": "pan-tilt-sweep",
+        "target_node_id": sweep_id,
+        "params": {"pan_deg": [0.0], "tilt_deg": [75.0]},
+        "reason": "too far",
+    }]
+    ok, reason = _validate(tree, "find_object", mods)
+    assert ok is False
+    assert "tilt_deg" in reason
+    assert "-45" in reason and "60" in reason
+
+
 def test_search_spots_capacity():
     tree = small_trees.create_search_object()
     root_id = "small/search_object/root"

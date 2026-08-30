@@ -85,14 +85,53 @@ def _str_list(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(item, (int, float)) for item in value)
 
 
+# J6 (testing session 3f): pan-tilt-sweep accepted UNBOUNDED pan_deg/tilt_deg
+# lists -- an LLM-authored sweep of e.g. 9 poses per axis multiplies the
+# scan's runtime cost with no cap. Capped to 1..MAX_SWEEP_POSES_PER_AXIS
+# values, each within the physical pan/tilt travel limits.
+MAX_SWEEP_POSES_PER_AXIS = 5
+PAN_RANGE_DEG = (-120, 120)
+TILT_RANGE_DEG = (-45, 60)
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _angle_list(value: Any, lo: float, hi: float) -> bool:
+    # N1 (Task B review, still true): only a `list` is accepted, never a
+    # `tuple` (a tuple is unreachable from JSON input anyway) -- the
+    # requirement text below says "list" only.
+    if not isinstance(value, list) or not (1 <= len(value) <= MAX_SWEEP_POSES_PER_AXIS):
+        return False
+    return all(_is_number(item) and lo <= item <= hi for item in value)
+
+
+def _pan_list(value: Any) -> bool:
+    return _angle_list(value, *PAN_RANGE_DEG)
+
+
+def _tilt_list(value: Any) -> bool:
+    return _angle_list(value, *TILT_RANGE_DEG)
+
+
+def _angle_list_requirement(lo: float, hi: float) -> str:
+    return (
+        f"must be a list of 1..{MAX_SWEEP_POSES_PER_AXIS} numbers (degrees), "
+        f"each within [{lo}, {hi}]"
+    )
+
+
 #: Common float-list schemas reused by several templates.
 FLOAT_LIST = ParamSpec((list, tuple))
-# N1 (Task B review): `_str_list` only accepts `list`, never `tuple` (a tuple
-# is unreachable from JSON input anyway), so the requirement text says "list"
-# only -- it must not promise tuples are accepted too.
-_ANGLE_LIST_REQUIREMENT = "must be a list of numbers (degrees)"
-TILT_LIST = ModParamSpec((list, tuple), validator=_str_list, requirement=_ANGLE_LIST_REQUIREMENT)
-PAN_LIST = ModParamSpec((list, tuple), validator=_str_list, requirement=_ANGLE_LIST_REQUIREMENT)
+PAN_LIST = ModParamSpec(
+    (list, tuple), validator=_pan_list,
+    requirement=_angle_list_requirement(*PAN_RANGE_DEG),
+)
+TILT_LIST = ModParamSpec(
+    (list, tuple), validator=_tilt_list,
+    requirement=_angle_list_requirement(*TILT_RANGE_DEG),
+)
 
 
 # ---------------------------------------------------------------------------

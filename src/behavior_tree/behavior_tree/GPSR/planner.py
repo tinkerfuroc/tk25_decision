@@ -255,8 +255,9 @@ LOWER_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
     - "announce-text" (actions whose tree has a literal-message announce):
       params {"text": "<spoken text>"} — change a spoken announcement.
     - "pan-tilt-sweep" (actions find_person / find_object / describe_person):
-      params {"pan_deg": [floats], "tilt_deg": [floats]} — override the
-      scan sweep ranges.
+      params {"pan_deg": [floats], "tilt_deg": [floats]} — override the scan
+      sweep ranges. Each list is 1..5 values; pan_deg values must be within
+      [-120, 120] degrees, tilt_deg values within [-45, 60] degrees.
     - "search-spots" (action search_object): params {"capacity": <int 1..32>}
       — scale the room sweep capacity.
 
