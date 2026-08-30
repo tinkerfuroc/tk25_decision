@@ -82,13 +82,21 @@ OPENAI_TEMPERATURE = 0.2
 OPENAI_MAX_TOKENS = 256
 
 
-def _resolve_llm_timeout_s(default: float = 45.0) -> float:
+def _resolve_llm_timeout_s(default: float = 90.0) -> float:
     """Read GPSR_LLM_TIMEOUT_S (process env only); fall back to ``default``.
 
     I4 (round-3 adversarial review, M7): the planner client is built with no
     timeout and default (unbounded) retries, so an OpenRouter stall can hang
     a planning attempt indefinitely -- this bounds every request the
     planner's ``openai.OpenAI`` client makes.
+
+    L-3 (round-3 fix review): tier0 measured 36-43s for entries with two
+    SERIAL round-trips and zero rejections (~15-20s per call on the
+    baseline model) -- a reasoning model with a higher effort setting can
+    exceed the previous 45s default on a single call, timing out every
+    attempt and taking 2*45s*4 attempts (~6 minutes) to reach the
+    fallback. 90s leaves headroom for a slower model without materially
+    lengthening the worst case (still bounded, never unbounded).
     """
     raw = os.environ.get("GPSR_LLM_TIMEOUT_S")
     if raw:

@@ -713,14 +713,16 @@ def test_two_layer_planner_honours_offline_planner_override(monkeypatch):
 def test_llm_timeout_s_defaults_and_reads_env_override(monkeypatch):
     from behavior_tree.GPSR import config as config_module
 
+    # L-3 (round-3 fix review): 45s was close to observed reasoning-model
+    # latency (tier0: ~15-20s per serial call) -- default raised to 90s.
     monkeypatch.delenv("GPSR_LLM_TIMEOUT_S", raising=False)
-    assert config_module._resolve_llm_timeout_s() == 45.0
+    assert config_module._resolve_llm_timeout_s() == 90.0
 
     monkeypatch.setenv("GPSR_LLM_TIMEOUT_S", "12.5")
     assert config_module._resolve_llm_timeout_s() == 12.5
 
     monkeypatch.setenv("GPSR_LLM_TIMEOUT_S", "not-a-number")
-    assert config_module._resolve_llm_timeout_s() == 45.0
+    assert config_module._resolve_llm_timeout_s() == 90.0
 
 
 def test_new_client_passes_timeout_and_bounded_retries(monkeypatch):
