@@ -210,6 +210,63 @@ def test_post_all_or_nothing_on_second_failure():
     assert bb.get(bb_keys.FACTS) == ["at_robot(kitchen)"]
 
 
+def test_post_own_postcondition_already_in_ledger_needs_its_own_evidence():
+    # J2 (round-3 adversarial review, M3): "meet Sarah at the laundry_desk
+    # then locate Sarah in the kitchen" -- t0 already wrote person_found
+    # (sarah) to the ledger, but t1 declares person_found(sarah) as ITS OWN
+    # postcondition too. The established-fact shortcut must not let t1 pass
+    # on t0's evidence -- with no person_detection recorded during t1, this
+    # must be UNKNOWN (not VALID).
+    bb = _bb("post-own-pc-unknown")
+    bb.set(bb_keys.FACTS, ["person_found(sarah)"], overwrite=True)
+    # The blackboard is process-global -- explicitly clear any stale
+    # detection evidence an earlier test in this module left behind.
+    bb.set(bb_keys.TARGET_PERSON_DETECTION, None, overwrite=True)
+    bb.set(bb_keys.ALL_WAVING_PERSONS, None, overwrite=True)
+    node = _setup(BtNode_TargetPostconditionCheck(
+        "post", ["person_found(sarah)"], 1,
+        [{"action": "find_person", "params": {"person": "sarah"}}],
+    ))
+    assert node.update() is Status.FAILURE
+    assert node.feedback_message == "postcondition unmet: person_found(sarah) (UNKNOWN)"
+    assert bb.get(bb_keys.FACTS) == ["person_found(sarah)"]
+
+
+def test_post_own_postcondition_with_matching_detection_is_valid():
+    bb = _bb("post-own-pc-valid")
+    bb.set(bb_keys.FACTS, ["person_found(sarah)"], overwrite=True)
+    bb.set(bb_keys.TARGET_PERSON_DETECTION, {"objects": ["sarah"]}, overwrite=True)
+    node = _setup(BtNode_TargetPostconditionCheck(
+        "post", ["person_found(sarah)"], 1,
+        [{"action": "find_person", "params": {"person": "sarah"}}],
+    ))
+    assert node.update() is Status.SUCCESS
+    assert bb.get(bb_keys.FACTS) == ["person_found(sarah)"]
+
+
+def test_post_fact_that_is_only_a_precondition_still_passes_via_ledger():
+    # A deferred precondition (not one of THIS target's declared
+    # postconditions) still gets the established-fact shortcut -- J2 only
+    # narrows the shortcut for a target's OWN postconditions. Simulate what
+    # BtNode_TargetPreconditionCheck would have written to
+    # DEFERRED_PRECONDITIONS: at_robot(kitchen) is already in the ledger
+    # (from an earlier target) and is NOT one of this target's own
+    # postconditions, so it should verify VALID from the ledger alone even
+    # though nothing in this target's own plan/evidence re-navigated there.
+    bb = _bb("post-deferred-ledger")
+    bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.WRITE)
+    bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.READ)
+    bb.set(bb_keys.FACTS, ["at_robot(kitchen)"], overwrite=True)
+    bb.set(bb_keys.DEFERRED_PRECONDITIONS, ["at_robot(kitchen)"], overwrite=True)
+    node = _setup(BtNode_TargetPostconditionCheck(
+        "post", ["held(plant pot)"], 0,
+        [{"action": "grasp", "params": {"object": "plant pot"}}],
+    ))
+    assert node.update() is Status.SUCCESS
+    assert "at_robot(kitchen)" in bb.get(bb_keys.FACTS)
+    assert "held(plant_pot)" in bb.get(bb_keys.FACTS)
+
+
 def test_post_canonical_dedup_preserves_prior_order():
     bb = _bb("post-dedup")
     bb.set(bb_keys.FACTS, ["at_robot(kitchen)", "held(plant pot)"], overwrite=True)

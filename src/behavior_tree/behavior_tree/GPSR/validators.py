@@ -36,6 +36,13 @@ class VerificationContext:
     completed_steps: tuple[Mapping[str, Any], ...] = ()
     target_object: str = ""
     target_location: str = ""
+    # J2 (round-3 adversarial review, M3): canonical facts the CURRENT
+    # target itself declares as postconditions. In the postcondition phase
+    # only, the established-fact ledger shortcut below must not apply to
+    # these -- a target's own postcondition must be verified from evidence/
+    # action-verdict produced DURING this target, never from a fact an
+    # earlier (or even this same) target already wrote to the ledger.
+    own_postconditions: frozenset[str] = frozenset()
 
 
 Tier2Hook = Callable[[Fact, Mapping[str, Any], VerificationContext], Optional[VerificationResult]]
@@ -475,14 +482,17 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
 
     canonical = canonical_fact(fact)
     established = {_normalize_established(item) for item in context.established_facts}
+    # J2: the ledger shortcut is only for facts OTHER targets established --
+    # never for a fact this target itself is being asked to newly verify.
+    is_own_postcondition = context.phase == "postcondition" and canonical in context.own_postconditions
     if fact.predicate == "at_robot":
         if "last_nav_location" in evidence and evidence["last_nav_location"] is not None:
             if not _at_robot_match(evidence["last_nav_location"], fact.args[0]):
                 return _result(Verdict.INVALID, "navigation location mismatch")
-        if canonical in established:
+        if canonical in established and not is_own_postcondition:
             return _result(Verdict.VALID, f"established fact: {canonical}")
 
-    if canonical in established:
+    if canonical in established and not is_own_postcondition:
         return _result(Verdict.VALID, f"established fact: {canonical}")
 
     if fact.predicate in {"object_seen", "person_found"}:

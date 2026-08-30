@@ -1781,12 +1781,18 @@ class BtNode_TargetPostconditionCheck(Behaviour):
         sources = list(self._postconditions) + [d for d in deferred if d not in self._postconditions]
         if not sources:
             return Status.SUCCESS
+        own_postconditions = set()
+        for source in self._postconditions:
+            fact, _err = parse_fact(source)
+            if fact is not None:
+                own_postconditions.add(canonical_fact(fact))
         context = VerificationContext(
             phase="postcondition",
             established_facts=frozenset(_target_gate_facts(self._bb)),
             completed_steps=tuple(self._action_plan),
             target_object=self._target_object,
             target_location=self._target_location,
+            own_postconditions=frozenset(own_postconditions),
         )
         evidence = _target_gate_evidence(self._bb)
         parsed_facts = []
