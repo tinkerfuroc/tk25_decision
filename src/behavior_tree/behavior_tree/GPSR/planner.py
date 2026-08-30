@@ -1325,6 +1325,28 @@ def _foreign_facts(
     return foreign, owned_pairs
 
 
+def _successor_postcondition_facts(
+    target: Optional[Dict[str, Any]], all_targets: Optional[List[Dict[str, Any]]],
+) -> set:
+    """Canonical postcondition facts of every target AFTER ``target`` in list order.
+
+    J12: used to decide whether ``answered(...)`` must be treated at
+    PREDICATE level (see ``_drop_foreign_contract_steps``) — deliberately
+    successors only, never ancestors, per the ruling.
+    """
+    if not target or not all_targets:
+        return set()
+    pos = next(
+        (i for i, t in enumerate(all_targets) if _is_same_target(t, target)), None,
+    )
+    if pos is None:
+        return set()
+    result: set = set()
+    for other in all_targets[pos + 1:]:
+        result |= _canonical_postconditions(other)
+    return result
+
+
 def _render_contract_block(
     contract: Optional[Dict[str, Any]],
     all_targets: Optional[List[Dict[str, Any]]],
@@ -1455,6 +1477,24 @@ def _drop_foreign_contract_steps(
     foreign_post_canon, _owned_pairs = _foreign_facts(
         target, all_targets, include_ancestors=include_ancestors,
     )
+    # J12 (round-3 adversarial review, tier0 #3, run 024): every OTHER
+    # predicate is compared as a FULL fact (exact argument text), but
+    # `answered(<free text>)` never round-trips exactly between the top
+    # layer's split wording and the lower layer's own ask_person/announce
+    # steps -- so a target whose plan asks+announces an answer a SUCCESSOR
+    # target actually owns was never caught ("find the person.../tell me
+    # the name..." -- target0 planned the whole ask+announce itself).
+    # `answered` is therefore matched at PREDICATE level: any step
+    # establishing answered(*) is foreign when some successor declares AT
+    # LEAST ONE answered(...) postcondition and THIS target declares none
+    # of its own (a target that itself owns an answered(...) fact is
+    # unaffected -- its own ask/announce is legitimate).
+    own_has_answered = any(f.startswith("answered(") for f in own_post_canon)
+    successor_has_answered = any(
+        f.startswith("answered(")
+        for f in _successor_postcondition_facts(target, all_targets)
+    )
+    answered_is_predicate_foreign = successor_has_answered and not own_has_answered
     kept: List[Dict[str, Any]] = []
     dropped: List[str] = []
     # J10: fall back to the TARGET's own declared object when a step omits
@@ -1464,7 +1504,10 @@ def _drop_foreign_contract_steps(
     for step in plan or []:
         facts = established_facts(step, target_object) if isinstance(step, dict) else []
         foreign_fact = next(
-            (f for f in facts if f not in own_post_canon and f in foreign_post_canon),
+            (f for f in facts if f not in own_post_canon and (
+                f in foreign_post_canon
+                or (answered_is_predicate_foreign and f.startswith("answered("))
+            )),
             None,
         )
         if foreign_fact is not None:

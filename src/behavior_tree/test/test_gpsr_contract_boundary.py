@@ -272,6 +272,21 @@ J10_PLACE_T = {
 }
 
 
+# J12 (round-3 adversarial review, tier0 #3, run 024): "find the person at
+# the shelf" / "tell me the name of the person at the shelf".
+J12_T0 = {
+    "id": "t0", "desc": "Find the person at the shelf", "object": "",
+    "location": "shelf", "depends_on": [], "preconditions": [],
+    "postconditions": ["person_found(person)"],
+}
+J12_T1 = {
+    "id": "t1", "desc": "Tell me the name of the person at the shelf",
+    "object": "", "location": "", "depends_on": ["t0"],
+    "preconditions": ["person_found(person)"],
+    "postconditions": ["answered(the name of the person at the shelf)"],
+}
+
+
 # ---------------------------------------------------------------------------
 # 2. Deterministic guard: _drop_foreign_contract_steps.
 # ---------------------------------------------------------------------------
@@ -298,6 +313,36 @@ def test_guard_drops_object_less_place_step_via_target_object_fallback():
     )
     assert kept == []
     assert dropped == ["contract:place->placed(kitchen_item,kitchen_table)"]
+
+
+def test_guard_drops_answered_step_at_predicate_level_when_only_successor_owns_it():
+    # run 024: t0's plan over-delivered the ENTIRE interaction, including
+    # asking the person's name -- the free-text question ("what is your
+    # name") never matches t1's declared answered(the name of the person
+    # at the shelf) fact-for-fact, so the exact-match guard alone can never
+    # catch this; the predicate-level answered() rule does.
+    plan = [
+        {"action": "goto", "params": {"location": "shelf"}},
+        {"action": "find_person", "params": {"person": "person"}},
+        {"action": "approach_person", "params": {}},
+        {"action": "ask_person", "params": {"question": "what is your name"}},
+        {"action": "goto", "params": {"location": "start_position"}},
+        {"action": "announce", "params": {}},
+    ]
+    kept, dropped = _drop_foreign_contract_steps(plan, J12_T0, [J12_T0, J12_T1])
+    assert [s["action"] for s in kept] == [
+        "goto", "find_person", "approach_person", "goto", "announce",
+    ]
+    assert dropped == ["contract:ask_person->answered(what_is_your_name)"]
+
+
+def test_guard_keeps_answered_step_when_target_declares_its_own_answered():
+    # t1 itself declares answered(...) -- its own ask_person is legitimate
+    # (own_has_answered is True), unaffected by the predicate-level rule.
+    plan = [{"action": "ask_person", "params": {"question": "what is your name"}}]
+    kept, dropped = _drop_foreign_contract_steps(plan, J12_T1, [J12_T0, J12_T1])
+    assert kept == plan
+    assert dropped == []
 
 
 def test_guard_keeps_t1_deliver_plan_untouched():
