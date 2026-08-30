@@ -243,6 +243,20 @@ def _detect_follow_destinations(command: str) -> List[str]:
     return [re.sub(r"\s+", "_", m.strip()) for m in matches]
 
 
+# L-2 (round-3 fix review): the +s/+es rule below misses common irregular
+# plurals an operator (or the split layer) may say -- "counted(people)" vs
+# "count(object='person')" -- rejected outright with no matching rule.
+_IRREGULAR_PLURALS = {
+    "people": "person",
+    "children": "child",
+    "knives": "knife",
+    "shelves": "shelf",
+    "boxes": "box",
+    "dishes": "dish",
+    "glasses": "glass",
+}
+
+
 def _same_object(a: str, b: str) -> bool:
     """Case-insensitive object-name match tolerant of singular/plural."""
     a, b = a.lower(), b.lower()
@@ -250,6 +264,8 @@ def _same_object(a: str, b: str) -> bool:
         return True
     for x, y in ((a, b), (b, a)):
         if y in (x + "s", x + "es"):
+            return True
+        if _IRREGULAR_PLURALS.get(x) == y:
             return True
     return False
 

@@ -368,6 +368,28 @@ def test_counted_provenance_is_plural_tolerant_h2():
     assert mismatch.verdict is Verdict.INVALID
 
 
+def test_counted_provenance_tolerates_irregular_plurals_l2():
+    # L-2 (round-3 fix review): the +s/+es rule alone does not cover
+    # irregular plurals -- "people" is common operator wording even where
+    # the 2026 generator says "persons".
+    people, _ = _check(
+        "counted(people)", evidence={"count_value": 3, "count_target": "person"}
+    )
+    children, _ = _check(
+        "counted(children)", evidence={"count_value": 2, "count_target": "child"}
+    )
+    knives, _ = _check(
+        "counted(knives)", evidence={"count_value": 1, "count_target": "knife"}
+    )
+    shelves, _ = _check(
+        "counted(shelves)", evidence={"count_value": 4, "count_target": "shelf"}
+    )
+    assert people.verdict is Verdict.VALID
+    assert children.verdict is Verdict.VALID
+    assert knives.verdict is Verdict.VALID
+    assert shelves.verdict is Verdict.VALID
+
+
 def test_answered_provenance_is_soft_bag_of_content_words_h1_005_007():
     # Round-3 H1: the top layer writes the fact from the COMMAND's own
     # wording; the lower layer's question is phrased differently. As long as
