@@ -267,6 +267,42 @@ def test_postcondition_gate_emits_gate_verified_per_fact(tmp_path):
     assert first["payload"]["verdict"] == "UNKNOWN"
 
 
+def test_emit_gate_verified_prints_only_non_valid_unless_debug_flag_set(monkeypatch, capsys):
+    # L-4 (round-3 fix review): the stdout print line is noisy at one line
+    # per fact per tick even on a healthy target's routine VALIDs -- only
+    # print unconditionally for non-VALID verdicts; VALID prints only under
+    # GPSR_GATE_DEBUG=1. The telemetry event itself (checked elsewhere) is
+    # unaffected by this flag.
+    from behavior_tree.GPSR import orchestrator as orch
+    from behavior_tree.GPSR.validators import Verdict
+
+    class _NoTelemetryBB:
+        def get(self, key):
+            raise KeyError(key)
+
+    monkeypatch.setattr(orch, "get_default_telemetry", lambda: None)
+    monkeypatch.delenv("GPSR_GATE_DEBUG", raising=False)
+
+    orch._emit_gate_verified(
+        _NoTelemetryBB(), 0, 0, "postcondition", "counted(drinks)",
+        Verdict.VALID, 1.0, "count artifact target provenance matches",
+    )
+    assert capsys.readouterr().out == ""
+
+    orch._emit_gate_verified(
+        _NoTelemetryBB(), 0, 0, "postcondition", "counted(drinks)",
+        Verdict.INVALID, 1.0, "count artifact target provenance mismatch",
+    )
+    assert "[gate:0:postcondition] counted(drinks) INVALID" in capsys.readouterr().out
+
+    monkeypatch.setenv("GPSR_GATE_DEBUG", "1")
+    orch._emit_gate_verified(
+        _NoTelemetryBB(), 0, 0, "postcondition", "counted(drinks)",
+        Verdict.VALID, 1.0, "count artifact target provenance matches",
+    )
+    assert "[gate:0:postcondition] counted(drinks) VALID" in capsys.readouterr().out
+
+
 # I6: the SKIPPED (replan budget exceeded) outcome had NO telemetry event of
 # its own when every underlying failure was step-level (never a gate) --
 # only step.finished(failed) events, never target.failed.

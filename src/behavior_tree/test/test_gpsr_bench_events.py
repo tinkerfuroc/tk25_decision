@@ -90,6 +90,27 @@ def test_parse_events_keeps_last_gate_verified_invalid_reason_per_target(tmp_pat
     )
 
 
+def test_parse_events_pops_gate_reason_on_a_later_valid_l4(tmp_path):
+    # L-4 (round-3 fix review): a target that FAILED a gate check but then
+    # RECOVERED (a later gate.verified for the same target/fact is VALID)
+    # must not still show the stale failure reason in diagnostics.
+    lines = [
+        _ev("gate.verified", "gpsr-x/task-0",
+            {"slot": 0, "target_index": 1, "phase": "postcondition",
+             "fact": "counted(drinks)", "verdict": "INVALID", "confidence": 1.0,
+             "reason": "count artifact target provenance mismatch"}, seq=0),
+        _ev("gate.verified", "gpsr-x/task-0",
+            {"slot": 0, "target_index": 1, "phase": "postcondition",
+             "fact": "counted(drinks)", "verdict": "VALID", "confidence": 1.0,
+             "reason": "count artifact target provenance matches"}, seq=1),
+    ]
+    path = tmp_path / "events.jsonl"
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+
+    results = parse_events(path)
+    assert 1 not in results[0].gate_reasons
+
+
 def test_parse_events_tolerates_partial_last_line(tmp_path):
     path = tmp_path / "events.jsonl"
     path.write_text(json.dumps(_ev("step.finished", "g/task-0", {"action": "goto", "outcome": "succeeded"})) + "\n{\"trunc")

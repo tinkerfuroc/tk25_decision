@@ -164,16 +164,23 @@ def parse_events(path: Path) -> dict[int, TaskResult]:
         elif kind == "gate.verified":
             verdict = payload.get("verdict")
             target_index = payload.get("target_index")
-            if verdict in ("INVALID", "UNKNOWN") and target_index is not None:
+            if target_index is not None:
                 try:
                     target_index = int(target_index)
                 except (TypeError, ValueError):
                     target_index = None
-                if target_index is not None:
+            if target_index is not None:
+                if verdict in ("INVALID", "UNKNOWN"):
                     result.gate_reasons[target_index] = (
                         f"{payload.get('phase')}:{payload.get('fact')} {verdict} "
                         f"({payload.get('reason')})"
                     )
+                elif verdict == "VALID":
+                    # L-4 (round-3 fix review): a target that recovered on a
+                    # later retry (or a later fact/phase VALID for the same
+                    # target) must not still show a stale failure reason in
+                    # diagnostics -- pop it now that this target is VALID.
+                    result.gate_reasons.pop(target_index, None)
         elif kind == "task.finished":
             result.status = payload.get("status")
             result.reason = payload.get("reason")

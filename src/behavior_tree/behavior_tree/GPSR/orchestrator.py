@@ -1697,6 +1697,14 @@ def _target_gate_facts(bb) -> List[str]:
     return list(facts or [])
 
 
+def _gate_debug_enabled() -> bool:
+    """L-4 (round-3 fix review): ``GPSR_GATE_DEBUG=1`` prints every gate
+    verdict (including VALID); by default only non-VALID verdicts print, so
+    a healthy run's stdout is not one line per fact per tick.
+    """
+    return os.environ.get("GPSR_GATE_DEBUG") == "1"
+
+
 def _emit_gate_verified(
     bb, slot: int, target_index: int, phase: str, fact: str,
     verdict: Verdict, confidence: float, reason: str,
@@ -1708,8 +1716,16 @@ def _emit_gate_verified(
     (``bench/events.py``'s ``parse_events`` keeps the last INVALID/UNKNOWN
     reason per target from exactly this event -- see I6). Telemetry must
     never break gate evaluation, so this is best-effort/guarded throughout.
+
+    L-4 (round-3 fix review): the print line is unconditional on every
+    fact/verdict, including a healthy target's routine VALIDs -- only print
+    when the verdict is NOT VALID (worth seeing without asking) or
+    ``GPSR_GATE_DEBUG=1`` (opt-in full trace). The telemetry event below is
+    unaffected -- it is always emitted so bench/diagnostics still see every
+    verdict.
     """
-    print(f"[gate:{target_index}:{phase}] {fact} {verdict.value} ({reason})")
+    if verdict is not Verdict.VALID or _gate_debug_enabled():
+        print(f"[gate:{target_index}:{phase}] {fact} {verdict.value} ({reason})")
     telemetry = get_default_telemetry()
     if telemetry is None:
         return
