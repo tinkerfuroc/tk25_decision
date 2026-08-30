@@ -2371,6 +2371,7 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.WRITE)
         self._bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.READ)
         self._bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.STATE_LOG, access=Access.READ)
         self._bb.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
         self._bb.register_key(bb_keys.FACTS, access=Access.READ)
         self._bb.register_key(bb_keys.FACTS, access=Access.WRITE)
@@ -2493,6 +2494,45 @@ class DynamicExecutor(py_trees.composites.Composite):
         announce.update()
 
     # -- per-target event handlers ------------------------------------------
+
+    @staticmethod
+    def _completed_steps_from_state_log(
+        plan: Sequence[Mapping[str, Any]],
+        plan_index: int,
+        state_log: Sequence[Any],
+    ) -> List[Dict[str, Any]]:
+        """M-2 (round-3 fix review): ``GATE_COMPLETED_STEPS`` (J3) is written
+        only by the POSTCONDITION GATE (``BtNode_TargetPostconditionCheck``)
+        -- a plain STEP failure (a small tree itself failing, e.g. M8's own
+        "grasp succeeded, place's nav failed") fails the target's Sequence
+        BEFORE any gate runs, so ``_on_target_failure`` sees an empty
+        ``GATE_COMPLETED_STEPS`` and hands the replan ``[]`` even though an
+        earlier step of this same target genuinely succeeded.
+
+        Fallback: ``plan[:PLAN_INDEX-1]`` -- the same prefix-COUNT semantics
+        ``SupervisedSubtaskSlot._apply_global_decision`` (J7) already uses
+        (``BtNode_MaterialiseStep`` sets ``PLAN_INDEX`` to ``step_index + 1``
+        for the CURRENTLY ACTIVE target's own plan) -- kept only while each
+        candidate step has a matching ``STATE_LOG`` line
+        (``f"{action}({params}) SUCCEEDED"``, written by
+        ``BtNode_LogStepResult``); stops at the first step that is not
+        confirmed, so the result is always a genuine PREFIX, never steps
+        picked out of order.
+        """
+        candidate_count = max(0, int(plan_index or 0) - 1)
+        completed: List[Dict[str, Any]] = []
+        log_lines = [str(line) for line in (state_log or [])]
+        for step in list(plan or [])[:candidate_count]:
+            if not isinstance(step, Mapping):
+                break
+            expected = f"{step.get('action')}({step.get('params') or {}})"
+            if not any(
+                line.startswith(expected) and line.endswith("SUCCEEDED")
+                for line in log_lines
+            ):
+                break
+            completed.append(dict(step))
+        return completed
 
     def _on_target_success(self) -> None:
         self._target_outcomes[self._target_id(self._index)] = "SUCCEEDED"
@@ -2626,6 +2666,22 @@ class DynamicExecutor(py_trees.composites.Composite):
             gate_completed = list(self._bb.get(bb_keys.GATE_COMPLETED_STEPS) or [])
         except KeyError:
             gate_completed = []
+        if not gate_completed:
+            # M-2: no postcondition gate ran (or it committed nothing) for
+            # this failure -- fall back to deriving the completed prefix
+            # from PLAN_INDEX + STATE_LOG so a plain step failure later in
+            # this target does not throw away an earlier step's work.
+            get_action_plan = getattr(self._planner, "get_action_plan", None)
+            plan = get_action_plan(self._slot, self._index) if callable(get_action_plan) else []
+            try:
+                plan_index = int(self._bb.get(bb_keys.PLAN_INDEX) or 0)
+            except KeyError:
+                plan_index = 0
+            try:
+                state_log = list(self._bb.get(bb_keys.STATE_LOG) or [])
+            except KeyError:
+                state_log = []
+            gate_completed = self._completed_steps_from_state_log(plan, plan_index, state_log)
         self._planner.replan_target(self._slot, self._index, reason, completed_steps=gate_completed)
         self._bb.set(bb_keys.REPLAN_REQUEST,
                      {"level": "target", "index": self._index, "reason": reason},

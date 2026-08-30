@@ -727,6 +727,86 @@ def test_all_success_dependency_chain_ends_success():
 
 
 # ---------------------------------------------------------------------------
+# M-2 (round-3 fix review): a plain step failure (before any postcondition
+# gate ran) must not throw away an earlier step's completed work.
+# ---------------------------------------------------------------------------
+
+def test_completed_steps_from_state_log_stops_at_the_first_unconfirmed_step():
+    plan = [
+        {"action": "grasp", "params": {"object": "spam"}},
+        {"action": "place", "params": {"location": "table"}},
+        {"action": "announce", "params": {"text": "done"}},
+    ]
+    state_log = [
+        "goto({'location': 'kitchen'}) SUCCEEDED",
+        "grasp({'object': 'spam'}) SUCCEEDED",
+        "place({'location': 'table'}) FAILED",
+    ]
+    # plan_index=2 -> the failed/in-flight step is index 1 (place); only
+    # index 0 (grasp) is a completed-prefix candidate.
+    result = DynamicExecutor._completed_steps_from_state_log(plan, 2, state_log)
+    assert result == [{"action": "grasp", "params": {"object": "spam"}}]
+
+
+def test_completed_steps_from_state_log_empty_plan_index_is_empty():
+    plan = [{"action": "grasp", "params": {"object": "spam"}}]
+    assert DynamicExecutor._completed_steps_from_state_log(plan, 0, []) == []
+
+
+class _StepFailurePlanner:
+    """M-2: a plan with 2 steps; get_action_plan returns it, replan_target
+    records the completed_steps it was called with."""
+
+    def __init__(self, plan):
+        self.plan = plan
+        self.replan_calls = []
+
+    def get_target_subtree(self, slot, index):
+        return py_trees.behaviours.Success("ready")
+
+    def get_action_plan(self, slot, index):
+        return self.plan
+
+    def _get_desc(self, slot, index):
+        return "target"
+
+    def replan_target(self, slot, index, reason, completed_steps=None):
+        self.replan_calls.append(completed_steps)
+
+
+def test_on_target_failure_derives_completed_steps_from_state_log_when_gate_never_ran():
+    # M8's own scenario: grasp succeeded, place's own small tree then failed
+    # (a STEP failure, never reaching the postcondition gate) -- the replan
+    # must still be told the grasp already succeeded.
+    plan = [
+        {"action": "grasp", "params": {"object": "spam"}},
+        {"action": "place", "params": {"location": "table"}},
+    ]
+    planner = _StepFailurePlanner(plan)
+    executor, _tree = _executor(planner)
+    writer = py_trees.blackboard.Client(name="m2-writer")
+    writer.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
+    writer.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
+    writer.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
+    # PLAN_INDEX=2 -> place (index 1) is the step that just failed; grasp
+    # (index 0) already succeeded.
+    writer.set(bb_keys.PLAN_INDEX, 2, overwrite=True)
+    writer.set(
+        bb_keys.STATE_LOG,
+        [
+            "grasp({'object': 'spam'}) SUCCEEDED",
+            "place({'location': 'table'}) FAILED",
+        ],
+        overwrite=True,
+    )
+    writer.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
+
+    executor._on_target_failure("place small tree failed")
+
+    assert planner.replan_calls == [[{"action": "grasp", "params": {"object": "spam"}}]]
+
+
+# ---------------------------------------------------------------------------
 # I4 (round-3 adversarial review, M7): split_command's worker thread must
 # never leave BtNode_SplitCommand.update() spinning RUNNING forever when
 # `planner.split_command` raises -- it falls back to the same deterministic
