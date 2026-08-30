@@ -1765,6 +1765,16 @@ def _plan_established_predicates(action_plan: Sequence[Mapping[str, Any]]) -> se
     the establishing step's params until it runs (e.g. an implicit `object`
     on `place`/`deliver` -- see J10), so matching on the predicate alone is
     what makes the deferral fire for the cases it exists for.
+
+    H-2 (round-3 fix review): ``at_robot`` is EXCLUDED here on purpose.
+    ``goto``'s ``establishes`` names ``at_robot(location)`` generically (any
+    location), so including it would defer EVERY ``at_robot(X)``
+    precondition whenever the plan contains a goto to ANY location -- not
+    just the one the plan actually reaches. Spec Sec.3 reserves at_robot
+    deferral for the exact ``self_establishes`` match (a plan step whose
+    resolved param value equals the precondition's location), handled
+    separately via ``_self_established_facts``; this predicate-level path
+    stays for every other predicate.
     """
     predicates: set = set()
     for step in action_plan or []:
@@ -1774,7 +1784,10 @@ def _plan_established_predicates(action_plan: Sequence[Mapping[str, Any]]) -> se
         if contract is None:
             continue
         for template in contract.establishes:
-            predicates.add(template.split("(", 1)[0])
+            predicate = template.split("(", 1)[0]
+            if predicate == "at_robot":
+                continue
+            predicates.add(predicate)
     return predicates
 
 

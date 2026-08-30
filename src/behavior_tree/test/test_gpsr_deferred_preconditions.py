@@ -94,6 +94,27 @@ def test_precondition_predicate_established_by_own_plan_is_deferred_object_seen(
     assert w.get(bb_keys.DEFERRED_PRECONDITIONS) == ["object_seen(coke)"]
 
 
+GOTO_OFFICE_PLAN = [{"action": "goto", "params": {"location": "office"}}]
+
+
+def test_at_robot_precondition_from_a_goto_to_a_different_location_is_checked_at_entry():
+    # H-2 (round-3 fix review): goto's `establishes` tuple names at_robot
+    # generically -- _plan_established_predicates must NOT put at_robot in
+    # the general predicate-deferral set, or ANY plan with a goto (to any
+    # location) would defer EVERY at_robot precondition, even one the plan's
+    # own goto doesn't establish. Only the exact self_establishes match may
+    # defer at_robot. Here the plan gotos to "office" but the precondition
+    # is at_robot(kitchen_table), already true from an earlier target --
+    # it must be CHECKED (not deferred) and pass via the ledger.
+    w = _writer()
+    w.set(bb_keys.FACTS, ["at_robot(kitchen_table)"], overwrite=True)
+    gate = BtNode_TargetPreconditionCheck(
+        "pre", ["at_robot(kitchen_table)"], 0, action_plan=GOTO_OFFICE_PLAN,
+    )
+    assert _tick(gate) is Status.SUCCESS
+    assert w.get(bb_keys.DEFERRED_PRECONDITIONS) == []
+
+
 def test_precondition_with_no_establisher_in_plan_still_fails_at_entry():
     # PLACE_PLAN's only action (place) does not establish held() -- this
     # precondition has no establisher in the target's own plan and must be
