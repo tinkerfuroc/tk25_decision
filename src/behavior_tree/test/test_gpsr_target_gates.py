@@ -334,6 +334,35 @@ def test_post_canonical_dedup_preserves_prior_order():
     assert bb.get(bb_keys.FACTS) == ["at_robot(kitchen)", "held(plant_pot)"]
 
 
+def test_post_commits_in_plan_order_not_declared_order_m5(capsys):
+    # M-5 (round-3 fix review): the target declares its postconditions in
+    # the OPPOSITE order the plan actually establishes them -- held(x) via
+    # an earlier grasp step, placed(x,t) via a later place step. Before the
+    # fix, apply_fact_transitions committed them in DECLARED order
+    # (placed(x,t) first, then held(x)) -- since a fresh held(x) retracts
+    # any existing placed/delivered(x,..), that incorrectly left held(x) as
+    # the FINAL ledger state even though the object was actually placed
+    # last. Committing in plan-causal order (held before placed) produces
+    # the physically correct final state: placed(x,t) present, held(x)
+    # retracted -- and the retraction is named in the log line.
+    bb = _bb("post-plan-order")
+    bb.set(bb_keys.FACTS, [], overwrite=True)
+    grasp_step = {"action": "grasp", "params": {"object": "x"}}
+    place_step = {"action": "place", "params": {"location": "t"}}
+    node = _setup(BtNode_TargetPostconditionCheck(
+        "post", ["placed(x,t)", "held(x)"], 0,
+        [grasp_step, place_step],
+        target_object="x",
+    ))
+    assert node.update() is Status.SUCCESS
+    facts = bb.get(bb_keys.FACTS)
+    assert facts == ["placed(x,t)"]
+    assert "held(x)" not in facts
+    captured = capsys.readouterr()
+    assert "gate:0:post committed" in captured.out
+    assert "held(x) retracted by placed(x,t)" in captured.out
+
+
 def test_post_writer_exception_does_not_merge():
     bb = _bb("post-writer-error")
     bb.set(bb_keys.FACTS, [], overwrite=True)

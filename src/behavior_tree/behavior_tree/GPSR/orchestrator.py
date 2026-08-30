@@ -1896,6 +1896,42 @@ def _steps_establishing(
     return matched
 
 
+def _order_facts_by_establishing_step(
+    action_plan: Sequence[Mapping[str, Any]],
+    facts: Sequence[str],
+    target_object: str = "",
+) -> List[str]:
+    """M-5 (round-3 fix review): order ``facts`` (canonical, already deduped)
+    by the index of the FIRST step of ``action_plan`` that establishes each
+    one -- the CAUSAL/plan order, not whatever order the target's declared
+    postconditions (or the deferred-preconditions list appended after them)
+    happen to list them in. A fact with no identifiable establishing step
+    (e.g. a deferred ``at_robot`` verified from navigation evidence rather
+    than a specific plan step's contract) keeps its original relative
+    position, sorted after every fact that DOES match a step (Python's sort
+    is stable, so ties preserve ``facts``' incoming order).
+
+    This matters because ``apply_fact_transitions`` retracts an EXISTING
+    ledger entry only at the moment a LATER addition is processed -- e.g.
+    ``placed(x,t)`` retracts a ``held(x)`` already in the ledger. Committing
+    ``[held(x), placed(x,t)]`` in the WRONG order (placed before held, e.g.
+    because the target declared them in that order) would leave ``held(x)``
+    incorrectly un-retracted in the ledger.
+    """
+    index_by_fact: Dict[str, int] = {}
+    for i, step in enumerate(action_plan or []):
+        if not isinstance(step, Mapping):
+            continue
+        produced = (
+            set(_step_established_facts(step, target_object))
+            | set(_self_established_facts(step))
+        )
+        for fact in produced:
+            index_by_fact.setdefault(fact, i)
+    fallback_index = len(list(action_plan or ()))
+    return sorted(facts, key=lambda f: index_by_fact.get(f, fallback_index))
+
+
 class BtNode_TargetPostconditionCheck(Behaviour):
     """Verify and publish target facts under the v1 fact-store contract.
 
@@ -1997,6 +2033,18 @@ class BtNode_TargetPostconditionCheck(Behaviour):
                 seen.add(value)
                 canonical.append(value)
 
+        # M-5 (round-3 fix review): commit in the CAUSAL/plan order (facts
+        # established by earlier plan steps first), not whatever order the
+        # target's declared postconditions/deferred preconditions happen to
+        # list them in -- apply_fact_transitions' retraction rules are
+        # order-sensitive (placed(x,t) retracts an existing held(x), but
+        # only if held(x) was already in the ledger when placed(x,t) is
+        # processed).
+        canonical = _order_facts_by_establishing_step(
+            self._action_plan, canonical, self._target_object,
+        )
+
+        retraction_notes: List[str] = []
         if canonical:
             try:
                 if self._facts_writer is not None:
@@ -2016,12 +2064,30 @@ class BtNode_TargetPostconditionCheck(Behaviour):
                     self.feedback_message = f"postcondition fact write failed: {exc}"
                     return Status.FAILURE
 
+            # M-5: a fact THIS SAME commit establishes can be retracted by
+            # ANOTHER fact of this same commit (e.g. placed(x,t) retracts a
+            # just-committed held(x) -- the correct physical outcome, since
+            # apply_fact_transitions' rules mirror the real world). Name it
+            # in the log line below instead of silently reporting a fact as
+            # "committed" that the ledger no longer actually holds.
+            retracted_within_commit = [f for f in canonical if f not in merged]
+            if retracted_within_commit:
+                from .planner import _retracting_addition  # lazy: planner.py imports this module
+                for fact_text in retracted_within_commit:
+                    retractor = _retracting_addition(fact_text, canonical) or "?"
+                    retraction_notes.append(f"{fact_text} retracted by {retractor}")
+
+        if canonical or unmet:
+            log_line = f"gate:{self._target_index}:post committed {canonical}"
+            if retraction_notes:
+                log_line += " (" + "; ".join(retraction_notes) + ")"
+            if unmet:
+                log_line += f" unmet {unmet}"
+            print(log_line)
+
         if unmet:
             committed_steps = _steps_establishing(self._action_plan, canonical)
             self._bb.set(bb_keys.GATE_COMPLETED_STEPS, committed_steps, overwrite=True)
-            print(
-                f"gate:{self._target_index}:post committed {canonical} unmet {unmet}"
-            )
             self.feedback_message = "postcondition unmet: " + ", ".join(unmet)
             return Status.FAILURE
 
