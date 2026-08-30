@@ -313,6 +313,22 @@ def _known_object_names() -> frozenset[str]:
     return frozenset(KNOWN_OBJECT_NAMES)
 
 
+def _known_object_prompt_token_sets() -> dict[str, frozenset[str]]:
+    """Map each normalised known object name to the token set of its
+    free-text VLM description (``orchestrator.KNOWN_OBJECT_PROMPTS`` --
+    the SAME ``possible_objects`` source as ``_known_object_names``, but its
+    VALUES, e.g. ``"mug" -> "red ceramic mug"`` -> ``{"red","ceramic","mug"}``).
+    """
+    try:
+        from .orchestrator import KNOWN_OBJECT_PROMPTS  # lazy: orchestrator imports this module
+    except Exception:  # noqa: BLE001 -- never let a knowledge lookup crash the gate
+        return {}
+    return {
+        _normalize(str(key)): frozenset(_label_tokens(_normalize(str(value))))
+        for key, value in KNOWN_OBJECT_PROMPTS.items()
+    }
+
+
 def _category_instance_known(instance: str, requested: str) -> bool:
     """J5 (round-3 adversarial review, testing session 3a): is a class-prefix
     match's INSTANCE segment (``kitchen_item.refrigerator`` -> ``refrigerator``)
@@ -322,8 +338,23 @@ def _category_instance_known(instance: str, requested: str) -> bool:
     offline -- keep today's permissive behaviour); OR ``requested`` is
     ITSELF a known object name (an exact-object request, e.g. "bowl", not a
     category one -- the class-prefix rule wasn't the reason it matched);
-    OR ``instance`` names a known object (plural/underscore tolerant, same
-    as grasp/place object identity).
+    OR a single-token known object's name matches ONE of ``instance``'s
+    tokens (plural/underscore tolerant, same as grasp/place object
+    identity); OR EVERY token of a multi-token known object's own name
+    (``sugar_box``, ``cheez_it``, ``pudding_box``) is present among
+    ``instance``'s tokens; OR EVERY token of a known object's VLM prompt
+    description is present among ``instance``'s tokens.
+
+    H-4 (round-3 fix review): the real detector's class-prefix labels are
+    ``"<category>.<free-text VLM description>"`` (e.g.
+    ``"kitchen item.red ceramic mug"``, not ``"kitchen item.mug"``) --
+    exact-or-plural ``_same_object`` on the WHOLE instance segment never
+    matched a ``possible_objects`` key, so every real detection failed this
+    gate. Token containment fixes it. Every containment check here requires
+    the FULL name (or the full prompt) as a token SUBSET of the instance,
+    never a single shared word in isolation -- a lone descriptive word (a
+    color like "white", a fragment like "it" of "cheez_it") appears across
+    many unrelated objects and is not, by itself, strong evidence.
     """
     known = _known_object_names()
     if not known:
@@ -331,7 +362,20 @@ def _category_instance_known(instance: str, requested: str) -> bool:
     if requested in known:
         return True
     from .planner_validators import _same_object  # lazy: planner_validators imports this module
-    return any(_same_object(instance, name) for name in known)
+    instance_tokens = _label_tokens(instance)
+    instance_token_set = set(instance_tokens)
+    single_token_names = {name for name in known if len(_label_tokens(name)) == 1}
+    if any(_same_object(tok, name) for tok in instance_tokens for name in single_token_names):
+        return True
+    prompt_token_sets = _known_object_prompt_token_sets()
+    for name in known:
+        name_tokens = _label_tokens(name)
+        if len(name_tokens) > 1 and set(name_tokens) <= instance_token_set:
+            return True
+        prompt_tokens = prompt_token_sets.get(name)
+        if prompt_tokens and prompt_tokens <= instance_token_set:
+            return True
+    return False
 
 
 def _label_matches(label: str, requested: str) -> bool:

@@ -278,6 +278,66 @@ def test_exact_requested_object_still_valid_when_possible_objects_loaded(monkeyp
     assert result.verdict is Verdict.VALID
 
 
+_RCW2026_OBJECT_NAMES = {
+    "soup", "mug", "banana", "mustard", "sugar_box", "spam", "cheez_it", "pudding_box",
+    "bowl", "bleach",
+}
+_RCW2026_OBJECT_PROMPTS = {
+    "soup": "red tomato soup can",
+    "mug": "red ceramic mug",
+    "banana": "yellow banana",
+    "mustard": "yellow mustard bottle",
+    "sugar_box": "yellow sugar box",
+    "spam": "blue rectangular spam can",
+    "cheez_it": "red cracker box",
+    "pudding_box": "brown pudding box",
+    "bowl": "red bowl",
+    "bleach": "white bleach cleanser bottle",
+}
+
+
+def test_category_membership_accepts_free_text_instance_naming_a_known_object(monkeypatch):
+    # H-4 (round-3 fix review): the real detector's class-prefix instance
+    # segment is free VLM text ("red ceramic mug"), never one of the short
+    # possible_objects KEYS themselves ("mug") -- exact-or-plural
+    # `_same_object` on the WHOLE instance segment never matches that.
+    # Token containment against the known names fixes it: "mug" is one of
+    # the instance's tokens.
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", set(_RCW2026_OBJECT_NAMES))
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_PROMPTS", dict(_RCW2026_OBJECT_PROMPTS))
+    result, _ = _check(
+        "object_seen(kitchen item)",
+        evidence={"object_detection": {"objects": [{"label": "kitchen item.red ceramic mug"}]}},
+    )
+    assert result.verdict is Verdict.VALID
+
+
+def test_category_membership_rejects_free_text_instance_with_no_known_object_token(monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", set(_RCW2026_OBJECT_NAMES))
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_PROMPTS", dict(_RCW2026_OBJECT_PROMPTS))
+    result, _ = _check(
+        "object_seen(kitchen item)",
+        evidence={"object_detection": {"objects": [{"label": "kitchen item.round white table"}]}},
+    )
+    assert result.verdict is Verdict.INVALID
+
+
+def test_category_membership_accepts_multi_token_key_via_name_tokens_subset(monkeypatch):
+    # "cheez_it" is a two-token key -- a SINGLE shared token ("it") would be
+    # too weak evidence on its own; both "cheez" and "it" must appear in the
+    # instance's tokens.
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", set(_RCW2026_OBJECT_NAMES))
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_PROMPTS", dict(_RCW2026_OBJECT_PROMPTS))
+    result, _ = _check(
+        "object_seen(food)",
+        evidence={"object_detection": {"objects": [{"label": "food.cheez it crackers"}]}},
+    )
+    assert result.verdict is Verdict.VALID
+
+
 def test_category_membership_permissive_when_no_possible_objects_loaded(monkeypatch):
     # Offline / unit-test default: KNOWN_OBJECT_NAMES empty -> today's
     # behaviour (class-prefix match alone is enough).
