@@ -2201,8 +2201,12 @@ class BtNode_SplitCommand(Behaviour):
             self._targets = self._planner.split_command(command, slot=self._slot)
         except Exception as exc:  # noqa: BLE001 -- I4: never leave the split not-ready
             print(f"[split] split_command crashed: {exc!r} -> deterministic fallback split")
-            from .planner import _offline_mock_targets  # lazy: planner.py imports this module
+            from .planner import _offline_mock_targets, _log_split_acceptance  # lazy: planner.py imports this module
             self._targets = _offline_mock_targets(command)
+            # M-4 (round-3 fix review): the crash fallback had no per-target
+            # contract log line or `split.accepted` telemetry event either
+            # -- same call the planner's own accepted/fallback paths make.
+            _log_split_acceptance(self._targets, self._slot)
 
     def update(self):
         if self._targets is None:
@@ -3704,7 +3708,12 @@ def _create_plan_and_save_new(
         f"announce planning task {slot + 1}", bb_source=None,
         message="I am planning, please wait.",
     ))
-    seq.add_child(BtNode_SplitCommand(f"split command {slot + 1}", planner))
+    # M-4 (round-3 fix review): `slot` is in scope but was never passed --
+    # every slot's split defaulted to slot=0, so `split.accepted` /
+    # `[split] tN ...` telemetry and log lines all attributed to slot 0
+    # (bench/events.py then mis-assigns every split in a multi-slot run to
+    # results[1]; other slots' split_targets stayed None).
+    seq.add_child(BtNode_SplitCommand(f"split command {slot + 1}", planner, slot=slot))
     seq.add_child(BtNode_PlanAllTargets(f"plan all targets {slot + 1}", slot, planner))
     if emit_plan_dir is not None:
         # Freeze the aggregate plan (COMMAND + PLAN are set by PlanAllTargets) to

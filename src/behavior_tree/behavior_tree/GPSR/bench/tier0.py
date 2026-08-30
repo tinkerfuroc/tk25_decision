@@ -47,7 +47,11 @@ def _call_with_timeout(fn: Callable[[], Any], timeout_s: float):
 def plan_one(planner, slot: int, command: str, *, timeout_s: float):
     started = time.monotonic()
     try:
-        targets = _call_with_timeout(lambda: planner.split_command(command), timeout_s)
+        # M-4 (round-3 fix review): pass `slot` so split.accepted telemetry
+        # and the `[split] tN ...` contract log attribute to THIS slot, not
+        # always slot 0 -- production's BtNode_SplitCommand now passes it
+        # too; test doubles for `split_command` accept `**kwargs`.
+        targets = _call_with_timeout(lambda: planner.split_command(command, slot=slot), timeout_s)
     except TimeoutError:
         raise TimeoutError(f"split_command timed out after {timeout_s:.0f}s")
     remaining = max(0.0, timeout_s - (time.monotonic() - started))

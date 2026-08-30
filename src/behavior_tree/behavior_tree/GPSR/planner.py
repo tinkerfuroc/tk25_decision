@@ -2382,7 +2382,13 @@ class GPSRPlanner:
             return targets
         print(f"[split] all {self._max_attempts} attempts failed -> "
               f"deterministic fallback split")
-        return _offline_mock_targets(command)
+        fallback_targets = _offline_mock_targets(command)
+        # M-4 (round-3 fix review): the deterministic fallback split had no
+        # per-target contract log line or `split.accepted` telemetry event
+        # -- a fallback run could not be audited any better than the crash
+        # path could. Same call the two LLM-accepted paths above make.
+        _log_split_acceptance(fallback_targets, slot)
+        return fallback_targets
 
     @staticmethod
     def _build_split_user_prompt(

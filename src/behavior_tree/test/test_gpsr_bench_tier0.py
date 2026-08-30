@@ -22,7 +22,9 @@ class FakePlanner:
         self._slots.clear()
         self._slot_context.clear()
 
-    def split_command(self, command):
+    def split_command(self, command, **kwargs):
+        # M-4 (round-3 fix review): tier0.plan_one now passes slot=<idx> --
+        # accept and ignore it, like production's split_command(slot=None).
         if command in self.raise_for:
             raise RuntimeError("llm down")
         return [{"id": f"t{i}", "desc": command} for i in range(len(self.plans[command]))]
@@ -99,7 +101,7 @@ def test_tier0_judge_seeds_prior_plan_across_targets_like_production():
                                   [{"action": "guide", "params": {}}]]}
 
     class TwoTargetPlanner(FakePlanner):
-        def split_command(self, command):
+        def split_command(self, command, **kwargs):
             return two_targets
 
     results = run_tier0([_entry(0, command)], TwoTargetPlanner(two_target_plans),
@@ -140,9 +142,28 @@ class HangingSplitPlanner:
     def reset(self):
         pass
 
-    def split_command(self, command):
+    def split_command(self, command, **kwargs):
         time.sleep(60)
         raise AssertionError("should never get here in a bounded test")
+
+
+def test_tier0_passes_the_entrys_slot_to_split_command():
+    # M-4 (round-3 fix review): tier0's own consumer of split.accepted
+    # telemetry/contract logs needs the slot to attribute a multi-entry run
+    # correctly -- plan_one must pass slot=<idx> (production's
+    # BtNode_SplitCommand does the same).
+    plans = {"go to the sofa": [[{"action": "goto", "params": {"location": "sofa"}}]]}
+    captured_slots = []
+
+    class SlotCapturingPlanner(FakePlanner):
+        def split_command(self, command, **kwargs):
+            captured_slots.append(kwargs.get("slot"))
+            return super().split_command(command, **kwargs)
+
+    entries = [_entry(i, "go to the sofa") for i in range(3)]
+    run_tier0(entries, SlotCapturingPlanner(plans), known_actions=KNOWN_ACTIONS,
+             known_locations=KNOWN_LOCATIONS, timeout_s=0.2)
+    assert captured_slots == [0, 1, 2]
 
 
 def test_tier0_bounds_a_stuck_split_command():

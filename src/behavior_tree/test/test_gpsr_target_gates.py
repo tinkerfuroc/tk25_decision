@@ -10,6 +10,7 @@ from behavior_tree.GPSR.orchestrator import (
     DynamicExecutor,
     materialise_params,
     record_nav_on_success,
+    _create_plan_and_save_new,
     _target_gate_evidence,
 )
 from behavior_tree.GPSR.validators import register_tier2_hook
@@ -807,6 +808,20 @@ def test_on_target_failure_derives_completed_steps_from_state_log_when_gate_neve
 
 
 # ---------------------------------------------------------------------------
+# M-4 (round-3 fix review): the tree builder never passed `slot` to
+# BtNode_SplitCommand -- every slot's split telemetry/log defaulted to
+# slot 0, so bench/events.py attributed every split in a multi-slot run to
+# slot 0's task and other slots' split_targets stayed None.
+# ---------------------------------------------------------------------------
+
+def test_create_plan_and_save_new_passes_its_slot_to_split_command():
+    seq = _create_plan_and_save_new(2, planner=object(), announce_targets=False)
+    split_nodes = [c for c in seq.children if isinstance(c, BtNode_SplitCommand)]
+    assert len(split_nodes) == 1
+    assert split_nodes[0]._slot == 2
+
+
+# ---------------------------------------------------------------------------
 # I4 (round-3 adversarial review, M7): split_command's worker thread must
 # never leave BtNode_SplitCommand.update() spinning RUNNING forever when
 # `planner.split_command` raises -- it falls back to the same deterministic
@@ -818,8 +833,25 @@ class _CrashingSplitPlanner:
         raise RuntimeError("boom: split_command crashed")
 
 
-def test_split_worker_falls_back_to_deterministic_split_on_crash():
+def test_split_worker_falls_back_to_deterministic_split_on_crash(monkeypatch):
     from behavior_tree.GPSR.planner import _offline_mock_targets
+    from behavior_tree.GPSR import planner as planner_module
+
+    # M-4 (round-3 fix review): the crash fallback must ALSO log the
+    # per-target contract line + emit split.accepted telemetry (same as the
+    # planner's own accepted/fallback paths) -- not leave the split
+    # unauditable just because split_command itself raised. Spy via
+    # monkeypatch (not capsys): this test's whole point is a race between
+    # the worker thread finishing and the first tick() observing it still
+    # RUNNING -- capsys's stdout/stderr fd redirection measurably perturbs
+    # that race in this environment (reproduced: adding a bare unused
+    # `capsys` parameter alone flips `_thread is not None` from always-true
+    # to always-false), so it must never be used in this test.
+    logged = []
+    monkeypatch.setattr(
+        planner_module, "_log_split_acceptance",
+        lambda targets, slot=None: logged.append((targets, slot)),
+    )
 
     bb = py_trees.blackboard.Client(name="split-crash")
     for key in (bb_keys.COMMAND, bb_keys.TARGETS, bb_keys.NUM_TARGETS, bb_keys.REPLAN_REQUEST):
@@ -836,5 +868,7 @@ def test_split_worker_falls_back_to_deterministic_split_on_crash():
     result = list(node.tick())[-1]
 
     assert result.status is Status.SUCCESS
-    assert bb.get(bb_keys.TARGETS) == _offline_mock_targets("first | second")
+    fallback_targets = _offline_mock_targets("first | second")
+    assert bb.get(bb_keys.TARGETS) == fallback_targets
     assert bb.get(bb_keys.NUM_TARGETS) == 2
+    assert logged == [(fallback_targets, 0)]

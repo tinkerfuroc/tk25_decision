@@ -535,6 +535,37 @@ def test_split_all_non_list_attempts_fall_back_without_exception(monkeypatch):
     assert planner.split_command("first | second") == planner_module._offline_mock_targets("first | second")
 
 
+def test_split_all_attempts_fail_still_logs_contract_and_emits_telemetry(monkeypatch, tmp_path, capsys):
+    # M-4 (round-3 fix review): the deterministic fallback split (every LLM
+    # attempt rejected) had no per-target contract log line or
+    # split.accepted telemetry event, unlike the two LLM-accepted paths --
+    # a fallback run could not be audited any better than a crash.
+    from behavior_tree.GPSR.telemetry import GpsrTelemetry
+    from behavior_tree.GPSR import telemetry as telemetry_module
+
+    planner = GPSRPlanner(max_attempts=1)
+    planner._offline_mock = False
+    monkeypatch.setattr(planner, "_new_client", lambda: object())
+    monkeypatch.setattr(planner_module, "_call_llm", lambda *args: (None, "boom"))
+
+    telemetry = GpsrTelemetry(tmp_path, trajectory_id="t-test", enabled=True)
+    telemetry_module.set_default_telemetry(telemetry)
+    try:
+        targets = planner.split_command("get a cup", slot=0)
+        assert targets == planner_module._offline_mock_targets("get a cup")
+        captured = capsys.readouterr()
+        assert f"[split] {targets[0]['id']} " in captured.out
+        telemetry.close()
+        import json
+        lines = [
+            json.loads(line)
+            for line in (tmp_path / "debug" / "t-test" / "events.jsonl").read_text().splitlines()
+        ]
+        assert any(e["event_type"] == "split.accepted" for e in lines)
+    finally:
+        telemetry_module.set_default_telemetry(None)
+
+
 def test_split_retries_invalid_graph_or_condition_then_accepts_valid(monkeypatch):
     planner = GPSRPlanner(max_attempts=2)
     planner._offline_mock = False
