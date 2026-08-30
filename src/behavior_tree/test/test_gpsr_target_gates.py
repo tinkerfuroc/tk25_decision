@@ -502,20 +502,26 @@ def test_same_target_swap_preserves_target_evidence_and_last_nav_for_grasp_mater
         bb_keys.TARGET_PERSON_PROMPT: "Alex",
         bb_keys.COUNT_VALUE: 2,
     }
-    # I1: question/answer provenance is per-attempt and is cleared on every
+    # I1: question provenance is per-attempt and is cleared on every
     # swap-in (including a same-target replan) so a stale question cannot
     # poison this replan's answered() gate check.
-    qa_keys = {
+    question_keys = {
         bb_keys.QA_QUESTION: "old question",
         bb_keys.ASK_QUESTION: "old ask question",
         bb_keys.VLM_QUESTION: "old vlm question",
         bb_keys.LLM_QUESTION: "old llm question",
+    }
+    # L-1 (round-3 fix review): the ANSWER artifacts are NOT cleared here --
+    # a same-target swap-in after a successful ask_person/llm_fallback (a
+    # replan, or a supervisor replacement) must not wipe an already-spoken
+    # answer a later announce may still report.
+    answer_keys = {
         bb_keys.QA_ANSWER: "blue",
         bb_keys.PERSON_ANSWER: "Alex",
         bb_keys.LLM_ANSWER: "answer",
         bb_keys.VLM_ANSWER: "vision",
     }
-    for key, value in {**preserved, **qa_keys}.items():
+    for key, value in {**preserved, **question_keys, **answer_keys}.items():
         bb.set(key, value, overwrite=True)
     executor, _tree = _executor(_PlannerWithoutFacts())
     executor.status = Status.RUNNING
@@ -523,9 +529,9 @@ def test_same_target_swap_preserves_target_evidence_and_last_nav_for_grasp_mater
     executor._index = 0
     executor._active_target_index = 0
     executor._swap_in(0)
-    for key, value in preserved.items():
+    for key, value in {**preserved, **answer_keys}.items():
         assert bb.get(key) == value
-    for key in qa_keys:
+    for key in question_keys:
         assert bb.get(key) is None
     # materialise_params reads this retained navigation state when deciding
     # whether a subsequent grasp needs the no-grasp referee branch.

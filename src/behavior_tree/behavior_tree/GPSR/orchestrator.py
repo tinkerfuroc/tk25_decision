@@ -1646,17 +1646,26 @@ _TARGET_GATE_EVIDENCE_KEYS = (
     ("llm_question", bb_keys.LLM_QUESTION),
 )
 
-# I1 (round-3 adversarial review, H1): question/answer evidence is
-# target-scoped but was only ever cleared when the executor advanced to a
-# DIFFERENT target -- a same-target replan (e.g. a failed ask_person
-# followed by a plain announce() of the answer) left the earlier attempt's
+# I1 (round-3 adversarial review, H1): question provenance is target-scoped
+# but was only ever cleared when the executor advanced to a DIFFERENT
+# target -- a same-target replan (e.g. a failed ask_person followed by a
+# plain announce() of the answer) left the earlier attempt's
 # llm_question/ask_question on the blackboard, where the answered() gate's
 # provenance check could still see it and poison an otherwise-correct
 # replan. These evidence names are cleared on EVERY _swap_in, including a
 # same-target continuation; the target's other perception/count evidence
 # still follows the existing target-index-change clearing below.
+#
+# L-1 (round-3 fix review): only the QUESTION keys are cleared here, not the
+# answer artifacts (qa_answer/person_answer/llm_answer/vlm_answer). A
+# same-target swap-in (replan, or a supervisor replacement after a
+# SUCCESSFUL ask_person/llm_fallback -- e.g. `preserved_completed_steps`
+# with a trailing `announce` that failed) must not wipe an already-spoken
+# answer: a LATER target's announce can still legitimately report it
+# (`REPORT_INFO`), and the postcondition gate's artifact path is a
+# stronger VALID than falling back to `_action_verdict`'s weak
+# completed-ask_person heuristic.
 _TARGET_GATE_QA_EVIDENCE_NAMES = frozenset({
-    "qa_answer", "person_answer", "llm_answer", "vlm_answer",
     "qa_question", "ask_question", "vlm_question", "llm_question",
 })
 
