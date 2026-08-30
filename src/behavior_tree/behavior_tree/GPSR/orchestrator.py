@@ -57,6 +57,7 @@ from .validators import (
     canonical_fact,
     check_all,
     parse_fact,
+    _normalize,
 )
 from .small_trees import (
     ACTION_FACTORIES,
@@ -123,6 +124,12 @@ def _offline_planner_enabled() -> bool:
 
 KNOWN_LOCATIONS: Dict[str, PoseStamped] = {}
 KNOWN_OBJECT_PROMPTS: Dict[str, str] = {}
+# J5 (round-3 adversarial review, testing session 3a): normalised (see
+# validators._normalize) arena object NAMES only -- the instance vocabulary
+# the gate's category-membership rule checks a detector's class-prefix match
+# against (validators._label_matches). Same source as KNOWN_OBJECT_PROMPTS
+# (constants.json "possible_objects"), populated alongside it.
+KNOWN_OBJECT_NAMES: set = set()
 # object name -> the location it usually lives at (used when a fetch command
 # names no location). Populated from constants.json "default_locations".
 DEFAULT_OBJECT_LOCATIONS: Dict[str, str] = {}
@@ -183,6 +190,7 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     """Populate KNOWN_LOCATIONS / KNOWN_OBJECT_PROMPTS from constants.json."""
     KNOWN_LOCATIONS.clear()
     KNOWN_OBJECT_PROMPTS.clear()
+    KNOWN_OBJECT_NAMES.clear()
     DEFAULT_OBJECT_LOCATIONS.clear()
     ROOM_SEARCH_SPOTS.clear()
     with open(constants_path, "r") as fh:
@@ -214,6 +222,7 @@ def load_knowledge_from_constants(constants_path: str) -> None:
             KNOWN_LOCATIONS[key] = pose
     for key, value in constants.get("possible_objects", {}).items():
         KNOWN_OBJECT_PROMPTS[key] = value
+        KNOWN_OBJECT_NAMES.add(_normalize(str(key)))
     # Object default locations (skip _comment-style keys).
     for key, value in constants.get("default_locations", {}).items():
         if str(key).startswith("_"):

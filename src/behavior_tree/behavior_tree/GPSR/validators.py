@@ -282,6 +282,45 @@ def _label_tokens(label: str) -> list[str]:
     return re.split(r"[_.]", label)
 
 
+def _known_object_names() -> frozenset[str]:
+    """Normalised arena object names, loaded via the SAME knowledge loader
+    the orchestrator uses (``constants.json``'s ``possible_objects``, see
+    ``orchestrator.load_knowledge_from_constants`` /
+    ``orchestrator.KNOWN_OBJECT_NAMES``).
+
+    Lazy import (validators.py must not hard-depend on orchestrator.py for
+    its own network-free unit tests): when orchestrator hasn't been
+    imported/loaded yet, or nothing was loaded (offline/unit tests), this is
+    empty -- callers keep today's permissive behaviour in that case.
+    """
+    try:
+        from .orchestrator import KNOWN_OBJECT_NAMES  # lazy: orchestrator imports this module
+    except Exception:  # noqa: BLE001 -- never let a knowledge lookup crash the gate
+        return frozenset()
+    return frozenset(KNOWN_OBJECT_NAMES)
+
+
+def _category_instance_known(instance: str, requested: str) -> bool:
+    """J5 (round-3 adversarial review, testing session 3a): is a class-prefix
+    match's INSTANCE segment (``kitchen_item.refrigerator`` -> ``refrigerator``)
+    a real arena object?
+
+    True when: no ``possible_objects`` are loaded at all (unit tests /
+    offline -- keep today's permissive behaviour); OR ``requested`` is
+    ITSELF a known object name (an exact-object request, e.g. "bowl", not a
+    category one -- the class-prefix rule wasn't the reason it matched);
+    OR ``instance`` names a known object (plural/underscore tolerant, same
+    as grasp/place object identity).
+    """
+    known = _known_object_names()
+    if not known:
+        return True
+    if requested in known:
+        return True
+    from .planner_validators import _same_object  # lazy: planner_validators imports this module
+    return any(_same_object(instance, name) for name in known)
+
+
 def _label_matches(label: str, requested: str) -> bool:
     """label/requested already normalised.
 
@@ -307,12 +346,22 @@ def _label_matches(label: str, requested: str) -> bool:
       "bred_jacket". A multi-word `requested` (itself containing '_') only
       matches by equality; its own tokens are never split against the
       label's tokens.
+
+    J5 (round-3 adversarial review, testing session 3a): whole-CLASS-segment
+    equality (the category-membership rule) is VALID only when the
+    INSTANCE segment is itself a known arena object -- see
+    ``_category_instance_known``. Without this, ANY class-prefix match
+    ("kitchen_item.refrigerator" for a requested category "kitchen_item")
+    passed even when the arena doesn't model that instance as a graspable
+    object at all.
     """
     if label == requested:
         return True
     class_prefix, sep, instance = label.partition(".")
     if sep:
-        return class_prefix == requested or instance == requested
+        if instance == requested:
+            return True
+        return class_prefix == requested and _category_instance_known(instance, requested)
     if "_" not in requested and requested in _label_tokens(label):
         return True
     return False
@@ -528,6 +577,22 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
                     "sim mode: person detected; name identity is not modelled in sim",
                     0.6,
                 )
+            # J5: give the specific reason when a label's class prefix
+            # matched the requested category but its instance is not a
+            # known arena object (rejected by _label_matches/
+            # _category_instance_known) -- more actionable than the generic
+            # "labels do not match" for a category request.
+            for label in labels:
+                class_prefix, sep, instance = label.partition(".")
+                if (
+                    sep and class_prefix == requested_label
+                    and not _category_instance_known(instance, requested_label)
+                ):
+                    return _result(
+                        Verdict.INVALID,
+                        f"detected {label} is not a known arena object for "
+                        f"category {requested_label}",
+                    )
             return _result(Verdict.INVALID, f"{detection_key} labels do not match requested target")
         if nonempty:
             if fact.predicate == "person_found" and evidence.get("person_provenance") == "waving_specialist":

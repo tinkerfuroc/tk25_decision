@@ -17,6 +17,20 @@ from behavior_tree.GPSR.validators import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_possible_objects_loaded(monkeypatch):
+    """J5: these tests assume the "no possible_objects loaded" default for
+    the class-prefix category-membership gate unless a test explicitly
+    monkeypatches ``KNOWN_OBJECT_NAMES`` itself. orchestrator.KNOWN_OBJECT_NAMES
+    is process-global and populated for real by any earlier test module that
+    calls ``load_knowledge_from_constants`` (e.g. test_gpsr_bench_cli.py's
+    ``gpsr_bench._knowledge``) -- reset it here so that can never leak in
+    and flip these results depending on collection order.
+    """
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", set())
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [("Held( Plant Pot )", "held(plant_pot)"), ("placed( Red Cup, Kitchen Table )", "placed(red_cup,kitchen_table)")],
@@ -223,6 +237,55 @@ def test_object_seen_matches_category_prompted_class_prefix_label():
                 ]
             }
         },
+    )
+    assert result.verdict is Verdict.VALID
+
+
+def test_category_membership_rejects_instance_not_in_possible_objects(monkeypatch):
+    # J5 (round-3 adversarial review, testing session 3a): once
+    # possible_objects are loaded, a class-prefix match ("kitchen_item.
+    # refrigerator" for object_seen(kitchen item)) is VALID only when the
+    # detected INSTANCE is itself a known arena object -- "refrigerator" is
+    # furniture, never a possible_objects entry.
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", {"bowl", "cup", "spoon"})
+    result, _ = _check(
+        "object_seen(kitchen item)",
+        evidence={"object_detection": {"objects": [{"label": "kitchen item.refrigerator"}]}},
+    )
+    assert result.verdict is Verdict.INVALID
+    assert "kitchen_item.refrigerator" in result.evidence
+    assert "not a known arena object" in result.evidence
+
+
+def test_category_membership_accepts_instance_in_possible_objects(monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", {"bowl", "cup", "spoon"})
+    result, _ = _check(
+        "object_seen(kitchen item)",
+        evidence={"object_detection": {"objects": [{"label": "kitchen item.bowl"}]}},
+    )
+    assert result.verdict is Verdict.VALID
+
+
+def test_exact_requested_object_still_valid_when_possible_objects_loaded(monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", {"bowl", "cup", "spoon"})
+    result, _ = _check(
+        "object_seen(bowl)",
+        evidence={"object_detection": {"objects": [{"label": "bowl"}]}},
+    )
+    assert result.verdict is Verdict.VALID
+
+
+def test_category_membership_permissive_when_no_possible_objects_loaded(monkeypatch):
+    # Offline / unit-test default: KNOWN_OBJECT_NAMES empty -> today's
+    # behaviour (class-prefix match alone is enough).
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", set())
+    result, _ = _check(
+        "object_seen(kitchen item)",
+        evidence={"object_detection": {"objects": [{"label": "kitchen item.refrigerator"}]}},
     )
     assert result.verdict is Verdict.VALID
 
