@@ -285,6 +285,26 @@ def test_person_answer_uses_ask_question_provenance():
     assert mismatching.verdict is Verdict.INVALID
 
 
+def test_counted_provenance_is_plural_tolerant_h2():
+    drinks, _ = _check(
+        "counted(drinks)", evidence={"count_value": 2, "count_target": "drink"}
+    )
+    persons, _ = _check(
+        "counted(persons)", evidence={"count_value": 1, "count_target": "person"}
+    )
+    kitchen_items, _ = _check(
+        "counted(kitchen items)",
+        evidence={"count_value": 4, "count_target": "kitchen item"},
+    )
+    mismatch, _ = _check(
+        "counted(drinks)", evidence={"count_value": 2, "count_target": "person"}
+    )
+    assert drinks.verdict is Verdict.VALID
+    assert persons.verdict is Verdict.VALID
+    assert kitchen_items.verdict is Verdict.VALID
+    assert mismatch.verdict is Verdict.INVALID
+
+
 def test_answered_provenance_is_soft_bag_of_content_words_h1_005_007():
     # Round-3 H1: the top layer writes the fact from the COMMAND's own
     # wording; the lower layer's question is phrased differently. As long as

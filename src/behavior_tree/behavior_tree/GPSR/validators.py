@@ -298,6 +298,35 @@ def _label_matches(label: str, requested: str) -> bool:
     return False
 
 
+# I2 (round-3 adversarial review, H2): `count_target` is the count step's
+# literal `object` param (the LOWER layer's own wording); the counted() fact
+# argument comes from the TOP layer's split (the command's wording). Exact
+# `_norm_match` rejected "drinks"/"drink", "persons"/"person" and "kitchen
+# items"/"kitchen item" -- all correct counts. Reuse the same plural
+# tolerance `planner_validators._same_object` already applies to grasp/place
+# object identity, plus `_label_matches`' class/instance rule, and only then
+# fall back to a per-token plural-tolerant comparison for multi-word
+# descriptors ("persons pointing to the left" / "person pointing to the
+# left") whose plural lives on the head noun, not the last token.
+def _count_provenance_matches(requested: str, provenance: Any) -> bool:
+    from .planner_validators import _same_object  # lazy: planner_validators imports this module
+
+    requested_norm = _normalize(requested)
+    provenance_norm = _normalize(str(provenance))
+    if requested_norm == provenance_norm:
+        return True
+    if _same_object(requested_norm, provenance_norm):
+        return True
+    if _label_matches(provenance_norm, requested_norm) or _label_matches(requested_norm, provenance_norm):
+        return True
+    req_tokens = requested_norm.split("_")
+    prov_tokens = provenance_norm.split("_")
+    if len(req_tokens) == len(prov_tokens) and len(req_tokens) > 1 and req_tokens[1:] == prov_tokens[1:]:
+        if _same_object(req_tokens[0], prov_tokens[0]):
+            return True
+    return False
+
+
 def _step_action(step: Mapping[str, Any]) -> str:
     action = step.get("action", step.get("name", step.get("type", "")))
     return _normalize(str(action))
@@ -487,7 +516,7 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
         if "count_value" in evidence:
             provenance = evidence.get("count_target") or evidence.get("count_query")
             if provenance is not None and str(provenance).strip():
-                if not _norm_match(provenance, fact.args[0]):
+                if not _count_provenance_matches(fact.args[0], provenance):
                     return _result(Verdict.INVALID, "count artifact target provenance mismatch")
                 return _result(Verdict.VALID, "count artifact target provenance matches")
             return _result(Verdict.VALID, "count artifact contains count_value; target identity unavailable")
