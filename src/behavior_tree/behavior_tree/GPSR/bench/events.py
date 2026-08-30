@@ -42,6 +42,16 @@ class TaskResult:
     # WHY a gate failed (e.g. "postcondition:counted(drinks) INVALID (count
     # artifact target provenance mismatch)") instead of a bare status.
     gate_reasons: dict[int, str] = field(default_factory=dict)
+    # L-4-M1 (round-3 fix2 review): the fact each `gate_reasons` entry was
+    # recorded for, keyed the same way -- since J3 a postcondition check
+    # verifies EVERY fact (one `gate.verified` per fact, "no more
+    # fail-fast"), so a target with sources [answered(x) INVALID,
+    # counted(y) VALID] must not have the INVALID reason popped just
+    # because an UNRELATED fact on the same target went VALID in the same
+    # tick. Not part of the public dict[int, str] shape (compare=False, so
+    # it never affects TaskResult equality) -- purely an internal aid for
+    # the pop-on-matching-fact rule below.
+    _gate_reason_fact: dict[int, str] = field(default_factory=dict, repr=False, compare=False)
     # J14 (round-3 adversarial review, tier0 #7): the accepted split's full
     # target contracts (id/desc/pre/postconditions/depends_on/object/
     # location), from `split.accepted` -- lets tier0/tier2 reports show a
@@ -163,6 +173,7 @@ def parse_events(path: Path) -> dict[int, TaskResult]:
             result.planner_errors += 1
         elif kind == "gate.verified":
             verdict = payload.get("verdict")
+            fact = payload.get("fact")
             target_index = payload.get("target_index")
             if target_index is not None:
                 try:
@@ -172,15 +183,23 @@ def parse_events(path: Path) -> dict[int, TaskResult]:
             if target_index is not None:
                 if verdict in ("INVALID", "UNKNOWN"):
                     result.gate_reasons[target_index] = (
-                        f"{payload.get('phase')}:{payload.get('fact')} {verdict} "
+                        f"{payload.get('phase')}:{fact} {verdict} "
                         f"({payload.get('reason')})"
                     )
+                    result._gate_reason_fact[target_index] = fact
                 elif verdict == "VALID":
                     # L-4 (round-3 fix review): a target that recovered on a
-                    # later retry (or a later fact/phase VALID for the same
-                    # target) must not still show a stale failure reason in
-                    # diagnostics -- pop it now that this target is VALID.
-                    result.gate_reasons.pop(target_index, None)
+                    # later retry must not still show a stale failure reason
+                    # in diagnostics -- pop it now that this target is
+                    # VALID. L-4-M1 (round-3 fix2 review): since J3 verifies
+                    # EVERY fact per gate tick ("no more fail-fast"), only
+                    # pop when THIS VALID is for the SAME fact the stored
+                    # reason was recorded for -- an unrelated fact's VALID
+                    # in the same tick must not discard a still-standing
+                    # INVALID for a different fact.
+                    if result._gate_reason_fact.get(target_index) == fact:
+                        result.gate_reasons.pop(target_index, None)
+                        result._gate_reason_fact.pop(target_index, None)
         elif kind == "task.finished":
             result.status = payload.get("status")
             result.reason = payload.get("reason")

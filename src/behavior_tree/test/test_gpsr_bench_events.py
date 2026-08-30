@@ -111,6 +111,35 @@ def test_parse_events_pops_gate_reason_on_a_later_valid_l4(tmp_path):
     assert 1 not in results[0].gate_reasons
 
 
+def test_parse_events_keeps_invalid_reason_when_a_different_facts_valid_l4m1(tmp_path):
+    # L-4-M1 (round-3 fix2 review): since J3, BtNode_TargetPostconditionCheck
+    # verifies EVERY fact and emits one gate.verified per fact ("no more
+    # fail-fast") -- a target with sources [answered(x) INVALID, counted(y)
+    # VALID] (declared postconditions first, then deferred preconditions --
+    # exactly the J8 report target's shape) must not have the INVALID
+    # answered() reason popped just because an UNRELATED fact on the same
+    # target went VALID in the same tick. Only a VALID for the SAME fact
+    # may pop it.
+    lines = [
+        _ev("gate.verified", "gpsr-x/task-0",
+            {"slot": 0, "target_index": 1, "phase": "postcondition",
+             "fact": "answered(what colour is the box)", "verdict": "INVALID",
+             "confidence": 1.0, "reason": "answer artifact question provenance mismatch"}, seq=0),
+        _ev("gate.verified", "gpsr-x/task-0",
+            {"slot": 0, "target_index": 1, "phase": "postcondition",
+             "fact": "counted(drinks)", "verdict": "VALID", "confidence": 1.0,
+             "reason": "count artifact target provenance matches"}, seq=1),
+    ]
+    path = tmp_path / "events.jsonl"
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+
+    results = parse_events(path)
+    assert results[0].gate_reasons[1] == (
+        "postcondition:answered(what colour is the box) INVALID "
+        "(answer artifact question provenance mismatch)"
+    )
+
+
 def test_parse_events_tolerates_partial_last_line(tmp_path):
     path = tmp_path / "events.jsonl"
     path.write_text(json.dumps(_ev("step.finished", "g/task-0", {"action": "goto", "outcome": "succeeded"})) + "\n{\"trunc")
