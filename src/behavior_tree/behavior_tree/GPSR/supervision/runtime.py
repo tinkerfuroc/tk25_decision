@@ -27,6 +27,7 @@ from .models import (
     RecoveryKind,
     RecoveryProposal,
     ReportedStatus,
+    SchemaError,
     SupervisionMode,
     SupervisorConfig,
 )
@@ -448,16 +449,43 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         self._hard_stop_reason = intervention.reason
 
     def _apply_global_decision(self, decision: GlobalPlanDecision) -> None:
-        completed = len(_bb_get("gpsr/state_log", []) or [])
+        # J7 (round-3 adversarial review, H3, ACTIVE mode): ``len(state_log)``
+        # counts every logged line for the WHOLE task (target-transition
+        # lines included, see ``DynamicExecutor._log`` / ``BtNode_LogStepResult``
+        # both appending to the same ``gpsr/state_log`` key) -- but the
+        # two-layer executor (``orchestrator._on_target_failure``) consumes
+        # ``preserved_completed_steps`` as a prefix COUNT into the CURRENT
+        # TARGET's own action plan (``get_action_plan(slot, index)[:preserved]``).
+        # The two counts disagree, so the strict equality check in
+        # ``validate_global_decision`` raised ``SchemaError`` for a
+        # perfectly-formed decision. ``gpsr/plan_index`` (already on the
+        # blackboard, and already used exactly this way by
+        # ``current_subtask_id`` above) is the per-target step count:
+        # ``BtNode_MaterialiseStep`` sets it to ``step_index + 1`` for the
+        # CURRENT target's own plan, so ``plan_index - 1`` is the number of
+        # that target's steps completed before the one now in flight.
+        completed = max(0, int(_bb_get("gpsr/plan_index", 1) or 1) - 1)
         command = str(_bb_get("gpsr/command", ""))
         from behavior_tree.GPSR.small_trees import ACTION_FACTORIES
 
-        validate_global_decision(
-            decision,
-            completed_steps=completed,
-            original_instruction=command,
-            known_actions=ACTION_FACTORIES,
-        )
+        try:
+            validate_global_decision(
+                decision,
+                completed_steps=completed,
+                original_instruction=command,
+                known_actions=ACTION_FACTORIES,
+            )
+        except SchemaError as exc:
+            # J7: never let a malformed/mismatched global decision crash the
+            # tree from inside tick() -- treat it as a stop intervention,
+            # same as any other unrecognised intervention kind below.
+            _set_supervisor_outcome(
+                "stopped",
+                str(exc),
+                subtask_id=self.current_subtask_id(),
+            )
+            self._hard_stop_reason = str(exc)
+            return
         if decision.action is GlobalAction.ABORT_AND_REPORT:
             _bb_set("gpsr/plan", [])
             _bb_set("gpsr/plan_index", 0)

@@ -598,3 +598,109 @@ def test_destructive_failure_aborts_and_records_operator_message():
         assert py_trees.blackboard.Blackboard.get("gpsr/plan") == []
     finally:
         supervisor.close()
+
+
+def _global_replan_slot(preserved_completed_steps, *, plan_index):
+    """Build a SupervisedSubtaskSlot mid-global-replan, matching
+    test_destructive_failure_aborts_and_records_operator_message's harness --
+    J7 (round-3 adversarial review, H3, ACTIVE mode): the two-layer executor
+    tracks completed steps for the CURRENT target's own plan via
+    gpsr/plan_index, not gpsr/state_log (which is a whole-task log, not a
+    per-target step count).
+    """
+    _seed_blackboard()
+    py_trees.blackboard.Blackboard.set("gpsr/plan_index", plan_index)
+    py_trees.blackboard.Blackboard.set("gpsr/plan", [{"action": "grasp", "params": {}}])
+    step = max(0, plan_index - 1)
+    checkpoint = (
+        f"task/plan-r1/step-{step:04d}:demo/tree-r1/"
+        "demo/root/activation-0001"
+    )
+    verification = {
+        **_decision(checkpoint, verdict="unrecoverable"),
+        "subtask_status": "not_achieved",
+        "world_change": "destructive",
+        "escalation": "global_replan",
+        "failure_category": "object_broken",
+    }
+    client = ScriptedSupervisorClient(
+        verifications=[verification],
+        global_plans=[
+            {
+                "checkpoint_id": checkpoint,
+                "action": "replan_remaining",
+                "replacement_plan": [{"action": "announce", "params": {"text": "resuming"}}],
+                "preserved_completed_steps": preserved_completed_steps,
+                "relaxed_constraints": [],
+                "rationale": "target 0 already finished, resume target 1",
+                "operator_message": "resuming after global replan",
+            }
+        ],
+    )
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect",
+                "manipulation",
+                EffectRisk.IRREVERSIBLE,
+                "object was safely grasped",
+                allow_local_recovery=False,
+            )
+        ]
+    )
+    slot = SupervisedSubtaskSlot(
+        action_name="demo",
+        factory=lambda: FakeEffect("grasp", py_trees.common.Status.FAILURE, []),
+        supervisor=supervisor,
+        registry=registry,
+    )
+    return slot, supervisor
+
+
+def test_global_decision_completed_count_derives_from_plan_index_not_state_log():
+    # "target 1 after target 0 completed": plan_index=3 means 2 steps of
+    # THIS target's own plan already materialised (step 0, step 1) before
+    # the 3rd (index 2) is now in flight -- gpsr/state_log stays [] the
+    # whole time (per _seed_blackboard), so the OLD len(state_log)-based
+    # count (0) would have rejected a correctly-formed decision claiming 2.
+    slot, supervisor = _global_replan_slot(preserved_completed_steps=2, plan_index=3)
+    try:
+        for _ in range(200):
+            slot.tick_once()
+            if slot.status is py_trees.common.Status.SUCCESS:
+                break
+            time.sleep(0.005)
+        assert slot.status is py_trees.common.Status.SUCCESS
+        request = py_trees.blackboard.Blackboard.get("gpsr/replan_request")
+        assert request["preserved_completed_steps"] == 2
+        assert request["level"] == "supervisor"
+        # No stop/abort outcome was ever recorded -- the decision applied
+        # cleanly (no SchemaError from a completed-count mismatch).
+        assert not py_trees.blackboard.Blackboard.exists("gpsr/task_outcome")
+    finally:
+        supervisor.close()
+
+
+def test_malformed_completed_count_becomes_stop_intervention_not_exception():
+    # A decision whose preserved_completed_steps does not match the
+    # derived count is malformed -- must be handled as a stop intervention
+    # (no SchemaError escaping tick()).
+    slot, supervisor = _global_replan_slot(preserved_completed_steps=99, plan_index=3)
+    try:
+        for _ in range(50):
+            slot.tick_once()
+            time.sleep(0.005)
+        # A hard-stop keeps the slot RUNNING forever -- it never reaches
+        # SUCCESS/FAILURE, but critically the loop above never raised.
+        assert slot.status is py_trees.common.Status.RUNNING
+        outcome = py_trees.blackboard.Blackboard.get("gpsr/task_outcome")
+        assert outcome["status"] == "stopped"
+        assert outcome["source"] == "llm_supervisor"
+        assert "completed step count" in outcome["reason"]
+    finally:
+        supervisor.close()
