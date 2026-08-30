@@ -214,6 +214,20 @@ def test_j9_ordinary_object_handling_target_passes():
     assert _reject_person_object_handling(targets) is None
 
 
+def test_j9_deliver_to_a_person_recipient_passes():
+    # H-1 (round-3 fix review): the desc names a person because it names the
+    # RECIPIENT, but the HANDLED thing (fact.args[0], and target["object"])
+    # is spam -- this is an ordinary deliver-to-person target, not a person
+    # being object-handled, and must not be rejected.
+    targets = [
+        {"id": "t0", "desc": "give the spam to the person raising their left arm",
+         "object": "spam", "location": "kitchen", "depends_on": [],
+         "preconditions": [],
+         "postconditions": ["delivered(spam,person raising their left arm)"]},
+    ]
+    assert _reject_person_object_handling(targets) is None
+
+
 # ---------------------------------------------------------------------------
 # X1 (round-3 fix review, source-pinned tier0 sweep): held/placed/delivered
 # are for PHYSICAL OBJECTS only -- "tell <info> to <person>" must use

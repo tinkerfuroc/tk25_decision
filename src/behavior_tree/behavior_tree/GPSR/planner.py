@@ -595,9 +595,14 @@ _GENERIC_PERSON_WORDS_RE = re.compile(r"\b(person|persons|someone|guest)\b", re.
 
 
 def _desc_names_a_person(desc: str) -> bool:
-    if _GENERIC_PERSON_WORDS_RE.search(desc):
+    # H-1 (round-3 fix review): callers now also feed a normalised fact arg
+    # (parse_fact's ``_normalize`` joins words with "_", e.g.
+    # "person_wearing_a_gray_jacket") -- \b doesn't break on "_" (a \w char),
+    # so the generic-word regex would silently miss it. Un-join first.
+    text = str(desc).replace("_", " ")
+    if _GENERIC_PERSON_WORDS_RE.search(text):
         return True
-    tokens = re.findall(r"[A-Za-z']+", desc)
+    tokens = re.findall(r"[A-Za-z']+", text)
     return any(tok.lower() in _ARENA_PERSON_NAMES for tok in tokens)
 
 
@@ -610,21 +615,30 @@ def _reject_person_object_handling(
     Split produced ``['Take the person wearing a gray jacket from the sofa',
     'Take the person ... to the side_table', 'Place the person ... at the
     side_table']`` for a guide command -- object-handling verbs applied to a
-    PERSON. Deterministic reject-and-retry: a target whose desc names a
-    person (an arena name, or a generic "person"/"someone"/"guest" word)
-    AND whose postcondition predicate is held/placed/delivered is rejected,
-    with a reason naming the correct pattern (find_person + guide).
+    PERSON. Deterministic reject-and-retry: a target whose HANDLED thing --
+    ``fact.args[0]`` of a held/placed/delivered postcondition (the object
+    being grasped/placed/delivered, never a ``delivered(x,recipient)``
+    recipient arg), or ``target["object"]`` -- names a person (an arena
+    name, or a generic "person"/"someone"/"guest" word) is rejected, with a
+    reason naming the correct pattern (find_person + guide).
+
+    H-1 (round-3 fix review): the PREVIOUS version rejected on the desc
+    naming a person anywhere, which also matches an ordinary
+    "deliver spam to the person raising their left arm" target -- the desc
+    names the RECIPIENT, not the handled thing, so it must not be rejected.
     Returns the rejection reason, or None when nothing is wrong.
     """
     for target in targets:
         desc = str(target.get("desc") or "")
-        if not _desc_names_a_person(desc):
-            continue
+        obj = str(target.get("object") or "")
         for condition in target.get("postconditions") or []:
             if not isinstance(condition, str):
                 continue
             fact, _err = parse_fact(condition)
-            if fact is not None and fact.predicate in {"held", "placed", "delivered"}:
+            if fact is None or fact.predicate not in {"held", "placed", "delivered"}:
+                continue
+            handled = fact.args[0] if fact.args else ""
+            if _desc_names_a_person(handled) or _desc_names_a_person(obj):
                 return (
                     f"target {target.get('id')!r} ({desc!r}): persons are "
                     "guided, not grasped: use find_person + guide "
