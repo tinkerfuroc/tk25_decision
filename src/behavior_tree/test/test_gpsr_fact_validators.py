@@ -264,7 +264,7 @@ def test_answered_matches_question_provenance_with_weak_fallback():
     )
     mismatching, _ = _check(
         "answered(what color)",
-        evidence={"llm_answer": "blue", "question_provenance": "What shape?"},
+        evidence={"llm_answer": "blue", "question_provenance": "What shape is the box?"},
     )
     fallback, _ = _check("answered(what color)", evidence={"llm_answer": "blue"})
     assert matching.verdict is Verdict.VALID
@@ -279,10 +279,41 @@ def test_person_answer_uses_ask_question_provenance():
     )
     mismatching, _ = _check(
         "answered(what color)",
-        evidence={"person_answer": "blue", "ask_question": "What shape?"},
+        evidence={"person_answer": "blue", "ask_question": "What shape is the box?"},
     )
     assert matching.verdict is Verdict.VALID
     assert mismatching.verdict is Verdict.INVALID
+
+
+def test_answered_provenance_is_soft_bag_of_content_words_h1_005_007():
+    # Round-3 H1: the top layer writes the fact from the COMMAND's own
+    # wording; the lower layer's question is phrased differently. As long as
+    # the fact's content words are a subset of the question's, it VALIDates.
+    day_of_month, _ = _check(
+        "answered(day of the month)",
+        evidence={
+            "llm_answer": "It is the 29th.",
+            "llm_question": "What is the day of the month today? Say that it is 29.",
+        },
+    )
+    what_day, _ = _check(
+        "answered(what day is today)",
+        evidence={"llm_answer": "Sunday", "llm_question": "What day is it today?"},
+    )
+    assert day_of_month.verdict is Verdict.VALID
+    assert "provenance matches" in day_of_month.evidence
+    assert what_day.verdict is Verdict.VALID
+
+
+def test_answered_provenance_invalid_only_when_zero_overlap_and_specific_question():
+    # A completely different question (>= 2 content words, zero overlap) is
+    # INVALID; a short/ambiguous provenance falls back to a weak partial VALID.
+    invalid, _ = _check(
+        "answered(name of the person)",
+        evidence={"llm_answer": "It is red.", "llm_question": "What colour is the box?"},
+    )
+    assert invalid.verdict is Verdict.INVALID
+    assert "mismatch" in invalid.evidence
 
 
 def test_answered_provenance_normalizes_whitespace_and_underscores():

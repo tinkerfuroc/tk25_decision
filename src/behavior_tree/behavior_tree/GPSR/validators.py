@@ -64,6 +64,24 @@ _REFUSAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# I1 (round-3 adversarial review, H1): the top layer writes an answered()
+# fact from the COMMAND's own wording ("day of the month") while the lower
+# layer's ask_person/llm_fallback/vlm question is phrased in its own words
+# ("What is the day of the month today? Say that it is 29."). Exact-string
+# provenance rejected every correct answer. Provenance is now a SOFT signal:
+# bag-of-content-words overlap between the fact argument and the recorded
+# question, ignoring a fixed stopword list and punctuation.
+_PROVENANCE_STOPWORDS = {
+    "what", "is", "the", "a", "an", "of", "to", "me", "you", "your", "please",
+    "say", "tell", "today", "it", "that", "this", "in", "on", "at",
+}
+
+
+def _content_words(text: str) -> set[str]:
+    cleaned = re.sub(r"[^a-zA-Z0-9_\s]", " ", str(text))
+    tokens = re.split(r"[_\s]+", cleaned.lower())
+    return {token for token in tokens if token and token not in _PROVENANCE_STOPWORDS}
+
 
 def _normalize(value: str) -> str:
     return re.sub(r"\s+", "_", value.strip().lower())
@@ -496,12 +514,15 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
                                ("qa_question", "ask_question", "question_provenance", "vlm_question", "llm_question")
                                if isinstance(evidence.get(key), str) and evidence[key].strip()), None)
             if provenance is not None:
-                provenance_norm = _normalize(re.sub(r"[^a-zA-Z0-9_\s]", "", str(provenance)))
-                requested_norm = _normalize(fact.args[0])
-                if not (provenance_norm == requested_norm or requested_norm in provenance_norm.split("_")):
+                fact_words = _content_words(fact.args[0])
+                provenance_words = _content_words(provenance)
+                if not fact_words or fact_words.issubset(provenance_words):
+                    return _result(Verdict.VALID, "answer artifact question provenance matches")
+                if not (fact_words & provenance_words) and len(provenance_words) >= 2:
                     return _result(Verdict.INVALID, "answer artifact question provenance mismatch")
-            if provenance is not None:
-                return _result(Verdict.VALID, "answer artifact question provenance matches")
+                return _result(
+                    Verdict.VALID, "answer artifact question provenance partially matches", 0.6
+                )
             return _result(Verdict.VALID, "answer artifact contains a nonempty answer; question identity unavailable")
     elif fact.predicate == "at_robot":
         if "last_nav_location" in evidence and evidence["last_nav_location"] is not None:

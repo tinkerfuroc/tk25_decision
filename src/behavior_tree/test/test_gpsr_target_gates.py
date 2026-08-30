@@ -372,7 +372,7 @@ def test_same_target_swap_preserves_target_evidence_and_last_nav_for_grasp_mater
     bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.WRITE)
     bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.WRITE)
     bb.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
-    values = {
+    preserved = {
         bb_keys.LAST_NAV_LOCATION: "kitchen_shelf",
         bb_keys.TARGET_OBJECT_DETECTION: {"objects": ["cup"]},
         bb_keys.TARGET_PERSON_DETECTION: {"objects": ["Alex"]},
@@ -380,17 +380,22 @@ def test_same_target_swap_preserves_target_evidence_and_last_nav_for_grasp_mater
         bb_keys.TARGET_PERSON_POSE: "pose",
         bb_keys.TARGET_OBJECT_PROMPT: "cups",
         bb_keys.TARGET_PERSON_PROMPT: "Alex",
+        bb_keys.COUNT_VALUE: 2,
+    }
+    # I1: question/answer provenance is per-attempt and is cleared on every
+    # swap-in (including a same-target replan) so a stale question cannot
+    # poison this replan's answered() gate check.
+    qa_keys = {
         bb_keys.QA_QUESTION: "old question",
         bb_keys.ASK_QUESTION: "old ask question",
         bb_keys.VLM_QUESTION: "old vlm question",
         bb_keys.LLM_QUESTION: "old llm question",
-        bb_keys.COUNT_VALUE: 2,
         bb_keys.QA_ANSWER: "blue",
         bb_keys.PERSON_ANSWER: "Alex",
         bb_keys.LLM_ANSWER: "answer",
         bb_keys.VLM_ANSWER: "vision",
     }
-    for key, value in values.items():
+    for key, value in {**preserved, **qa_keys}.items():
         bb.set(key, value, overwrite=True)
     executor, _tree = _executor(_PlannerWithoutFacts())
     executor.status = Status.RUNNING
@@ -398,8 +403,10 @@ def test_same_target_swap_preserves_target_evidence_and_last_nav_for_grasp_mater
     executor._index = 0
     executor._active_target_index = 0
     executor._swap_in(0)
-    for key, value in values.items():
+    for key, value in preserved.items():
         assert bb.get(key) == value
+    for key in qa_keys:
+        assert bb.get(key) is None
     # materialise_params reads this retained navigation state when deciding
     # whether a subsequent grasp needs the no-grasp referee branch.
     assert bb.get(bb_keys.LAST_NAV_LOCATION) == "kitchen_shelf"

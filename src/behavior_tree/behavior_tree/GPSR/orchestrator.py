@@ -1540,6 +1540,20 @@ _TARGET_GATE_EVIDENCE_KEYS = (
     ("llm_question", bb_keys.LLM_QUESTION),
 )
 
+# I1 (round-3 adversarial review, H1): question/answer evidence is
+# target-scoped but was only ever cleared when the executor advanced to a
+# DIFFERENT target -- a same-target replan (e.g. a failed ask_person
+# followed by a plain announce() of the answer) left the earlier attempt's
+# llm_question/ask_question on the blackboard, where the answered() gate's
+# provenance check could still see it and poison an otherwise-correct
+# replan. These evidence names are cleared on EVERY _swap_in, including a
+# same-target continuation; the target's other perception/count evidence
+# still follows the existing target-index-change clearing below.
+_TARGET_GATE_QA_EVIDENCE_NAMES = frozenset({
+    "qa_answer", "person_answer", "llm_answer", "vlm_answer",
+    "qa_question", "ask_question", "vlm_question", "llm_question",
+})
+
 
 def _target_gate_evidence(bb) -> Dict[str, Any]:
     evidence: Dict[str, Any] = {}
@@ -2099,6 +2113,14 @@ class DynamicExecutor(py_trees.composites.Composite):
                     self._bb.set(key, None, overwrite=True)
             self._bb.set(bb_keys.DEFERRED_PRECONDITIONS, [], overwrite=True)
             self._swap_count = 0
+        else:
+            # I1: a same-target replan/continuation retains perception/count
+            # evidence (comment above), but question/answer provenance is
+            # per-attempt -- clear it so a stale question from an earlier
+            # step in this same target cannot poison this replan's gate.
+            for evidence_name, key in _TARGET_GATE_EVIDENCE_KEYS:
+                if evidence_name in _TARGET_GATE_QA_EVIDENCE_NAMES:
+                    self._bb.set(key, None, overwrite=True)
         self._active_target_index = index
         # Every materialization of the same target (LLM replan OR supervisor
         # replacement, which does not bump TARGET_REPLAN_COUNT) gets a strictly
