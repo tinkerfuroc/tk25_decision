@@ -366,21 +366,39 @@ def _normalise_targets(raw: List[Any]) -> List[Dict[str, Any]]:
             "postconditions": normalize_conditions(item.get("postconditions")),
         })
 
-    # Per the split prompt contract, a target precondition is only meaningful
-    # as cross-target sequencing: it must be established by an EARLIER
-    # target's postconditions AND still be alive at this point in the
-    # command's fact timeline. J1 (round-3 adversarial review, H4): the
-    # ledger is not a monotonic union -- ``validators.apply_fact_transitions``
-    # applies the SAME retraction rules the runtime gate uses (placing/
-    # delivering an object retracts ``held(object)``; re-holding it retracts
-    # a stale ``placed``/``delivered``), so a precondition an ancestor
-    # target established but a LATER ancestor then retracted is not an
-    # acceptable precondition either -- the plan must re-establish it, not
-    # rely on a fact that is no longer true. Unparseable conditions are left
-    # alone -- ``_validate_target_contract`` rejects those with a retry.
+    _prune_unestablishable_preconditions(normalized)
+    return normalized
+
+
+def _prune_unestablishable_preconditions(targets: List[Dict[str, Any]]) -> None:
+    """Drop a target precondition no EARLIER target in ``targets`` (in list
+    order) still has alive at that point in the command's fact timeline.
+    Mutates each target's ``preconditions`` list in place.
+
+    Per the split prompt contract, a target precondition is only meaningful
+    as cross-target sequencing: it must be established by an EARLIER
+    target's postconditions AND still be alive at this point in the
+    command's fact timeline. J1 (round-3 adversarial review, H4): the
+    ledger is not a monotonic union -- ``validators.apply_fact_transitions``
+    applies the SAME retraction rules the runtime gate uses (placing/
+    delivering an object retracts ``held(object)``; re-holding it retracts
+    a stale ``placed``/``delivered``), so a precondition an ancestor
+    target established but a LATER ancestor then retracted is not an
+    acceptable precondition either -- the plan must re-establish it, not
+    rely on a fact that is no longer true. Unparseable conditions are left
+    alone -- ``_validate_target_contract`` rejects those with a retry.
+
+    M-3 (round-3 fix review): called a SECOND time, after
+    ``_merge_transport_targets`` drops a pure-transport target N, so a
+    successor's precondition N used to be the ONLY establisher of (e.g. the
+    merged ``at_robot(Y)``) is dropped too -- N no longer appears in this
+    list at all, so it never re-enters the ledger, and the precondition
+    "loses" exactly what N established (and nothing else: any OTHER
+    target's postcondition establishing the same fact keeps it alive).
+    """
     ledger: list[str] = []
     retracted_by: dict[str, tuple[str, str]] = {}
-    for target in normalized:
+    for target in targets:
         alive = set(ledger)
         preconditions = target.get("preconditions")
         if isinstance(preconditions, list):
@@ -419,8 +437,6 @@ def _normalise_targets(raw: List[Any]) -> List[Dict[str, Any]]:
                 retract_text = _retracting_addition(removed_fact, post_texts) or "?"
                 retracted_by[removed_fact] = (target["id"], retract_text)
             ledger = new_ledger
-
-    return normalized
 
 
 def _retracting_addition(removed_fact: str, additions: List[str]) -> Optional[str]:
@@ -2349,6 +2365,12 @@ class GPSRPlanner:
                       f"{last_reason}")
                 continue
             targets = _merge_transport_targets(targets)
+            # M-3 (round-3 fix review): a merge can drop target N, the ONLY
+            # establisher of a precondition on some successor (e.g. the
+            # merged at_robot(Y)) -- re-run the same ledger-based pruning
+            # _normalise_targets already applied so that precondition is
+            # dropped too, not left dangling with no establisher.
+            _prune_unestablishable_preconditions(targets)
             ok, reason = _validate_target_contract(targets)
             if not ok:
                 last_reason = f"your target graph/conditions are invalid: {reason}"

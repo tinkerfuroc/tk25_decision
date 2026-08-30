@@ -363,6 +363,13 @@ def test_j11_003_shaped_4_target_split_merges_to_3():
     assert merged_target["depends_on"] == ["t1"]
     assert merged_target["postconditions"] == ["placed(kitchen_item,kitchen_table)"]
     assert merged_target["desc"] == "Place the kitchen item on the kitchen_table"
+    # M-3 (round-3 fix review): the merge alone leaves t3's
+    # at_robot(kitchen_table) precondition dangling -- t2, the ONLY target
+    # that established it, is now gone. split_command re-runs the same
+    # ledger-based pruning _normalise_targets applies so it is dropped too
+    # (held(kitchen_item), still established by t1, stays).
+    planner_module._prune_unestablishable_preconditions(result)
+    assert merged_target["preconditions"] == ["held(kitchen_item)"]
 
 
 def test_j11_deliver_to_a_room_shaped_recipient_merges_too():
