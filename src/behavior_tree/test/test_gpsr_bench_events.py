@@ -39,6 +39,38 @@ def test_parse_events_groups_by_slot_and_keeps_step_order(tmp_path):
     assert results[1].planner_errors == 1
 
 
+def test_parse_events_keeps_last_gate_verified_invalid_reason_per_target(tmp_path):
+    # I6 (round-3 adversarial review): gate.verified is a NEW event type
+    # carrying the gate's per-fact verdict + rationale -- parse_events keeps
+    # the LAST INVALID/UNKNOWN one per target_index so tier2 diagnostics can
+    # show WHY a gate failed, not just that it failed.
+    lines = [
+        _ev("gate.verified", "gpsr-x/task-0",
+            {"slot": 0, "target_index": 0, "phase": "postcondition",
+             "fact": "counted(drinks)", "verdict": "VALID", "confidence": 1.0,
+             "reason": "count artifact target provenance matches"}, seq=0),
+        _ev("gate.verified", "gpsr-x/task-0",
+            {"slot": 0, "target_index": 1, "phase": "precondition",
+             "fact": "held(spam)", "verdict": "UNKNOWN", "confidence": 1.0,
+             "reason": "UNKNOWN: stronger verifier not installed and no sufficient artifact"},
+            seq=1),
+        _ev("gate.verified", "gpsr-x/task-0",
+            {"slot": 0, "target_index": 1, "phase": "postcondition",
+             "fact": "counted(drinks)", "verdict": "INVALID", "confidence": 1.0,
+             "reason": "count artifact target provenance mismatch"}, seq=2),
+    ]
+    path = tmp_path / "events.jsonl"
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+
+    results = parse_events(path)
+    # target 0's only event was VALID -- never recorded.
+    assert 0 not in results[0].gate_reasons
+    # target 1's LAST invalid/unknown reason wins.
+    assert results[0].gate_reasons[1] == (
+        "postcondition:counted(drinks) INVALID (count artifact target provenance mismatch)"
+    )
+
+
 def test_parse_events_tolerates_partial_last_line(tmp_path):
     path = tmp_path / "events.jsonl"
     path.write_text(json.dumps(_ev("step.finished", "g/task-0", {"action": "goto", "outcome": "succeeded"})) + "\n{\"trunc")

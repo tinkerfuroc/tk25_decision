@@ -10,7 +10,11 @@ from py_trees.common import Access
 from behavior_tree.GPSR import planner as planner_mod
 from behavior_tree.GPSR import telemetry as telemetry_mod
 from behavior_tree.GPSR.bench.events import parse_events
-from behavior_tree.GPSR.orchestrator import BtNode_TargetPreconditionCheck, DynamicExecutor
+from behavior_tree.GPSR.orchestrator import (
+    BtNode_TargetPostconditionCheck,
+    BtNode_TargetPreconditionCheck,
+    DynamicExecutor,
+)
 from behavior_tree.GPSR.small_trees import bb_keys
 
 
@@ -45,6 +49,14 @@ def _gate_target():
 def _leaf_target():
     seq = py_trees.composites.Sequence("target", memory=True)
     seq.add_child(_FailingLeaf("place action"))
+    return seq
+
+
+def _postcondition_gate_target():
+    """Target whose real postcondition gate fails (counted(drinks) unknown)."""
+    seq = py_trees.composites.Sequence("target", memory=True)
+    seq.add_child(BtNode_TargetPostconditionCheck(
+        "postcondition gate:0:0", ["counted(drinks)"], 0, action_plan=[]))
     return seq
 
 
@@ -219,6 +231,70 @@ def test_non_gate_failure_without_current_action_emits_target_failed(tmp_path):
     assert not [e for e in lines if e["event_type"] == "step.finished"]
     failed = [e for e in lines if e["event_type"] == "target.failed"]
     assert len(failed) == 1
+    assert failed[0]["payload"]["reason"] == "navigation failed: kitchen_table unreachable"
+
+
+# I6 (round-3 adversarial review, testing-session suspect 3c): the gate's
+# VALID/INVALID rationale existed only in the transient feedback_message --
+# gate.verified telemetry carries it per checked fact.
+def test_precondition_gate_emits_gate_verified_per_fact(tmp_path):
+    plan = [{"action": "announce", "params": {"text": "done"}}]
+    path, _ = _events(tmp_path, plan, subtree_factory=_gate_target)
+    gate_events = [e for e in _lines(path) if e["event_type"] == "gate.verified"]
+    assert gate_events
+    first = gate_events[0]
+    assert first["phase"] == "execution"
+    assert str(first["task_id"]).endswith("/task-1")
+    assert first["payload"]["slot"] == 0
+    assert first["payload"]["target_index"] == 0
+    assert first["payload"]["phase"] == "precondition"
+    assert first["payload"]["fact"] == "held(coke)"
+    assert first["payload"]["verdict"] == "UNKNOWN"
+    assert first["payload"]["confidence"] == 1.0
+    assert first["payload"]["reason"]
+
+
+def test_postcondition_gate_emits_gate_verified_per_fact(tmp_path):
+    plan = [{"action": "announce", "params": {"text": "done"}}]
+    path, _ = _events(tmp_path, plan, subtree_factory=_postcondition_gate_target)
+    gate_events = [e for e in _lines(path) if e["event_type"] == "gate.verified"]
+    assert gate_events
+    first = gate_events[0]
+    assert first["payload"]["slot"] == 0
+    assert first["payload"]["target_index"] == 0
+    assert first["payload"]["phase"] == "postcondition"
+    assert first["payload"]["fact"] == "counted(drinks)"
+    assert first["payload"]["verdict"] == "UNKNOWN"
+
+
+# I6: the SKIPPED (replan budget exceeded) outcome had NO telemetry event of
+# its own when every underlying failure was step-level (never a gate) --
+# only step.finished(failed) events, never target.failed.
+def test_skipped_budget_exceeded_emits_its_own_target_failed(tmp_path):
+    plan = [{"action": "place", "params": {"location": "kitchen_table"}}]
+    tele, path = _telemetry(tmp_path)
+    w = _seed_blackboard()
+    ex = DynamicExecutor("executor task 1", 0, _Planner(plan), max_replans_per_target=1)
+    ex._announce = lambda text: None  # budget exhaustion announces via a real ROS node
+    tree = py_trees.trees.BehaviourTree(ex)
+    ex.setup(gpsr_tree=tree, node=object())
+    for _ in range(4):
+        tree.tick()
+        if ex.status != py_trees.common.Status.RUNNING:
+            break
+    tele.close(status="done")
+    telemetry_mod.set_default_telemetry(None)
+
+    log = w.get(bb_keys.STATE_LOG)
+    assert any("SKIPPED (replan budget exceeded)" in entry for entry in log)
+    lines = _lines(path)
+    # Every underlying attempt was a plain step failure (step.finished only).
+    step_failures = [e for e in lines if e["event_type"] == "step.finished"]
+    assert step_failures
+    failed = [e for e in lines if e["event_type"] == "target.failed"]
+    assert len(failed) == 1
+    assert failed[0]["payload"]["slot"] == 0
+    assert failed[0]["payload"]["target_index"] == 0
     assert failed[0]["payload"]["reason"] == "navigation failed: kitchen_table unreachable"
 
 

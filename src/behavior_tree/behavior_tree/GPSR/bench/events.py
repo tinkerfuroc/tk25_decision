@@ -36,6 +36,12 @@ class TaskResult:
     planner_errors: int = 0
     first_seen: str | None = None
     finished_at: str | None = None
+    # I6 (round-3 adversarial review): the last INVALID/UNKNOWN `gate.verified`
+    # reason per target_index -- a gate's rationale used to exist only in the
+    # executor's transient feedback_message; this lets tier2 diagnostics show
+    # WHY a gate failed (e.g. "postcondition:counted(drinks) INVALID (count
+    # artifact target provenance mismatch)") instead of a bare status.
+    gate_reasons: dict[int, str] = field(default_factory=dict)
 
 
 def slot_of(task_id: str | None) -> int | None:
@@ -146,6 +152,19 @@ def parse_events(path: Path) -> dict[int, TaskResult]:
             result.steps.append((str(payload.get("action")), str(payload.get("outcome"))))
         elif kind == "planner.error":
             result.planner_errors += 1
+        elif kind == "gate.verified":
+            verdict = payload.get("verdict")
+            target_index = payload.get("target_index")
+            if verdict in ("INVALID", "UNKNOWN") and target_index is not None:
+                try:
+                    target_index = int(target_index)
+                except (TypeError, ValueError):
+                    target_index = None
+                if target_index is not None:
+                    result.gate_reasons[target_index] = (
+                        f"{payload.get('phase')}:{payload.get('fact')} {verdict} "
+                        f"({payload.get('reason')})"
+                    )
         elif kind == "task.finished":
             result.status = payload.get("status")
             result.reason = payload.get("reason")

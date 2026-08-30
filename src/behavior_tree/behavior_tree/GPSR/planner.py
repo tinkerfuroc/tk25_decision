@@ -2498,7 +2498,7 @@ class GPSRPlanner:
         if preconditions:
             seq.add_child(BtNode_TargetPreconditionCheck(
                 f"precondition gate:{slot}:{index}", preconditions, index,
-                action_plan=full_plan,
+                action_plan=full_plan, slot=slot,
             ))
         seq.add_child(BtNode_AnnounceFromBB(
             f"announce target:{slot}:{index}",
@@ -2545,5 +2545,6 @@ class GPSRPlanner:
                 completed_steps=completed_steps,
                 target_location=str(target.get("location") or ""),
                 facts_writer=lambda facts: self.record_facts(slot, facts),
+                slot=slot,
             ))
         return seq

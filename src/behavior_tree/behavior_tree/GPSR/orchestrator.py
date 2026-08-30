@@ -1591,6 +1591,40 @@ def _target_gate_facts(bb) -> List[str]:
     return list(facts or [])
 
 
+def _emit_gate_verified(
+    bb, slot: int, target_index: int, phase: str, fact: str,
+    verdict: Verdict, confidence: float, reason: str,
+) -> None:
+    """I6 (round-3 adversarial review): the gate's VALID/INVALID rationale
+    used to exist only in memory (a transient ``feedback_message``) -- emit
+    it as a ``gate.verified`` telemetry event per fact, plus one print line,
+    so a bench/debugger consumer can see WHY a gate failed after the fact
+    (``bench/events.py``'s ``parse_events`` keeps the last INVALID/UNKNOWN
+    reason per target from exactly this event -- see I6). Telemetry must
+    never break gate evaluation, so this is best-effort/guarded throughout.
+    """
+    print(f"[gate:{target_index}:{phase}] {fact} {verdict.value} ({reason})")
+    telemetry = get_default_telemetry()
+    if telemetry is None:
+        return
+    try:
+        task_id = bb.get(bb_keys.TASK_ID)
+    except Exception:  # noqa: BLE001
+        task_id = None
+    try:
+        telemetry.emit(
+            "gate.verified",
+            {
+                "slot": slot, "target_index": target_index, "phase": phase,
+                "fact": fact, "verdict": verdict.value, "confidence": confidence,
+                "reason": reason,
+            },
+            task_id=task_id, phase="execution",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class BtNode_TargetPreconditionCheck(Behaviour):
     """Verify a target's preconditions at its execution boundary.
 
@@ -1603,10 +1637,11 @@ class BtNode_TargetPreconditionCheck(Behaviour):
     """
 
     def __init__(self, name: str, preconditions: List[str], target_index: int,
-                 action_plan: Sequence[Mapping[str, Any]] = ()):
+                 action_plan: Sequence[Mapping[str, Any]] = (), slot: int = 0):
         super().__init__(name)
         self._preconditions = list(preconditions or [])
         self._target_index = int(target_index)
+        self._slot = int(slot)
         self._self_established = {
             fact for step in (action_plan or []) for fact in _self_established_facts(step)
         }
@@ -1616,6 +1651,7 @@ class BtNode_TargetPreconditionCheck(Behaviour):
         self._bb = self.attach_blackboard_client(name=self.name)
         self._bb.register_key(bb_keys.FACTS, access=Access.READ)
         self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
         for _, key in _TARGET_GATE_EVIDENCE_KEYS:
             self._bb.register_key(key, access=Access.READ)
 
@@ -1648,6 +1684,14 @@ class BtNode_TargetPreconditionCheck(Behaviour):
             except Exception:
                 result = None
             verdict = Verdict.INVALID if result is None else result.verdict
+            reason = "verifier exception" if result is None else result.evidence
+            confidence = 0.0 if result is None else result.confidence
+            # I6: telemetry per checked fact -- fail-fast semantics unchanged,
+            # so a fact after the first failure is never reached/emitted.
+            _emit_gate_verified(
+                self._bb, self._slot, self._target_index, "precondition",
+                source, verdict, confidence, reason,
+            )
             if verdict is not Verdict.VALID:
                 self.feedback_message = f"precondition unmet: {source} ({verdict.value})"
                 return Status.FAILURE
@@ -1673,10 +1717,12 @@ class BtNode_TargetPostconditionCheck(Behaviour):
         completed_steps: Optional[List[Dict[str, Any]]] = None,
         target_location: str = "",
         facts_writer: Optional[Callable[[List[str]], None]] = None,
+        slot: int = 0,
     ):
         super().__init__(name)
         self._postconditions = list(postconditions or [])
         self._target_index = int(target_index)
+        self._slot = int(slot)
         self._action_plan = copy.deepcopy(list(completed_steps or []) + list(action_plan or []))
         self._target_object = target_object
         self._target_location = target_location
@@ -1689,6 +1735,7 @@ class BtNode_TargetPostconditionCheck(Behaviour):
         self._bb.register_key(bb_keys.FACTS, access=Access.WRITE)
         self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.READ)
         self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
         for _, key in _TARGET_GATE_EVIDENCE_KEYS:
             self._bb.register_key(key, access=Access.READ)
 
@@ -1719,6 +1766,14 @@ class BtNode_TargetPostconditionCheck(Behaviour):
                 verdict = Verdict.INVALID
             else:
                 verdict = result.verdict
+            reason = "verifier exception" if result is None else result.evidence
+            confidence = 0.0 if result is None else result.confidence
+            # I6: telemetry per checked fact -- fail-fast semantics unchanged,
+            # so a fact after the first failure is never reached/emitted.
+            _emit_gate_verified(
+                self._bb, self._slot, self._target_index, "postcondition",
+                source, verdict, confidence, reason,
+            )
             if verdict is not Verdict.VALID:
                 self.feedback_message = f"postcondition unmet: {source} ({verdict.value})"
                 return Status.FAILURE
@@ -2223,7 +2278,14 @@ class DynamicExecutor(py_trees.composites.Composite):
             self._state = "REQUESTING"
             self._index += 1
 
-    def _on_target_failure(self, reason: str) -> None:
+    def _on_target_failure(self, reason: str, target_failed_emitted: bool = False) -> None:
+        """``target_failed_emitted`` (I6): whether the caller's
+        ``_emit_failed_step`` already emitted a ``target.failed`` telemetry
+        event for THIS SAME failure — the SKIPPED/UNRECOVERABLE branch below
+        only emits its own ``target.failed`` when that did NOT already
+        happen (never double-emit for a gate failure the caller already
+        reported).
+        """
         self._log(f"target:{self._index}:{self._current_desc()} FAILED: {reason}")
         try:
             request = self._bb.get(bb_keys.REPLAN_REQUEST) or {}
@@ -2295,6 +2357,27 @@ class DynamicExecutor(py_trees.composites.Composite):
             )
             self._log(f"target:{self._index}:{self._current_desc()} SKIPPED "
                       f"(replan budget exceeded){skip_suffix}")
+            # I6 (round-3 adversarial review): the SKIPPED (budget) and
+            # UNRECOVERABLE outcomes previously had no telemetry event of
+            # their own -- only the STATE_LOG text line above. Emit
+            # target.failed here too, UNLESS the caller's _emit_failed_step
+            # already reported target.failed for this same underlying
+            # failure (a gate failure) -- never double-emit.
+            if not target_failed_emitted:
+                telemetry = get_default_telemetry()
+                if telemetry is not None:
+                    try:
+                        task_id = self._bb.get(bb_keys.TASK_ID)
+                    except KeyError:
+                        task_id = None
+                    try:
+                        telemetry.emit(
+                            "target.failed",
+                            {"slot": self._slot, "target_index": self._index, "reason": reason},
+                            task_id=task_id, phase="execution",
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
             self._bb.set(bb_keys.TARGET_INDEX, self._index + 1, overwrite=True)
             self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
             if self._index + 1 >= self._num_targets:
@@ -2424,8 +2507,8 @@ class DynamicExecutor(py_trees.composites.Composite):
             if isinstance(error, str) and error.startswith(IDENTICAL_PLAN_ERROR_PREFIX):
                 self._log(f"target:{self._index}:{self._current_desc()} "
                           f"IDENTICAL_PLAN_SKIPPED ({error})")
-                self._emit_failed_step(None, error)
-                self._on_target_failure(error)
+                already_emitted = self._emit_failed_step(None, error)
+                self._on_target_failure(error, target_failed_emitted=already_emitted)
                 if self._state == "DONE":
                     self.stop(py_trees.common.Status.FAILURE)
                     yield self
@@ -2447,9 +2530,9 @@ class DynamicExecutor(py_trees.composites.Composite):
             if isinstance(error, str) and error.startswith(UNRECOVERABLE_ERROR_PREFIX):
                 self._log(f"target:{self._index}:{self._current_desc()} "
                           f"UNRECOVERABLE_SKIPPED ({error})")
-                self._emit_failed_step(None, error)
+                already_emitted = self._emit_failed_step(None, error)
                 self._bb.set(bb_keys.TARGET_REPLAN_COUNT, self._max_replans, overwrite=True)
-                self._on_target_failure(error)
+                self._on_target_failure(error, target_failed_emitted=already_emitted)
                 if self._state == "DONE":
                     self.stop(py_trees.common.Status.FAILURE)
                     yield self
@@ -2482,8 +2565,8 @@ class DynamicExecutor(py_trees.composites.Composite):
                         self._on_target_success()
                     else:
                         reason = self._last_child_feedback(node)
-                        self._emit_failed_step(node, reason)
-                        self._on_target_failure(reason)
+                        already_emitted = self._emit_failed_step(node, reason)
+                        self._on_target_failure(reason, target_failed_emitted=already_emitted)
                     if self._state == "DONE":
                         terminal_status = (
                             py_trees.common.Status.SUCCESS
@@ -2510,7 +2593,7 @@ class DynamicExecutor(py_trees.composites.Composite):
 
     _GATE_REASON_PREFIXES = ("precondition unmet", "postcondition unmet")
 
-    def _emit_failed_step(self, node, reason: str) -> None:
+    def _emit_failed_step(self, node, reason: str) -> bool:
         """Emit ``step.finished``/failed so the bench sees failed steps too.
 
         ``BtNode_LogStepResult`` only runs after a successful step; a failed
@@ -2526,10 +2609,15 @@ class DynamicExecutor(py_trees.composites.Composite):
 
         ``node=None`` means no subtree ran at all (the executor refused an
         identical replan before swapping it in): always ``target.failed``.
+
+        Returns True iff a ``target.failed`` event was emitted here (vs
+        ``step.finished`` or nothing) — I6 (round-3 adversarial review):
+        ``_on_target_failure``'s SKIPPED/UNRECOVERABLE path uses this to
+        avoid double-emitting ``target.failed`` for the same failure.
         """
         telemetry = get_default_telemetry()
         if telemetry is None:
-            return
+            return False
         try:
             task_id = self._bb.get(bb_keys.TASK_ID)
         except KeyError:
@@ -2554,7 +2642,7 @@ class DynamicExecutor(py_trees.composites.Composite):
                     {"slot": self._slot, "target_index": self._index, "reason": reason},
                     task_id=task_id, phase="execution",
                 )
-                return
+                return True
             params = self._bb.get(bb_keys.CURRENT_PARAMS) or {}
             step_index = int(self._bb.get(bb_keys.PLAN_INDEX) or 1) - 1
             telemetry.emit(
@@ -2565,6 +2653,7 @@ class DynamicExecutor(py_trees.composites.Composite):
             )
         except Exception:
             pass
+        return False
 
     @staticmethod
     def _last_child_feedback(node) -> str:
