@@ -53,8 +53,12 @@ def _make_planner():
 def _knowledge(constants: Path):
     from behavior_tree.GPSR import orchestrator, small_trees
     orchestrator.load_knowledge_from_constants(str(constants))
+    # H-1-L4 (round-3 fix2 review): KNOWN_LOCATION_VALIDATION_EXTRAS (not
+    # the bare START_LOCATION_ALIASES) so tier0/tier1 accept goto(command_
+    # point) the same way the live orchestrator's validate_plan does even
+    # when the constants file has not filled command_point in yet.
     return (set(small_trees.ACTION_FACTORIES),
-            set(orchestrator.KNOWN_LOCATIONS) | set(orchestrator.START_LOCATION_ALIASES))
+            set(orchestrator.KNOWN_LOCATIONS) | set(orchestrator.KNOWN_LOCATION_VALIDATION_EXTRAS))
 
 
 def _filter(entries, only_class: str | None):

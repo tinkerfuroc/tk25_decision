@@ -79,7 +79,7 @@ from .orchestrator import (
     KNOWN_OBJECT_NAMES,
     DEFAULT_OBJECT_LOCATIONS,
     ACTION_CATALOGUE_DESCRIPTION,
-    START_LOCATION_ALIASES,
+    KNOWN_LOCATION_VALIDATION_EXTRAS,
     BtNode_LogStepResult,
     BtNode_MaterialiseStep,
     BtNode_SupervisorBarrier,
@@ -2695,7 +2695,7 @@ class GPSRPlanner:
             if identical_marker_reason.startswith(nested_prefix):
                 identical_marker_reason = identical_marker_reason[len(nested_prefix):]
         known_locs = set(KNOWN_LOCATIONS.keys())
-        known_loc_arg = (known_locs | START_LOCATION_ALIASES) if known_locs else None
+        known_loc_arg = (known_locs | KNOWN_LOCATION_VALIDATION_EXTRAS) if known_locs else None
         known_actions = set(ACTION_FACTORIES.keys())
         for attempt in range(self._max_attempts):
             nonce = uuid.uuid4().hex[:8]

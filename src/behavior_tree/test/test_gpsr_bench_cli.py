@@ -94,6 +94,23 @@ def test_knowledge_includes_room_search_spot_aliases_i7():
     assert "laundry_room" in known_locations
 
 
+def test_knowledge_includes_command_point_when_constants_leave_it_unfilled_h1l4(tmp_path):
+    # H-1-L4 (round-3 fix2 review): a constants file whose command_point is
+    # still the `{}` placeholder leaves it out of KNOWN_LOCATIONS entirely
+    # (H-1's `_try_pose` skips it) -- gpsr_bench._knowledge must still
+    # include it in the known-locations set it hands to validate_plan,
+    # same as the live orchestrator (KNOWN_LOCATION_VALIDATION_EXTRAS), or
+    # tier0/tier1 reject goto(command_point) as unknown where the sim
+    # doesn't.
+    constants = json.loads(CONSTANTS.read_text())
+    constants["possible_poses"]["command_point"] = {}
+    unfilled = tmp_path / "constants_unfilled_cp.json"
+    unfilled.write_text(json.dumps(constants))
+
+    known_actions, known_locations = gpsr_bench._knowledge(unfilled)
+    assert "command_point" in known_locations
+
+
 def test_knowledge_calls_the_shared_orchestrator_loader(monkeypatch):
     # I7: guard against a future regression back to a separate/parallel
     # possible-poses-only loader -- _knowledge must be backed by

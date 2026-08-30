@@ -171,6 +171,18 @@ START_LOCATION_ALIASES = {
     "me", "the_user", "the_operator",
 }
 
+# H-1-L4 (round-3 fix2 review): a VALIDATION-only extension of the set
+# above, used exclusively to build the known-locations argument for
+# validate_plan/uncovered_postcondition_reason -- NEVER for resolve_pose or
+# any pose-resolution path (that stays exactly what H-1 intended: only real
+# KNOWN_LOCATIONS entries and the START_POSE aliases above). command_point
+# is a real, designed map waypoint (H-1's whole point), but a constants
+# file that has not filled it in yet (still the `{}` placeholder, skipped
+# by `_try_pose`) leaves it out of KNOWN_LOCATIONS entirely -- without this,
+# goto(command_point)/at_robot(command_point) is rejected as an unknown
+# location where it used to be alias-accepted before H-1.
+KNOWN_LOCATION_VALIDATION_EXTRAS = START_LOCATION_ALIASES | {"command_point"}
+
 
 def _target_desc(t: Any) -> str:
     """A target's human-readable description: ``desc`` if structured, else itself."""
@@ -914,7 +926,7 @@ class BtNode_PlanActions(Behaviour):
             return
 
         known_locs = set(KNOWN_LOCATIONS.keys())
-        known_loc_arg = (known_locs | START_LOCATION_ALIASES) if known_locs else None
+        known_loc_arg = (known_locs | KNOWN_LOCATION_VALIDATION_EXTRAS) if known_locs else None
         known_actions = set(ACTION_FACTORIES.keys())
         max_attempts = self._max_attempts
 

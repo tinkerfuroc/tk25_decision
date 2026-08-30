@@ -985,3 +985,40 @@ def test_replace_target_plan_installs_the_guarded_empty_plan(monkeypatch, capsys
     assert p.get_action_plan(0, 0) == []
     out = capsys.readouterr().out
     assert "contract-boundary guard emptied the plan" in out
+
+
+# ---------------------------------------------------------------------------
+# H-1-L4 (round-3 fix2 review): command_point stays in the VALIDATOR-side
+# known-location set (validation only, never pose resolution -- H-1's own
+# concern) so a constants file that has not filled it in yet (still a
+# KNOWN_LOCATIONS miss) still validates goto(command_point).
+# ---------------------------------------------------------------------------
+
+CP_TARGET = {
+    "id": "t0", "desc": "go to the command point", "object": "", "location": "command_point",
+    "depends_on": [], "preconditions": [], "postconditions": ["at_robot(command_point)"],
+}
+
+
+def test_plan_target_validates_goto_command_point_unfilled_h1l4(monkeypatch, capsys):
+    # A constants file's command_point is still the `{}` placeholder --
+    # load_knowledge_from_constants skips it (H-1's `_try_pose`), so it is
+    # NOT in KNOWN_LOCATIONS, and it is deliberately NOT in
+    # START_LOCATION_ALIASES (H-1: that would route it through the
+    # captured START_POSE instead of the real waypoint). Real (un-stubbed)
+    # validate_plan must still accept goto(command_point).
+    p = GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    monkeypatch.setattr(planner_module, "KNOWN_LOCATIONS", {"laundry_desk": object()})
+    p._slot_context[0] = {"command": "go to the command point", "targets": [CP_TARGET]}
+    llm_plan = {"plan": [{"action": "goto", "params": {"location": "command_point"}}]}
+    monkeypatch.setattr(planner_module, "_call_llm", lambda *a, **k: (llm_plan, None))
+    monkeypatch.setattr(planner_module, "validate_plan_modifications", lambda *a, **k: (True, ""))
+
+    p.plan_target(
+        0, 0, CP_TARGET["desc"], command="go to the command point",
+        target_obj="", target_loc="command_point", target=CP_TARGET, all_targets=[CP_TARGET],
+    )
+
+    assert [s["action"] for s in p.get_action_plan(0, 0)] == ["goto"]
