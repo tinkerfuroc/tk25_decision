@@ -10,6 +10,7 @@ from behavior_tree.GPSR.planner import (
     TOP_LAYER_SYSTEM_PROMPT,
     _append_report_target_if_needed,
     _build_lower_layer_user_prompt,
+    _log_split_acceptance,
     _merge_transport_targets,
     _normalise_targets,
     _reject_person_object_handling,
@@ -272,6 +273,50 @@ def test_j11_transport_followed_by_find_object_is_not_merged():
     ]
     result = _merge_transport_targets(targets)
     assert result == targets
+
+
+# ---------------------------------------------------------------------------
+# J14: log target contracts + emit split.accepted at split acceptance
+# ---------------------------------------------------------------------------
+
+def test_j14_logs_one_line_per_target_and_emits_split_accepted(tmp_path, capsys):
+    from behavior_tree.GPSR.telemetry import GpsrTelemetry
+    from behavior_tree.GPSR import telemetry as telemetry_module
+    import json
+
+    telemetry = GpsrTelemetry(tmp_path, trajectory_id="t-test", enabled=True)
+    telemetry_module.set_default_telemetry(telemetry)
+    try:
+        targets = [
+            {"id": "t0", "desc": "grab the coke", "object": "coke", "location": "kitchen",
+             "depends_on": [], "preconditions": [], "postconditions": ["held(coke)"]},
+        ]
+        _log_split_acceptance(targets, slot=0)
+        captured = capsys.readouterr()
+        assert "[split] t0 'grab the coke' " in captured.out
+        assert "pre=[] post=['held(coke)'] depends_on=[]" in captured.out
+        telemetry.close()
+        lines = [
+            json.loads(line)
+            for line in (tmp_path / "debug" / "t-test" / "events.jsonl").read_text().splitlines()
+        ]
+        accepted = [e for e in lines if e["event_type"] == "split.accepted"]
+        assert len(accepted) == 1
+        assert accepted[0]["payload"]["slot"] == 0
+        assert accepted[0]["payload"]["targets"] == targets
+        assert accepted[0]["task_id"] == "t-test/task-1"
+    finally:
+        telemetry_module.set_default_telemetry(None)
+
+
+def test_j14_log_line_appears_without_telemetry_configured(capsys):
+    targets = [
+        {"id": "t0", "desc": "go to the kitchen", "object": "", "location": "kitchen",
+         "depends_on": [], "preconditions": [], "postconditions": ["at_robot(kitchen)"]},
+    ]
+    _log_split_acceptance(targets)  # no slot, no telemetry configured -- must not raise
+    captured = capsys.readouterr()
+    assert "[split] t0 'go to the kitchen' " in captured.out
 
 
 def test_fact_store_applies_transitions_and_returns_defensive_copies():

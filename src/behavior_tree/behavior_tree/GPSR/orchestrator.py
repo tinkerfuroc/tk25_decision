@@ -2074,10 +2074,11 @@ class BtNode_SplitCommand(Behaviour):
     hook for command-level replans (trigger not wired yet).
     """
 
-    def __init__(self, name: str, planner, rephrase_on_failure: bool = False):
+    def __init__(self, name: str, planner, rephrase_on_failure: bool = False, slot: int = 0):
         super().__init__(name)
         self._planner = planner
         self._rephrase_on_failure = rephrase_on_failure
+        self._slot = int(slot)
         self._bb = None
         self._thread = None
         self._targets = None
@@ -2112,7 +2113,7 @@ class BtNode_SplitCommand(Behaviour):
         # deterministic split `split_command` itself uses when every LLM
         # attempt fails.
         try:
-            self._targets = self._planner.split_command(command)
+            self._targets = self._planner.split_command(command, slot=self._slot)
         except Exception as exc:  # noqa: BLE001 -- I4: never leave the split not-ready
             print(f"[split] split_command crashed: {exc!r} -> deterministic fallback split")
             from .planner import _offline_mock_targets  # lazy: planner.py imports this module

@@ -10,6 +10,25 @@ def _ev(event_type, task_id=None, payload=None, at="2026-08-23T00:00:00Z", seq=0
             "phase": None, "parent_event_id": None, "causation_ids": [], "payload": payload or {}}
 
 
+def test_parse_events_keeps_split_accepted_targets(tmp_path):
+    # J14 (round-3 adversarial review, tier0 #7): split.accepted carries the
+    # full target contracts so tier0/tier2 reports can audit them.
+    targets = [
+        {"id": "t0", "desc": "grab the coke", "object": "coke", "location": "kitchen",
+         "depends_on": [], "preconditions": [], "postconditions": ["held(coke)"]},
+        {"id": "t1", "desc": "deliver the coke to me", "object": "coke", "location": "",
+         "depends_on": ["t0"], "preconditions": ["held(coke)"],
+         "postconditions": ["delivered(coke,me)"]},
+    ]
+    lines = [
+        _ev("split.accepted", "gpsr-x/task-2", {"slot": 2, "targets": targets}, seq=0),
+    ]
+    path = tmp_path / "events.jsonl"
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+    results = parse_events(path)
+    assert results[2].split_targets == targets
+
+
 def test_slot_of_parses_task_suffix():
     assert slot_of("gpsr-x/task-3") == 3
     assert slot_of(None) is None

@@ -728,7 +728,7 @@ def test_all_success_dependency_chain_ends_success():
 # ---------------------------------------------------------------------------
 
 class _CrashingSplitPlanner:
-    def split_command(self, command):
+    def split_command(self, command, slot=None):
         raise RuntimeError("boom: split_command crashed")
 
 

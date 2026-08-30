@@ -42,6 +42,11 @@ class TaskResult:
     # WHY a gate failed (e.g. "postcondition:counted(drinks) INVALID (count
     # artifact target provenance mismatch)") instead of a bare status.
     gate_reasons: dict[int, str] = field(default_factory=dict)
+    # J14 (round-3 adversarial review, tier0 #7): the accepted split's full
+    # target contracts (id/desc/pre/postconditions/depends_on/object/
+    # location), from `split.accepted` -- lets tier0/tier2 reports show a
+    # run's contracts, not just descriptions, for auditing split mistakes.
+    split_targets: list[dict] | None = None
 
 
 def slot_of(task_id: str | None) -> int | None:
@@ -150,6 +155,10 @@ def parse_events(path: Path) -> dict[int, TaskResult]:
             result.first_seen = event.get("occurred_at")
         if kind == "step.finished":
             result.steps.append((str(payload.get("action")), str(payload.get("outcome"))))
+        elif kind == "split.accepted":
+            targets = payload.get("targets")
+            if isinstance(targets, list):
+                result.split_targets = targets
         elif kind == "planner.error":
             result.planner_errors += 1
         elif kind == "gate.verified":

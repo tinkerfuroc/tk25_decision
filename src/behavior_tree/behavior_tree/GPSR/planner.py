@@ -62,6 +62,7 @@ from .small_trees import (
     get_small_tree_roles,
 )
 from .supervision.runtime import get_default_supervisor, wrap_action_factory
+from .telemetry import get_default_telemetry
 from .action_contracts import (
     ACTION_CONTRACTS,
     IDENTICAL_PLAN_ERROR_PREFIX,
@@ -658,6 +659,40 @@ def _merge_transport_targets(targets: List[Dict[str, Any]]) -> List[Dict[str, An
             changed = True
             break
     return merged
+
+
+def _log_split_acceptance(
+    targets: List[Dict[str, Any]], slot: Optional[int] = None,
+) -> None:
+    """J14 (round-3 adversarial review, tier0 #7): audit an accepted split.
+
+    The old ``[split] accepted on attempt N: [descs]`` line showed only
+    descriptions -- never each target's preconditions/postconditions/
+    depends_on/object/location, so no run could be audited for contract
+    mistakes (a wrong precondition, a merge/reject that changed the shape,
+    ...). Prints one line per target and emits a ``split.accepted``
+    telemetry event ``{slot, targets: [...]}`` (kept by ``bench/events.py``
+    so tier0/tier2 reports can show the full contract, not just the descs).
+    """
+    for t in targets:
+        print(
+            f"[split] {t.get('id')} {t.get('desc')!r} "
+            f"pre={t.get('preconditions') or []} post={t.get('postconditions') or []} "
+            f"depends_on={t.get('depends_on') or []} "
+            f"object={t.get('object') or ''!r} location={t.get('location') or ''!r}"
+        )
+    telemetry = get_default_telemetry()
+    if telemetry is None:
+        return
+    try:
+        task_id = telemetry.task_id(slot + 1) if slot is not None else None
+        telemetry.emit(
+            "split.accepted",
+            {"slot": slot, "targets": [dict(t) for t in targets]},
+            task_id=task_id, phase="planning",
+        )
+    except Exception:  # noqa: BLE001 -- telemetry must never break the split
+        pass
 
 
 def _dependency_ancestor_targets(
@@ -2067,7 +2102,9 @@ class GPSRPlanner:
 
     # -- top layer ----------------------------------------------------------
 
-    def split_command(self, command: str) -> List[Dict[str, Any]]:
+    def split_command(
+        self, command: str, slot: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         """TOP LAYER. Blocking split of a command into structured targets.
 
         Returns a list of target dicts ``{desc, object, location, depends_on}``
@@ -2075,9 +2112,15 @@ class GPSRPlanner:
         ``BtNode_SplitCommand`` (offline mock returns instantly, no thread
         needed). On total LLM failure falls back to the deterministic split so
         the pipeline always proceeds.
+
+        ``slot`` (optional) is used only for J14's acceptance audit log/
+        telemetry (below) — callers that don't have one yet (ad hoc tests)
+        still get the per-target log line, just with no task-scoped event.
         """
         if self._offline_mock:
-            return _offline_mock_targets(command)
+            targets = _offline_mock_targets(command)
+            _log_split_acceptance(targets, slot)
+            return targets
         client = self._new_client()
         last_reason: Optional[str] = None
         for attempt in range(self._max_attempts):
@@ -2125,6 +2168,7 @@ class GPSRPlanner:
                 continue
             print(f"[split] accepted on attempt {attempt+1}: "
                   f"{[t['desc'] for t in targets]}")
+            _log_split_acceptance(targets, slot)
             return targets
         print(f"[split] all {self._max_attempts} attempts failed -> "
               f"deterministic fallback split")
