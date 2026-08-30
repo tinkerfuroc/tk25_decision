@@ -83,6 +83,19 @@ _PROVENANCE_STOPWORDS = {
     "say", "tell", "today", "it", "that", "this", "in", "on", "at",
 }
 
+# M-2 (round-3 fix review): the top layer's split-prompt advertises the
+# predicate as literally `answered(question)` (planner.py), and plans like
+# `answered(question of the person)`/`answered(information)` are plausible,
+# generic paraphrases of "the question was answered" — not a claim about a
+# SPECIFIC different question. Words here carry no discriminating content on
+# their own: a fact whose content words (after _PROVENANCE_STOPWORDS) are
+# ENTIRELY made of these must never INVALID on zero overlap (there is
+# nothing specific to disagree about), only fall through to the weak
+# partial-VALID branch below.
+_NON_DISCRIMINATING_FACT_WORDS = {
+    "question", "answer", "information", "person", "people", "it", "thing", "things",
+}
+
 
 def _content_words(text: str) -> set[str]:
     cleaned = re.sub(r"[^a-zA-Z0-9_\s]", " ", str(text))
@@ -646,7 +659,15 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
                 provenance_words = _content_words(provenance)
                 if not fact_words or fact_words.issubset(provenance_words):
                     return _result(Verdict.VALID, "answer artifact question provenance matches")
-                if not (fact_words & provenance_words) and len(provenance_words) >= 2:
+                # M-2 (round-3 fix review): only a DISCRIMINATING fact word
+                # (one that says something specific, not just "question" /
+                # "person" / ...) can justify rejecting on zero overlap.
+                discriminating = fact_words - _NON_DISCRIMINATING_FACT_WORDS
+                if (
+                    discriminating
+                    and not (fact_words & provenance_words)
+                    and len(provenance_words) >= 2
+                ):
                     return _result(Verdict.INVALID, "answer artifact question provenance mismatch")
                 return _result(
                     Verdict.VALID, "answer artifact question provenance partially matches", 0.6

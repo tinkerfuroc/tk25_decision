@@ -399,6 +399,29 @@ def test_answered_provenance_invalid_only_when_zero_overlap_and_specific_questio
     assert "mismatch" in invalid.evidence
 
 
+def test_answered_provenance_generic_fact_words_never_invalid():
+    # M-2 (round-3 fix review): the top layer literally advertises the
+    # predicate as `answered(question)`, so generic paraphrases like
+    # "question of the person" carry no discriminating content -- zero
+    # overlap with an unrelated question must NOT INVALID a correct answer.
+    result, _ = _check(
+        "answered(question of the person)",
+        evidence={"llm_answer": "Four.", "llm_question": "How many chairs are there?"},
+    )
+    assert result.verdict is Verdict.VALID
+
+    # Same for the other generic nouns named by the ruling, alone or mixed.
+    for fact_text in (
+        "answered(question)", "answered(answer)", "answered(information)",
+        "answered(the person)", "answered(it)", "answered(thing)", "answered(things)",
+    ):
+        result, _ = _check(
+            fact_text,
+            evidence={"llm_answer": "Four.", "llm_question": "How many chairs are there?"},
+        )
+        assert result.verdict is Verdict.VALID, fact_text
+
+
 def test_answered_provenance_normalizes_whitespace_and_underscores():
     result, _ = _check(
         "answered(what color)",
