@@ -32,6 +32,48 @@ def test_tier0_uses_injected_runner_and_writes_report(tmp_path, monkeypatch):
     assert (out / "SUMMARY.md").exists() and (out / "report.json").exists()
 
 
+def test_resolved_source_path_matches_the_imported_package():
+    # M-3 (round-3 fix review): a stale colcon install/ can shadow this
+    # source checkout on sys.path even though every import still appears to
+    # work -- this must resolve the ACTUAL imported behavior_tree.__file__,
+    # not e.g. a hardcoded checkout-relative guess.
+    import behavior_tree
+    from pathlib import Path
+    assert gpsr_bench._resolved_source_path() == str(Path(behavior_tree.__file__).resolve())
+
+
+def test_main_prints_source_path_banner_before_running(tmp_path, capsys, monkeypatch):
+    corpus = tmp_path / "corpus.jsonl"
+    gpsr_bench.main(["gen", "--seed", "1", "--per-template", "1", "--constants", str(CONSTANTS), "--out", str(corpus)])
+    capsys.readouterr()  # discard the gen command's own output
+
+    def fake_run(entries, planner, **kwargs):
+        return [BenchResult(e.id, e.template, e.feasibility, 0, "PASS") for e in entries]
+
+    monkeypatch.setattr(gpsr_bench, "run_tier0", fake_run)
+    monkeypatch.setattr(gpsr_bench, "_make_planner", lambda: object())
+    out = tmp_path / "t0"
+    gpsr_bench.main(["tier0", "--corpus", str(corpus), "--out", str(out), "--constants", str(CONSTANTS)])
+    stdout = capsys.readouterr().out
+    assert "[gpsr-bench] behavior_tree resolved from:" in stdout
+    assert gpsr_bench._resolved_source_path() in stdout
+
+
+def test_tier0_report_meta_carries_source_path(tmp_path, monkeypatch):
+    corpus = tmp_path / "corpus.jsonl"
+    gpsr_bench.main(["gen", "--seed", "1", "--per-template", "1", "--constants", str(CONSTANTS), "--out", str(corpus)])
+
+    def fake_run(entries, planner, **kwargs):
+        return [BenchResult(e.id, e.template, e.feasibility, 0, "PASS") for e in entries]
+
+    monkeypatch.setattr(gpsr_bench, "run_tier0", fake_run)
+    monkeypatch.setattr(gpsr_bench, "_make_planner", lambda: object())
+    out = tmp_path / "t0"
+    gpsr_bench.main(["tier0", "--corpus", str(corpus), "--out", str(out), "--constants", str(CONSTANTS)])
+    report = json.loads((out / "report.json").read_text())
+    assert report["meta"]["source_path"] == gpsr_bench._resolved_source_path()
+
+
 def test_knowledge_includes_start_location_aliases():
     known_actions, known_locations = gpsr_bench._knowledge(CONSTANTS)
     assert "start_position" in known_locations

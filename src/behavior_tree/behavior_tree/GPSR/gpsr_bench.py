@@ -27,6 +27,24 @@ DEFAULT_CONSTANTS = HERE / "constants.rcw2026.json"
 DEFAULT_MOCK_CONFIG = HERE.parent / "mock_config.bench.json"
 
 
+def _resolved_source_path() -> str:
+    """M-3 (round-3 fix review): the resolved ``behavior_tree`` package path.
+
+    A `colcon install/` copy of the package can shadow the source checkout
+    on ``sys.path`` (e.g. with `install/setup.bash` sourced) -- ``import
+    behavior_tree`` then silently resolves to a STALE copy, not this
+    checkout, even though every module this file imports FROM
+    (``behavior_tree.GPSR...``) still appears to work. A prior round's tier0
+    sweep reproduced exactly that: `goto(bedroom)` rejected as unknown
+    because the stale install predates the room-alias loader. Printing/
+    recording this path makes a stale-install run visible in the report
+    instead of silently invalid. See docs/superpowers/notes/ for the
+    PYTHONPATH / colcon-build workaround.
+    """
+    import behavior_tree
+    return str(Path(behavior_tree.__file__).resolve())
+
+
 def _make_planner():
     from behavior_tree.GPSR.planner import GPSRPlanner
     return GPSRPlanner()
@@ -91,7 +109,7 @@ def cmd_tier0(args) -> int:
                         known_locations=known_locations, timeout_s=args.timeout,
                         planner_factory=_make_planner)
     meta = {"tier": 0, "timeout_s": args.timeout, "only_class": args.only_class,
-            "seed": _corpus_seed(entries)}
+            "seed": _corpus_seed(entries), "source_path": _resolved_source_path()}
     return _finish(results, Path(args.out), Path(args.corpus), meta=meta)
 
 
@@ -102,7 +120,7 @@ def cmd_tier1(args) -> int:
                         plan_dir=Path(args.out) / "runs", live_llm=not args.offline_planner)
     meta = {"tier": 1, "group_size": args.group_size, "timeout_s": args.timeout,
             "live_llm": not args.offline_planner, "only_class": args.only_class,
-            "seed": _corpus_seed(entries)}
+            "seed": _corpus_seed(entries), "source_path": _resolved_source_path()}
     return _finish(results, Path(args.out), Path(args.corpus), meta=meta)
 
 
@@ -125,7 +143,8 @@ def cmd_tier2(args) -> int:
                         llm_check=not args.skip_llm_check)
     meta = {"tier": args.tier_label, "timeout_s": args.timeout, "settle_s": args.settle,
             "only_class": args.only_class, "live_llm": not args.offline_planner,
-            "llm_check": not args.skip_llm_check, "seed": _corpus_seed(entries)}
+            "llm_check": not args.skip_llm_check, "seed": _corpus_seed(entries),
+            "source_path": _resolved_source_path()}
     return _finish(results, Path(args.out), Path(args.corpus), meta=meta)
 
 
@@ -188,6 +207,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    # M-3: loud banner so a stale colcon install/ shadowing this source
+    # checkout is visible on stdout before any command runs, not just
+    # buried in the report meta.
+    print(f"[gpsr-bench] behavior_tree resolved from: {_resolved_source_path()}")
     return args.func(args)
 
 
