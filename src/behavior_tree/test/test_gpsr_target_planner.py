@@ -11,6 +11,7 @@ from behavior_tree.GPSR.planner import (
     _append_report_target_if_needed,
     _build_lower_layer_user_prompt,
     _normalise_targets,
+    _reject_person_object_handling,
 )
 from behavior_tree.GPSR.planner_validators import validate_dag
 
@@ -162,6 +163,53 @@ def test_j8_no_counted_or_answered_facts_gets_no_report_target():
     ]
     result = _append_report_target_if_needed(targets)
     assert result == targets
+
+
+# ---------------------------------------------------------------------------
+# J9: persons are never object-handled (held/placed/delivered)
+# ---------------------------------------------------------------------------
+
+def test_j9_person_object_handling_split_is_rejected():
+    # edge corpus guideClothPrs: the split treated a person like an object.
+    targets = [
+        {"id": "t0", "desc": "Take the person wearing a gray jacket from the sofa",
+         "object": "", "location": "sofa", "depends_on": [],
+         "preconditions": [], "postconditions": ["held(person wearing a gray jacket)"]},
+        {"id": "t1", "desc": "Take the person wearing a gray jacket to the side_table",
+         "object": "", "location": "side_table", "depends_on": ["t0"],
+         "preconditions": ["held(person wearing a gray jacket)"],
+         "postconditions": ["at_robot(side_table)"]},
+        {"id": "t2", "desc": "Place the person wearing a gray jacket at the side_table",
+         "object": "", "location": "side_table", "depends_on": ["t1"],
+         "preconditions": ["held(person wearing a gray jacket)"],
+         "postconditions": ["placed(person wearing a gray jacket,side_table)"]},
+    ]
+    reason = _reject_person_object_handling(targets)
+    assert reason is not None
+    assert "persons are guided, not grasped" in reason
+    assert "find_person + guide" in reason
+
+
+def test_j9_normal_guide_split_passes():
+    targets = [
+        {"id": "t0", "desc": "find the person wearing a gray jacket at the sofa",
+         "object": "", "location": "sofa", "depends_on": [],
+         "preconditions": [], "postconditions": ["person_found(person wearing a gray jacket)"]},
+        {"id": "t1", "desc": "guide the person wearing a gray jacket to the side_table",
+         "object": "", "location": "side_table", "depends_on": ["t0"],
+         "preconditions": ["person_found(person wearing a gray jacket)"],
+         "postconditions": ["at_robot(side_table)"]},
+    ]
+    assert _reject_person_object_handling(targets) is None
+
+
+def test_j9_ordinary_object_handling_target_passes():
+    targets = [
+        {"id": "t0", "desc": "grab the coke from the kitchen", "object": "coke",
+         "location": "kitchen", "depends_on": [], "preconditions": [],
+         "postconditions": ["held(coke)"]},
+    ]
+    assert _reject_person_object_handling(targets) is None
 
 
 def test_fact_store_applies_transitions_and_returns_defensive_copies():

@@ -183,6 +183,10 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
         "preconditions": [the counted(...) facts], "postconditions":
         ["at_robot(start_position)", "answered(...)"]} — a plan that gathers a
         count/answer without ever speaking it is incomplete.
+    12. A PERSON is never held/placed/delivered like an object: a target
+        about a person (named or described, e.g. "the person wearing a gray
+        jacket") must use postconditions person_found(<p>)/at_robot(<dest>)
+        (find_person + guide), never held(...)/placed(...)/delivered(...).
 """).strip().replace("__SELF_SATISFIED_RULE__", render_self_satisfied_rule())
 
 
@@ -509,6 +513,55 @@ def _append_report_target_if_needed(
     }
     print(f"[split] appended report target {new_id} (depends_on {reporting_ids})")
     return targets + [report_target]
+
+
+# J9 (round-3 adversarial review, edge corpus guideClothPrs): mirrors
+# bench/corpus.py's ``Knowledge.names`` -- the canonical GPSR arena name
+# list this repo's corpus generator draws from -- kept here as a plain
+# set (no import of bench/, which depends on planner.py, not the reverse).
+_ARENA_PERSON_NAMES = frozenset({
+    "alex", "sarah", "john", "emma", "liam", "olivia",
+})
+_GENERIC_PERSON_WORDS_RE = re.compile(r"\b(person|persons|someone|guest)\b", re.IGNORECASE)
+
+
+def _desc_names_a_person(desc: str) -> bool:
+    if _GENERIC_PERSON_WORDS_RE.search(desc):
+        return True
+    tokens = re.findall(r"[A-Za-z']+", desc)
+    return any(tok.lower() in _ARENA_PERSON_NAMES for tok in tokens)
+
+
+def _reject_person_object_handling(
+    targets: List[Dict[str, Any]],
+) -> Optional[str]:
+    """J9 (round-3 adversarial review, edge corpus guideClothPrs): a person
+    is GUIDED, never grasped/placed/delivered like an object.
+
+    Split produced ``['Take the person wearing a gray jacket from the sofa',
+    'Take the person ... to the side_table', 'Place the person ... at the
+    side_table']`` for a guide command -- object-handling verbs applied to a
+    PERSON. Deterministic reject-and-retry: a target whose desc names a
+    person (an arena name, or a generic "person"/"someone"/"guest" word)
+    AND whose postcondition predicate is held/placed/delivered is rejected,
+    with a reason naming the correct pattern (find_person + guide).
+    Returns the rejection reason, or None when nothing is wrong.
+    """
+    for target in targets:
+        desc = str(target.get("desc") or "")
+        if not _desc_names_a_person(desc):
+            continue
+        for condition in target.get("postconditions") or []:
+            if not isinstance(condition, str):
+                continue
+            fact, _err = parse_fact(condition)
+            if fact is not None and fact.predicate in {"held", "placed", "delivered"}:
+                return (
+                    f"target {target.get('id')!r} ({desc!r}): persons are "
+                    "guided, not grasped: use find_person + guide "
+                    "(postconditions person_found(<p>), at_robot(<dest>))"
+                )
+    return None
 
 
 def _dependency_ancestor_targets(
@@ -1915,6 +1968,12 @@ class GPSRPlanner:
                       f"{last_reason}")
                 continue
             targets = _append_report_target_if_needed(targets)
+            person_object_reason = _reject_person_object_handling(targets)
+            if person_object_reason is not None:
+                last_reason = person_object_reason
+                print(f"[split] attempt {attempt+1}/{self._max_attempts} REJECTED: "
+                      f"{last_reason}")
+                continue
             ok, reason = _validate_target_contract(targets)
             if not ok:
                 last_reason = f"your target graph/conditions are invalid: {reason}"
