@@ -600,8 +600,16 @@ _REPORT_KEYWORDS_RE = re.compile(
 # addresses a person, or uses one of these speech verbs, has already spoken
 # its answer; appending a synthetic report target for it sends the robot
 # back to start_position to re-announce to nobody.
+_ANSWERED_ADDRESSEE_WORDS = (
+    "person", "someone", "guest",
+    # N-3 (round-3 fix2 review): "talk to the woman ..." / "ask the man his
+    # name" name the addressee by a generic gendered/age noun instead of
+    # person/someone/guest/an arena name -- widen the alternation so those
+    # still count as "already spoken to someone" (M-1's whole point).
+    "man", "woman", "boy", "girl", "child", "lady", "gentleman", "people",
+) + tuple(_ARENA_PERSON_NAMES)
 _ANSWERED_ADDRESSES_A_PERSON_RE = re.compile(
-    r"\b(to|for)\s+(the\s+)?(person|someone|guest|" + "|".join(_ARENA_PERSON_NAMES) + r")\b",
+    r"\b(to|for)\s+(the\s+)?(" + "|".join(_ANSWERED_ADDRESSEE_WORDS) + r")\b",
     re.IGNORECASE,
 )
 _ANSWERED_SPEECH_VERB_RE = re.compile(

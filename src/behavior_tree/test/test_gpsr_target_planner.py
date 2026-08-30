@@ -263,6 +263,21 @@ def test_j8_answered_addressed_to_a_person_by_preposition_gets_no_report_target(
     assert result == targets
 
 
+def test_j8_answered_addressed_to_a_generic_gendered_word_gets_no_report_target_n3():
+    # N-3 (round-3 fix2 review): "talk to the woman ..." / "ask the man his
+    # name" name the addressee by a generic gendered/age noun instead of
+    # person/someone/guest/an arena name -- the addressee alternation is
+    # widened so these still count as "already spoken to someone".
+    for word in ("man", "woman", "boy", "girl", "child", "lady", "gentleman", "people"):
+        targets = [
+            {"id": "t0", "desc": f"talk to the {word} about the weather",
+             "object": "", "location": "", "depends_on": [],
+             "preconditions": [], "postconditions": ["answered(the weather)"]},
+        ]
+        result = _append_report_target_if_needed(targets)
+        assert result == targets, f"word={word!r} unexpectedly got a report target"
+
+
 # ---------------------------------------------------------------------------
 # J9: persons are never object-handled (held/placed/delivered)
 # ---------------------------------------------------------------------------
