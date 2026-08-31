@@ -786,8 +786,13 @@ class PersistentFailureCap(py_trees.decorators.Decorator):
 
         if self.exhausted:
             # Cap already reached in a previous entry: do NOT tick the child
-            # again (no more goals / side effects).
-            self.stop(Status.FAILURE)
+            # again (no more goals / side effects). V-4 (task-K review):
+            # only transition (call stop()) once, not on every tick spent in
+            # this terminal state -- normal py_trees usage calls stop() once
+            # per status CHANGE, and a future terminate() override must not
+            # fire on every tick forever.
+            if self.status != Status.FAILURE:
+                self.stop(Status.FAILURE)
             self.status = Status.FAILURE
             yield self
             return
@@ -804,7 +809,18 @@ class PersistentFailureCap(py_trees.decorators.Decorator):
                 if not self._fired:
                     self._fired = True
                     if self.on_exhausted is not None:
-                        self.on_exhausted()
+                        # V-5 (task-K review): a callback's own bug must
+                        # never break the tree's tick -- this decorator is a
+                        # generic, reusable cap, not just the one call site
+                        # whose current callback happens to already guard
+                        # its own body.
+                        try:
+                            self.on_exhausted()
+                        except Exception as exc:  # noqa: BLE001
+                            self.logger.error(
+                                f"{self.__class__.__name__} '{self.name}': "
+                                f"on_exhausted() raised: {exc!r}"
+                            )
 
         if new_status != Status.RUNNING:
             self.stop(new_status)

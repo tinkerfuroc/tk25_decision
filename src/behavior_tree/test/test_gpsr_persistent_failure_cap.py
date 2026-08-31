@@ -163,3 +163,84 @@ def test_v3_cap_is_a_pure_single_child_decorator():
         cap.tick_once()
         _reenter(cap)
     assert len(cap.children) == 1
+
+
+def test_v4_stop_is_called_once_per_transition_not_every_exhausted_tick():
+    # V-4 (task-K review, LOW): self.stop(FAILURE) must fire only on the
+    # actual transition into the exhausted-FAILURE terminal state, not on
+    # every tick spent there -- otherwise a future terminate() override
+    # would fire every ~500ms forever instead of once.
+    child = _AlwaysFail("tuck arm (stub)")
+    cap = PersistentFailureCap("cap", child, max_failures=2, on_exhausted=None)
+
+    stop_calls = []
+    real_stop = cap.stop
+
+    def _counting_stop(new_status):
+        stop_calls.append(new_status)
+        real_stop(new_status)
+
+    cap.stop = _counting_stop  # captures BOTH tick()-internal and our own
+                                # explicit re-entry stop(INVALID) calls below.
+
+    # Tick 1: under cap, transparent FAILURE pass-through -- one transition,
+    # one stop() call (the non-exhausted code path's own stop(new_status)).
+    cap.tick_once()
+    assert len(stop_calls) == 1
+
+    # Tick 2: reaches max_failures=2 INSIDE the non-exhausted code path (not
+    # yet the early-exit branch) -- one more transition, one more stop().
+    cap.tick_once()
+    assert cap.exhausted is True
+    assert len(stop_calls) == 2
+
+    # Ticks 3-5: now in the exhausted early-exit branch with status already
+    # FAILURE from tick 2 and no re-entry in between -- NO transition, so
+    # stop() must not be called again on any of these.
+    cap.tick_once()
+    cap.tick_once()
+    cap.tick_once()
+    assert len(stop_calls) == 2
+
+    # A root-restart re-entry (INVALID) is itself one stop() call (the
+    # caller's own invalidation, mirroring a real ancestor Sequence -- not
+    # what this test is pinning), and the FOLLOWING exhausted-branch tick
+    # sees status=INVALID != FAILURE -- that IS a transition, one more
+    # stop() call, but still not repeated on the ticks after it.
+    cap.stop(Status.INVALID)
+    assert len(stop_calls) == 3
+    cap.tick_once()
+    assert len(stop_calls) == 4
+    cap.tick_once()
+    cap.tick_once()
+    assert len(stop_calls) == 4
+
+
+def test_v5_on_exhausted_exception_is_caught_and_logged_not_raised():
+    # V-5 (task-K review, LOW): a broken on_exhausted callback must never
+    # break the tree's tick -- this decorator is generic/reusable, not just
+    # the one call site whose current callback happens to guard itself.
+    child = _AlwaysFail("tuck arm (stub)")
+
+    def _broken_callback():
+        raise RuntimeError("boom")
+
+    cap = PersistentFailureCap("cap", child, max_failures=2, on_exhausted=_broken_callback)
+
+    logged = []
+    cap.logger.error = lambda msg: logged.append(msg)
+
+    # Must not raise, despite on_exhausted blowing up on the exhausting tick.
+    cap.tick_once()
+    cap.tick_once()
+
+    assert cap.exhausted is True
+    assert cap.status is Status.FAILURE
+    assert len(logged) == 1
+    assert "boom" in logged[0]
+
+    # And it stays quiet/non-raising on every later tick too.
+    for _ in range(3):
+        cap.tick_once()
+        assert cap.status is Status.FAILURE
+        _reenter(cap)
