@@ -137,6 +137,38 @@ DEFAULT_OBJECT_LOCATIONS: Dict[str, str] = {}
 # spot is unknown (the override case). Populated from constants.json
 # "search_spots"; a location with no entry falls back to [itself].
 ROOM_SEARCH_SPOTS: Dict[str, List[str]] = {}
+def reduce_unknown_object_query(prompt: str) -> Optional[str]:
+    """Token-subset-reduce an unknown object vision query to a known name.
+
+    L1b (round-4 battery fix, run 016): the LLM's plan named ``object: "red
+    bowl"`` for a command that only ever said "bowl" (the spawned YCB bowl
+    is white); the L1a plan-validation guard catches this at plan time, but
+    a query can still reach the scan unknown. ``_object_scan_and_verify``'s
+    caller (``create_find_object``, see ``BtNode_ReduceObjectQuery``) uses
+    this to retry a full-sweep failure ONCE with the reduced query.
+
+    Returns the known-object token found within ``prompt`` (e.g. "bowl"), or
+    None when ``prompt`` is already known (a KNOWN_OBJECT_PROMPTS key or
+    value, or a KNOWN_OBJECT_NAMES member — nothing to reduce), or when no
+    token of it is a known object name (nothing this rule can reduce it to
+    — leave it to the open-vocabulary vision system, same as L1a).
+    """
+    prompt_norm = str(prompt or "").strip()
+    if not prompt_norm:
+        return None
+    if (_normalize(prompt_norm) in KNOWN_OBJECT_NAMES
+            or prompt_norm in KNOWN_OBJECT_PROMPTS
+            or prompt_norm in KNOWN_OBJECT_PROMPTS.values()):
+        return None
+    tokens = re.findall(r"[a-zA-Z]+", prompt_norm.lower())
+    matches = [t for t in tokens if t in KNOWN_OBJECT_NAMES]
+    if not matches:
+        return None
+    # English adjective-noun order: "red bowl" -> the noun is the LAST
+    # known-object token.
+    return matches[-1]
+
+
 # Appliances/containers with doors the robot CANNOT open or reach into itself: a
 # grasp there is ALWAYS bypassed to the ask-referee branch (the referee opens the
 # door and hands the item over). Forced into NO_GRASP_LOCATIONS on every load so a
@@ -468,7 +500,11 @@ SYSTEM_PROMPT = textwrap.dedent("""
     whatever object word the command names (e.g. "bottle", "cup", "remote",
     "coke"). The "Known objects" list is only the typical arena items as a hint —
     NEVER refuse or announce "I cannot find a known object matching X"; just use
-    X as the object. Only refuse if there is no LOCATION you can resolve.
+    X as the object. Only refuse if there is no LOCATION you can resolve. The
+    ``object`` param of ``find_object`` / ``grasp`` / ``count`` must copy the
+    command's own noun phrase, or a known object name, VERBATIM — never invent
+    a descriptive attribute the command did not use (the command says "the
+    bowl"? pass "bowl", never "red bowl", even if you can guess a colour).
 
     Hard planning rules — your plan WILL be rejected if you violate any:
     1. Do not silently drop any clause from the command. Every clause must

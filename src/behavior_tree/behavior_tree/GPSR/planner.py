@@ -2846,6 +2846,13 @@ class GPSRPlanner:
                 known_locations=known_loc_arg,
                 prior_plan=prior_plan,
                 postconditions=(target or {}).get("postconditions"),
+                # L1a (round-4 battery fix, run 016): reject an invented
+                # object attribute ("red bowl" when only "bowl" was ever
+                # said). raw_command is the full multi-clause command (this
+                # call's own `command` positional arg is the per-target
+                # `desc`, which can paraphrase away the exact wording).
+                known_objects=KNOWN_OBJECT_NAMES,
+                raw_command=command or desc,
             )
             if not ok:
                 # The contract-boundary guard may have just removed the step(s)

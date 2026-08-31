@@ -1189,6 +1189,57 @@ def _object_scan_and_verify():
     return seq
 
 
+class BtNode_ReduceObjectQuery(Behaviour):
+    """One-shot fallback: reduce an unknown, attribute-laden object query to
+    its known-object token subset (e.g. "red bowl" -> "bowl") after the
+    strict pantilt sweep has exhausted every angle with no match.
+
+    L1b (round-4 battery fix, run 016): sim battery run 016 planned
+    ``object: "red bowl"`` for a command that only ever said "bowl" — four
+    full pan/tilt sweeps for "red bowl" never matched anything in the scene
+    (the spawned YCB bowl is white). ``create_find_object`` puts a fresh
+    instance of this node ahead of a SECOND pantilt sweep, both as the
+    second branch of a Selector alongside the original (strict) sweep — see
+    that function.
+
+    K-round lesson (``PersistentFailureCap``, task-K): the orchestrator's
+    memory-Sequence root re-ticks already-terminal subtrees on ANY later
+    sibling's FAILURE. This node's "already reduced" flag is a plain
+    instance attribute, deliberately never reset in ``initialise()``
+    (mirroring ``PersistentFailureCap``) — a root restart replays the
+    sweep, but a SECOND reduction is never re-triggered: this can SUCCEED
+    at most once per ``create_find_object`` subtree instance ("per sweep").
+    """
+
+    def __init__(self, name: str = "reduce object query"):
+        super().__init__(name)
+        self._client = None
+        self._reduced = False
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(bb_keys.TARGET_OBJECT_PROMPT, access=Access.WRITE)
+
+    def update(self):
+        if self._reduced:
+            self.feedback_message = "reduced query already attempted this sweep"
+            return Status.FAILURE
+        from .orchestrator import reduce_unknown_object_query  # lazy: avoid import cycle
+        try:
+            prompt = self._client.get(bb_keys.TARGET_OBJECT_PROMPT)
+        except Exception as exc:
+            self.feedback_message = f"no {bb_keys.TARGET_OBJECT_PROMPT} to reduce: {exc}"
+            return Status.FAILURE
+        reduced = reduce_unknown_object_query(prompt)
+        if reduced is None:
+            self.feedback_message = f'no known-object reduction for "{prompt}"'
+            return Status.FAILURE
+        self._reduced = True
+        self._client.set(bb_keys.TARGET_OBJECT_PROMPT, reduced, overwrite=True)
+        self.feedback_message = f'reduced query "{prompt}" -> "{reduced}"'
+        return Status.SUCCESS
+
+
 def create_find_object(pan_deg=None, tilt_deg=None):
     """Scan for the object named in ``bb_keys.TARGET_OBJECT_PROMPT``.
 
@@ -1199,15 +1250,32 @@ def create_find_object(pan_deg=None, tilt_deg=None):
     the base. Locate-only: it does NOT pick a single instance. ``pan_deg`` /
     ``tilt_deg`` override the sweep ranges (used by ``pan-tilt-sweep``
     modifications).
+
+    L1b (round-4 battery fix, run 016): when the full sweep exhausts every
+    (pan, tilt) with no match AND the query is an unknown, attribute-laden
+    one that token-subset-reduces to a known object name (e.g. "red bowl" ->
+    "bowl"), a second Selector branch retries the WHOLE sweep exactly once
+    with the reduced query (``BtNode_ReduceObjectQuery``) before this
+    ultimately fails. No reduction possible -> behaves exactly as before.
     """
     seq = py_trees.composites.Sequence("small/find_object", memory=True)
     seq.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
-    seq.add_child(_pantilt_sweep(
-        "find_object",
-        OBJECT_TILT_DEG if tilt_deg is None else [float(t) for t in tilt_deg],
-        _object_scan_and_verify,
-        pan_deg=pan_deg,
+    tilts = OBJECT_TILT_DEG if tilt_deg is None else [float(t) for t in tilt_deg]
+    sweep_with_reduction = py_trees.composites.Selector(
+        "find_object sweep with query reduction", memory=True,
+    )
+    sweep_with_reduction.add_child(_pantilt_sweep(
+        "find_object", tilts, _object_scan_and_verify, pan_deg=pan_deg,
     ))
+    reduced_retry = py_trees.composites.Sequence(
+        "find_object reduced-query retry", memory=True,
+    )
+    reduced_retry.add_child(BtNode_ReduceObjectQuery())
+    reduced_retry.add_child(_pantilt_sweep(
+        "find_object", tilts, _object_scan_and_verify, pan_deg=pan_deg,
+    ))
+    sweep_with_reduction.add_child(reduced_retry)
+    seq.add_child(sweep_with_reduction)
     seq.add_child(BtNode_AnnounceFromBB(
         "announce found", bb_keys.TARGET_OBJECT_NAME, prefix="I can see the "
     ))

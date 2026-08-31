@@ -118,6 +118,53 @@ DEFAULT_CATEGORY_WORDS = frozenset({
     "cutlery",
 })
 
+# L1a (round-4 battery fix, run 016): object-param words that are never
+# themselves an "invented attribute" -- generic placeholders an LLM may
+# legitimately fall back to when it genuinely has no concrete noun.
+_GENERIC_OBJECT_WORDS = frozenset({"object", "it", "item", "thing"})
+
+
+def _object_attribute_reason(
+    obj: str, command_tokens: set, known_objects: Iterable[str],
+    category_words: Iterable[str],
+) -> Optional[str]:
+    """Rejection reason for an invented-attribute ``object`` param, or None.
+
+    Sim battery run 016: the LLM planned ``object: "red bowl"`` for a command
+    that only ever said "bowl" (the spawned YCB bowl is white) -- four VLM
+    scans for "red bowl" never matched anything in the scene. Reject only
+    when ALL of: (i) the param is not itself a known object/category/generic
+    word, (ii) it contains a token that IS a known object name (something to
+    reduce it to), and (iii) it also carries a token the command never used
+    (the invented attribute). A param like "red mug" is accepted when the
+    command itself says "red mug" -- the LLM only copied the command.
+    """
+    obj_norm = str(obj).strip().lower()
+    if not obj_norm:
+        return None
+    known_set = (
+        {str(w).lower() for w in known_objects}
+        | {str(w).lower() for w in category_words}
+        | _GENERIC_OBJECT_WORDS
+    )
+    if obj_norm in known_set:
+        return None
+    obj_tokens = _tokenize(obj)
+    if not obj_tokens:
+        return None
+    matched = [t for t in obj_tokens if t in known_set]
+    if not matched:
+        return None  # no known-object subset -- not this rule's business
+    extra = [t for t in obj_tokens if t not in known_set]
+    if not extra:
+        return None
+    if all(t in command_tokens for t in extra):
+        return None  # every extra token is right there in the command
+    return (
+        f'object "{obj}" adds attributes not in the command; '
+        f'use "{" ".join(matched)}"'
+    )
+
 
 def validate_dag(targets: list[dict[str, Any]]) -> tuple[bool, Optional[str]]:
     """Validate the canonical ordered-DAG representation of GPSR targets.
@@ -369,6 +416,8 @@ def validate_plan(
     known_locations: Optional[Iterable[str]] = None,
     prior_plan: Optional[Iterable[Dict[str, Any]]] = None,
     postconditions: Optional[Iterable[str]] = None,
+    known_objects: Optional[Iterable[str]] = None,
+    raw_command: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
     """Apply post-checks to a planner-returned plan.
 
@@ -386,6 +435,15 @@ def validate_plan(
     (``ACTION_CONTRACTS[action].establishes``) — see
     ``uncovered_postcondition_reason``. This is the LAST check applied, so
     it never pre-empts an earlier, more specific rejection.
+
+    ``known_objects`` (optional, opt-in like ``known_locations``) enables the
+    L1a invented-attribute-object check (see ``_object_attribute_reason``):
+    a ``find_object``/``grasp`` object param that adds a descriptive token
+    the command never used, on top of a known-object token subset, is
+    rejected. ``raw_command`` overrides ``command`` as the text that check
+    compares against (the two-layer planner has the full multi-clause
+    command available beyond this call's per-target ``command``); defaults
+    to ``command`` when not given.
 
     Returns (True, None) if the plan passes, (False, reason) otherwise.
     Empty plans are accepted here — callers decide whether emptiness is a
@@ -520,6 +578,20 @@ def validate_plan(
                     f"preceding goto(location={loc!r}). Emit the goto step "
                     "explicitly before searching."
                 )
+
+        # Rule (L1a, round-4 battery fix, run 016): a find_object/grasp
+        # object param must not invent a descriptive attribute the command
+        # never named on top of a known-object noun ("red bowl" when the
+        # command only ever said "bowl").
+        if known_objects is not None and action in ("find_object", "grasp"):
+            obj = params.get("object")
+            if isinstance(obj, str):
+                attr_reason = _object_attribute_reason(
+                    obj, set(_tokenize(raw_command if raw_command else command)),
+                    known_objects, category_words,
+                )
+                if attr_reason is not None:
+                    return False, attr_reason
 
         # Rule: no angle-bracket placeholders in say/tell_info text.
         for k, v in params.items():
