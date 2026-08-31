@@ -2869,6 +2869,34 @@ class DynamicExecutor(py_trees.composites.Composite):
             request = {}
         if request.get("level") == "supervisor":
             self._bb.set(bb_keys.REPLAN_REQUEST, {}, overwrite=True)
+            action = request.get("action")
+            if action == "abort_and_report":
+                # R-2 (task-Q, round-6 review fix): an abort is terminal
+                # and cannot loop -- it always gets its fresh-start/abort
+                # semantics regardless of the supervisor-replan cap below.
+                # The Q3 cap exists to stop the supervisor from
+                # REPLANNING the same failing target forever; an abort
+                # can never contribute to that churn, since honoring it
+                # always ends this target's loop right here
+                # (self._state = "DONE"). Capping it anyway would mean
+                # the more times the supervisor has already tried (and
+                # failed) to help this target, the LESS likely its
+                # explicit "give up, here's why" decision -- complete
+                # with operator_message -- is honored: silently replaced
+                # by the generic budget-exceeded skip message, discarding
+                # the supervisor's own diagnosis exactly when a human is
+                # most likely to want it surfaced. Checked before the cap
+                # gate and before even touching SUPERVISOR_REPLAN_COUNT --
+                # an abort neither consumes nor is limited by that budget.
+                message = str(request.get("operator_message") or reason)
+                if message:
+                    self._announce(message)
+                self._bb.set(
+                    bb_keys.TARGET_INDEX, self._num_targets, overwrite=True,
+                )
+                self._supervisor_aborted = True
+                self._state = "DONE"
+                return
             # Q3 (task-Q, round-6): count supervisor-initiated replans of
             # THIS target, separately from TARGET_REPLAN_COUNT. Measured
             # root cause this caps: RecoveryLedger's own cap fired
@@ -2930,17 +2958,10 @@ class DynamicExecutor(py_trees.composites.Composite):
                 # handing this target a fresh start either way, up to the
                 # cap above.
                 self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
-                action = request.get("action")
-                if action == "abort_and_report":
-                    message = str(request.get("operator_message") or reason)
-                    if message:
-                        self._announce(message)
-                    self._bb.set(
-                        bb_keys.TARGET_INDEX, self._num_targets, overwrite=True,
-                    )
-                    self._supervisor_aborted = True
-                    self._state = "DONE"
-                    return
+                # R-2: `action == "abort_and_report"` is handled above,
+                # unconditionally, before the cap gate -- this branch only
+                # ever sees a non-abort ("replan_remaining"-shaped)
+                # request now.
                 replacement = request.get("replacement_plan") or []
                 preserved = request.get("preserved_completed_steps")
                 if isinstance(preserved, list):

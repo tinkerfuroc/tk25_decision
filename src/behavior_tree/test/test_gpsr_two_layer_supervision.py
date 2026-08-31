@@ -539,3 +539,112 @@ def test_supervisor_replan_cap_is_isolated_per_target(tmp_path) -> None:
     # OWN fresh allowance and, driven by the same always-fail planner, trips
     # its own cap once too -- never inheriting A's already-spent count.
     assert [e["payload"]["target_index"] for e in cap_events] == [0, 1]
+
+
+# ---------------------------------------------------------------------------
+# Task R-2 (round-6 review fix, MEDIUM): Q3's replan cap must exempt
+# abort_and_report. An abort is terminal (always sets state DONE right
+# there) and structurally cannot contribute to the "supervisor keeps
+# replanning the same failing target forever" churn Q3 exists to cap -- so
+# it must always be honored, complete with its operator_message, regardless
+# of how many prior supervisor replans this target has already consumed.
+
+
+class _AbortRequest(py_trees.behaviour.Behaviour):
+    def update(self) -> Status:
+        py_trees.blackboard.Blackboard.set(
+            bb_keys.REPLAN_REQUEST,
+            {
+                "level": "supervisor",
+                "action": "abort_and_report",
+                "reason": "supervisor gave up",
+                "operator_message": "I am sorry, I could not do this, giving up.",
+            },
+        )
+        return Status.SUCCESS
+
+
+class _Q3AbortPlanner:
+    """Requests ordinary supervisor replans for the first ``cap`` attempts
+    (exhausting the free "fresh start" budget), then requests
+    ``abort_and_report`` -- proving the abort is still honored, with its
+    operator_message intact, PAST the cap."""
+
+    def __init__(self, cap: int) -> None:
+        self.plan = [{"action": "goto", "params": {"location": "kitchen"}}]
+        self.replacements: list = []
+        self.replan_calls = 0
+        self._cap = cap
+        self._attempts = 0
+
+    def _get_desc(self, slot, index):
+        return "go to the kitchen"
+
+    def is_target_ready(self, slot, index):
+        return True
+
+    def get_action_plan(self, slot, index):
+        return list(self.plan)
+
+    def get_target_subtree(self, slot, index):
+        self._attempts += 1
+        seq = py_trees.composites.Sequence("target", memory=True)
+        request: py_trees.behaviour.Behaviour
+        if self._attempts > self._cap:
+            request = _AbortRequest("request abort")
+        else:
+            request = _RequestSupervisorReplan("request replan")
+        seq.add_children([request, BtNode_SupervisorBarrier()])
+        return seq
+
+    def replace_target_plan(self, slot, index, plan, reason, completed_steps=None):
+        self.plan = list(plan)
+        self.replacements.append((slot, index, list(plan), reason))
+
+    def replan_target(self, slot, index, reason, completed_steps=None):
+        self.replan_calls += 1
+
+
+def test_supervisor_replan_cap_exempts_abort_and_report(tmp_path) -> None:
+    tele = telemetry_mod.GpsrTelemetry(tmp_path, enabled=True, trajectory_id="traj")
+    telemetry_mod.set_default_telemetry(tele)
+    _seed_q3_targets()
+    planner = _Q3AbortPlanner(cap=2)
+    root = py_trees.composites.Sequence("root", memory=True)
+    with patch.dict("os.environ", {"GPSR_SUPERVISION_MAX_SUPERVISOR_REPLANS": "2"}):
+        executor = DynamicExecutor("executor", 0, planner, max_replans_per_target=1)
+    announced: list = []
+    executor._announce = lambda text: announced.append(text)
+    root.add_child(executor)
+    tree = py_trees.trees.BehaviourTree(root)
+    node = SimpleNamespace(get_name=lambda: "stub")
+    tree.setup(timeout=15, node=node, gpsr_tree=tree)
+
+    try:
+        for _ in range(10):
+            tree.tick()
+            if executor.status != Status.RUNNING:
+                break
+        # A supervisor abort maps to task-level SUCCESS (a reported, told-
+        # the-operator give-up), not a skip/FAILURE.
+        assert executor.status == Status.SUCCESS
+        # The operator_message reached the operator intact -- not silently
+        # replaced by the generic "I could not complete X..." skip speech.
+        assert announced == ["I am sorry, I could not do this, giving up."]
+        # Two ordinary replans happened first (under the cap) -- proving
+        # the abort really was requested PAST the cap, not merely because
+        # the cap was never reached.
+        assert len(planner.replacements) == 2
+    finally:
+        tele.close(status="done")
+        telemetry_mod.set_default_telemetry(None)
+
+    lines = [
+        json.loads(line)
+        for line in (tele.directory / "events.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    # The abort branch never touches SUPERVISOR_REPLAN_COUNT at all (it is
+    # checked before that counter is even read) -- no cap-trip telemetry,
+    # unlike test_supervisor_replan_cap_lets_target_failed_become_reachable_again.
+    assert [e for e in lines if e["event_type"] == "supervision.replan_cap"] == []
