@@ -62,3 +62,23 @@ up enough to trip escalation.
 
 See `/home/tinker/.claude/jobs/5b873e5d/tmp/round2/task-F-review.md` (H3, H4, M1, M2) for
 the full review this note summarises.
+
+## Addendum (2026-08-31, Task M review): two more pre-existing supervision defects
+
+Found while reviewing the Task M intervention fixes (detach-first `_apply_intervention`,
+fixed slot identity + active-gating); both predate that diff and are NOT fixed by it:
+
+1. **Orphaned interventions can hang the mission (MEDIUM).** Unconsumed interventions
+   never expire. The mission-wide (unscoped) `can_start_effect`/`can_finish_subtask`
+   gate blocks all subtask progress while an intervention is pending, and
+   `_swap_in` discards a completed target's slots — so an intervention whose async
+   verdict resolves *after* its slot was swapped out is permanently orphaned and
+   silently stalls every future subtask for the rest of the mission. A future fix
+   needs expiry/GC for pending interventions (plan-revision or slot-lifetime scoped),
+   or scoping the start/finish gates to the intervention's own subtask id.
+2. **`instrument_effect_nodes` can silently null a wrapped leaf's parent (LOW).** Its
+   `Composite.replace_child` path clobbers the wrapped leaf's `.parent` back to `None`
+   — the silent inverse of the "already has parent" crash class Task M fixed. Latent,
+   informational.
+
+Full analysis: `/home/tinker/.claude/jobs/5b873e5d/tmp/round4/task-M-review.md` (X-2, X-3).
