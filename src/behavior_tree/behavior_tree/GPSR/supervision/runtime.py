@@ -423,14 +423,31 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         if intervention.kind == "local_recovery":
             proposal = intervention.payload
             assert isinstance(proposal, RecoveryProposal)
+            # M1b (task-M, round-4 battery fix): detach-first. The crash
+            # this guards against: `Sequence(children=[macro, fresh_subtask])`
+            # calls `add_child` -> `Composite.add_child`, which raises
+            # RuntimeError if the behaviour it is given already has a
+            # `.parent` -- and the slot's OWN currently-attached child
+            # (`self.decorated`) still has `.parent is self` at this point in
+            # the old code, since nothing had unlinked it yet. `_materialize_
+            # subtask` is now asserted to always return a parentless subtree
+            # (see M1a), which already closes the one way `fresh_subtask`
+            # could BE that live child -- this ordering is the second,
+            # independent half of the fix: detach the slot's current child
+            # BEFORE building anything that might get added to a composite,
+            # mirroring `DynamicExecutor._swap_in`'s build-fully-unattached-
+            # then-swap-in pattern, so a bug in any future composite built
+            # here cannot resurrect this crash.
+            self._detach_child()
             macro = self.recovery_compiler.compile(proposal)
             fresh_subtask = self._materialize_subtask()
             sequence = py_trees.composites.Sequence(
                 name=f"recover+retry:{proposal.strategy_id}",
                 memory=True,
-                children=[macro, fresh_subtask],
             )
-            self._replace_child(sequence)
+            sequence.add_child(macro)
+            sequence.add_child(fresh_subtask)
+            self._attach_child(sequence)
             self.tree_revision += 1
             self._child_terminal = None
             self._active_recovery = proposal
@@ -527,18 +544,44 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
 
     def _materialize_subtask(self) -> py_trees.behaviour.Behaviour:
         root = self.factory()
-        return instrument_effect_nodes(
+        subtree = instrument_effect_nodes(
             root,
             supervisor=self.supervisor,
             slot=self,
             registry=self.registry,
             path=f"{self.action_name}/root",
         )
+        # M1a (task-M, round-4 battery fix): `self.factory` MUST be a
+        # builder closure invoked fresh per call, never a captured/cached
+        # subtree instance. The verified root cause of the crash this
+        # guards: `GPSRPlanner.build_target_subtree` used to build one
+        # small_tree object per plan step and hand `SupervisedSubtaskSlot`
+        # `lambda: small_tree` (closing over that ONE already-built
+        # instance) as its "factory" -- so every call here, including the
+        # very first one made from `__init__`, returned the SAME object.
+        # By the time a `local_recovery` intervention called this a second
+        # time, that object was already `self.decorated` (parent ==
+        # this slot), and building `Sequence(children=[..., fresh_subtask])`
+        # crashed inside py_trees `add_child` with "already has parent" --
+        # a factory-wiring regression surfacing as a confusing library
+        # exception several layers away from its cause. Assert here so it
+        # fails loudly, AT the site of the regression, instead: a fresh
+        # small_tree object is never anyone else's child yet.
+        assert subtree.parent is None, (
+            f"SupervisedSubtaskSlot({self.action_name!r})._materialize_subtask "
+            f"returned a subtree that already has a parent "
+            f"({subtree.name!r} parent={getattr(subtree.parent, 'name', None)!r}); "
+            "`factory` must build a fresh, unparented subtree on every call, "
+            "never return a cached/closure-captured instance"
+        )
+        return subtree
 
-    def _replace_child(self, child: py_trees.behaviour.Behaviour) -> None:
+    def _detach_child(self) -> None:
         if self.decorated.status == Status.RUNNING:
             self.decorated.stop(Status.INVALID)
         self.decorated.parent = None
+
+    def _attach_child(self, child: py_trees.behaviour.Behaviour) -> None:
         self.children[0] = child
         self.decorated = child
         child.parent = self

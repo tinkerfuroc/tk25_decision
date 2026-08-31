@@ -3300,14 +3300,31 @@ class GPSRPlanner:
             step_seq.add_child(BtNode_MaterialiseStep(
                 f"materialise:{slot}:{index}:{k}", plan_key, k,
             ))
-            small_tree = factory()
             mods = step_mods.get(k) or []
-            if mods:
-                small_tree, _applied = apply_modifications(
-                    small_tree, action, mods,
-                )
+
+            # M1a (task-M, round-4 battery fix): this closure is the
+            # `SupervisedSubtaskSlot.factory` that ``_materialize_subtask``
+            # calls -- including a SECOND time, on a `local_recovery`
+            # intervention, to rebuild the step's subtree for a retry. It
+            # MUST build a fresh, unparented subtree on every call. The
+            # previous code built `small_tree` ONCE here and captured that
+            # one instance in `lambda: small_tree`, so the second call
+            # handed back the SAME (by-then-already-attached) object --
+            # the verified root cause of the "already has parent" crash
+            # (see supervision/runtime.py `_materialize_subtask`). Default
+            # args bind `factory`/`action`/`mods` at definition time (this
+            # loop iteration), same as the old code intended, but the body
+            # runs -- and rebuilds -- fresh on every call.
+            def _build_step_tree(
+                factory=factory, action=action, mods=mods,
+            ) -> py_trees.behaviour.Behaviour:
+                tree = factory()
+                if mods:
+                    tree, _applied = apply_modifications(tree, action, mods)
+                return tree
+
             step_seq.add_child(wrap_action_factory(
-                action, lambda: small_tree, get_default_supervisor(),
+                action, _build_step_tree, get_default_supervisor(),
             ))
             step_seq.add_child(BtNode_LogStepResult(
                 f"log:{slot}:{index}:{k}", succeeded=True,

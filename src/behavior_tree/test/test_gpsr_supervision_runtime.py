@@ -7,6 +7,7 @@ import threading
 import time
 
 import py_trees
+import pytest
 from geometry_msgs.msg import PoseStamped
 
 from behavior_tree.GPSR.supervision.clients import ScriptedSupervisorClient
@@ -707,5 +708,180 @@ def test_malformed_completed_count_becomes_stop_intervention_not_exception():
         assert outcome["status"] == "stopped"
         assert outcome["source"] == "llm_supervisor"
         assert "completed step count" in outcome["reason"]
+    finally:
+        supervisor.close()
+
+
+# ---------------------------------------------------------------------------
+# Task M (round-4 battery fix): active-supervision intervention crash + slot
+# identity. The crash: `runtime.py:_apply_intervention`'s local_recovery
+# branch built `Sequence(children=[macro, fresh_subtask])` -- add_child
+# raised "already has parent" when `fresh_subtask` (from
+# `_materialize_subtask`) was, due to a factory-wiring bug elsewhere
+# (`GPSRPlanner.build_target_subtree` handing the slot `lambda: small_tree`,
+# a closure over one already-built/already-attached instance), the SAME
+# object as the slot's own currently-attached child. Every existing test
+# above used a genuinely fresh-per-call factory, so this was structurally
+# unreachable -- these tests close that coverage hole.
+# ---------------------------------------------------------------------------
+
+
+def test_materialize_subtask_builds_a_fresh_parentless_object_every_call():
+    """Pins M1a: `_materialize_subtask` must invoke `self.factory` fresh
+    every call and never hand back a subtree that already has a parent."""
+    _seed_blackboard()
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.SHADOW),
+        _provider(),
+        ScriptedSupervisorClient(),
+    )
+    build_calls = 0
+
+    def factory():
+        nonlocal build_calls
+        build_calls += 1
+        return py_trees.behaviours.Success(name=f"leaf-{build_calls}")
+
+    try:
+        slot = SupervisedSubtaskSlot(
+            action_name="demo",
+            factory=factory,
+            supervisor=supervisor,
+        )
+        # __init__ already called _materialize_subtask once (build_calls == 1).
+        first = slot._materialize_subtask()
+        second = slot._materialize_subtask()
+        assert first is not second
+        assert first.parent is None
+        assert second.parent is None
+        assert build_calls == 3
+    finally:
+        supervisor.close()
+
+
+def test_materialize_subtask_asserts_loudly_on_a_cached_factory():
+    """Pins M1a's defensive assertion: a factory that returns a cached/
+    closure-captured instance (the exact shape of the historical
+    `GPSRPlanner.build_target_subtree` bug) must fail loudly AT
+    `_materialize_subtask`, not several layers away inside py_trees
+    `add_child`."""
+    _seed_blackboard()
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.SHADOW),
+        _provider(),
+        ScriptedSupervisorClient(),
+    )
+    cached = py_trees.behaviours.Success(name="cached-leaf")
+    try:
+        slot = SupervisedSubtaskSlot(
+            action_name="demo",
+            # The FIRST call (inside __init__) is fine -- `cached` starts
+            # parentless. It is the SECOND call, once `cached` is already
+            # this slot's attached child, that must trip the assertion.
+            factory=lambda: cached,
+            supervisor=supervisor,
+        )
+        with pytest.raises(AssertionError, match="already has a parent"):
+            slot._materialize_subtask()
+    finally:
+        supervisor.close()
+
+
+def test_local_recovery_detaches_old_child_before_attaching_replacement():
+    """Pins M1b: the exact crash regression. An intervention arriving while
+    the slot's child is attached must replace it via detach-first -- the new
+    `recover+retry:` Sequence becomes the slot's child, and the displaced
+    child comes out with `parent is None` (never re-added anywhere)."""
+    _seed_blackboard()
+    calls: list[str] = []
+    first_checkpoint = (
+        "task/plan-r1/step-0000:demo/tree-r1/"
+        "demo/root/activation-0001"
+    )
+    retry_checkpoint = (
+        "task/plan-r1/step-0000:demo/tree-r2/"
+        "demo/root/activation-0001"
+    )
+    client = ScriptedSupervisorClient(
+        verifications=[
+            {
+                **_decision(first_checkpoint, verdict="recoverable"),
+                "subtask_status": "not_achieved",
+                "escalation": "local_recovery",
+                "failure_category": "target_not_visible",
+            },
+            _decision(retry_checkpoint),
+        ],
+        recoveries=[
+            {
+                "checkpoint_id": first_checkpoint,
+                "issue_id": "filled-by-test",
+                "strategy_id": "look-left",
+                "kind": "scan_views",
+                "arguments": {
+                    "angles": [[-30, 10]],
+                    "perception_action": "find_object",
+                },
+                "rationale": "try a new view",
+                "expected_evidence": ["target visible"],
+                "stop_conditions": ["target absent"],
+            }
+        ],
+    )
+    original = client.plan_local_recovery
+
+    def local(snapshot, verification, issue_id):
+        client._recoveries[0]["issue_id"] = issue_id
+        return original(snapshot, verification, issue_id)
+
+    client.plan_local_recovery = local
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect",
+                "perception",
+                EffectRisk.OBSERVATION,
+                "target was observed",
+            )
+        ]
+    )
+
+    def factory():
+        return FakeEffect("scan", py_trees.common.Status.FAILURE, calls)
+
+    compiler = RecoveryMacroCompiler(
+        {
+            RecoveryKind.SCAN_VIEWS: lambda proposal: py_trees.behaviours.Success(
+                name=f"macro:{proposal.strategy_id}"
+            )
+        }
+    )
+    slot = SupervisedSubtaskSlot(
+        action_name="demo",
+        factory=factory,
+        supervisor=supervisor,
+        registry=registry,
+        recovery_compiler=compiler,
+    )
+    old_child = slot.decorated
+    try:
+        for _ in range(300):
+            slot.tick_once()
+            if slot.tree_revision == 2:
+                break
+            time.sleep(0.005)
+        assert slot.tree_revision == 2
+        assert old_child.parent is None
+        assert slot.decorated is not old_child
+        assert slot.decorated.name == "recover+retry:look-left"
+        assert slot.decorated.parent is slot
+        assert [child.parent for child in slot.decorated.children] == (
+            [slot.decorated] * len(slot.decorated.children)
+        )
     finally:
         supervisor.close()

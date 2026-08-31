@@ -59,6 +59,44 @@ def test_dynamic_target_subtree_uses_supervised_action_slots() -> None:
         supervisor.close()
 
 
+def test_build_target_subtree_step_factory_builds_a_fresh_subtree_every_call() -> None:
+    """M1 regression (task-M, round-4 battery fix): `build_target_subtree`
+    used to build one small_tree object per step and hand
+    `SupervisedSubtaskSlot` `lambda: small_tree` -- a closure returning that
+    SAME cached instance on every call. `_materialize_subtask` calls the
+    slot's factory a second time on every `local_recovery` intervention;
+    with the old closure this returned the slot's own already-attached
+    child, and building the replacement Sequence crashed inside py_trees
+    `add_child` with "already has parent" (the verified crash, sim runs
+    s2026-009-tellCatPropOnPlcmt etc.). Drive the REAL planner wiring (not a
+    hand-written factory) and assert two fresh, parentless subtrees."""
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.SHADOW),
+        _provider(),
+        ScriptedSupervisorClient(),
+    )
+    set_default_supervisor(supervisor)
+    try:
+        subtree = GPSRPlanner().build_target_subtree(
+            0,
+            0,
+            [{"action": "announce", "params": {"text": "hello"}}],
+        )
+        slot = next(
+            node
+            for node in subtree.iterate()
+            if type(node).__name__ == "SupervisedSubtaskSlot"
+        )
+        first = slot._materialize_subtask()
+        second = slot._materialize_subtask()
+        assert first is not second
+        assert first.parent is None
+        assert second.parent is None
+    finally:
+        set_default_supervisor(None)
+        supervisor.close()
+
+
 class _RequestSupervisorReplan(py_trees.behaviour.Behaviour):
     def update(self) -> Status:
         py_trees.blackboard.Blackboard.set(
