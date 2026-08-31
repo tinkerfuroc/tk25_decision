@@ -51,37 +51,18 @@ def _blackboard_str(blackboard: Mapping[str, Any], key: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _goal_pose_from_blackboard(
-    blackboard: Mapping[str, Any],
+def _pose_from_stamped_mapping(
+    raw: Any,
 ) -> tuple[float, float, float] | None:
-    """Derive a nav-goal marker pose from a live blackboard.
+    """Parse a `snapshot_blackboard`-safed PoseStamped-shaped mapping.
 
-    N1d: the LIVE blackboard already carries `gpsr/target_location` (the
-    named waypoint the in-flight action is heading to/acting at -- see
-    `bb_keys.TARGET_LOCATION` in small_trees.py). Guarded: an absent key or
-    a name `gpsr_named_pose` does not recognise omits the marker instead of
-    raising out of `capture()`.
+    Q5 (task-Q, round-6 supervision-economics fix): factored out of
+    `_last_capture_pose_from_blackboard` so `gpsr/target_pose` -- a
+    PoseStamped scratch value JSON-safed by `snapshot_blackboard` the
+    exact same way `gpsr/last_capture` is -- can be parsed identically.
+    Guarded end to end: any missing key or non-numeric field returns None
+    rather than crashing `capture()`.
     """
-    name = _blackboard_str(blackboard, "gpsr/target_location")
-    if name is None:
-        return None
-    try:
-        return gpsr_named_pose(name)
-    except (KeyError, TypeError, ValueError):
-        return None
-
-
-def _last_capture_pose_from_blackboard(
-    blackboard: Mapping[str, Any],
-) -> tuple[float, float, float] | None:
-    """Derive a "last reliable position" marker from `gpsr/last_capture`.
-
-    N1d: `gpsr/last_capture` is a PoseStamped scratch value; once it passes
-    through `snapshot_blackboard`'s JSON-safing (`_safe_value`) it arrives
-    here as a plain nested mapping. Guarded end to end: any missing key or
-    non-numeric field omits the marker rather than crashing capture().
-    """
-    raw = blackboard.get("gpsr/last_capture")
     if not isinstance(raw, Mapping):
         return None
     pose = raw.get("pose", raw)
@@ -107,6 +88,71 @@ def _last_capture_pose_from_blackboard(
         except (TypeError, ValueError):
             yaw = 0.0
     return (x, y, yaw)
+
+
+def _target_pose_from_blackboard(
+    blackboard: Mapping[str, Any],
+) -> tuple[float, float, float] | None:
+    """The ACTUAL navigation goal the goto dispatch drives to.
+
+    Q5 (task-Q, round-6): `bb_keys.TARGET_POSE` ("gpsr/target_pose") is
+    what `create_goto`/`BtNode_GotoAction` in small_trees.py actually
+    navigates to (set by the orchestrator right before a goto dispatches,
+    orchestrator.py ~1246) -- a PoseStamped, JSON-safed by
+    `snapshot_blackboard` exactly like `gpsr/last_capture`.
+    """
+    return _pose_from_stamped_mapping(blackboard.get("gpsr/target_pose"))
+
+
+def _goal_pose_from_blackboard(
+    blackboard: Mapping[str, Any],
+) -> tuple[float, float, float] | None:
+    """Derive a nav-goal marker pose from a live blackboard.
+
+    Q5 (task-Q, round-6): the 019 run's verify checkpoints repeatedly
+    cited a missing navigation goal. Root cause: this used to read ONLY
+    `gpsr/target_location` -- the location's NAME string (e.g.
+    "kitchen_table"), used elsewhere purely for announcements (see
+    bb_keys.TARGET_LOCATION's users in small_trees.py: "announce going",
+    "announce arrived", "ask referee to open", "announce placing") --
+    and re-derive a pose from it via a SEPARATE name lookup
+    (`gpsr_named_pose`) into constants.json's `possible_poses`. That
+    lookup is a second, independent source of truth that can disagree
+    with (or simply not recognise) the name, silently omitting the
+    marker on a mismatch (see
+    test_fixture_provider_ignores_an_unknown_target_location_name).
+    Meanwhile the REAL navigation goal the goto dispatch actually drives
+    to, `gpsr/target_pose` (a PoseStamped, orchestrator.py ~1246), was
+    never even included in the checkpoint's captured blackboard keys
+    (`SupervisedSubtaskSlot.build_capture_request`) -- so it was never
+    available here at all. Prefer it directly (no name-lookup
+    ambiguity); fall back to the name-based lookup only when it is
+    absent (N1d: the pre-existing behavior for callers/fixtures that
+    never populate `gpsr/target_pose`).
+    """
+    direct = _target_pose_from_blackboard(blackboard)
+    if direct is not None:
+        return direct
+    name = _blackboard_str(blackboard, "gpsr/target_location")
+    if name is None:
+        return None
+    try:
+        return gpsr_named_pose(name)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _last_capture_pose_from_blackboard(
+    blackboard: Mapping[str, Any],
+) -> tuple[float, float, float] | None:
+    """Derive a "last reliable position" marker from `gpsr/last_capture`.
+
+    N1d: `gpsr/last_capture` is a PoseStamped scratch value; once it passes
+    through `snapshot_blackboard`'s JSON-safing (`_safe_value`) it arrives
+    here as a plain nested mapping. Guarded end to end: any missing key or
+    non-numeric field omits the marker rather than crashing capture().
+    """
+    return _pose_from_stamped_mapping(blackboard.get("gpsr/last_capture"))
 
 
 def gpsr_arm_pose_navigating() -> tuple[float, ...]:
@@ -180,7 +226,17 @@ class FixtureContextProvider:
         goal_pose_name = (
             scenario.map_goal_name
             if scenario
-            else _blackboard_str(request.blackboard, "gpsr/target_location")
+            else (
+                _blackboard_str(request.blackboard, "gpsr/target_location")
+                # Q5: no location NAME on the blackboard, but the direct
+                # nav-goal pose is -- label it, same treatment
+                # last_known_pose_name already gives "gpsr/last_capture".
+                or (
+                    "gpsr/target_pose"
+                    if _target_pose_from_blackboard(request.blackboard) is not None
+                    else None
+                )
+            )
         )
         last_known_pose_name = (
             scenario.map_last_known_name

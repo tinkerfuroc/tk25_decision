@@ -256,6 +256,74 @@ def test_fixture_provider_ignores_an_unknown_target_location_name(
     assert map_artifact.metadata["goal_pose_name"] == "dining_table"
 
 
+# ---------------------------------------------------------------------------
+# Task Q5 (round-6, supervision-economics fix): the "/goal missing" verify
+# evidence. The 019 verdicts repeatedly cited a missing navigation goal.
+# `_goal_pose_from_blackboard` used to read ONLY `gpsr/target_location` --
+# the location's NAME string, used elsewhere purely for announcements -- and
+# re-derive a pose from it via a separate, fallible `gpsr_named_pose` lookup
+# into constants.json (see the un-recognised-name test above: "dining_table"
+# simply isn't a key there). The REAL navigation goal the goto dispatch
+# actually drives to, `gpsr/target_pose` (a PoseStamped), was never even
+# captured onto the checkpoint's blackboard snapshot in the first place.
+
+
+def test_goal_pose_from_blackboard_prefers_the_direct_target_pose() -> None:
+    from behavior_tree.GPSR.supervision.context import _goal_pose_from_blackboard
+
+    blackboard = {
+        # No gpsr/target_location at all -- the name-based lookup has
+        # nothing to work with; the direct pose alone must resolve.
+        "gpsr/target_pose": {
+            "pose": {
+                "position": {"x": 2.0, "y": -1.0, "z": 0.0},
+                "orientation": {"w": 1.0},
+            }
+        },
+    }
+    assert _goal_pose_from_blackboard(blackboard) == pytest.approx((2.0, -1.0, 0.0))
+
+
+def test_goal_pose_from_blackboard_direct_pose_wins_over_an_unresolvable_name() -> None:
+    from behavior_tree.GPSR.supervision.context import _goal_pose_from_blackboard
+
+    blackboard = {
+        # Same "dining_table" mismatch as the un-recognised-name test
+        # above -- the direct target_pose must still resolve the marker.
+        "gpsr/target_location": "dining_table",
+        "gpsr/target_pose": {
+            "pose": {
+                "position": {"x": 3.5, "y": 0.5, "z": 0.0},
+                "orientation": {"w": 1.0},
+            }
+        },
+    }
+    assert _goal_pose_from_blackboard(blackboard) == pytest.approx((3.5, 0.5, 0.0))
+
+
+def test_fixture_provider_labels_goal_from_target_pose_without_a_location_name(
+    tmp_path: Path,
+) -> None:
+    # Q5 end to end: gpsr/target_pose alone (no gpsr/target_location text
+    # at all) is enough for capture() to surface goal evidence -- labeled
+    # the same way last_known_pose_name already labels gpsr/last_capture.
+    provider = FixtureContextProvider(output_dir=tmp_path)
+    request = replace(
+        _request(),
+        blackboard={
+            "gpsr/target_pose": {
+                "pose": {
+                    "position": {"x": 1.0, "y": 1.0, "z": 0.0},
+                    "orientation": {"w": 1.0},
+                }
+            },
+        },
+    )
+    snapshot = provider.capture(request)  # must not raise
+    map_artifact = next(a for a in snapshot.artifacts if a.role == "map")
+    assert map_artifact.metadata["goal_pose_name"] == "gpsr/target_pose"
+
+
 def test_navigating_pose_comes_from_gpsr_runtime_constants() -> None:
     from behavior_tree.GPSR.gpsr_full import _load_arm_constants
 

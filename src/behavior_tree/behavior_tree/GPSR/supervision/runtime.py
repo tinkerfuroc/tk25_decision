@@ -492,6 +492,15 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
                 "gpsr/current_params",
                 "gpsr/state_log",
                 "gpsr/target_location",
+                # Q5 (task-Q, round-6): the ACTUAL navigation goal the
+                # goto dispatch drives to (bb_keys.TARGET_POSE, a
+                # PoseStamped set by the orchestrator right before a goto
+                # dispatches) -- was never captured at all, so
+                # FixtureContextProvider.capture() had no choice but to
+                # re-derive a goal marker from gpsr/target_location's NAME
+                # via a separate, fallible lookup. See
+                # supervision/context.py's _goal_pose_from_blackboard.
+                "gpsr/target_pose",
                 "gpsr/target_object_name",
                 "gpsr/target_object_prompt",
                 "gpsr/target_person_prompt",

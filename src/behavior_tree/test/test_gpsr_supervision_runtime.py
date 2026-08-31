@@ -829,6 +829,57 @@ def test_actual_goto_factory_runs_with_fixture_context_and_full_mock(
         supervisor.close()
 
 
+# ---------------------------------------------------------------------------
+# Task Q5 (round-6, supervision-economics fix): the "/goal missing" verify
+# evidence. `gpsr/target_pose` -- the ACTUAL navigation goal the goto
+# dispatch drives to -- must reach the checkpoint's captured blackboard
+# snapshot (build_capture_request's explicit key set) so
+# FixtureContextProvider.capture() can read it directly instead of
+# re-deriving a goal marker from `gpsr/target_location`'s NAME through a
+# separate, fallible lookup (see supervision/context.py's
+# _goal_pose_from_blackboard for the read-side half of this fix).
+
+
+def test_build_capture_request_includes_the_real_nav_goal_key():
+    _seed_blackboard()
+    py_trees.blackboard.Blackboard.set(
+        "gpsr/target_pose",
+        {
+            "pose": {
+                "position": {"x": 4.0, "y": 2.0, "z": 0.0},
+                "orientation": {"w": 1.0},
+            }
+        },
+    )
+    client = ScriptedSupervisorClient(verifications=[_decision("irrelevant")])
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.SHADOW), _provider(), client
+    )
+    registry = NodeContractRegistry(
+        [NodeContract("FakeEffect", "navigation", EffectRisk.OBSERVATION, "arrived")]
+    )
+    slot = SupervisedSubtaskSlot(
+        action_name="goto",
+        factory=lambda: FakeEffect("goto-leaf", py_trees.common.Status.SUCCESS, []),
+        supervisor=supervisor,
+        registry=registry,
+    )
+    try:
+        slot.tick_once()
+        assert slot.status is py_trees.common.Status.SUCCESS
+        records = supervisor.records()
+        assert len(records) == 1
+        blackboard = records[0].snapshot.request.blackboard
+        assert blackboard.get("gpsr/target_pose") == {
+            "pose": {
+                "position": {"x": 4.0, "y": 2.0, "z": 0.0},
+                "orientation": {"w": 1.0},
+            }
+        }
+    finally:
+        supervisor.close()
+
+
 def test_local_recovery_replaces_and_retries_the_current_subtask():
     _seed_blackboard()
     calls: list[str] = []
