@@ -108,6 +108,7 @@ class SupervisorConfig:
     verify_timeout_s: float = 60.0
     plan_timeout_s: float = 120.0
     run_live_tests: bool = False
+    max_consecutive_errors: int = 5
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "SupervisorConfig":
@@ -126,6 +127,13 @@ class SupervisorConfig:
         max_recoveries = int(env.get("GPSR_SUPERVISOR_MAX_RECOVERIES", "3"))
         if max_recoveries < 1:
             raise ValueError("GPSR_SUPERVISOR_MAX_RECOVERIES must be positive")
+        max_consecutive_errors = int(
+            env.get("GPSR_SUPERVISION_MAX_CONSECUTIVE_ERRORS", "5")
+        )
+        if max_consecutive_errors < 1:
+            raise ValueError(
+                "GPSR_SUPERVISION_MAX_CONSECUTIVE_ERRORS must be positive"
+            )
         return cls(
             mode=mode,
             success_mode=success_mode,
@@ -136,6 +144,7 @@ class SupervisorConfig:
             verify_timeout_s=float(env.get("GPSR_SUPERVISOR_VERIFY_TIMEOUT_S", "60")),
             plan_timeout_s=float(env.get("GPSR_SUPERVISOR_PLAN_TIMEOUT_S", "120")),
             run_live_tests=_truthy(env.get("GPSR_RUN_LIVE_LLM_TESTS", "0")),
+            max_consecutive_errors=max_consecutive_errors,
         )
 
 

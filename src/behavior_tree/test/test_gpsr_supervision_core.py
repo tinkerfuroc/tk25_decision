@@ -459,24 +459,122 @@ def test_verifier_prompt_tells_the_model_missing_artifacts_are_not_failure() -> 
     assert "missing" in prompt and "not evidence" in prompt
 
 
-def test_outage_policy_continues_observation_success_but_stops_failure() -> None:
+def test_outage_policy_never_stops_the_mission() -> None:
+    # Was "test_outage_policy_continues_observation_success_but_stops_failure":
+    # O4 removes the stop-on-unavailable branch entirely. A broken/offline
+    # verifier is an LLM formatting hiccup, not a mission failure -- it
+    # must cost nothing, for an observation-risk SUCCESS checkpoint or any
+    # other kind (including a reported FAILURE, which used to hard-stop).
     config = SupervisorConfig(mode=SupervisionMode.ACTIVE)
+    events: list[tuple[str, dict]] = []
     client = ScriptedSupervisorClient(
         verifications=[RuntimeError("offline"), RuntimeError("offline")]
     )
-    supervisor = MissionSupervisor(config, _provider(), client)
+    supervisor = MissionSupervisor(
+        config,
+        _provider(),
+        client,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
     try:
         supervisor.submit(_request("success"), _contract(), ReportedStatus.SUCCESS)
         supervisor.submit(_request("failure"), _contract(), ReportedStatus.FAILURE)
         assert supervisor.wait_for_idle()
         assert supervisor.record("success").unverified is True
-        assert supervisor.resolution("success") == "success"
-        stop = supervisor.consume_intervention()
-        assert stop is not None
-        assert stop.kind == "stop"
-        assert stop.reason == "supervisor_unavailable"
+        assert supervisor.resolution("success") == "unavailable"
+        assert supervisor.record("failure").unverified is True
+        assert supervisor.resolution("failure") == "unavailable"
+        assert supervisor.consume_intervention() is None
+        unavailable = [p for e, p in events if e == "supervisor.unavailable"]
+        assert len(unavailable) == 2
+        assert all(p["continued_unverified"] is True for p in unavailable)
     finally:
         supervisor.close()
+
+
+def test_consecutive_query_errors_degrade_supervision_without_stopping() -> None:
+    # O4: after N consecutive unavailable results (here N=3), supervision
+    # degrades to off for the rest of the run -- a broken verifier must
+    # cost the mission nothing, not even ongoing LLM calls that will keep
+    # failing. supervisor.degraded fires exactly once; existing/new
+    # checkpoints still complete (undegraded, i.e. resolved from
+    # reported_status) without ever creating another query.
+    config = SupervisorConfig(mode=SupervisionMode.ACTIVE, max_consecutive_errors=3)
+    events: list[tuple[str, dict]] = []
+    client = ScriptedSupervisorClient(
+        verifications=[RuntimeError("offline")] * 3
+    )
+    supervisor = MissionSupervisor(
+        config,
+        _provider(),
+        client,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    try:
+        for index in range(3):
+            supervisor.submit(
+                _request(f"cp-{index}"), _contract(), ReportedStatus.SUCCESS
+            )
+        assert supervisor.wait_for_idle()
+        assert supervisor.consume_intervention() is None
+        degraded = [p for e, p in events if e == "supervisor.degraded"]
+        assert len(degraded) == 1
+
+        supervisor.submit(_request("cp-after"), _contract(), ReportedStatus.SUCCESS)
+        assert supervisor.resolution("cp-after") == "success"
+        assert supervisor.record("cp-after").unverified is False
+        # no fourth verify call was made for cp-after
+        assert [role for role, _ in client.calls] == ["verify", "verify", "verify"]
+    finally:
+        supervisor.close()
+
+
+def test_consecutive_error_counter_resets_on_a_successful_verdict() -> None:
+    config = SupervisorConfig(mode=SupervisionMode.ACTIVE, max_consecutive_errors=2)
+    events: list[tuple[str, dict]] = []
+    client = ScriptedSupervisorClient(
+        verifications=[
+            RuntimeError("offline"),
+            _verification("cp-1"),
+            RuntimeError("offline"),
+            RuntimeError("offline"),
+        ]
+    )
+    supervisor = MissionSupervisor(
+        config,
+        _provider(),
+        client,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    try:
+        supervisor.submit(_request("cp-error-a"), _contract(), ReportedStatus.SUCCESS)
+        assert supervisor.wait_for_idle()
+        assert not [p for e, p in events if e == "supervisor.degraded"]
+
+        supervisor.submit(_request("cp-1"), _contract(), ReportedStatus.SUCCESS)
+        assert supervisor.wait_for_idle()
+        assert supervisor.resolution("cp-1") == "success"
+        assert not [p for e, p in events if e == "supervisor.degraded"]
+
+        supervisor.submit(_request("cp-error-b"), _contract(), ReportedStatus.SUCCESS)
+        assert supervisor.wait_for_idle()
+        assert not [p for e, p in events if e == "supervisor.degraded"]
+
+        supervisor.submit(_request("cp-error-c"), _contract(), ReportedStatus.SUCCESS)
+        assert supervisor.wait_for_idle()
+        degraded = [p for e, p in events if e == "supervisor.degraded"]
+        assert len(degraded) == 1
+    finally:
+        supervisor.close()
+
+
+def test_config_default_and_env_max_consecutive_errors() -> None:
+    default = SupervisorConfig.from_env({})
+    assert default.max_consecutive_errors == 5
+    custom = SupervisorConfig.from_env(
+        {"GPSR_SUPERVISION_MAX_CONSECUTIVE_ERRORS": "2"}
+    )
+    assert custom.max_consecutive_errors == 2
 
 
 def test_recovery_ledger_counts_only_distinct_executed_failures() -> None:

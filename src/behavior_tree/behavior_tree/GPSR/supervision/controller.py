@@ -80,6 +80,13 @@ class MissionSupervisor:
         self._interventions: list[SupervisorIntervention] = []
         self._issue_checkpoint: dict[str, str] = {}
         self._lock = threading.RLock()
+        # O4 (unavailability never stops a mission): count consecutive
+        # supervisor.unavailable results; once the run of failures reaches
+        # config.max_consecutive_errors, degrade supervision to off for the
+        # rest of the run rather than keep issuing queries a broken
+        # verifier will just keep failing. Reset on any successful verdict.
+        self._consecutive_errors = 0
+        self._degraded = False
 
     def submit(
         self,
@@ -101,7 +108,14 @@ class MissionSupervisor:
             if request.checkpoint_id in self._records:
                 return request.checkpoint_id
             self._records[request.checkpoint_id] = record
-            if self.config.mode is SupervisionMode.OFF:
+            # O4: once degraded (ACTIVE mode only), supervision behaves like
+            # OFF -- resolve straight from reported_status and never enqueue
+            # another query; SHADOW mode keeps querying regardless, since it
+            # never intervenes and a broken verifier costs it nothing.
+            skip_query = self.config.mode is SupervisionMode.OFF or (
+                self.config.mode is SupervisionMode.ACTIVE and self._degraded
+            )
+            if skip_query:
                 record.stage = "complete"
                 record.resolution = reported_status.value.lower()
             else:
@@ -326,6 +340,9 @@ class MissionSupervisor:
             )
             return
         record.verification = decision
+        # O4: any successful verdict (the query itself succeeded, whatever
+        # its content) resets the consecutive-unavailable counter.
+        self._consecutive_errors = 0
         self._emit(
             "supervisor.verdict.received",
             {
@@ -528,34 +545,42 @@ class MissionSupervisor:
         )
 
     def _handle_query_error(self, record: CheckpointRecord, exc: Exception) -> None:
+        # O4 (unavailability never stops a mission): a query error -- a
+        # transport failure, a malformed/empty structured response, a stale
+        # checkpoint id, anything that reaches here -- is a supervisor
+        # problem, not evidence the mission failed. It ALWAYS resolves as
+        # continue-unverified now; the old stop-intervention branch is gone.
         record.error = f"{type(exc).__name__}: {exc}"
         request = record.snapshot.request
-        low_risk_success = (
-            record.reported_status is ReportedStatus.SUCCESS
-            and record.contract.risk is EffectRisk.OBSERVATION
+        record.stage = (
+            "complete" if self.config.mode is SupervisionMode.ACTIVE else "shadow_complete"
         )
-        if self.config.mode is SupervisionMode.SHADOW or low_risk_success:
-            record.stage = "complete" if self.config.mode is SupervisionMode.ACTIVE else "shadow_complete"
-            record.resolution = "success"
-            record.unverified = True
-        else:
-            record.stage = "complete"
-            record.resolution = "stop"
-            self._interventions.append(
-                SupervisorIntervention(
-                    kind="stop",
-                    checkpoint_id=request.checkpoint_id,
-                    reason="supervisor_unavailable",
-                )
-            )
+        record.resolution = "unavailable"
+        record.unverified = True
+        self._consecutive_errors += 1
+        just_degraded = False
+        if (
+            not self._degraded
+            and self._consecutive_errors >= self.config.max_consecutive_errors
+        ):
+            self._degraded = True
+            just_degraded = True
         self._emit(
             "supervisor.unavailable",
             {
                 "checkpoint_id": request.checkpoint_id,
                 "error_type": type(exc).__name__,
-                "continued_unverified": record.unverified,
+                "continued_unverified": True,
             },
         )
+        if just_degraded:
+            self._emit(
+                "supervisor.degraded",
+                {
+                    "checkpoint_id": request.checkpoint_id,
+                    "consecutive_errors": self._consecutive_errors,
+                },
+            )
 
     def _emit(self, event: str, payload: Mapping[str, Any]) -> None:
         if self._telemetry is None:
