@@ -411,6 +411,16 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         # that should shift mid-mission if the env var changes.
         self._time_source: Callable[[], float] = time_source or time.monotonic
         self._stall_s = float(os.environ.get("GPSR_SUPERVISION_STALL_S", "120.0"))
+        # Q2 (task-Q, round-6): once a subtask has been through >=1 applied
+        # intervention (see `_apply_intervention`'s local_recovery branch),
+        # a FURTHER intervention against a still-RUNNING retry only has to
+        # wait this long, not the full `_stall_s` -- a step already in
+        # recovery has forfeited the presumption of nominality. Read once at
+        # construction, same rationale as `_stall_s` above.
+        self._retry_stall_s = float(
+            os.environ.get("GPSR_SUPERVISION_RETRY_STALL_S", "20.0")
+        )
+        self._has_retried = False
         self._attempt_started_at: float = self._time_source()
         self._deferred_intervention_checkpoint: str | None = None
         self._hard_stop_reason: str | None = None
@@ -685,7 +695,15 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         if self._has_failed_pending_effect():
             return True
         age_s = self._time_source() - self._attempt_started_at
-        return age_s >= self._stall_s
+        # Q2 (task-Q, round-6): the full stall window protects a subtask's
+        # FIRST attempt from a premature intervention. Once this subtask
+        # has been through >=1 applied intervention (`_has_retried`, set at
+        # the end of `_apply_intervention`'s local_recovery branch), it has
+        # already forfeited that presumption of nominality -- a FURTHER
+        # intervention against the still-RUNNING retry only has to wait the
+        # much shorter retry-stall window.
+        stall_s = self._retry_stall_s if self._has_retried else self._stall_s
+        return age_s >= stall_s
 
     def _has_failed_pending_effect(self) -> bool:
         for node in self.decorated.iterate():
@@ -749,6 +767,14 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
             # judged against its own age, not however long the PRIOR failed
             # attempt had been running.
             self._attempt_started_at = self._time_source()
+            # Q2 (task-Q, round-6): this subtask has now been through >=1
+            # applied intervention -- it has forfeited the presumption of
+            # nominality `GPSR_SUPERVISION_STALL_S` protects. Any FURTHER
+            # intervention against a still-RUNNING retry (e.g. a
+            # ledger-exhaustion global replan resolving late) only needs to
+            # wait `GPSR_SUPERVISION_RETRY_STALL_S`, not the full stall --
+            # see `_may_apply_intervention_now`.
+            self._has_retried = True
             self.supervisor.recovery_started(proposal)
             return
         if intervention.kind == "global_replan":

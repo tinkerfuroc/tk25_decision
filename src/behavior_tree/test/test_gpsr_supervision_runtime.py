@@ -1263,6 +1263,120 @@ def test_a_new_subtask_after_a_completed_recovery_still_gets_its_own_checkpoint(
         supervisor.close()
 
 
+# ---------------------------------------------------------------------------
+# Task Q2 (round-6, supervision-economics fix): a retry attempt does not get
+# a fresh full stall window. `_may_apply_intervention_now`'s full
+# GPSR_SUPERVISION_STALL_S protection applies only to a subtask's FIRST
+# attempt; once a subtask has been through >=1 applied intervention, a
+# FURTHER intervention against a still-RUNNING retry only has to wait the
+# much shorter GPSR_SUPERVISION_RETRY_STALL_S.
+
+
+def test_post_retry_intervention_applies_at_the_shorter_retry_stall_not_the_full_stall():
+    _seed_blackboard()
+    checkpoint_id = "post-retry-checkpoint"
+    client = ScriptedSupervisorClient(verifications=[_decision(checkpoint_id)])
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE), _provider(), client
+    )
+    registry = NodeContractRegistry([])
+    clock = {"t": 0.0}
+    with patch.dict(
+        "os.environ",
+        {"GPSR_SUPERVISION_STALL_S": "120", "GPSR_SUPERVISION_RETRY_STALL_S": "20"},
+    ):
+        slot = SupervisedSubtaskSlot(
+            action_name="demo",
+            factory=lambda: FakeEffect("goto", py_trees.common.Status.RUNNING, []),
+            supervisor=supervisor,
+            registry=registry,
+            time_source=lambda: clock["t"],
+        )
+    # Normally set by `_apply_intervention`'s local_recovery branch; set
+    # directly here to isolate the stall-threshold decision (Q2) from the
+    # rest of the recovery pipeline (covered by the Q1 tests above).
+    slot._has_retried = True
+    try:
+        subtask_id = slot.current_subtask_id()
+        _register_checkpoint(supervisor, checkpoint_id=checkpoint_id, subtask_id=subtask_id)
+        proposal = _proposal(checkpoint_id=checkpoint_id)
+        supervisor.ledger.register(proposal)
+        supervisor._interventions.append(
+            SupervisorIntervention(
+                kind="local_recovery",
+                checkpoint_id=checkpoint_id,
+                reason="hallucinated",
+                payload=proposal,
+            )
+        )
+
+        slot.tick_once()
+        assert slot.status is py_trees.common.Status.RUNNING
+        assert len(supervisor._interventions) == 1
+
+        # Well under the 20s retry stall (and WAY under the 120s full
+        # stall) -> still deferred.
+        clock["t"] = 10.0
+        slot.tick_once()
+        assert len(supervisor._interventions) == 1
+
+        # Past the 20s retry stall (but nowhere near the 120s full stall)
+        # -> now applies, proving the SHORTER window governed.
+        clock["t"] = 21.0
+        slot.tick_once()
+        assert len(supervisor._interventions) == 0
+        assert slot.tree_revision == 2
+    finally:
+        supervisor.close()
+
+
+def test_first_attempt_intervention_still_waits_the_full_stall_not_the_retry_stall():
+    # Q2 counterpart: `_has_retried` starts False -- a subtask's FIRST
+    # attempt keeps the existing full-stall protection even when the (much
+    # shorter) retry-stall env var is configured.
+    _seed_blackboard()
+    checkpoint_id = "first-attempt-checkpoint"
+    client = ScriptedSupervisorClient(verifications=[_decision(checkpoint_id)])
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE), _provider(), client
+    )
+    registry = NodeContractRegistry([])
+    clock = {"t": 0.0}
+    with patch.dict(
+        "os.environ",
+        {"GPSR_SUPERVISION_STALL_S": "120", "GPSR_SUPERVISION_RETRY_STALL_S": "20"},
+    ):
+        slot = SupervisedSubtaskSlot(
+            action_name="demo",
+            factory=lambda: FakeEffect("goto", py_trees.common.Status.RUNNING, []),
+            supervisor=supervisor,
+            registry=registry,
+            time_source=lambda: clock["t"],
+        )
+    try:
+        subtask_id = slot.current_subtask_id()
+        _register_checkpoint(supervisor, checkpoint_id=checkpoint_id, subtask_id=subtask_id)
+        proposal = _proposal(checkpoint_id=checkpoint_id)
+        supervisor.ledger.register(proposal)
+        supervisor._interventions.append(
+            SupervisorIntervention(
+                kind="local_recovery",
+                checkpoint_id=checkpoint_id,
+                reason="hallucinated",
+                payload=proposal,
+            )
+        )
+        slot.tick_once()
+        # Past the 20s retry-stall window but well under the 120s full
+        # stall -> STILL deferred, because this is the first attempt.
+        clock["t"] = 21.0
+        slot.tick_once()
+        assert len(supervisor._interventions) == 1
+        assert slot.tree_revision == 1
+    finally:
+        supervisor.close()
+
+
 def test_destructive_failure_aborts_and_records_operator_message():
     _seed_blackboard()
     py_trees.blackboard.Blackboard.set("gpsr/plan", [{"action": "grasp", "params": {}}])
