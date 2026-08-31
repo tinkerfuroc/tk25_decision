@@ -630,11 +630,23 @@ class BtNode_CheckBBTrue(Behaviour):
     A generic boolean guard — used to gate the ask-referee-to-open step on
     ``GRASP_REFEREE_IS_APPLIANCE`` (only closed appliances) and, via an
     ``Inverter``, to skip it when ``APPLIANCE_OPENED`` is already set.
+
+    N4 (round-5 rerun fix, bench log flood): ``quiet_on_falsy`` -- default
+    False, preserving today's feedback for every other call site of this
+    SHARED class -- suppresses the ``"{key} is not truthy"`` feedback on the
+    FAILURE branch when set. ``create_goto()``'s fail-fast guard (ticked
+    EVERY tick of EVERY goto, essentially the whole mission, and almost
+    always FAILURE -- the normal, expected case) passes this: sim run 016
+    logged ``gpsr/mission_unrecoverable is not truthy`` 6805x, and bench's
+    run.json picked it as the failure DETAIL, hiding the true failure
+    reason. FAILURE here is routine; only a SUCCESS (the flag actually
+    latched True) is the exceptional, worth-logging case.
     """
 
-    def __init__(self, name: str, key: str):
+    def __init__(self, name: str, key: str, *, quiet_on_falsy: bool = False):
         super().__init__(name)
         self._key = key
+        self._quiet_on_falsy = quiet_on_falsy
         self._client = None
 
     def setup(self, **kwargs):
@@ -648,7 +660,9 @@ class BtNode_CheckBBTrue(Behaviour):
             value = None
         if bool(value):
             return Status.SUCCESS
-        self.feedback_message = f"{self._key} is not truthy"
+        self.feedback_message = (
+            "" if self._quiet_on_falsy else f"{self._key} is not truthy"
+        )
         return Status.FAILURE
 
 
@@ -1207,7 +1221,10 @@ def create_goto():
     # quiet loop.
     seq.add_child(py_trees.decorators.Inverter(
         "mission still recoverable? (fail-fast guard)",
-        BtNode_CheckBBTrue("mission unrecoverable?", bb_keys.MISSION_UNRECOVERABLE),
+        BtNode_CheckBBTrue(
+            "mission unrecoverable?", bb_keys.MISSION_UNRECOVERABLE,
+            quiet_on_falsy=True,
+        ),
     ))
     seq.add_child(BtNode_AnnounceFromBB(
         "announce going", bb_keys.TARGET_LOCATION, prefix="Going to "

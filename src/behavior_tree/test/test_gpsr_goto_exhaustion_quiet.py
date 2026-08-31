@@ -178,3 +178,20 @@ def test_unrecoverable_announce_fires_exactly_once_even_if_it_fails():
 
     assert cap.exhausted is True
     assert unrec_announce.tick_count == 1
+
+
+def test_fail_fast_guard_feedback_is_empty_when_mission_recoverable():
+    # N4 (round-5 rerun fix, bench log flood): this fail-fast guard ticks on
+    # EVERY goto, almost always FAILURE -- MISSION_UNRECOVERABLE simply
+    # absent, the normal/expected case. Sim run 016 logged its old
+    # "gpsr/mission_unrecoverable is not truthy" feedback 6805x, and bench's
+    # run.json picked that noise as the failure DETAIL, hiding the true
+    # reason. Feedback here must be empty; a real trip (the flag actually
+    # latched True) is the only case worth a message.
+    py_trees.blackboard.Blackboard.clear()
+    tree, announce_going, tuck, cap, unrec_announce = _build_goto_under_test()
+
+    tree.tick_once()
+
+    guard = tree.children[0]
+    assert guard.decorated.feedback_message == ""

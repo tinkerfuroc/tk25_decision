@@ -25,6 +25,19 @@ _DIAG_RE = re.compile(
     r"swept \d+ of \d+ spots|identical to failed plan)",
     re.IGNORECASE,
 )
+# N4 (round-5 rerun fix, bench log flood): the K-round fail-fast guard's
+# routine per-tick feedback -- "gpsr/mission_unrecoverable is not truthy" --
+# contains the substring "unrecoverable" (from the blackboard KEY's own
+# name), so _DIAG_RE above matches it too. That guard fires on EVERY tick
+# of EVERY goto (almost always FAILURE -- the normal, expected case) and
+# `diag_by_slot` keeps only the LAST match seen, so this routine noise
+# (6805x in sim run 016's logs) silently overwrote whatever real diagnostic
+# preceded it, and bench's run.json then reported the guard line as the
+# failure detail instead of the true reason. Exclude this shape regardless
+# of whether the guard node itself was also quieted (small_trees.py's
+# BtNode_CheckBBTrue quiet_on_falsy) -- old logs captured before that fix
+# still carry the noisy line verbatim.
+_DIAG_EXCLUDE_RE = re.compile(r"is not truthy", re.IGNORECASE)
 
 
 @dataclass
@@ -144,7 +157,12 @@ def parse_events(path: Path) -> dict[int, TaskResult]:
             for node in payload.get("nodes", []):
                 node_id = node.get("id") or node.get("node_id")
                 feedback = node.get("feedback")
-                if isinstance(feedback, str) and feedback and _DIAG_RE.search(feedback):
+                if (
+                    isinstance(feedback, str)
+                    and feedback
+                    and not _DIAG_EXCLUDE_RE.search(feedback)
+                    and _DIAG_RE.search(feedback)
+                ):
                     diag_slot = _slot_for_node(node_id, executor_slot_by_id)
                     if diag_slot is not None:
                         diag_by_slot[diag_slot] = feedback

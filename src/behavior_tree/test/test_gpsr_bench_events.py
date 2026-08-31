@@ -282,6 +282,52 @@ def test_parse_events_captures_a_search_object_swept_feedback_from_a_nested_node
     assert results[1].reason == "search_object: swept 1 of 6 spots at bedroom, nothing found"
 
 
+# ---------------------------------------------------------------------------
+# N4 (round-5 rerun fix, bench log flood): the K-round fail-fast guard's
+# routine per-tick "gpsr/mission_unrecoverable is not truthy" feedback
+# contains the substring "unrecoverable" (from the blackboard key's own
+# name), so _DIAG_RE matched it too -- 6805x in sim run 016's logs, always
+# the LAST diag_by_slot entry, silently burying the true failure reason.
+# ---------------------------------------------------------------------------
+
+def test_diag_re_exclusion_matches_the_guard_flood_line():
+    text = "gpsr/mission_unrecoverable is not truthy"
+    assert _DIAG_RE.search(text), "sanity: the old regex DOES match this line"
+    from behavior_tree.GPSR.bench.events import _DIAG_EXCLUDE_RE
+    assert _DIAG_EXCLUDE_RE.search(text)
+
+
+def test_parse_events_ignores_the_guard_flood_and_keeps_the_real_reason(tmp_path):
+    lines = [
+        _tree_generated({"executor/root/7/0/13": "executor task 1"}, at="2026-08-23T00:00:00Z", seq=0),
+        _node_states_changed({"executor/root/7/0/13": "RUNNING"}, at="2026-08-23T00:00:01Z", seq=1),
+        _ev("tree.node_states_changed", None, {"tree_kind": "executor", "nodes": [
+            {"id": "executor/root/7/0/13/0/0", "node_id": "executor/root/7/0/13/0/0",
+             "status": "FAILURE",
+             "feedback": "unrecoverable: no untried establisher for ['object_seen(pudding_box)']"}]},
+            at="2026-08-23T00:00:02Z", seq=2),
+        # A flood of the routine guard line AFTER the real diagnostic --
+        # exactly the shape that used to overwrite diag_by_slot last.
+        *[
+            _ev("tree.node_states_changed", None, {"tree_kind": "executor", "nodes": [
+                {"id": "executor/root/7/0/13/1/0", "node_id": "executor/root/7/0/13/1/0",
+                 "status": "FAILURE",
+                 "feedback": "gpsr/mission_unrecoverable is not truthy"}]},
+                at="2026-08-23T00:00:03Z", seq=3 + i)
+            for i in range(5)
+        ],
+        _node_states_changed({"executor/root/7/0/13": "FAILURE"}, at="2026-08-23T00:00:10Z", seq=10),
+    ]
+    path = tmp_path / "events.jsonl"
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+
+    results = parse_events(path)
+    assert results[1].status == "failed"
+    assert results[1].reason == (
+        "unrecoverable: no untried establisher for ['object_seen(pudding_box)']"
+    )
+
+
 def test_parse_events_ignores_node_states_from_a_non_executor_tree(tmp_path):
     """Only the "executor" tree's node states should be read as task-completion signals."""
     lines = [
