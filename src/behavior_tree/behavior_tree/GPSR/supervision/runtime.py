@@ -41,12 +41,6 @@ from .recovery import (
 _DEFAULT_SUPERVISOR: MissionSupervisor | None = None
 _DEFAULT_LOCK = threading.RLock()
 
-# O2/O4: checkpoint resolutions that give up trying to verify a genuinely
-# reported FAILURE without ever queuing an intervention (see
-# SupervisedEffect.tick()) -- "unverified" is an uncertain verdict (O2),
-# "unavailable" is a broken/errored supervisor query (O4).
-_UNVERIFIED_RESOLUTIONS = frozenset({"unverified", "unavailable"})
-
 
 def set_default_supervisor(supervisor: MissionSupervisor | None) -> None:
     global _DEFAULT_SUPERVISOR
@@ -272,24 +266,59 @@ class SupervisedEffect(py_trees.decorators.Decorator):
         ):
             new_status = self._terminal_status
         else:
-            resolution = self.supervisor.resolution(self._checkpoint_id or "")
-            if resolution == "success":
-                new_status = Status.SUCCESS
-            elif resolution in _UNVERIFIED_RESOLUTIONS:
-                # O2/O4 (uncertainty/unavailability is not failure, but it
-                # is not a fabricated success either): "unverified" (an
-                # uncertain verdict) and "unavailable" (a broken/errored
-                # query) are terminal resolutions that -- unlike
-                # recovery/global/stop -- never queue an intervention for
-                # this slot to consume. Every other non-"success"
-                # resolution here relies on that queued intervention to
-                # pull the effect out of this masked RUNNING state; without
-                # this branch a genuinely-failed checkpoint whose verifier
-                # came back uncertain or errored would mask as RUNNING
-                # forever. Let the real, already-reported FAILURE stand.
+            # Z-1 (task-O review, CRITICAL): this used to be an open
+            # allowlist of "known terminal resolution strings"
+            # (_UNVERIFIED_RESOLUTIONS = {"unverified", "unavailable"}) that
+            # every future terminal resolution had to remember to join --
+            # and one already didn't: O4's own skip_query path (once
+            # degraded) resolves a genuinely FAILED checkpoint to the bare
+            # string "failure", which matched neither "success" nor that
+            # allowlist and fell into the `else: RUNNING` branch, hanging
+            # the effect (and its slot) forever. Fixed at the class, not
+            # the instance: invert the check to be closed over "still
+            # pending" (nothing terminal has happened yet -- resolution is
+            # unset -- or an intervention IS queued for this checkpoint and
+            # the owning SupervisedSubtaskSlot has not consumed it yet, see
+            # has_queued_intervention()) rather than open over "known
+            # terminal". Any resolution that is not "success" and is not
+            # still pending unmasks to the real, already-reported terminal
+            # status -- the resolution *string* only ever selects SUCCESS
+            # vs FAILURE surfacing, so a brand new future resolution value
+            # is safe by construction and cannot reintroduce this hang.
+            checkpoint_id = self._checkpoint_id or ""
+            resolution = self.supervisor.resolution(checkpoint_id)
+            record = self.supervisor.record(checkpoint_id)
+            stage_complete = record is not None and record.stage in {
+                "complete",
+                "shadow_complete",
+            }
+            intervention_pending = self.supervisor.has_queued_intervention(
+                checkpoint_id
+            )
+            if stage_complete and resolution is None and not intervention_pending:
+                # Structural invariant guard, not an expected runtime path:
+                # every controller code path that marks a record
+                # complete/shadow_complete also sets `resolution` in the
+                # same call (verified against every `record.resolution =`
+                # assignment in controller.py). If that invariant is ever
+                # violated by a future change, fail loud with a real
+                # terminal FAILURE and a feedback message naming the
+                # anomaly instead of silently holding RUNNING forever.
+                self.feedback_message = (
+                    f"supervisor invariant violated: checkpoint {checkpoint_id!r} "
+                    f"is stage={record.stage if record else None!r} with no "
+                    "resolution and no queued intervention -- surfacing FAILURE"
+                )
+                self.logger.error(
+                    f"{self.__class__.__name__}.tick(): {self.feedback_message}"
+                )
                 new_status = self._terminal_status
-            else:
+            elif resolution is None or intervention_pending:
                 new_status = Status.RUNNING
+            elif resolution == "success":
+                new_status = Status.SUCCESS
+            else:
+                new_status = self._terminal_status
 
         if new_status != Status.RUNNING:
             self.stop(new_status)

@@ -212,6 +212,29 @@ class MissionSupervisor:
             record = self._records.get(checkpoint_id)
             return record.resolution if record else None
 
+    def has_queued_intervention(self, checkpoint_id: str) -> bool:
+        """Structural predicate: is an intervention for THIS checkpoint
+        still queued, waiting for its owning slot to consume it?
+
+        Z-1 (task-O review, CRITICAL): every call site that queues a
+        ``SupervisorIntervention`` (the ``Escalation.STOP`` branch and the
+        else-fallback in ``_handle_verification``, ``_handle_local_recovery``,
+        ``_handle_global_replan``) does so for exactly this checkpoint_id in
+        the same call that sets ``record.resolution``. This lets a caller
+        (``SupervisedEffect.tick()``) defer to the slot-level consumption
+        machinery *structurally* -- by asking the controller directly,
+        rather than by pattern-matching which resolution strings happen to
+        mean "an intervention is coming" -- so a future intervention-queuing
+        code path is recognized automatically, with nothing to remember to
+        patch in the caller.
+        """
+        self.poll()
+        with self._lock:
+            return any(
+                intervention.checkpoint_id == checkpoint_id
+                for intervention in self._interventions
+            )
+
     def consume_intervention(
         self, *, subtask_id: str | None = None
     ) -> SupervisorIntervention | None:

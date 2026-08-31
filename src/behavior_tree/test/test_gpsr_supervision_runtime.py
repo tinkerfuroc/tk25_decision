@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import py_trees
@@ -37,6 +38,7 @@ from behavior_tree.GPSR.supervision.models import (
 )
 from behavior_tree.GPSR.supervision.runtime import (
     BtNode_RecoveryDirective,
+    SupervisedEffect,
     SupervisedSubtaskSlot,
     default_recovery_compiler,
 )
@@ -249,6 +251,206 @@ def test_query_error_after_genuine_failure_resolves_to_failure():
         assert supervisor.resolution(checkpoint) == "unavailable"
         assert supervisor.consume_intervention() is None
     finally:
+        supervisor.close()
+
+
+def test_degraded_supervisor_then_genuine_failure_does_not_hang():
+    # Z-1 (task-O review, CRITICAL) -- the reviewer's own direct
+    # reproduction. Once supervision degrades (N consecutive query
+    # errors), MissionSupervisor.submit()'s O4 skip_query path resolves
+    # straight from reported_status -- for a genuinely FAILED effect that
+    # is the bare string "failure", which the previous fix's
+    # _UNVERIFIED_RESOLUTIONS allowlist (only {"unverified", "unavailable"})
+    # did not recognize, silently re-masking it as RUNNING forever. This
+    # is production-realistic, not a synthetic edge case: a verifier
+    # outage degrades supervision (as O4 intends, at zero mission cost so
+    # far -- the three warmup checkpoints below all still succeed), and
+    # the NEXT genuine robot failure (a missed grasp, a failed goto) must
+    # still surface, not hang the mission forever.
+    _seed_blackboard()
+    calls: list[str] = []
+    client = ScriptedSupervisorClient(verifications=[RuntimeError("offline")] * 3)
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE, max_consecutive_errors=3),
+        _provider(),
+        client,
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect", "perception", EffectRisk.OBSERVATION, "observed"
+            )
+        ]
+    )
+    try:
+        for index in range(3):
+            warmup_slot = SupervisedSubtaskSlot(
+                action_name=f"warmup-{index}",
+                factory=lambda: FakeEffect(
+                    "warmup", py_trees.common.Status.SUCCESS, calls
+                ),
+                supervisor=supervisor,
+                registry=registry,
+            )
+            for _ in range(100):
+                warmup_slot.tick_once()
+                if warmup_slot.status is not py_trees.common.Status.RUNNING:
+                    break
+                time.sleep(0.005)
+            assert warmup_slot.status is py_trees.common.Status.SUCCESS
+        # Confirm supervision actually degraded (the precondition for the
+        # skip_query path that produces the bare "failure" resolution).
+        assert supervisor._degraded is True
+
+        failing_slot = SupervisedSubtaskSlot(
+            action_name="real-robot-failure",
+            factory=lambda: FakeEffect(
+                "grasp", py_trees.common.Status.FAILURE, calls
+            ),
+            supervisor=supervisor,
+            registry=registry,
+        )
+        for _ in range(100):
+            failing_slot.tick_once()
+            if failing_slot.status is not py_trees.common.Status.RUNNING:
+                break
+            time.sleep(0.005)
+        assert failing_slot.status is py_trees.common.Status.FAILURE
+    finally:
+        supervisor.close()
+
+
+def _build_masked_failed_effect():
+    """Real MissionSupervisor + SupervisedSubtaskSlot wrapping a FAILURE
+    effect, ticked exactly once so the underlying SupervisedEffect is
+    parked in its masked-RUNNING state: `_terminal_status` is FAILURE,
+    `_checkpoint_id` is captured, and the query is genuinely still
+    pending (blocked on a threading.Event, never released here) so the
+    masking branch has not made a decision yet.
+
+    Returns (slot, effect, real_supervisor, release_event). The caller is
+    responsible for `release_event.set()` and `real_supervisor.close()`.
+    Swap `effect.supervisor` for a stub to control exactly what the
+    masking branch's next tick sees, without needing the real async
+    verifier/recovery pipeline to produce every resolution.
+    """
+    _seed_blackboard()
+    release = threading.Event()
+
+    def delayed():
+        release.wait(5)
+        raise RuntimeError("kept pending for the test")
+
+    client = ScriptedSupervisorClient(verifications=[delayed])
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE), _provider(), client
+    )
+    registry = NodeContractRegistry(
+        [NodeContract("FakeEffect", "perception", EffectRisk.OBSERVATION, "observed")]
+    )
+    slot = SupervisedSubtaskSlot(
+        action_name="masking-probe",
+        factory=lambda: FakeEffect("fail", py_trees.common.Status.FAILURE, []),
+        supervisor=supervisor,
+        registry=registry,
+    )
+    slot.tick_once()
+    assert slot.status is py_trees.common.Status.RUNNING
+    effect = next(
+        node for node in slot.decorated.iterate() if isinstance(node, SupervisedEffect)
+    )
+    assert effect.status is py_trees.common.Status.RUNNING
+    assert effect._terminal_status is py_trees.common.Status.FAILURE
+    return slot, effect, supervisor, release
+
+
+class _StubSupervisorForMasking:
+    """Controls exactly what SupervisedEffect.tick()'s masking branch sees
+    for one tick, decoupled from the real async verifier/recovery
+    pipeline -- see _build_masked_failed_effect()."""
+
+    def __init__(self, *, resolution, has_intervention, stage="complete"):
+        self.config = SimpleNamespace(mode=SupervisionMode.ACTIVE)
+        self._resolution = resolution
+        self._has_intervention = has_intervention
+        self._stage = stage
+
+    def resolution(self, checkpoint_id):
+        return self._resolution
+
+    def record(self, checkpoint_id):
+        return SimpleNamespace(stage=self._stage)
+
+    def has_queued_intervention(self, checkpoint_id):
+        return self._has_intervention
+
+
+# Z-1 (task-O review, CRITICAL): every `record.resolution = ...` literal
+# grepped from controller.py, so a future resolution value that isn't
+# added here fails this test instead of silently being able to hang a
+# mission. `has_intervention` reflects how each value actually arises in
+# controller.py: the STOP branch and else-fallback in
+# `_handle_verification` (both "stop") and `_start_local`/
+# `_handle_local_recovery` ("recovery"), `_start_global`/
+# `_handle_global_replan` ("global") are the ONLY three call sites that
+# also queue a SupervisorIntervention for the same checkpoint (see
+# `MissionSupervisor.has_queued_intervention`'s docstring) -- every other
+# resolution-setting call site never queues one.
+_KNOWN_RESOLUTIONS = (
+    # (resolution, has_intervention, expected_status)
+    ("success", False, py_trees.common.Status.SUCCESS),  # false_failure override
+    ("failure", False, py_trees.common.Status.FAILURE),  # O4 skip_query once degraded
+    ("unverified", False, py_trees.common.Status.FAILURE),  # O2 uncertain downgrade
+    ("unavailable", False, py_trees.common.Status.FAILURE),  # O4 query error
+    ("recovery_succeeded", False, py_trees.common.Status.FAILURE),
+    ("recovery_failed", False, py_trees.common.Status.FAILURE),
+    ("stop", True, py_trees.common.Status.RUNNING),  # intervention queued, slot owns it
+    ("recovery", True, py_trees.common.Status.RUNNING),
+    ("global", True, py_trees.common.Status.RUNNING),
+)
+
+
+@pytest.mark.parametrize("resolution,has_intervention,expected", _KNOWN_RESOLUTIONS)
+def test_every_known_resolution_value_is_safe_by_construction(
+    resolution, has_intervention, expected
+):
+    # Z-1: no resolution value the controller can produce may hang the
+    # masking branch. Only "success" maps to Status.SUCCESS; a resolution
+    # paired with a still-queued intervention (stop/recovery/global) stays
+    # RUNNING, correctly deferring to the owning SupervisedSubtaskSlot's
+    # intervention-consumption machinery; every other resolution unmasks
+    # to the real, already-reported FAILURE -- including
+    # "recovery_succeeded"/"recovery_failed", which must NOT be
+    # misread as this checkpoint's own success just because the word
+    # "succeeded" appears in the string.
+    slot, effect, supervisor, release = _build_masked_failed_effect()
+    try:
+        effect.supervisor = _StubSupervisorForMasking(
+            resolution=resolution, has_intervention=has_intervention
+        )
+        list(effect.tick())
+        assert effect.status is expected
+    finally:
+        release.set()
+        supervisor.close()
+
+
+def test_stage_complete_with_unset_resolution_fails_loud_not_running():
+    # Z-1: a genuinely unknown/unset state (the controller's own
+    # complete/shadow_complete-always-sets-resolution invariant somehow
+    # violated) must fail loud -- surface a real terminal FAILURE with a
+    # feedback message naming the anomaly -- never hold RUNNING forever.
+    slot, effect, supervisor, release = _build_masked_failed_effect()
+    try:
+        effect.supervisor = _StubSupervisorForMasking(
+            resolution=None, has_intervention=False, stage="complete"
+        )
+        list(effect.tick())
+        assert effect.status is py_trees.common.Status.FAILURE
+        assert "invariant violated" in effect.feedback_message
+        assert str(effect._checkpoint_id) in effect.feedback_message
+    finally:
+        release.set()
         supervisor.close()
 
 
