@@ -553,6 +553,58 @@ def test_plan_target_final_identical_attempt_escapes_to_untried_action(monkeypat
     assert "dropped []" in out
 
 
+def test_plan_target_escape_ladder_threads_completed_steps(monkeypatch, capsys):
+    # R2 (round-3 whole-branch review): `_try_escape`'s own `_store` call
+    # was the one site in `_plan_target_impl` that did NOT thread
+    # `completed_steps` through (unlike the accepted-plan and
+    # fallback-plan paths, both of which pass it to `build_target_subtree`
+    # and `_store`). A target that reaches the deterministic escape ladder
+    # with a non-empty completed prefix (e.g. an earlier step of this same
+    # attempt already succeeded) would otherwise gate the escape subtree
+    # over the escape steps alone, and never persist the prefix for a
+    # later attempt's `get_completed_steps()` recovery.
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    build_calls = []
+
+    def fake_build(slot, index, plan, modifications=None, completed_steps=None):
+        build_calls.append(completed_steps)
+        return py_trees.behaviours.Success("stub")
+
+    monkeypatch.setattr(p, "build_target_subtree", fake_build)
+    target = {"id": "t0", "desc": "d", "object": "", "location": "",
+              "depends_on": [], "preconditions": [],
+              "postconditions": ["object_seen(pudding_box)"]}
+    p._slot_context[0] = {"command": "c", "targets": [target]}
+    same = {"plan": [
+        {"action": "goto", "params": {"location": "living_room"}},
+        {"action": "find_object",
+         "params": {"object": "pudding_box", "location": "living_room"}},
+    ]}
+    monkeypatch.setattr(planner_mod, "_call_llm", lambda *a, **k: (same, None))
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+    p._store(0, 0, "d", same["plan"], py_trees.behaviours.Success("old"), None)
+    p._invalidate(0, 0)
+    completed_steps = [{"action": "goto", "params": {"location": "kitchen"}}]
+    p.plan_target(
+        0, 0, "d", command="c",
+        failure_reason="postcondition unmet: object_seen(pudding_box) (UNKNOWN)",
+        target=target, all_targets=[target], completed_steps=completed_steps,
+    )
+    assert p.is_target_ready(0, 0)
+    plan = p.get_action_plan(0, 0)
+    assert [s["action"] for s in plan] == ["search_object"]
+    assert p.get_error(0, 0) is None
+    # the escape's own build_target_subtree call received completed_steps
+    assert build_calls[-1] == completed_steps
+    # ... and _store persisted it onto the cache entry for a later
+    # attempt's get_completed_steps() recovery.
+    assert p.get_completed_steps(0, 0) == completed_steps
+    out = capsys.readouterr().out
+    assert "LLM stuck on an identical plan -> deterministic escape" in out
+
+
 def test_plan_target_marks_unrecoverable_when_escape_ladder_is_exhausted(monkeypatch, capsys):
     # E2 (runs 003/004, 2026-08-29): find_object AND search_object have BOTH
     # already failed for this target -- object_seen's only two registry

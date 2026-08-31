@@ -2519,6 +2519,7 @@ class GPSRPlanner:
         known_actions: set,
         known_loc_arg: Optional[set],
         prior_plan: List[Dict[str, Any]],
+        completed_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[bool, Optional[str]]:
         """D1 (Task D brief, battery run 004): try ONE deterministic escape.
 
@@ -2551,6 +2552,15 @@ class GPSRPlanner:
         postcondition (e.g. a 2-postcondition grasp/deliver target) would
         have ``_escape_plan`` re-select, and ``validate_plan`` re-reject,
         the exact same candidate on every subsequent identical replan.
+
+        R2 (round-3 whole-branch review): ``completed_steps`` is threaded
+        through to ``build_target_subtree`` and ``_store`` the same way the
+        accepted-plan and fallback-plan paths in ``_plan_target_impl``
+        already do — the escape ladder was the one ``_store`` site missing
+        it, so a target that reaches a deterministic escape with a
+        non-empty completed prefix would otherwise gate the escape subtree
+        over the escape steps alone and never persist the prefix for a
+        later attempt's ``get_completed_steps`` recovery.
         """
         failed_plans = self._failed_plans(slot, index)
         tried_escapes = self._tried_escapes(slot, index)
@@ -2586,7 +2596,9 @@ class GPSRPlanner:
         escape_subtree = None
         if escape_ok:
             try:
-                escape_subtree = self.build_target_subtree(slot, index, escape_guarded)
+                escape_subtree = self.build_target_subtree(
+                    slot, index, escape_guarded, completed_steps=completed_steps,
+                )
             except Exception as exc:  # noqa: BLE001 — fall through to the marker path
                 print(f"[plan:{slot}:{index}] deterministic escape subtree build "
                       f"failed: {exc!r}")
@@ -2606,7 +2618,8 @@ class GPSRPlanner:
         print(f"[plan:{slot}:{index}] LLM stuck on an identical plan -> "
               f"deterministic escape {[s['action'] for s in escape_guarded]} "
               f"dropped {escape_dropped}")
-        self._store(slot, index, desc, escape_guarded, escape_subtree, None)
+        self._store(slot, index, desc, escape_guarded, escape_subtree, None,
+                    completed_steps=completed_steps)
         return True, None
 
     def plan_target(
@@ -2890,6 +2903,7 @@ class GPSRPlanner:
                     slot, index, desc, target, target_obj, target_loc,
                     identical_marker_reason, all_targets, failure_reason,
                     known_actions, known_loc_arg, prior_plan,
+                    completed_steps=completed_steps,
                 )
                 if handled:
                     return
