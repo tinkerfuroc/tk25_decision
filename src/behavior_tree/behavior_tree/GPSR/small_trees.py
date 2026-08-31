@@ -51,6 +51,7 @@ from .custom_nodes import (
     BtNode_ParseCountFromAnswer,
     BtNode_LLMQuery,
 )
+from .telemetry import get_default_telemetry
 
 
 # ---------------------------------------------------------------------------
@@ -708,6 +709,98 @@ class BtNode_CountDetections(Behaviour):
         return Status.SUCCESS
 
 
+class PersistentFailureCap(py_trees.decorators.Decorator):
+    """Caps CONSECUTIVE child FAILUREs at ``max_failures``, with a counter
+    that SURVIVES root-restart re-entries.
+
+    K2 (task-K, live-manipulation sim findings, F1): the orchestrator root is
+    a memory Sequence that invalidates every child on ANY sibling FAILURE and
+    restarts from child 0 on the next tick. An ordinary ``Retry`` decorator's
+    ``initialise()`` re-zeroes its own attempt counter on every one of those
+    restarts, so a persistently broken action (e.g. the arm controller
+    rejecting every goal) never actually gives up -- a real run produced
+    3000+ rejected arm goals and 8601 announce repeats over 1500s. This
+    decorator wraps a (possibly already ``Retry``-wrapped) child and
+    deliberately does NOT reset its failure counter in ``initialise()`` --
+    failures accumulate ACROSS re-entries, not per-entry. A child SUCCESS
+    resets the counter to 0.
+
+    While under the cap this is a transparent pass-through of the child's
+    status (RUNNING stays RUNNING, etc). On reaching the cap, ``on_exhausted``
+    (if given) fires exactly once, and from then on this returns FAILURE
+    immediately WITHOUT ticking the child again -- no further goals / per-
+    attempt side effects, ever.
+
+    ``announce_child`` (optional) is a second, independent behaviour ticked
+    ONLY once exhausted (never before) -- an escape hatch for a one-time
+    reaction that itself needs several ticks to complete (e.g. a ROS speech
+    call that goes RUNNING while in flight), which a synchronous
+    ``on_exhausted`` callback cannot drive to completion on its own. It is
+    appended to ``self.children`` (setup/shutdown reach it normally) and
+    should already be wrapped one-shot by the caller (see ``_one_shot``) so
+    ticking it forever after it settles is a harmless bounce, not a repeat.
+    """
+
+    def __init__(self, name: str, child: py_trees.behaviour.Behaviour,
+                 max_failures: int, on_exhausted=None,
+                 announce_child: py_trees.behaviour.Behaviour | None = None):
+        super().__init__(name=name, child=child)
+        self.max_failures = max_failures
+        self.on_exhausted = on_exhausted
+        self.consecutive_failures = 0
+        self.exhausted = False
+        self._fired = False
+        self.announce_child = announce_child
+        if announce_child is not None:
+            self.children.append(announce_child)
+            announce_child.parent = self
+
+    def initialise(self) -> None:
+        # Deliberately does NOT reset consecutive_failures / exhausted /
+        # _fired -- see class docstring; that persistence across re-entries
+        # is the entire point of this decorator.
+        pass
+
+    def tick(self):
+        self.logger.debug(f"{self.__class__.__name__}.tick()")
+        if self.status != Status.RUNNING:
+            self.initialise()
+
+        if self.exhausted:
+            # Cap already reached in a previous entry: do NOT tick the child
+            # again (no more goals / side effects). The (one-shot) announce
+            # is the only thing still ticked, so it can finish delivering
+            # the exhaustion speech even if that takes a few more ticks.
+            if self.announce_child is not None:
+                yield from self.announce_child.tick()
+            self.stop(Status.FAILURE)
+            self.status = Status.FAILURE
+            yield self
+            return
+
+        yield from self.decorated.tick()
+        new_status = self.decorated.status
+
+        if new_status == Status.SUCCESS:
+            self.consecutive_failures = 0
+        elif new_status == Status.FAILURE:
+            self.consecutive_failures += 1
+            if self.consecutive_failures >= self.max_failures:
+                self.exhausted = True
+                if not self._fired:
+                    self._fired = True
+                    if self.on_exhausted is not None:
+                        self.on_exhausted()
+
+        if new_status != Status.RUNNING:
+            self.stop(new_status)
+        self.status = new_status
+        yield self
+
+    def update(self) -> Status:  # pragma: no cover - custom tick owns status
+        return self.status
+
+
 # ---------------------------------------------------------------------------
 # Small-tree factories
 # ---------------------------------------------------------------------------
@@ -797,7 +890,10 @@ def _pantilt_sweep(label: str, tilts, make_detect, pan_deg=None):
     return sweep
 
 
-def _one_shot(child: py_trees.behaviour.Behaviour) -> py_trees.decorators.OneShot:
+def _one_shot(
+    child: py_trees.behaviour.Behaviour,
+    policy: py_trees.common.OneShotPolicy = py_trees.common.OneShotPolicy.ON_SUCCESSFUL_COMPLETION,
+) -> py_trees.decorators.OneShot:
     """Wrap ``child`` so it runs through to completion only ONCE.
 
     K1 (task-K, live-manipulation sim findings, F1): the orchestrator root is
@@ -815,10 +911,14 @@ def _one_shot(child: py_trees.behaviour.Behaviour) -> py_trees.decorators.OneSho
     call site does not change what shows up in name-based lookups (tests,
     ``tree_serialization``, the tick visualizer) -- the wrapper is invisible
     by name, only its behaviour differs.
+
+    ``policy`` defaults to ``ON_SUCCESSFUL_COMPLETION`` (only a SUCCESS
+    latches; a FAILURE keeps retrying on the next entry -- what entry-arena
+    needs). K2 passes ``ON_COMPLETION`` for the exhaustion announcement,
+    where a single ATTEMPT (success or failure) must be enough -- it must
+    never re-announce even if the TTS call itself happens to fail.
     """
-    return py_trees.decorators.OneShot(
-        child.name, child, py_trees.common.OneShotPolicy.ON_SUCCESSFUL_COMPLETION,
-    )
+    return py_trees.decorators.OneShot(child.name, child, policy)
 
 
 def create_enter_arena():
@@ -910,6 +1010,34 @@ def _goto_keepalive_announcer() -> py_trees.behaviour.Behaviour:
     return py_trees.decorators.SuccessIsRunning("loop nav keepalive", lines)
 
 
+def _tuck_arm_before_goto_exhausted() -> None:
+    """K2 ``on_exhausted`` for the goto tuck-arm ``PersistentFailureCap``.
+
+    Fires once the tuck-arm node has FAILED ``max_failures`` (5) times in a
+    row -- at 3 retries/attempt that is at most 15 rejected arm goals total,
+    instead of the 3000+ a broken arm controller produced in a real run
+    (F1). Telemetry only: the matching speech is wired as this cap's
+    ``announce_child`` in ``create_goto()`` (see there) rather than fired
+    from here, since delivering it needs the tree's OWN tick loop (RUNNING
+    while the TTS call is in flight) -- a synchronous callback invoked
+    mid-tick cannot drive that to completion.
+    """
+    telemetry = get_default_telemetry()
+    if telemetry is None:
+        return
+    try:
+        telemetry.emit(
+            "mission.unrecoverable",
+            {
+                "reason": "arm goal rejected/aborted repeatedly",
+                "node": "tuck arm before goto",
+            },
+            phase="execution",
+        )
+    except Exception:
+        pass
+
+
 def create_goto():
     """Navigate to ``bb_keys.TARGET_POSE`` (filled by orchestrator).
 
@@ -922,8 +1050,27 @@ def create_goto():
     ))
     # goto is pure navigation: always park the arm in the dedicated navigating
     # (lidar-clearing) pose before driving, not the orbbec-look stow pose.
-    seq.add_child(_tuck_arm_for_nav(
-        "tuck arm before goto", pose_key=bb_keys.ARM_NAVIGATING,
+    # K2: cap the Retry(num_failures=3) tuck-arm node at 5 CONSECUTIVE
+    # failures that survive root restarts (F1: an ordinary decorator's
+    # initialise() would re-zero the Retry's own counter every ~500ms while
+    # the root keeps failing/restarting, so it never actually gives up).
+    # After exhaustion the tuck (and so this whole goto) just quietly FAILS
+    # every tick -- no more arm goals -- after announcing once.
+    seq.add_child(PersistentFailureCap(
+        "tuck arm before goto (failure cap)",
+        _tuck_arm_for_nav("tuck arm before goto", pose_key=bb_keys.ARM_NAVIGATING),
+        max_failures=5,
+        on_exhausted=_tuck_arm_before_goto_exhausted,
+        announce_child=_one_shot(
+            BtNode_Announce(
+                "announce arm unrecoverable", bb_source=None,
+                message=(
+                    "I cannot move my arm and cannot continue. "
+                    "Please check the arm controller."
+                ),
+            ),
+            policy=py_trees.common.OneShotPolicy.ON_COMPLETION,
+        ),
     ))
     drive = py_trees.decorators.Retry(
         "retry goto",
