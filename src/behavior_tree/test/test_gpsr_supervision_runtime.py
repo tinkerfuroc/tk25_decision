@@ -139,6 +139,75 @@ def test_failure_waits_for_verifier_and_false_failure_becomes_success():
         supervisor.close()
 
 
+def test_uncertain_stop_verdict_after_child_success_still_returns_success():
+    # O2 retro-fail regression test: hybrid success mode holds an
+    # already-SUCCESS child RUNNING until the pending verification
+    # resolves (see can_finish_subtask below). Before O2, an uncertain
+    # verdict that also requested escalation=stop (e.g. a sensor-context
+    # mismatch under the old prompt) created a stop intervention that
+    # converted the already-successful step to FAILURE -- an LLM admitting
+    # it could not verify silently retro-failed a nominal step. After O2
+    # the uncertain verdict downgrades to "unverified" with no
+    # intervention, so the slot must surface the child's real SUCCESS.
+    _seed_blackboard()
+    calls: list[str] = []
+    checkpoint = (
+        "task/plan-r1/step-0000:demo/tree-r1/"
+        "demo/root/activation-0001"
+    )
+    client = ScriptedSupervisorClient(
+        verifications=[
+            {
+                "checkpoint_id": checkpoint,
+                "verdict": "uncertain",
+                "bt_assessment": "agree",
+                "subtask_status": "unknown",
+                "world_change": "unknown",
+                "escalation": "stop",
+                "failure_category": "sensor_context_mismatch",
+                "evidence": ["script"],
+                "rationale": "cannot verify this checkpoint",
+                "confidence": 0.4,
+            }
+        ]
+    )
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect",
+                "perception",
+                EffectRisk.OBSERVATION,
+                "effect happened",
+            )
+        ]
+    )
+    slot = SupervisedSubtaskSlot(
+        action_name="demo",
+        factory=lambda: FakeEffect(
+            "succeed", py_trees.common.Status.SUCCESS, calls
+        ),
+        supervisor=supervisor,
+        registry=registry,
+    )
+    try:
+        for _ in range(100):
+            slot.tick_once()
+            if slot.status is not py_trees.common.Status.RUNNING:
+                break
+            time.sleep(0.005)
+        assert slot.status is py_trees.common.Status.SUCCESS
+        assert calls == ["succeed"]
+        assert supervisor.resolution(checkpoint) == "unverified"
+        assert supervisor.consume_intervention() is None
+    finally:
+        supervisor.close()
+
+
 def test_hybrid_blocks_irreversible_next_effect_until_prior_verdict():
     _seed_blackboard()
     calls: list[str] = []
