@@ -310,6 +310,11 @@ def test_all_registered_effect_leaves_are_wrapped_in_gpsr_action_factories():
         "BtNode_CountDetections",
         "BtNode_ExtractDetection",
         "BtNode_LLMQuery",
+        # L1b (round-4 battery fix, run 016): one-shot blackboard-only guard
+        # for create_find_object's reduced-query retry branch -- same kind
+        # of internal bookkeeping leaf as BtNode_ExtractDetection above, no
+        # real-world effect to supervise.
+        "BtNode_ReduceObjectQuery",
         "BtNode_RegisterLabeledPose",
         "BtNode_SetReportInfo",
         "BtNode_VLMQuery",
