@@ -35,6 +35,7 @@ from behavior_tree.GPSR.supervision.models import (
     Verdict,
     VerificationDecision,
     WorldChange,
+    issue_identity,
 )
 from behavior_tree.GPSR.supervision.runtime import (
     BtNode_RecoveryDirective,
@@ -42,7 +43,7 @@ from behavior_tree.GPSR.supervision.runtime import (
     SupervisedSubtaskSlot,
     default_recovery_compiler,
 )
-from behavior_tree.GPSR.supervision.recovery import RecoveryMacroCompiler
+from behavior_tree.GPSR.supervision.recovery import RecoveryLedger, RecoveryMacroCompiler
 from behavior_tree.GPSR.supervision.models import RecoveryKind
 from behavior_tree.GPSR.small_trees import ACTION_FACTORIES, bb_keys
 
@@ -1310,6 +1311,179 @@ def test_a_new_subtask_after_a_completed_recovery_still_gets_its_own_checkpoint(
             "own checkpoint -- Q1 must not disable checkpoint creation "
             "beyond the specific retry subtree"
         )
+    finally:
+        supervisor.close()
+
+
+# ---------------------------------------------------------------------------
+# Task R-1 (round-6 review fix, HIGH): Q1's retry-failure hard-stop can
+# synchronously trigger an async `_start_global` (ledger exhaustion on the
+# retry's own failure) whose late-resolving global-replan intervention used
+# to orphan into `supervisor._interventions` -- unconsumable (the owning
+# slot is latched FAILURE and never ticks again) and unscoped by subtask_id
+# in `can_start_effect`/`can_finish_subtask`'s blocking check, wedging
+# EVERY later subtask for the rest of the mission. `mark_subtask_dead` +
+# `_enqueue_intervention` fix this at the class level: any intervention
+# enqueued for a subtask_id already marked dead is dropped (resolution
+# "dropped_dead_subtask", telemetry supervisor.intervention.dropped)
+# instead of appended, regardless of which checkpoint or enqueue site
+# produced it, or how late its async future resolves.
+
+
+def test_late_global_replan_after_synchronous_retry_hard_stop_is_dropped_not_orphaned():
+    _seed_blackboard()
+    py_trees.blackboard.Blackboard.set("gpsr/target_object_name", "coke")
+    py_trees.blackboard.Blackboard.set("gpsr/target_location", "kitchen_table")
+    original_checkpoint = (
+        "task/plan-r1/step-0000:demo/tree-r1/demo/root/activation-0001"
+    )
+
+    # Pre-load the ledger with 2 already-FAILED distinct recoveries for the
+    # SAME issue this subtask's own failure will derive (issue_identity is
+    # a pure function of subtask_goal/effect/failure_category/target/
+    # location -- none of it subtask_id-specific) -- so THIS subtask's own
+    # (3rd) recovery attempt exhausts the ledger the moment its retry fails,
+    # exactly the "ledger happens to be at 2 distinct failures and this
+    # retry fails too" precondition the review identified.
+    issue_id = issue_identity(
+        subtask_goal="demo({})",
+        effect="perception",
+        failure_category="target_not_visible",
+        target="coke",
+        location="kitchen_table",
+    )
+    ledger = RecoveryLedger(max_distinct_failures=3)
+    for index in range(2):
+        seed = RecoveryProposal(
+            checkpoint_id=f"seed-{index}",
+            issue_id=issue_id,
+            strategy_id=f"seed-strategy-{index}",
+            kind=RecoveryKind.SCAN_VIEWS,
+            arguments={"angles": [[-10 * (index + 1), 0]], "perception_action": "seed"},
+            rationale="seed",
+            expected_evidence=("e",),
+            stop_conditions=("s",),
+        )
+        ledger.register(seed)
+        ledger.mark_executed(issue_id, seed.strategy_id)
+        ledger.mark_result(issue_id, seed.strategy_id, succeeded=False)
+
+    events: list[tuple[str, dict]] = []
+    global_replan_release = threading.Event()
+
+    def delayed_global_plan():
+        # Resolves only after the test explicitly releases it -- well
+        # after the retry's synchronous hard-stop has already happened.
+        global_replan_release.wait(5)
+        return {
+            "checkpoint_id": original_checkpoint,
+            "action": "abort_and_report",
+            "replacement_plan": [],
+            "preserved_completed_steps": 0,
+            "relaxed_constraints": [],
+            "rationale": "three distinct recoveries failed",
+            "operator_message": "giving up",
+        }
+
+    client = ScriptedSupervisorClient(
+        verifications=[
+            {
+                **_decision(original_checkpoint, verdict="recoverable"),
+                "subtask_status": "not_achieved",
+                "escalation": "local_recovery",
+                "failure_category": "target_not_visible",
+            },
+        ],
+        recoveries=[
+            {
+                "checkpoint_id": original_checkpoint,
+                "issue_id": "filled-by-test",
+                "strategy_id": "third-strategy",
+                "kind": "scan_views",
+                "arguments": {"angles": [[-30, 10]], "perception_action": "find_object"},
+                "rationale": "try a new view",
+                "expected_evidence": ["target visible"],
+                "stop_conditions": ["target absent"],
+            }
+        ],
+        global_plans=[delayed_global_plan],
+    )
+    original_local = client.plan_local_recovery
+
+    def local(snapshot, verification, issue_id_arg):
+        client._recoveries[0]["issue_id"] = issue_id_arg
+        return original_local(snapshot, verification, issue_id_arg)
+
+    client.plan_local_recovery = local
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+        ledger=ledger,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect", "perception", EffectRisk.OBSERVATION, "target was observed"
+            )
+        ]
+    )
+    compiler = RecoveryMacroCompiler(
+        {
+            RecoveryKind.SCAN_VIEWS: lambda proposal: py_trees.behaviours.Success(
+                name=f"macro:{proposal.strategy_id}"
+            )
+        }
+    )
+    calls: list[str] = []
+    slot = SupervisedSubtaskSlot(
+        action_name="demo",
+        # Both the original attempt AND the retry fail -- the retry's own
+        # FAILURE is what drives ledger exhaustion this time (Q1: it never
+        # creates its own checkpoint, so this is the ONLY way its outcome
+        # is recorded at all -- see the FAILURE branch of tick()).
+        factory=lambda: FakeEffect("scan", py_trees.common.Status.FAILURE, calls),
+        supervisor=supervisor,
+        registry=registry,
+        recovery_compiler=compiler,
+    )
+    try:
+        for _ in range(300):
+            slot.tick_once()
+            if slot.status is py_trees.common.Status.FAILURE:
+                break
+            time.sleep(0.005)
+        assert slot.status is py_trees.common.Status.FAILURE
+        # The hard-stop already happened synchronously; the ledger is now
+        # exhausted and a global-replan query has been scheduled but has
+        # NOT resolved yet (still blocked on the release event) -- nothing
+        # is queued for it.
+        assert supervisor._interventions == []
+        assert supervisor.ledger.exhausted(issue_id)
+
+        # Now let the late-resolving global-replan future complete.
+        global_replan_release.set()
+        assert supervisor.wait_for_idle()
+
+        # It must have been DROPPED, not orphaned into the queue.
+        assert supervisor._interventions == [], (
+            "a global-replan intervention resolving after its owning "
+            "subtask hard-stopped must be dropped, not queued forever"
+        )
+        dropped = [p for e, p in events if e == "supervisor.intervention.dropped"]
+        assert len(dropped) == 1
+        assert dropped[0]["checkpoint_id"] == original_checkpoint
+        assert dropped[0]["kind"] == "global_replan"
+        record = supervisor.record(original_checkpoint)
+        assert record.resolution == "dropped_dead_subtask"
+
+        # And therefore a completely different, LATER subtask is never
+        # blocked by the orphan -- the actual mission-hanging symptom.
+        assert supervisor.can_start_effect(
+            EffectRisk.OBSERVATION, subtask_id="task/plan-r1/step-0001:next"
+        ) is True
+        assert supervisor.can_finish_subtask("task/plan-r1/step-0001:next") is True
     finally:
         supervisor.close()
 

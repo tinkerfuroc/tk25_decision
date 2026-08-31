@@ -100,6 +100,21 @@ class MissionSupervisor:
         self._overhead_s = 0.0
         self._recovery_started_at: dict[tuple[str, str], float] = {}
         self._degraded = False
+        # R-1 (task-Q, round-6 review fix): subtask_ids whose owning slot
+        # has already hard-stopped (SupervisedSubtaskSlot._finish_hard_stop
+        # calls `mark_subtask_dead` at the same point the Y-1 drain runs).
+        # A dead slot never ticks its intervention-processing block again,
+        # so ANY intervention that would enqueue for one of these
+        # subtask_ids afterward -- from whichever checkpoint, whenever its
+        # async future happens to resolve -- can never be consumed; every
+        # enqueue site routes through `_enqueue_intervention`, which drops
+        # it instead. This is the class fix for the X-2/Y-1/R-1 orphaned-
+        # intervention family: it does not matter which checkpoint or
+        # which of the three enqueue call sites produces the intervention,
+        # or how long its async future takes to resolve -- once the owning
+        # subtask is dead, nothing enqueued against it can ever wedge the
+        # mission again.
+        self._dead_subtasks: set[str] = set()
 
     def submit(
         self,
@@ -246,6 +261,58 @@ class MissionSupervisor:
             return any(
                 intervention.checkpoint_id == checkpoint_id
                 for intervention in self._interventions
+            )
+
+    def mark_subtask_dead(self, subtask_id: str) -> None:
+        """R-1 (task-Q, round-6 review fix): a slot has hard-stopped for
+        this subtask_id and will never tick its intervention-processing
+        block again. Every future call to `_enqueue_intervention` for this
+        subtask_id -- regardless of which checkpoint or which of the three
+        enqueue sites produces it -- drops the intervention instead of
+        queuing it. Called by `SupervisedSubtaskSlot._finish_hard_stop`, at
+        the same point the Y-1 drain runs (belt and braces: Y-1 still
+        drains whatever is ALREADY queued at that instant; this covers
+        whatever enqueues LATER, from an async future that resolves after
+        the hard stop).
+        """
+        with self._lock:
+            self._dead_subtasks.add(subtask_id)
+
+    def _enqueue_intervention(
+        self, intervention: SupervisorIntervention, *, record: CheckpointRecord
+    ) -> None:
+        """Single choke point for every intervention-enqueue site (the
+        ``Escalation.STOP`` branch and the else-fallback in
+        ``_handle_verification``, ``_handle_local_recovery``, and
+        ``_handle_global_replan``). R-1: if `record`'s subtask is already
+        dead (`mark_subtask_dead`), resolve the record immediately instead
+        of appending -- an intervention queued against a dead subtask can
+        never be consumed and would otherwise sit in `_interventions`
+        forever, and `can_start_effect`/`can_finish_subtask`'s
+        `if self._interventions: return False` gate is unscoped by
+        subtask_id, so ONE such orphan blocks every later subtask for the
+        rest of the mission. This is the structural fix: a future
+        intervention-queuing code path only has to route through here to
+        be covered automatically, with nothing to remember to check at the
+        call site.
+        """
+        subtask_id = record.snapshot.request.subtask_id
+        with self._lock:
+            dead = subtask_id in self._dead_subtasks
+            if dead:
+                record.stage = "complete"
+                record.resolution = "dropped_dead_subtask"
+            else:
+                self._interventions.append(intervention)
+        if dead:
+            self._emit(
+                "supervisor.intervention.dropped",
+                {
+                    "checkpoint_id": intervention.checkpoint_id,
+                    "subtask_id": subtask_id,
+                    "kind": intervention.kind,
+                    "reason": intervention.reason,
+                },
             )
 
     def consume_intervention(
@@ -489,12 +556,13 @@ class MissionSupervisor:
         if decision.escalation is Escalation.STOP:
             record.stage = "complete"
             record.resolution = "stop"
-            self._interventions.append(
+            self._enqueue_intervention(
                 SupervisorIntervention(
                     kind="stop",
                     checkpoint_id=expected,
                     reason=decision.failure_category or "verifier_stop",
-                )
+                ),
+                record=record,
             )
             return
         if decision.bt_assessment is BtAssessment.FALSE_FAILURE:
@@ -527,12 +595,13 @@ class MissionSupervisor:
         else:
             record.stage = "complete"
             record.resolution = "stop"
-            self._interventions.append(
+            self._enqueue_intervention(
                 SupervisorIntervention(
                     kind="stop",
                     checkpoint_id=expected,
                     reason="inconsistent_or_failed_verification",
-                )
+                ),
+                record=record,
             )
 
     def _start_local(self, record: CheckpointRecord) -> None:
@@ -592,13 +661,14 @@ class MissionSupervisor:
             return
         record.stage = "awaiting_recovery"
         record.resolution = "recovery"
-        self._interventions.append(
+        self._enqueue_intervention(
             SupervisorIntervention(
                 kind="local_recovery",
                 checkpoint_id=expected,
                 reason=record.verification.failure_category if record.verification else "",
                 payload=proposal,
-            )
+            ),
+            record=record,
         )
         self._emit(
             "supervisor.recovery.proposed",
@@ -623,13 +693,14 @@ class MissionSupervisor:
             return
         record.stage = "awaiting_global"
         record.resolution = "global"
-        self._interventions.append(
+        self._enqueue_intervention(
             SupervisorIntervention(
                 kind="global_replan",
                 checkpoint_id=expected,
                 reason=decision.rationale,
                 payload=decision,
-            )
+            ),
+            record=record,
         )
         self._emit(
             "supervisor.global.proposed",

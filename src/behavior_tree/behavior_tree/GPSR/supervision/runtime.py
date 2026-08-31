@@ -659,6 +659,16 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         # the child is never re-ticked either) -- and every later call just
         # replays that same FAILURE without touching the child again.
         if self.status != Status.FAILURE:
+            # R-1 (task-Q, round-6 review fix): register this subtask as
+            # DEAD with the controller BEFORE draining -- belt and braces
+            # with the Y-1 drain below. Y-1 drains whatever is ALREADY
+            # queued at this instant; marking dead here covers whatever
+            # enqueues LATER, from an async future (e.g. a global-replan
+            # query `recovery_finished`/`_start_global` just scheduled,
+            # see runtime.py's FAILURE branch above) that resolves after
+            # this hard stop -- see MissionSupervisor.mark_subtask_dead /
+            # `_enqueue_intervention`.
+            self.supervisor.mark_subtask_dead(self.current_subtask_id())
             self._drain_own_interventions()
             self.feedback_message = f"hard stop: {self._hard_stop_reason}"
             self.stop(Status.FAILURE)
@@ -683,6 +693,11 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         # never apply an intervention against it, so drain every remaining
         # match for this subtask before finalizing -- nothing is left behind
         # for `can_start_effect`/`can_finish_subtask` to misread as pending.
+        # X-2 status: partially mitigated as of R-1 (task-Q, round-6 review
+        # fix) -- `mark_subtask_dead`, called right above this drain, also
+        # covers interventions that enqueue AFTER this point (this drain
+        # alone only ever covered what was already queued); belt and
+        # braces, this drain still runs unchanged.
         current_subtask = self.current_subtask_id()
         while self.supervisor.consume_intervention(subtask_id=current_subtask) is not None:
             pass
