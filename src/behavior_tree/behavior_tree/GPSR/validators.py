@@ -481,6 +481,22 @@ def _step_succeeded(step: Mapping[str, Any]) -> bool:
 # person_found branch below for where this is consulted -- it only
 # replaces the final INVALID return of the labelled-mismatch path, never
 # the earlier established-fact / waving-specialist / unset-evidence paths.
+#
+# L3 (round-4 battery fix, run 019): earlier revisions carved the SPECIALIST
+# waving descriptor (``_SIM_PERSON_DESCRIPTORS``) out of this degrade
+# entirely via ``_is_person_name_arg`` ("must never fall through to the
+# generic degrade") on the theory that only the provenance-gated
+# waving_specialist branch above may confirm person_found(waving_person).
+# Ruling: under the flag, waving is exactly as unmodelled in sim as any
+# other gesture/pose descriptor already covered here (static sim actors
+# cannot wave) -- the carve-out is REMOVED, but only inside this flag-on
+# path: with the flag off, this whole branch is unreachable (see
+# ``_sim_identity_relaxed_enabled()`` below) so the strict
+# "waving_specialist provenance required" behaviour is completely
+# untouched. The waving specialist branch still runs FIRST in
+# ``small_trees._person_scan_strategies`` and wins whenever it CAN detect
+# waving; this generic degrade is only reached once BOTH that specialist
+# and the strict descriptor-specific match have failed.
 _SIM_PERSON_CLASS_LABELS = {"person", "persons", "people", "human"}
 _SIM_PERSON_DESCRIPTORS = {"waving_person", "waving_persons"}
 
@@ -489,37 +505,6 @@ def _sim_identity_relaxed_enabled() -> bool:
     # Read fresh every call (not cached at import time) so tests can
     # monkeypatch os.environ per-test without reloading the module.
     return os.environ.get("GPSR_SIM_IDENTITY_RELAXED") == "1"
-
-
-def _is_person_name_arg(arg: str) -> bool:
-    """True when a person_found() argument is eligible for the generic
-    sim-relaxation degrade below (see its call site).
-
-    `arg` is already normalized (lowercase, whitespace -> "_") by the time
-    _verify sees fact.args, so "waving person" and "waving_person" are
-    indistinguishable here.
-
-    Only the SPECIALIST waving descriptor (``_SIM_PERSON_DESCRIPTORS``) is
-    excluded -- it has its own provenance-gated VALID/UNKNOWN branch above
-    (a generic "person" label with no ``waving_specialist`` provenance is
-    not itself evidence someone is waving) and must never fall through to
-    the generic degrade.
-
-    J13 (round-3 adversarial review, tier0 #4): this USED TO also exclude
-    any arg containing "_" or "person"/"persons" -- rejecting every OTHER
-    descriptor too (gesture/pose/clothing, e.g. "person raising their left
-    arm" -> "person_raising_their_left_arm") even though the sim models
-    none of those either. The sim's detector carries no more identity for
-    a descriptor than it does for a name, so the same degrade now applies.
-
-    L-5 (round-3 fix review): this also covers a plain generic-class arg
-    (e.g. ``person_found(person)``) and a specific-but-unmodelled one like
-    ``person_found(sitting_person)`` matched against a bare ``labels=
-    ["person"]`` detection -- under the flag, a wrong-pose/wrong-descriptor
-    person passes at confidence 0.6. Acceptable in sim (per the ruling);
-    ``GPSR_SIM_IDENTITY_RELAXED`` must never be set in the robot launch.
-    """
-    return arg not in _SIM_PERSON_DESCRIPTORS
 
 
 def _relaxed_person_pose_materialized(evidence: Mapping[str, Any]) -> bool:
@@ -679,7 +664,6 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
             if (
                 fact.predicate == "person_found"
                 and _sim_identity_relaxed_enabled()
-                and _is_person_name_arg(fact.args[0])
                 and any(
                     token in _SIM_PERSON_CLASS_LABELS
                     for label in labels
@@ -687,11 +671,13 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
                 )
                 and _relaxed_person_pose_materialized(evidence)
             ):
-                # J13: unified reason for any relaxed argument -- name or
-                # descriptor, the sim models neither. L2b (round-4 battery
-                # fix): also requires _relaxed_person_pose_materialized -- a
-                # VALID verdict here always means a pose was actually
-                # written, so approach_person has something to act on.
+                # J13/L3: unified reason for any relaxed argument -- name,
+                # gesture/pose descriptor, or (L3, round-4 battery fix) the
+                # waving descriptor too -- the sim models identity/gesture no
+                # better for one than another. L2b (same fix round) also
+                # requires _relaxed_person_pose_materialized: a VALID
+                # verdict here always means a pose was actually written, so
+                # approach_person has something to act on.
                 return _result(
                     Verdict.VALID,
                     f"sim mode: descriptor {fact.args[0]} not modelled",

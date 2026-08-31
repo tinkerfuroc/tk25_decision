@@ -23,6 +23,16 @@ validate person_found() and then approach_person crashed with "Unsupported
 type for gpsr/target_person_pose: NoneType" (runs 008/011). Every test below
 that asserts VALID now supplies pose evidence for that reason.
 
+L3 (round-4 battery fix, run 019): the SPECIALIST waving descriptor
+("waving_person"/"waving_persons") is NO LONGER excluded from this generic
+degrade when the flag is on (it used to have a hard carve-out on the theory
+that only the dedicated waving_specialist provenance branch may confirm it)
+-- static sim actors cannot wave, so under the flag it degrades exactly like
+any other unmodelled descriptor, AS LONG AS a pose was materialized (L2b).
+The waving_specialist's own dedicated provenance branch (tested in
+test_gpsr_fact_validators.py) still runs first / independently and is
+unaffected either way.
+
 Run with PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 (ROS pytest plugins break
 collection).
 """
@@ -92,12 +102,13 @@ def test_flag_on_waving_persons_descriptor_label_relaxes_via_class_token(monkeyp
     # L4 (round-2 review): the token-based class check (any token of any
     # LABEL in _SIM_PERSON_CLASS_LABELS) widened the relaxation to also
     # fire for a "waving_persons" DETECTION LABEL -- distinct from the
-    # person_found ARGUMENT naming a waving descriptor, which stays gated
-    # by _is_person_name_arg (requested="waving_person",
-    # test_flag_on_descriptor_argument_is_unaffected below). "waving_persons"
-    # tokenises to "waving"/"persons", and "persons" is itself one of
-    # _SIM_PERSON_CLASS_LABELS -- pinned here as ACCEPTED sim behaviour: a
-    # waving-person label is still evidence of a person.
+    # person_found ARGUMENT naming a waving descriptor (see
+    # test_flag_on_waving_descriptor_argument_is_now_relaxed_with_pose
+    # below, requested="waving_person" -- L3, round-4 battery fix, widened
+    # that too). "waving_persons" tokenises to "waving"/"persons", and
+    # "persons" is itself one of _SIM_PERSON_CLASS_LABELS -- pinned here as
+    # ACCEPTED sim behaviour: a waving-person label is still evidence of a
+    # person.
     result = _check(
         "person_found(sarah)",
         evidence={
@@ -122,13 +133,31 @@ def test_flag_on_non_person_labels_stay_invalid(monkeypatch):
     assert result.verdict is Verdict.INVALID
 
 
-def test_flag_on_descriptor_argument_is_unaffected(monkeypatch):
-    # "waving_person" is the SPECIALIST descriptor, not a plain gesture/pose
-    # one -- the generic relaxation must not touch this path (it already
-    # has its own provenance-gated VALID/UNKNOWN branch, tested in
-    # test_gpsr_fact_validators.py). This holds even WITH a materialized
-    # pose (L2b) -- the pose requirement is a NECESSARY, not sufficient,
-    # condition; _is_person_name_arg still excludes this descriptor.
+def test_flag_on_descriptor_argument_without_pose_stays_invalid(monkeypatch):
+    # L2b/L3 (round-4 battery fix): "waving_person" is no longer categorically
+    # excluded from the generic degrade under the flag (see L3 below), but
+    # this is the 008/011 regression shape -- a leftover detection with NO
+    # materialized pose/provenance -- so it must still be INVALID (L2b),
+    # just for a different reason than before (missing pose, not the old
+    # waving carve-out). See
+    # test_flag_on_waving_descriptor_argument_is_now_relaxed_with_pose below
+    # for the flag-on+pose VALID case.
+    result = _check(
+        "person_found(waving_person)",
+        evidence={"person_detection": {"objects": [{"label": "person"}]}},
+        env={"GPSR_SIM_IDENTITY_RELAXED": "1"},
+        monkeypatch=monkeypatch,
+    )
+    assert result.verdict is Verdict.INVALID
+
+
+def test_flag_on_waving_descriptor_argument_is_now_relaxed_with_pose(monkeypatch):
+    # L3 (round-4 battery fix, run 019): under the flag, with a
+    # materialized pose (L2b), the waving descriptor ARGUMENT degrades
+    # exactly like any other unmodelled descriptor -- static sim actors
+    # cannot wave, so the dedicated waving_specialist branch will never
+    # match in sim; the generic degrade is the only way a waving-descriptor
+    # command ever completes.
     result = _check(
         "person_found(waving_person)",
         evidence={
@@ -138,7 +167,9 @@ def test_flag_on_descriptor_argument_is_unaffected(monkeypatch):
         env={"GPSR_SIM_IDENTITY_RELAXED": "1"},
         monkeypatch=monkeypatch,
     )
-    assert result.verdict is Verdict.INVALID
+    assert result.verdict is Verdict.VALID
+    assert result.confidence == 0.6
+    assert result.evidence == "sim mode: descriptor waving_person not modelled"
 
 
 def test_flag_off_waving_descriptor_argument_with_pose_stays_invalid(monkeypatch):
