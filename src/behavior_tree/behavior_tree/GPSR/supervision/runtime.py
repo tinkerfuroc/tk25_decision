@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from typing import Any, Callable, Mapping
 
 import py_trees
@@ -112,10 +113,13 @@ class BtNode_RecoveryDirective(py_trees.behaviour.Behaviour):
         self,
         proposal: RecoveryProposal,
         handlers: Mapping[RecoveryKind, Callable[[RecoveryProposal], bool]] | None = None,
+        *,
+        telemetry: Callable[[str, Mapping[str, Any]], None] | None = None,
     ) -> None:
         super().__init__(f"recovery:{proposal.kind.value}:{proposal.strategy_id}")
         self.proposal = proposal
         self.handlers = dict(handlers or {})
+        self._telemetry = telemetry
         self._done = False
 
     def initialise(self) -> None:
@@ -140,10 +144,28 @@ class BtNode_RecoveryDirective(py_trees.behaviour.Behaviour):
         except Exception:
             mock_mode = False
         if not mock_mode:
+            # N1b (round-5 rerun fix): zero production RecoveryKind handlers
+            # are registered repo-wide today -- returning FAILURE here used
+            # to fail the whole `recover+retry` Sequence before it ever
+            # reached the fresh-subtask retry, which is the one thing that
+            # actually recovers when there is no preparatory handler. A
+            # missing handler is the expected/normal case, not an error:
+            # warn, tell telemetry, and let the Sequence proceed to the
+            # retry instead of dooming it.
             self.feedback_message = (
-                f"no production handler installed for {self.proposal.kind.value}"
+                f"no production handler installed for {self.proposal.kind.value}; "
+                "proceeding directly to the fresh-subtask retry"
             )
-            return Status.FAILURE
+            self.logger.warning(self.feedback_message)
+            if self._telemetry is not None:
+                try:
+                    self._telemetry(
+                        "recovery.handler_missing", {"kind": self.proposal.kind.value}
+                    )
+                except Exception:
+                    pass
+            self._done = True
+            return Status.SUCCESS
         self._done = True
         self.feedback_message = (
             f"MOCK recovery directive executed: {self.proposal.kind.value} "
@@ -154,12 +176,14 @@ class BtNode_RecoveryDirective(py_trees.behaviour.Behaviour):
 
 def default_recovery_compiler(
     handlers: Mapping[RecoveryKind, Callable[[RecoveryProposal], bool]] | None = None,
+    *,
+    telemetry: Callable[[str, Mapping[str, Any]], None] | None = None,
 ) -> RecoveryMacroCompiler:
     return RecoveryMacroCompiler(
         {
             kind: (
-                lambda proposal, _handlers=handlers: BtNode_RecoveryDirective(
-                    proposal, _handlers
+                lambda proposal, _handlers=handlers, _telemetry=telemetry: BtNode_RecoveryDirective(
+                    proposal, _handlers, telemetry=_telemetry
                 )
             )
             for kind in RecoveryKind
@@ -253,6 +277,22 @@ class SupervisedEffect(py_trees.decorators.Decorator):
     def update(self) -> Status:  # pragma: no cover - custom tick owns status
         return self.status
 
+    @property
+    def terminal_status(self) -> Status | None:
+        """The leaf's own reported terminal status, if it has terminated.
+
+        N1c (round-5 rerun fix): in ACTIVE mode, ``tick()`` above maps a
+        terminated-but-unresolved FAILURE into an outward ``Status.RUNNING``
+        (line ~246) while the async verifier/recovery pipeline runs -- so a
+        ``SupervisedSubtaskSlot`` cannot tell "genuinely still executing"
+        apart from "already failed, waiting on a verdict" by reading
+        ``.status`` alone. This exposes the masked internal state so the
+        slot's premature-intervention gate can treat "child already failed"
+        (apply immediately -- that is the real recovery case) differently
+        from "child never terminated" (defer until the stall threshold).
+        """
+        return self._terminal_status
+
 
 class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
     """Stable action slot that applies validated recovery at tick barriers."""
@@ -268,16 +308,30 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         target_slot: int | None = None,
         target_index: int | None = None,
         step_index: int | None = None,
+        time_source: Callable[[], float] | None = None,
     ) -> None:
         self.action_name = action_name
         self.factory = factory
         self.supervisor = supervisor
         self.registry = registry or default_node_contracts()
-        self.recovery_compiler = recovery_compiler or default_recovery_compiler()
+        self.recovery_compiler = recovery_compiler or default_recovery_compiler(
+            telemetry=lambda event, payload: supervisor.emit_telemetry(event, payload)
+        )
         self.tree_revision = 1
         self._setup_kwargs: dict[str, Any] | None = None
         self._child_terminal: Status | None = None
         self._active_recovery: RecoveryProposal | None = None
+        # N1c (round-5 rerun fix): "an attempt has been running longer than
+        # a stall threshold" needs a clock and a per-attempt start time.
+        # Injectable so tests can drive a fake clock deterministically
+        # instead of racing real wall-clock sleeps; production callers get
+        # `time.monotonic`. Read once at construction, per the ruling --
+        # this is a stable-for-the-life-of-the-slot setting, not something
+        # that should shift mid-mission if the env var changes.
+        self._time_source: Callable[[], float] = time_source or time.monotonic
+        self._stall_s = float(os.environ.get("GPSR_SUPERVISION_STALL_S", "120.0"))
+        self._attempt_started_at: float = self._time_source()
+        self._deferred_intervention_checkpoint: str | None = None
         self._hard_stop_reason: str | None = None
         self._release_after_global = False
         # M2 (task-M, round-4 battery fix): the builder that pre-builds one
@@ -413,13 +467,30 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         self.supervisor.poll()
         current_subtask = self.current_subtask_id()
         if is_active:
-            intervention = self.supervisor.consume_intervention(subtask_id=current_subtask)
-            if intervention is not None:
-                self._apply_intervention(intervention)
+            # N1c (round-5 rerun fix): peek, not consume. An intervention
+            # against a genuinely still-running child (not merely one whose
+            # failure is masked as RUNNING pending a verdict, see
+            # `_may_apply_intervention_now`) may be a hallucinated/premature
+            # verifier call -- applying it immediately would yank a
+            # perfectly healthy in-flight action. Only pop it off the
+            # supervisor's queue once we have actually decided to apply it;
+            # otherwise it stays queued (peeked again next tick) and
+            # `can_start_effect`/`can_finish_subtask` keep seeing it as
+            # pending, same as before this fix.
+            pending = self.supervisor.peek_intervention(subtask_id=current_subtask)
+            if pending is not None:
+                if self._may_apply_intervention_now(pending):
+                    intervention = self.supervisor.consume_intervention(
+                        subtask_id=current_subtask
+                    )
+                    if intervention is not None:
+                        self._deferred_intervention_checkpoint = None
+                        self._apply_intervention(intervention)
+                else:
+                    self._note_deferral(pending)
 
         if self._hard_stop_reason is not None:
-            self.status = Status.RUNNING
-            yield self
+            yield from self._finish_hard_stop()
             return
         if self._release_after_global:
             self._release_after_global = False
@@ -453,8 +524,7 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
                 subtask_id=current_subtask,
             )
             self._hard_stop_reason = "uncontracted_subtask_failure"
-            self.status = Status.RUNNING
-            yield self
+            yield from self._finish_hard_stop()
             return
 
         self.status = Status.RUNNING
@@ -462,6 +532,62 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
 
     def update(self) -> Status:  # pragma: no cover - custom tick owns status
         return self.status
+
+    def _finish_hard_stop(self):
+        # N1a (round-5 rerun fix): a hard stop used to latch `self.status =
+        # Status.RUNNING` forever -- the slot never re-ticks its child (that
+        # is correct and preserved below), but it also never told the tree
+        # it was done, so the tree's own failure machinery (target-failure
+        # path, replan/skip, bench exhaustion) never got a chance to run;
+        # the only consumer of `gpsr/task_outcome`, `BtNode_FinalizeTask`,
+        # sat downstream and unreachable forever. Release the slot via a
+        # real terminal FAILURE instead -- exactly once, via `Decorator.stop`
+        # (which itself stops a still-RUNNING child with Status.INVALID, so
+        # the child is never re-ticked either) -- and every later call just
+        # replays that same FAILURE without touching the child again.
+        if self.status != Status.FAILURE:
+            self.feedback_message = f"hard stop: {self._hard_stop_reason}"
+            self.stop(Status.FAILURE)
+        self.status = Status.FAILURE
+        yield self
+
+    def _may_apply_intervention_now(
+        self, intervention: SupervisorIntervention
+    ) -> bool:
+        # N1c (round-5 rerun fix): "the real recovery case" -- the
+        # contract-covered effect already reported FAILURE and is merely
+        # waiting (masked as RUNNING, see `SupervisedEffect.terminal_status`)
+        # on the async verifier/recovery pipeline -- always applies
+        # immediately, no matter how young the attempt is. Anything else
+        # (the child never terminated at all, e.g. a nominal in-flight goto)
+        # only applies once the attempt has run longer than the stall
+        # threshold; a hallucinated "recoverable" verdict against a healthy
+        # action should not be able to yank it mid-flight.
+        if self._child_terminal is not None:
+            return True
+        if self._has_failed_pending_effect():
+            return True
+        age_s = self._time_source() - self._attempt_started_at
+        return age_s >= self._stall_s
+
+    def _has_failed_pending_effect(self) -> bool:
+        for node in self.decorated.iterate():
+            if (
+                isinstance(node, SupervisedEffect)
+                and node.terminal_status is Status.FAILURE
+            ):
+                return True
+        return False
+
+    def _note_deferral(self, intervention: SupervisorIntervention) -> None:
+        if self._deferred_intervention_checkpoint == intervention.checkpoint_id:
+            return
+        self._deferred_intervention_checkpoint = intervention.checkpoint_id
+        age_s = self._time_source() - self._attempt_started_at
+        self.supervisor.emit_telemetry(
+            "intervention.deferred",
+            {"checkpoint_id": intervention.checkpoint_id, "age_s": age_s},
+        )
 
     def _apply_intervention(self, intervention: SupervisorIntervention) -> None:
         if self._active_recovery is not None:
@@ -498,6 +624,11 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
             self.tree_revision += 1
             self._child_terminal = None
             self._active_recovery = proposal
+            # N1c (round-5 rerun fix): a fresh attempt starts now -- reset
+            # the stall clock so the NEXT intervention against this retry is
+            # judged against its own age, not however long the PRIOR failed
+            # attempt had been running.
+            self._attempt_started_at = self._time_source()
             self.supervisor.recovery_started(proposal)
             return
         if intervention.kind == "global_replan":

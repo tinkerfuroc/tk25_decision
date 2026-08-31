@@ -46,6 +46,69 @@ def gpsr_named_pose(name: str) -> tuple[float, float, float]:
     return (x, y, yaw)
 
 
+def _blackboard_str(blackboard: Mapping[str, Any], key: str) -> str | None:
+    value = blackboard.get(key)
+    return value if isinstance(value, str) and value else None
+
+
+def _goal_pose_from_blackboard(
+    blackboard: Mapping[str, Any],
+) -> tuple[float, float, float] | None:
+    """Derive a nav-goal marker pose from a live blackboard.
+
+    N1d: the LIVE blackboard already carries `gpsr/target_location` (the
+    named waypoint the in-flight action is heading to/acting at -- see
+    `bb_keys.TARGET_LOCATION` in small_trees.py). Guarded: an absent key or
+    a name `gpsr_named_pose` does not recognise omits the marker instead of
+    raising out of `capture()`.
+    """
+    name = _blackboard_str(blackboard, "gpsr/target_location")
+    if name is None:
+        return None
+    try:
+        return gpsr_named_pose(name)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _last_capture_pose_from_blackboard(
+    blackboard: Mapping[str, Any],
+) -> tuple[float, float, float] | None:
+    """Derive a "last reliable position" marker from `gpsr/last_capture`.
+
+    N1d: `gpsr/last_capture` is a PoseStamped scratch value; once it passes
+    through `snapshot_blackboard`'s JSON-safing (`_safe_value`) it arrives
+    here as a plain nested mapping. Guarded end to end: any missing key or
+    non-numeric field omits the marker rather than crashing capture().
+    """
+    raw = blackboard.get("gpsr/last_capture")
+    if not isinstance(raw, Mapping):
+        return None
+    pose = raw.get("pose", raw)
+    if not isinstance(pose, Mapping):
+        return None
+    position = pose.get("position")
+    if not isinstance(position, Mapping):
+        return None
+    try:
+        x = float(position.get("x", 0.0))
+        y = float(position.get("y", 0.0))
+    except (TypeError, ValueError):
+        return None
+    orientation = pose.get("orientation")
+    yaw = 0.0
+    if isinstance(orientation, Mapping):
+        try:
+            qw = float(orientation.get("w", 1.0))
+            qz = float(orientation.get("z", 0.0))
+            qx = float(orientation.get("x", 0.0))
+            qy = float(orientation.get("y", 0.0))
+            yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        except (TypeError, ValueError):
+            yaw = 0.0
+    return (x, y, yaw)
+
+
 def gpsr_arm_pose_navigating() -> tuple[float, ...]:
     return gpsr_arm_pose("arm_pos_navigating")
 
@@ -91,21 +154,46 @@ class FixtureContextProvider:
         )[:120]
         map_output = self.output_dir / f"{safe_checkpoint}-map.png"
         arm_output = self.output_dir / f"{safe_checkpoint}-arm.png"
+        # N1d (round-5 rerun fix): with no scenario_id (the actual default
+        # production path -- `configure_default_supervisor` builds a bare
+        # `FixtureContextProvider()`), the goal/last-known markers used to
+        # come ONLY from `scenario.map_goal_name`/`map_last_known_name`,
+        # which are always None without a scenario. The verifier prompt then
+        # saw a map with nothing but a robot dot and a blackboard the LLM
+        # had no way to ground -- "cannot verify -> recoverable" for every
+        # checkpoint, even a perfectly nominal in-flight goto. Fall back to
+        # deriving the same evidence from the LIVE blackboard the caller
+        # already attached to this request (a production ContextProvider's
+        # only source of truth) whenever a scenario doesn't already supply
+        # it; every read is guarded so a missing/unresolvable key omits the
+        # marker instead of ever crashing capture().
+        goal_pose = (
+            gpsr_named_pose(scenario.map_goal_name)
+            if scenario and scenario.map_goal_name
+            else _goal_pose_from_blackboard(request.blackboard)
+        )
+        last_known_pose = (
+            gpsr_named_pose(scenario.map_last_known_name)
+            if scenario and scenario.map_last_known_name
+            else _last_capture_pose_from_blackboard(request.blackboard)
+        )
+        goal_pose_name = (
+            scenario.map_goal_name
+            if scenario
+            else _blackboard_str(request.blackboard, "gpsr/target_location")
+        )
+        last_known_pose_name = (
+            scenario.map_last_known_name
+            if scenario
+            else ("gpsr/last_capture" if last_known_pose is not None else None)
+        )
         render_map_pose(
             self.fixture_dir / "arena_map.pgm",
             self.fixture_dir / "arena_map.yaml",
             request.robot_pose,
             map_output,
-            goal_pose=(
-                gpsr_named_pose(scenario.map_goal_name)
-                if scenario and scenario.map_goal_name
-                else None
-            ),
-            last_known_pose=(
-                gpsr_named_pose(scenario.map_last_known_name)
-                if scenario and scenario.map_last_known_name
-                else None
-            ),
+            goal_pose=goal_pose,
+            last_known_pose=last_known_pose,
             uncertainty_radius_m=(
                 scenario.map_uncertainty_radius_m if scenario else None
             ),
@@ -179,12 +267,8 @@ class FixtureContextProvider:
                 metadata={
                     "fixture": True,
                     "robot_pose": list(request.robot_pose),
-                    "goal_pose_name": (
-                        scenario.map_goal_name if scenario else None
-                    ),
-                    "last_known_pose_name": (
-                        scenario.map_last_known_name if scenario else None
-                    ),
+                    "goal_pose_name": goal_pose_name,
+                    "last_known_pose_name": last_known_pose_name,
                     "uncertainty_radius_m": (
                         scenario.map_uncertainty_radius_m if scenario else None
                     ),

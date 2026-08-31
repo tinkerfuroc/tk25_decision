@@ -213,6 +213,38 @@ class MissionSupervisor:
                     return self._interventions.pop(index)
         return None
 
+    def peek_intervention(
+        self, *, subtask_id: str | None = None
+    ) -> SupervisorIntervention | None:
+        """Look at the next matching intervention without dequeuing it.
+
+        N1c (round-5 rerun fix): an ACTIVE-mode slot must be able to inspect
+        a pending intervention (to decide whether it is premature -- see
+        ``SupervisedSubtaskSlot._may_apply_intervention_now``) without
+        removing it from the queue, since a deferred intervention is "not
+        consumed, not dropped": the next qualifying tick must still be able
+        to find and apply it. Mirrors ``consume_intervention``'s matching
+        exactly, just without the ``pop``.
+        """
+        self.poll()
+        with self._lock:
+            for intervention in self._interventions:
+                record = self._records.get(intervention.checkpoint_id)
+                if record is None:
+                    continue
+                if (
+                    subtask_id is None
+                    or record.snapshot.request.subtask_id == subtask_id
+                ):
+                    return intervention
+        return None
+
+    def emit_telemetry(self, event: str, payload: Mapping[str, Any]) -> None:
+        """Public wrapper so BT nodes outside this module can emit events
+        through the same fail-open ``_emit`` path (e.g.
+        ``BtNode_RecoveryDirective`` reporting ``recovery.handler_missing``)."""
+        self._emit(event, payload)
+
     def recovery_started(self, proposal: RecoveryProposal) -> None:
         self.ledger.mark_executed(proposal.issue_id, proposal.strategy_id)
         with self._lock:

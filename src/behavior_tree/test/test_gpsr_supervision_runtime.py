@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import time
+from unittest.mock import patch
 
 import py_trees
 import pytest
@@ -13,11 +14,17 @@ from geometry_msgs.msg import PoseStamped
 from behavior_tree.GPSR.supervision.clients import ScriptedSupervisorClient
 from behavior_tree.GPSR.supervision.context import StaticContextProvider
 from behavior_tree.GPSR.supervision.contracts import NodeContractRegistry
-from behavior_tree.GPSR.supervision.controller import MissionSupervisor
+from behavior_tree.GPSR.supervision.controller import (
+    MissionSupervisor,
+    SupervisorIntervention,
+)
 from behavior_tree.GPSR.supervision.models import (
     ArtifactRef,
+    CaptureRequest,
     EffectRisk,
     NodeContract,
+    RecoveryProposal,
+    ReportedStatus,
     SuccessMode,
     SupervisionMode,
     SupervisorConfig,
@@ -28,7 +35,11 @@ from behavior_tree.GPSR.supervision.models import (
     VerificationDecision,
     WorldChange,
 )
-from behavior_tree.GPSR.supervision.runtime import SupervisedSubtaskSlot
+from behavior_tree.GPSR.supervision.runtime import (
+    BtNode_RecoveryDirective,
+    SupervisedSubtaskSlot,
+    default_recovery_compiler,
+)
 from behavior_tree.GPSR.supervision.recovery import RecoveryMacroCompiler
 from behavior_tree.GPSR.supervision.models import RecoveryKind
 from behavior_tree.GPSR.small_trees import ACTION_FACTORIES, bb_keys
@@ -696,18 +707,32 @@ def test_malformed_completed_count_becomes_stop_intervention_not_exception():
     # A decision whose preserved_completed_steps does not match the
     # derived count is malformed -- must be handled as a stop intervention
     # (no SchemaError escaping tick()).
+    #
+    # N1a (round-5 rerun fix): REWRITTEN from the old RUNNING-latch contract.
+    # A hard-stop used to leave the slot RUNNING forever -- unreachable by
+    # the only `gpsr/task_outcome` consumer (`BtNode_FinalizeTask`) and the
+    # exact "hard-stop into an unconsumed state" defect documented in
+    # docs/superpowers/notes/2026-08-29-supervision-ledger-followup.md
+    # (F1/H3). The new contract releases the slot via a terminal FAILURE
+    # instead, so the tree's own failure machinery can take over.
     slot, supervisor = _global_replan_slot(preserved_completed_steps=99, plan_index=3)
     try:
-        for _ in range(50):
+        for _ in range(200):
             slot.tick_once()
+            if slot.status is py_trees.common.Status.FAILURE:
+                break
             time.sleep(0.005)
-        # A hard-stop keeps the slot RUNNING forever -- it never reaches
-        # SUCCESS/FAILURE, but critically the loop above never raised.
-        assert slot.status is py_trees.common.Status.RUNNING
+        assert slot.status is py_trees.common.Status.FAILURE
         outcome = py_trees.blackboard.Blackboard.get("gpsr/task_outcome")
         assert outcome["status"] == "stopped"
         assert outcome["source"] == "llm_supervisor"
         assert "completed step count" in outcome["reason"]
+        # Ticking a FAILURE slot again must not re-tick its child or change
+        # the outcome -- the hard-stop transition happens exactly once.
+        calls_before = slot.tree_revision
+        slot.tick_once()
+        assert slot.status is py_trees.common.Status.FAILURE
+        assert slot.tree_revision == calls_before
     finally:
         supervisor.close()
 
@@ -1003,5 +1028,275 @@ def test_idle_slot_never_consumes_even_with_a_colliding_subtask_id():
                 break
             time.sleep(0.005)
         assert active_slot.tree_revision == 2
+    finally:
+        supervisor.close()
+
+
+# ---------------------------------------------------------------------------
+# Task N1 (round-5 rerun fix): active-supervision first-recovery hang.
+# N1b -- a missing production RecoveryKind handler must not doom the
+# recovery: BtNode_RecoveryDirective returns SUCCESS (with telemetry)
+# instead of FAILURE so the recover+retry Sequence proceeds to the retry.
+
+
+def _proposal(kind=RecoveryKind.RETRY_NAVIGATION, **overrides) -> RecoveryProposal:
+    defaults = dict(
+        checkpoint_id="cp-1",
+        issue_id="issue-1",
+        strategy_id="retry",
+        kind=kind,
+        arguments={"target_location": "sofa", "approach_offset_m": 0.3, "attempts": 1},
+        rationale="test",
+        expected_evidence=("ok",),
+        stop_conditions=("ok",),
+    )
+    defaults.update(overrides)
+    return RecoveryProposal(**defaults)
+
+
+def test_recovery_directive_without_handler_succeeds_and_emits_telemetry():
+    proposal = _proposal()
+    events: list[tuple[str, dict]] = []
+    node = BtNode_RecoveryDirective(
+        proposal,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    with patch("behavior_tree.config.is_full_mock_mode", return_value=False):
+        node.tick_once()
+    assert node.status is py_trees.common.Status.SUCCESS
+    assert events == [("recovery.handler_missing", {"kind": "retry_navigation"})]
+
+
+def test_recovery_directive_with_handler_is_consulted_and_skips_telemetry():
+    proposal = _proposal()
+    handled: list[RecoveryProposal] = []
+    events: list[tuple[str, dict]] = []
+
+    def handler(p: RecoveryProposal) -> bool:
+        handled.append(p)
+        return True
+
+    node = BtNode_RecoveryDirective(
+        proposal,
+        {RecoveryKind.RETRY_NAVIGATION: handler},
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    with patch("behavior_tree.config.is_full_mock_mode", return_value=False):
+        node.tick_once()
+    assert node.status is py_trees.common.Status.SUCCESS
+    assert handled == [proposal]
+    assert events == []
+
+
+def test_local_recovery_with_no_registered_handler_still_reaches_the_retry():
+    # N1b end-to-end: `default_recovery_compiler()` (no handlers) used to
+    # make the WHOLE recover+retry Sequence fail on the very first
+    # intervention -- there are zero production RecoveryKind handlers
+    # registered repo-wide. The directive must proceed to the fresh-subtask
+    # retry instead.
+    _seed_blackboard()
+    calls: list[str] = []
+    factory_calls = 0
+    first_checkpoint = "task/plan-r1/step-0000:demo/tree-r1/demo/root/activation-0001"
+    retry_checkpoint = "task/plan-r1/step-0000:demo/tree-r2/demo/root/activation-0001"
+    client = ScriptedSupervisorClient(
+        verifications=[
+            {
+                **_decision(first_checkpoint, verdict="recoverable"),
+                "subtask_status": "not_achieved",
+                "escalation": "local_recovery",
+                "failure_category": "target_not_visible",
+            },
+            _decision(retry_checkpoint),
+        ],
+        recoveries=[
+            {
+                "checkpoint_id": first_checkpoint,
+                "issue_id": "filled-by-test",
+                "strategy_id": "look-left",
+                "kind": "scan_views",
+                "arguments": {"angles": [[-30, 10]], "perception_action": "find_object"},
+                "rationale": "try a new view",
+                "expected_evidence": ["target visible"],
+                "stop_conditions": ["target absent"],
+            }
+        ],
+    )
+    original = client.plan_local_recovery
+
+    def local(snapshot, verification, issue_id):
+        client._recoveries[0]["issue_id"] = issue_id
+        return original(snapshot, verification, issue_id)
+
+    client.plan_local_recovery = local
+    supervisor = MissionSupervisor(SupervisorConfig(mode=SupervisionMode.ACTIVE), _provider(), client)
+    registry = NodeContractRegistry(
+        [NodeContract("FakeEffect", "perception", EffectRisk.OBSERVATION, "target was observed")]
+    )
+
+    def factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        status = (
+            py_trees.common.Status.FAILURE
+            if factory_calls == 1
+            else py_trees.common.Status.SUCCESS
+        )
+        return FakeEffect(f"scan-{factory_calls}", status, calls)
+
+    with patch("behavior_tree.config.is_full_mock_mode", return_value=False):
+        slot = SupervisedSubtaskSlot(
+            action_name="demo",
+            factory=factory,
+            supervisor=supervisor,
+            registry=registry,
+            # No recovery_compiler override: the DEFAULT compiler, with no
+            # handlers registered for scan_views -- exactly the production
+            # gap this fix targets.
+        )
+        try:
+            for _ in range(300):
+                slot.tick_once()
+                if slot.status is py_trees.common.Status.SUCCESS:
+                    break
+                time.sleep(0.005)
+            assert slot.status is py_trees.common.Status.SUCCESS
+            assert calls == ["scan-1", "scan-2"]
+            assert slot.tree_revision == 2
+        finally:
+            supervisor.close()
+
+
+# ---------------------------------------------------------------------------
+# Task N1 (round-5 rerun fix): N1c -- premature intervention gating. An
+# ACTIVE-mode intervention against a child that is genuinely still RUNNING
+# (never terminated) is deferred until it has run longer than
+# GPSR_SUPERVISION_STALL_S; a child that already reported FAILURE (masked
+# as RUNNING behind the async verifier/recovery pipeline) applies
+# immediately -- that is the real recovery case.
+
+
+def _register_checkpoint(
+    supervisor: MissionSupervisor, *, checkpoint_id: str, subtask_id: str
+) -> None:
+    request = CaptureRequest(
+        checkpoint_id=checkpoint_id,
+        task_id="task",
+        subtask_id=subtask_id,
+        tree_revision="1",
+        plan_revision=1,
+        original_instruction="test",
+        subtask_goal="demo()",
+        terminal_node={},
+        next_node=None,
+        subtask_tree={"nodes": []},
+        blackboard={},
+        execution_history=(),
+        recovery_ledger=(),
+    )
+    contract = NodeContract("FakeEffect", "navigation", EffectRisk.REVERSIBLE_MOTION, "reached")
+    supervisor.submit(request, contract, ReportedStatus.SUCCESS)
+
+
+def test_premature_intervention_against_a_running_child_is_deferred_then_applied():
+    _seed_blackboard()
+    events: list[tuple[str, dict]] = []
+    checkpoint_id = "premature-checkpoint"
+    # The checkpoint's own async verify pipeline is scripted to resolve
+    # cleanly (all_clear/agree against a SUCCESS-reported checkpoint) so it
+    # can never itself append a competing intervention -- this test cares
+    # only about the ONE intervention we queue by hand below.
+    client = ScriptedSupervisorClient(verifications=[_decision(checkpoint_id)])
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    # No contract for "FakeEffect": the child is a raw, unwrapped leaf, so
+    # it can never be mistaken for an already-failed SupervisedEffect --
+    # this is the "genuinely still executing" case.
+    registry = NodeContractRegistry([])
+    clock = {"t": 0.0}
+    with patch.dict("os.environ", {"GPSR_SUPERVISION_STALL_S": "10"}):
+        slot = SupervisedSubtaskSlot(
+            action_name="demo",
+            factory=lambda: FakeEffect("goto", py_trees.common.Status.RUNNING, []),
+            supervisor=supervisor,
+            registry=registry,
+            time_source=lambda: clock["t"],
+        )
+    try:
+        subtask_id = slot.current_subtask_id()
+        _register_checkpoint(supervisor, checkpoint_id=checkpoint_id, subtask_id=subtask_id)
+        proposal = _proposal(checkpoint_id=checkpoint_id)
+        supervisor.ledger.register(proposal)
+        supervisor._interventions.append(
+            SupervisorIntervention(
+                kind="local_recovery",
+                checkpoint_id=checkpoint_id,
+                reason="hallucinated",
+                payload=proposal,
+            )
+        )
+
+        # Tick #1: the slot's very first activation -- starts the child,
+        # never even looks at interventions (M2b).
+        slot.tick_once()
+        assert slot.status is py_trees.common.Status.RUNNING
+        assert len(supervisor._interventions) == 1
+
+        # Tick #2, 1s into a still-genuinely-running attempt, well under the
+        # 10s stall threshold -> deferred, not consumed, not dropped.
+        clock["t"] = 1.0
+        slot.tick_once()
+        assert len(supervisor._interventions) == 1
+        assert slot.tree_revision == 1
+        deferrals = [event for event in events if event[0] == "intervention.deferred"]
+        assert len(deferrals) == 1
+        assert deferrals[0][1]["checkpoint_id"] == checkpoint_id
+
+        # Tick #3, still under threshold -> deferred again, but telemetry
+        # fires only once per intervention.
+        clock["t"] = 2.0
+        slot.tick_once()
+        deferrals = [event for event in events if event[0] == "intervention.deferred"]
+        assert len(deferrals) == 1
+
+        # Tick #4, past the 10s stall threshold -> now applies.
+        clock["t"] = 11.0
+        slot.tick_once()
+        assert len(supervisor._interventions) == 0
+        assert slot.tree_revision == 2
+    finally:
+        supervisor.close()
+
+
+def test_intervention_against_an_already_failed_child_bypasses_the_stall_threshold():
+    _seed_blackboard()
+    client = ScriptedSupervisorClient(verifications=[])
+    supervisor = MissionSupervisor(SupervisorConfig(mode=SupervisionMode.ACTIVE), _provider(), client)
+    registry = NodeContractRegistry(
+        [NodeContract("FakeEffect", "perception", EffectRisk.OBSERVATION, "observed")]
+    )
+    with patch.dict("os.environ", {"GPSR_SUPERVISION_STALL_S": "99999"}):
+        slot = SupervisedSubtaskSlot(
+            action_name="demo",
+            factory=lambda: FakeEffect("scan", py_trees.common.Status.FAILURE, []),
+            supervisor=supervisor,
+            registry=registry,
+        )
+    try:
+        # The child fails synchronously on the very first tick -- masked as
+        # RUNNING (SupervisedEffect.terminal_status is FAILURE underneath)
+        # while it waits on the async verdict pipeline.
+        slot.tick_once()
+        assert slot.status is py_trees.common.Status.RUNNING
+        intervention = SupervisorIntervention(
+            kind="local_recovery", checkpoint_id="irrelevant", reason="", payload=None
+        )
+        # Zero elapsed time, an enormous stall threshold -- still applies
+        # immediately, because the child already failed.
+        assert slot._may_apply_intervention_now(intervention) is True
     finally:
         supervisor.close()

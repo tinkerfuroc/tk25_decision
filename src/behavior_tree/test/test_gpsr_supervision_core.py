@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -141,6 +142,73 @@ def test_fixture_provider_renders_complete_context(tmp_path: Path) -> None:
     )
     assert wrist.metadata["view_direction"] == "upward"
     assert wrist.metadata["provenance"] == "synthetic_hardware_free"
+
+
+# N1d (round-5 rerun fix): without a scenario_id -- the actual production
+# path, since `configure_default_supervisor` builds a bare
+# `FixtureContextProvider()` -- `capture()` used to send a map fixture with
+# no goal/last-known marker at all, no matter what was actually on the
+# blackboard, leaving the verifier with nothing to ground a nominal
+# in-flight action against ("cannot verify -> recoverable" for everything).
+def test_fixture_provider_uses_live_blackboard_goal_without_scenario(
+    tmp_path: Path,
+) -> None:
+    provider = FixtureContextProvider(output_dir=tmp_path)
+    request = replace(
+        _request(),
+        blackboard={
+            "gpsr/target_object_name": "coke",
+            "gpsr/target_location": "dinner_table",
+        },
+    )
+    snapshot = provider.capture(request)
+    map_artifact = next(a for a in snapshot.artifacts if a.role == "map")
+    assert map_artifact.metadata["goal_pose_name"] == "dinner_table"
+
+
+def test_fixture_provider_uses_live_last_capture_without_scenario(
+    tmp_path: Path,
+) -> None:
+    provider = FixtureContextProvider(output_dir=tmp_path)
+    request = replace(
+        _request(),
+        blackboard={
+            "gpsr/last_capture": {
+                "pose": {
+                    "position": {"x": 1.5, "y": -0.5, "z": 0.0},
+                    "orientation": {"w": 1.0},
+                }
+            }
+        },
+    )
+    snapshot = provider.capture(request)
+    map_artifact = next(a for a in snapshot.artifacts if a.role == "map")
+    assert map_artifact.metadata["last_known_pose_name"] == "gpsr/last_capture"
+
+
+def test_fixture_provider_omits_live_evidence_without_a_populated_blackboard(
+    tmp_path: Path,
+) -> None:
+    provider = FixtureContextProvider(output_dir=tmp_path)
+    request = replace(_request(), blackboard={})
+    snapshot = provider.capture(request)  # must not raise
+    map_artifact = next(a for a in snapshot.artifacts if a.role == "map")
+    assert map_artifact.metadata["goal_pose_name"] is None
+    assert map_artifact.metadata["last_known_pose_name"] is None
+
+
+def test_fixture_provider_ignores_an_unknown_target_location_name(
+    tmp_path: Path,
+) -> None:
+    # `_request()` itself sets gpsr/target_location to "dining_table", which
+    # is not a real named pose (the real key is "dinner_table") -- capture()
+    # must still surface the raw location text as evidence (useful even
+    # un-rendered) but never crash trying to resolve/draw an unrecognised
+    # name.
+    provider = FixtureContextProvider(output_dir=tmp_path)
+    snapshot = provider.capture(_request())  # must not raise
+    map_artifact = next(a for a in snapshot.artifacts if a.role == "map")
+    assert map_artifact.metadata["goal_pose_name"] == "dining_table"
 
 
 def test_navigating_pose_comes_from_gpsr_runtime_constants() -> None:
