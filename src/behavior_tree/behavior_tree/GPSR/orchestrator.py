@@ -1526,6 +1526,35 @@ class BtNode_ActionRouter(Behaviour):
 # Self-monitor + self-correction
 # ---------------------------------------------------------------------------
 
+def _consume_step_method_claim(bb_client) -> str | None:
+    """Read+clear ``bb_keys.STEP_METHOD`` once, for folding into a
+    ``step.finished`` payload as ``"method"``.
+
+    V-1 (task-K review, HIGH): shared by EVERY ``step.finished`` emitter
+    (``BtNode_LogStepResult`` and ``DynamicExecutor._emit_failed_step`` --
+    the supervision/two-layer path's own emitter, which bypasses
+    ``BtNode_LogStepResult`` entirely on a failed step) so the two cannot
+    drift apart again. Without this, a claim set by e.g. grasp's
+    ``ex_machina`` branch that then fails INSIDE the same branch (before
+    ``BtNode_LogStepResult`` ever runs) would go through
+    ``_emit_failed_step`` uncleared, and a LATER, unrelated step's
+    successful ``step.finished`` (via ``BtNode_LogStepResult``) would
+    wrongly inherit the stale claim.
+
+    ``bb_client`` must already have ``bb_keys.STEP_METHOD`` registered
+    READ+WRITE. Returns the claimed method (truthy), or ``None`` if unset --
+    the caller should only add a ``"method"`` key to its payload when this
+    returns truthy (no ``method: null`` for the common case of no claim).
+    """
+    try:
+        method = bb_client.get(bb_keys.STEP_METHOD)
+    except KeyError:
+        return None
+    if method:
+        bb_client.set(bb_keys.STEP_METHOD, None, overwrite=True)
+    return method
+
+
 class BtNode_LogStepResult(Behaviour):
     """Append ``current_action(params) <result>`` to the state log."""
 
@@ -1590,13 +1619,10 @@ class BtNode_LogStepResult(Behaviour):
         # K3: a step's own branch (e.g. grasp's guarded_primary / ex_machina)
         # may have claimed a "method" before finishing -- fold it into this
         # step's payload once, then clear it so a LATER step with no claim
-        # of its own never inherits it.
-        try:
-            method = self._bb.get(bb_keys.STEP_METHOD)
-        except KeyError:
-            method = None
-        if method:
-            self._bb.set(bb_keys.STEP_METHOD, None, overwrite=True)
+        # of its own never inherits it. V-1 (task-K review): shared helper so
+        # this and DynamicExecutor._emit_failed_step's own step.finished
+        # emission cannot drift apart.
+        method = _consume_step_method_claim(self._bb)
         telemetry = get_default_telemetry()
         if telemetry is not None:
             try:
@@ -2502,6 +2528,12 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._bb.register_key(bb_keys.CURRENT_ACTION, access=Access.READ)
         self._bb.register_key(bb_keys.CURRENT_PARAMS, access=Access.READ)
         self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.READ)
+        # V-1 (task-K review): _emit_failed_step's own step.finished emission
+        # must honor a method claim (e.g. grasp's referee_fallback) and clear
+        # it, identically to BtNode_LogStepResult -- see
+        # _consume_step_method_claim.
+        self._bb.register_key(bb_keys.STEP_METHOD, access=Access.READ)
+        self._bb.register_key(bb_keys.STEP_METHOD, access=Access.WRITE)
         # N-1 (round-3 fix2 review): _swap_in resets PLAN_INDEX to 0 on a
         # target advance (below) -- write access is needed for that.
         self._bb.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
@@ -3123,10 +3155,22 @@ class DynamicExecutor(py_trees.composites.Composite):
                 return True
             params = self._bb.get(bb_keys.CURRENT_PARAMS) or {}
             step_index = int(self._bb.get(bb_keys.PLAN_INDEX) or 1) - 1
+            # V-1 (task-K review, HIGH): this is a step.finished-shaped
+            # emission (not the target.failed/gate branch above) -- fold a
+            # method claim in and clear it, identically to
+            # BtNode_LogStepResult, via the shared helper. Without this a
+            # claim set by e.g. grasp's ex_machina branch that then fails
+            # INSIDE that same branch (reaching this path, never
+            # BtNode_LogStepResult) would leak uncleared into a LATER,
+            # unrelated step's successful step.finished.
+            payload = {"step_index": step_index, "action": action, "params": params,
+                      "outcome": "failed", "feedback": reason}
+            method = _consume_step_method_claim(self._bb)
+            if method:
+                payload["method"] = method
             telemetry.emit(
                 "step.finished",
-                {"step_index": step_index, "action": action, "params": params,
-                 "outcome": "failed", "feedback": reason},
+                payload,
                 task_id=task_id, phase="execution",
             )
         except Exception:
