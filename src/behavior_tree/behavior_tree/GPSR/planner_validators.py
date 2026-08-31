@@ -121,6 +121,13 @@ DEFAULT_CATEGORY_WORDS = frozenset({
 # L1a (round-4 battery fix, run 016): object-param words that are never
 # themselves an "invented attribute" -- generic placeholders an LLM may
 # legitimately fall back to when it genuinely has no concrete noun.
+#
+# W-1 (round-4 review fix, HIGH): these words are ONLY a whole-param bypass
+# (the param IS just "it"/"item"/...) below -- they must NEVER enter the
+# known-object token-subset match, or a legitimate free-text object
+# containing one of these as an ordinary WORD (e.g. "Cheez-It" tokenizes to
+# ["cheez", "it"]) gets falsely flagged as if "it" were a matched
+# known-object subset, with the nonsensical suggested fix ``use "it"``.
 _GENERIC_OBJECT_WORDS = frozenset({"object", "it", "item", "thing"})
 
 
@@ -142,12 +149,14 @@ def _object_attribute_reason(
     obj_norm = str(obj).strip().lower()
     if not obj_norm:
         return None
+    # W-1: known_set feeds the token-subset match below and must NEVER
+    # contain _GENERIC_OBJECT_WORDS -- the whole-param bypass just below is
+    # the ONLY place those words apply.
     known_set = (
         {str(w).lower() for w in known_objects}
         | {str(w).lower() for w in category_words}
-        | _GENERIC_OBJECT_WORDS
     )
-    if obj_norm in known_set:
+    if obj_norm in known_set or obj_norm in _GENERIC_OBJECT_WORDS:
         return None
     obj_tokens = _tokenize(obj)
     if not obj_tokens:

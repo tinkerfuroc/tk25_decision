@@ -107,6 +107,54 @@ def test_generic_placeholder_object_is_accepted():
     assert ok, reason
 
 
+def test_generic_word_inside_a_legitimate_object_name_is_not_a_false_match():
+    # W-1 (round-4 review, HIGH): "Cheez-It" tokenizes to ["cheez", "it"] --
+    # _GENERIC_OBJECT_WORDS must NEVER enter the known-object token-subset
+    # match, or "it" gets treated as a matched known-object subset and the
+    # LLM is told to `use "it"` -- a nonsensical, actively counterproductive
+    # suggestion, and a false rejection of a legitimate free-text object
+    # that copies the command's own wording.
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "find_object", "params": {"object": "box of cheez it"}},
+    ]
+    # No category word ("snack") in the command -- kept isolated to the
+    # attribute-guard rule under test; a category word would separately
+    # trigger the UNRELATED category-to-instance-collapse rule.
+    ok, reason = validate_plan(
+        plan, "bring me the cheez it from the kitchen",
+        {"goto", "find_object"},
+        known_locations={"kitchen"},
+        known_objects=KNOWN_OBJECTS,
+    )
+    assert ok, reason
+
+
+def test_no_rejection_reason_ever_suggests_a_generic_word():
+    from behavior_tree.GPSR.planner_validators import _GENERIC_OBJECT_WORDS
+
+    candidates = [
+        "box of cheez it",       # "it"
+        "the item box",          # "item" -- not itself a known object either
+        "some thing container",  # "thing"
+        "an object holder",      # "object"
+    ]
+    for obj in candidates:
+        plan = [
+            {"action": "goto", "params": {"location": "kitchen"}},
+            {"action": "find_object", "params": {"object": obj}},
+        ]
+        ok, reason = validate_plan(
+            plan, "bring me the bowl from the kitchen",
+            {"goto", "find_object"},
+            known_locations={"kitchen"},
+            known_objects=KNOWN_OBJECTS,
+        )
+        if not ok:
+            for word in _GENERIC_OBJECT_WORDS:
+                assert f'use "{word}"' not in reason, (obj, reason)
+
+
 def test_check_is_inactive_when_known_objects_not_supplied():
     # Opt-in, like known_locations: a caller that doesn't pass known_objects
     # gets today's behaviour (no rejection) — only the two-layer per-target
