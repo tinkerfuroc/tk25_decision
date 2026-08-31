@@ -546,10 +546,33 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         # the child is never re-ticked either) -- and every later call just
         # replays that same FAILURE without touching the child again.
         if self.status != Status.FAILURE:
+            self._drain_own_interventions()
             self.feedback_message = f"hard stop: {self._hard_stop_reason}"
             self.stop(Status.FAILURE)
         self.status = Status.FAILURE
         yield self
+
+    def _drain_own_interventions(self) -> None:
+        # Y-1 (round-5 review fix): N1c's peek-then-defer window can leave a
+        # still-queued, still-matching-subtask_id intervention behind when
+        # THIS tick's own child independently produces a raw, un-instrumented
+        # FAILURE (no SupervisedEffect involved) -- that hard-stops the slot
+        # via the branch below, in the SAME tick, strictly AFTER the
+        # intervention-processing block at the top of `tick()` already ran
+        # and decided to defer. Once hard-stopped the slot never re-enters
+        # that block again (`is_active` is permanently False from here on),
+        # so a deferred intervention would otherwise sit in
+        # `supervisor._interventions` forever -- and `can_start_effect`/
+        # `can_finish_subtask`'s `if self._interventions: return False` gate
+        # is unscoped by subtask id, so ONE orphaned entry silently blocks
+        # EVERY later subtask for the rest of the mission (the X-2 orphaned-
+        # intervention shape, reopened through a new door). A dead slot can
+        # never apply an intervention against it, so drain every remaining
+        # match for this subtask before finalizing -- nothing is left behind
+        # for `can_start_effect`/`can_finish_subtask` to misread as pending.
+        current_subtask = self.current_subtask_id()
+        while self.supervisor.consume_intervention(subtask_id=current_subtask) is not None:
+            pass
 
     def _may_apply_intervention_now(
         self, intervention: SupervisorIntervention

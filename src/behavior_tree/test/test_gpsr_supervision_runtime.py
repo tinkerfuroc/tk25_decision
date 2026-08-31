@@ -1300,3 +1300,118 @@ def test_intervention_against_an_already_failed_child_bypasses_the_stall_thresho
         assert slot._may_apply_intervention_now(intervention) is True
     finally:
         supervisor.close()
+
+
+# ---------------------------------------------------------------------------
+# Y-1 (round-5 review fix, HIGH): N1c's peek-then-defer window reopens the
+# X-2 orphaned-intervention hang. A "premature" intervention is peeked (not
+# consumed) and left queued while its slot's child is still genuinely
+# RUNNING. If, on a LATER tick, that same child independently produces a
+# raw, un-instrumented FAILURE (no SupervisedEffect involved -- e.g. an
+# un-wrapped guard/precondition leaf), `_child_terminal` becomes FAILURE
+# AFTER that tick's own intervention-processing block already ran and
+# deferred, so the slot goes straight to `_finish_hard_stop()` without ever
+# re-checking the still-queued intervention. Pre-fix that intervention was
+# never drained: `is_active` is permanently False from a terminal slot
+# onward, so the block that could have consumed it never runs again, and
+# `can_start_effect`/`can_finish_subtask`'s unscoped
+# `if self._interventions: return False` gate then blocks EVERY later
+# subtask for the rest of the mission.
+# ---------------------------------------------------------------------------
+
+class _RunningThenRawFailure(py_trees.behaviour.Behaviour):
+    """RUNNING for the first ``running_ticks`` ticks, then a raw FAILURE
+    forever after -- deliberately NOT wrapped by any NodeContract (an
+    uncontracted, un-instrumented leaf), so it never becomes a
+    ``SupervisedEffect`` and can never be "already failed, masked as
+    RUNNING" -- exactly the un-instrumented-leaf shape Y-1 identifies as the
+    newly-reachable trigger."""
+
+    def __init__(self, name: str, running_ticks: int):
+        super().__init__(name)
+        self._remaining = running_ticks
+        self.ticks = 0
+
+    def update(self):
+        self.ticks += 1
+        if self._remaining > 0:
+            self._remaining -= 1
+            return py_trees.common.Status.RUNNING
+        return py_trees.common.Status.FAILURE
+
+
+def test_deferred_intervention_is_drained_when_an_unrelated_raw_failure_hard_stops_the_slot():
+    _seed_blackboard()
+    events: list[tuple[str, dict]] = []
+    checkpoint_id = "stale-checkpoint"
+    client = ScriptedSupervisorClient(verifications=[_decision(checkpoint_id)])
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    # No contract for "FakeEffect"/"_RunningThenRawFailure": the child is a
+    # raw, un-instrumented leaf -- it can never be mistaken for an
+    # already-failed SupervisedEffect (see _has_failed_pending_effect).
+    registry = NodeContractRegistry([])
+    clock = {"t": 0.0}
+    with patch.dict("os.environ", {"GPSR_SUPERVISION_STALL_S": "10"}):
+        slot = SupervisedSubtaskSlot(
+            action_name="demo",
+            factory=lambda: _RunningThenRawFailure("goto", running_ticks=2),
+            supervisor=supervisor,
+            registry=registry,
+            time_source=lambda: clock["t"],
+        )
+    try:
+        subtask_id = slot.current_subtask_id()
+        _register_checkpoint(supervisor, checkpoint_id=checkpoint_id, subtask_id=subtask_id)
+        proposal = _proposal(checkpoint_id=checkpoint_id)
+        supervisor.ledger.register(proposal)
+        supervisor._interventions.append(
+            SupervisorIntervention(
+                kind="local_recovery",
+                checkpoint_id=checkpoint_id,
+                reason="hallucinated",
+                payload=proposal,
+            )
+        )
+
+        # Tick #1: first activation -- starts the child, never even looks at
+        # interventions (M2b).
+        slot.tick_once()
+        assert slot.status is py_trees.common.Status.RUNNING
+        assert len(supervisor._interventions) == 1
+
+        # Tick #2: well under the 10s stall threshold, child still
+        # genuinely RUNNING -> deferred (not consumed, not dropped).
+        clock["t"] = 1.0
+        slot.tick_once()
+        assert slot.status is py_trees.common.Status.RUNNING
+        assert len(supervisor._interventions) == 1
+        assert [e for e in events if e[0] == "intervention.deferred"]
+
+        # Tick #3: STILL under the stall threshold (age well below 10s), so
+        # this tick's intervention block defers again -- but THIS tick the
+        # child independently returns a raw FAILURE (an unrelated,
+        # un-instrumented leaf; running_ticks=2 is exhausted), hard-stopping
+        # the slot in the same tick, after the deferral decision was made.
+        clock["t"] = 2.0
+        slot.tick_once()
+
+        assert slot.status is py_trees.common.Status.FAILURE
+        outcome = py_trees.blackboard.Blackboard.get("gpsr/task_outcome")
+        assert outcome["status"] == "failed"
+        assert outcome["reason"] == "uncontracted_subtask_failure"
+        # The core Y-1 assertion: the deferred intervention must not be
+        # left behind for a dead slot -- drained, not orphaned.
+        assert supervisor._interventions == []
+
+        # And therefore a completely different, later subtask is never
+        # blocked by the orphan (the actual mission-hanging symptom).
+        assert supervisor.can_start_effect(
+            EffectRisk.OBSERVATION, subtask_id="task/plan-r1/step-0001:next"
+        ) is True
+    finally:
+        supervisor.close()
