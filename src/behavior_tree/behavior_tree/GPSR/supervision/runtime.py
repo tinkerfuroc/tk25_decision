@@ -202,12 +202,29 @@ class SupervisedEffect(py_trees.decorators.Decorator):
         supervisor: MissionSupervisor,
         effect_node_id: str,
         slot: "SupervisedSubtaskSlot",
+        in_recovery_retry: bool = False,
     ) -> None:
         super().__init__(name=f"supervise:{child.name}", child=child)
         self.contract = contract
         self.supervisor = supervisor
         self.effect_node_id = effect_node_id
         self.slot = slot
+        # Q1 (task-Q, round-6 supervision-economics fix): True only for
+        # effects built INSIDE a recovery-built `recover+retry` composite
+        # (see `SupervisedSubtaskSlot._apply_intervention`'s local_recovery
+        # branch, which calls `_materialize_subtask(in_recovery_retry=True)`
+        # for the fresh retry subtree). A retry attempt that creates its own
+        # checkpoint re-enters the full verify/recovery pipeline -- the
+        # measured root cause of the 10x120s recovery-churn stall (every
+        # retry re-supervises itself, multiplying supervisor.query queries
+        # and re-arming the full stall window against the fresh subtree).
+        # An effect marked here skips checkpoint creation entirely (see
+        # `tick()` below) and reports its own terminal status straight
+        # through -- exactly like OFF mode -- for THIS activation only; a
+        # later, differently-constructed slot (a genuinely new subtask) is
+        # never marked and supervises normally (see `_materialize_subtask`'s
+        # default `in_recovery_retry=False` for every non-retry build).
+        self.in_recovery_retry = in_recovery_retry
         self.activation_counter = 0
         self._started = False
         self._terminal_status: Status | None = None
@@ -250,17 +267,30 @@ class SupervisedEffect(py_trees.decorators.Decorator):
                 yield self
                 return
             self._terminal_status = child_status
-            request = self.slot.build_capture_request(
-                effect=self,
-                terminal_status=child_status,
-            )
-            self._checkpoint_id = self.supervisor.submit(
-                request,
-                self.contract,
-                ReportedStatus(child_status.name),
-            )
+            # Q1 (task-Q, round-6): a recovery-retry effect never creates a
+            # checkpoint at all -- no `supervisor.submit()`, no verify/
+            # recovery pipeline, exactly one verify cycle per ORIGINAL
+            # attempt. `self._checkpoint_id` stays None (its `terminal_status`
+            # property, used by `SupervisedSubtaskSlot._has_failed_pending_
+            # effect`, still reports the real reported status either way).
+            if not self.in_recovery_retry:
+                request = self.slot.build_capture_request(
+                    effect=self,
+                    terminal_status=child_status,
+                )
+                self._checkpoint_id = self.supervisor.submit(
+                    request,
+                    self.contract,
+                    ReportedStatus(child_status.name),
+                )
 
-        if (
+        if self.in_recovery_retry:
+            # Bypass the checkpoint/mode/resolution machinery entirely --
+            # there is no checkpoint to resolve. Report the real terminal
+            # status straight through, exactly like OFF mode, regardless of
+            # `self.supervisor.config.mode`.
+            new_status = self._terminal_status
+        elif (
             self.supervisor.config.mode is not SupervisionMode.ACTIVE
             or self._terminal_status is Status.SUCCESS
         ):
@@ -568,6 +598,19 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
             return
 
         if self._child_terminal is Status.FAILURE:
+            # Q1 (task-Q, round-6): under the old architecture a retry's own
+            # FAILURE re-entered the verify/recovery pipeline via its own
+            # checkpoint, and THAT is where a failed retry's outcome used to
+            # reach the ledger (the top of `_apply_intervention`, when the
+            # NEXT intervention arrived). Retry internals no longer create
+            # checkpoints (see `SupervisedEffect.in_recovery_retry`), so
+            # that path is gone -- record the retry's outcome here instead,
+            # directly from the composite's own terminal result, exactly as
+            # the ruling requires ("the retry's outcome still reaches the
+            # ledger via the composite result").
+            if self._active_recovery is not None:
+                self.supervisor.recovery_finished(self._active_recovery, succeeded=False)
+                self._active_recovery = None
             # An unregistered/internal failure cannot be adjudicated leaf-wise.
             _set_supervisor_outcome(
                 "failed",
@@ -687,7 +730,10 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
             # here cannot resurrect this crash.
             self._detach_child()
             macro = self.recovery_compiler.compile(proposal)
-            fresh_subtask = self._materialize_subtask()
+            # Q1 (task-Q, round-6): the fresh retry subtree is the ONE place
+            # `in_recovery_retry=True` is ever passed -- see `_materialize_
+            # subtask` and `SupervisedEffect` for what that suppresses.
+            fresh_subtask = self._materialize_subtask(in_recovery_retry=True)
             sequence = py_trees.composites.Sequence(
                 name=f"recover+retry:{proposal.strategy_id}",
                 memory=True,
@@ -794,7 +840,9 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         )
         self._release_after_global = True
 
-    def _materialize_subtask(self) -> py_trees.behaviour.Behaviour:
+    def _materialize_subtask(
+        self, *, in_recovery_retry: bool = False
+    ) -> py_trees.behaviour.Behaviour:
         root = self.factory()
         subtree = instrument_effect_nodes(
             root,
@@ -802,6 +850,7 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
             slot=self,
             registry=self.registry,
             path=f"{self.action_name}/root",
+            in_recovery_retry=in_recovery_retry,
         )
         # M1a (task-M, round-4 battery fix): `self.factory` MUST be a
         # builder closure invoked fresh per call, never a captured/cached
@@ -849,6 +898,7 @@ def instrument_effect_nodes(
     slot: SupervisedSubtaskSlot,
     registry: NodeContractRegistry,
     path: str,
+    in_recovery_retry: bool = False,
 ) -> py_trees.behaviour.Behaviour:
     contract = registry.contract_for(root)
     if contract is not None and not isinstance(root, SupervisedEffect):
@@ -858,6 +908,7 @@ def instrument_effect_nodes(
             supervisor=supervisor,
             effect_node_id=path,
             slot=slot,
+            in_recovery_retry=in_recovery_retry,
         )
     for index, child in enumerate(list(root.children)):
         replacement = instrument_effect_nodes(
@@ -866,6 +917,7 @@ def instrument_effect_nodes(
             slot=slot,
             registry=registry,
             path=f"{path}/{index}",
+            in_recovery_retry=in_recovery_retry,
         )
         if replacement is child:
             continue

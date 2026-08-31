@@ -122,6 +122,29 @@ class _ScriptedLeaf(py_trees.behaviour.Behaviour):
         return self.result
 
 
+class _DelayedSuccessLeaf(py_trees.behaviour.Behaviour):
+    """Like ``_ScriptedLeaf``, but RUNNING for ``running_ticks`` updates
+    before reporting SUCCESS -- a realistic stand-in for a retried action
+    that takes more than zero ticks to complete (Q1, task-Q round-6: with
+    recovery-retry checkpoints suppressed, a retry that succeeds in ZERO
+    ticks now completes visibly in the SAME tick its recovery is applied,
+    since there is no longer a redundant async verify of the retry's own
+    outcome to wait on -- this leaf keeps this test's "still genuinely
+    executing" window meaningful without relying on that removed latency)."""
+
+    def __init__(self, name: str, running_ticks: int, calls: list) -> None:
+        super().__init__(name)
+        self._remaining = running_ticks
+        self.calls = calls
+
+    def update(self) -> Status:
+        self.calls.append(self.name)
+        if self._remaining > 0:
+            self._remaining -= 1
+            return Status.RUNNING
+        return Status.SUCCESS
+
+
 def _seed_two_layer_blackboard() -> None:
     py_trees.blackboard.Blackboard.clear()
     for key, value in {
@@ -213,8 +236,12 @@ def test_multi_slot_dispatch_active_slot_consumes_idle_slot_never_ticks() -> Non
     def goto_factory():
         nonlocal goto_calls
         goto_calls += 1
-        status = Status.FAILURE if goto_calls == 1 else Status.SUCCESS
-        return _ScriptedLeaf(f"goto-{goto_calls}", status, calls)
+        if goto_calls == 1:
+            return _ScriptedLeaf(f"goto-{goto_calls}", Status.FAILURE, calls)
+        # Q1 (task-Q, round-6): RUNNING for one tick before SUCCEEDING, so
+        # the retry is still genuinely in-flight for at least one tick
+        # after `_apply_intervention` builds it -- see `_DelayedSuccessLeaf`.
+        return _DelayedSuccessLeaf(f"goto-{goto_calls}", 1, calls)
 
     goto_slot = SupervisedSubtaskSlot(
         action_name="goto",

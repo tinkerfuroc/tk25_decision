@@ -933,6 +933,336 @@ def test_local_recovery_replaces_and_retries_the_current_subtask():
         supervisor.close()
 
 
+# ---------------------------------------------------------------------------
+# Task Q1 (round-6, supervision-economics fix): a recovery retry subtree's
+# effects must never create their own checkpoints -- exactly one verify/
+# recovery pipeline per ORIGINAL attempt, none per retry. This is the
+# measured root cause of the 10x120s recovery-churn stall: every retry used
+# to re-supervise itself, multiplying supervisor.query queries and re-arming
+# the full stall window against the fresh subtree.
+
+
+def test_recovery_retry_internals_create_zero_checkpoints():
+    _seed_blackboard()
+    calls: list[str] = []
+    factory_calls = 0
+    events: list[tuple[str, dict]] = []
+    first_checkpoint = (
+        "task/plan-r1/step-0000:demo/tree-r1/"
+        "demo/root/activation-0001"
+    )
+    # Only ONE verification is scripted -- if Q1 regressed and the retry's
+    # own SUCCESS created a second checkpoint, its background verify() call
+    # would starve for a scripted response (ScriptedSupervisorClient raises
+    # "no scripted verify response remains"), which resolves as
+    # "unavailable" rather than hanging -- so this test additionally counts
+    # checkpoints/telemetry directly rather than relying on that alone.
+    client = ScriptedSupervisorClient(
+        verifications=[
+            {
+                **_decision(first_checkpoint, verdict="recoverable"),
+                "subtask_status": "not_achieved",
+                "escalation": "local_recovery",
+                "failure_category": "target_not_visible",
+            },
+        ],
+        recoveries=[
+            {
+                "checkpoint_id": first_checkpoint,
+                "issue_id": "filled-by-test",
+                "strategy_id": "look-left",
+                "kind": "scan_views",
+                "arguments": {
+                    "angles": [[-30, 10]],
+                    "perception_action": "find_object",
+                },
+                "rationale": "try a new view",
+                "expected_evidence": ["target visible"],
+                "stop_conditions": ["target absent"],
+            }
+        ],
+    )
+    original = client.plan_local_recovery
+
+    def local(snapshot, verification, issue_id):
+        client._recoveries[0]["issue_id"] = issue_id
+        return original(snapshot, verification, issue_id)
+
+    client.plan_local_recovery = local
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect",
+                "perception",
+                EffectRisk.OBSERVATION,
+                "target was observed",
+            )
+        ]
+    )
+
+    def factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        status = (
+            py_trees.common.Status.FAILURE
+            if factory_calls == 1
+            else py_trees.common.Status.SUCCESS
+        )
+        return FakeEffect(f"scan-{factory_calls}", status, calls)
+
+    compiler = RecoveryMacroCompiler(
+        {
+            RecoveryKind.SCAN_VIEWS: lambda proposal: py_trees.behaviours.Success(
+                name=f"macro:{proposal.strategy_id}"
+            )
+        }
+    )
+    slot = SupervisedSubtaskSlot(
+        action_name="demo",
+        factory=factory,
+        supervisor=supervisor,
+        registry=registry,
+        recovery_compiler=compiler,
+    )
+    try:
+        for _ in range(300):
+            slot.tick_once()
+            if slot.status is py_trees.common.Status.SUCCESS:
+                break
+            time.sleep(0.005)
+        assert slot.status is py_trees.common.Status.SUCCESS
+        assert calls == ["scan-1", "scan-2"]
+        # Exactly one checkpoint was ever created (the ORIGINAL failure) --
+        # the retry's own terminal SUCCESS never reached `supervisor.submit`.
+        assert len(supervisor._records) == 1
+        created = [e for e in events if e[0] == "supervisor.checkpoint.created"]
+        assert len(created) == 1
+        assert created[0][1]["checkpoint_id"] == first_checkpoint
+        # The retry's OUTCOME still reaches the ledger via the composite
+        # result -- recovery_finished semantics unchanged.
+        attempts = supervisor.ledger.snapshot()
+        assert len(attempts) == 1
+        assert attempts[0]["succeeded"] is True
+        assert slot.tree_revision == 2
+    finally:
+        supervisor.close()
+
+
+def test_recovery_retry_failure_still_records_ledger_outcome_via_composite_result():
+    # With retry internals unsupervised, a FAILED retry no longer creates
+    # its own checkpoint/intervention to notice the failure through --
+    # `recovery_finished(succeeded=False)` must now come from the slot's
+    # own hard-stop path, driven directly by the `recover+retry` Sequence's
+    # own terminal FAILURE (see the FAILURE branch of `tick()`).
+    _seed_blackboard()
+    calls: list[str] = []
+    first_checkpoint = (
+        "task/plan-r1/step-0000:demo/tree-r1/demo/root/activation-0001"
+    )
+    client = ScriptedSupervisorClient(
+        verifications=[
+            {
+                **_decision(first_checkpoint, verdict="recoverable"),
+                "subtask_status": "not_achieved",
+                "escalation": "local_recovery",
+                "failure_category": "target_not_visible",
+            },
+        ],
+        recoveries=[
+            {
+                "checkpoint_id": first_checkpoint,
+                "issue_id": "filled-by-test",
+                "strategy_id": "look-left",
+                "kind": "scan_views",
+                "arguments": {
+                    "angles": [[-30, 10]],
+                    "perception_action": "find_object",
+                },
+                "rationale": "try a new view",
+                "expected_evidence": ["target visible"],
+                "stop_conditions": ["target absent"],
+            }
+        ],
+    )
+    original = client.plan_local_recovery
+
+    def local(snapshot, verification, issue_id):
+        client._recoveries[0]["issue_id"] = issue_id
+        return original(snapshot, verification, issue_id)
+
+    client.plan_local_recovery = local
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE), _provider(), client
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect",
+                "perception",
+                EffectRisk.OBSERVATION,
+                "target was observed",
+            )
+        ]
+    )
+    compiler = RecoveryMacroCompiler(
+        {
+            RecoveryKind.SCAN_VIEWS: lambda proposal: py_trees.behaviours.Success(
+                name=f"macro:{proposal.strategy_id}"
+            )
+        }
+    )
+    slot = SupervisedSubtaskSlot(
+        action_name="demo",
+        # Always fails -- including the retry.
+        factory=lambda: FakeEffect("scan", py_trees.common.Status.FAILURE, calls),
+        supervisor=supervisor,
+        registry=registry,
+        recovery_compiler=compiler,
+    )
+    try:
+        for _ in range(300):
+            slot.tick_once()
+            if slot.status is py_trees.common.Status.FAILURE:
+                break
+            time.sleep(0.005)
+        assert slot.status is py_trees.common.Status.FAILURE
+        # Only the ORIGINAL checkpoint was ever created.
+        assert len(supervisor._records) == 1
+        attempts = supervisor.ledger.snapshot()
+        assert len(attempts) == 1
+        assert attempts[0]["succeeded"] is False
+    finally:
+        supervisor.close()
+
+
+def test_a_new_subtask_after_a_completed_recovery_still_gets_its_own_checkpoint():
+    # Q1's "not the subtask forever" guarantee: `in_recovery_retry` is
+    # scoped to the ONE subtree built by `_apply_intervention` -- it must
+    # never leak into a later, genuinely new subtask's own first attempt.
+    # Drive slot 1 through a full fail -> recover -> retry -> SUCCESS cycle
+    # (checkpoints suppressed for its retry, per the test above), then build
+    # a brand new slot (standing in for the next plan step) whose own first
+    # attempt fails: it must create its own checkpoint exactly like any
+    # first attempt always has.
+    _seed_blackboard()
+    calls: list[str] = []
+    first_checkpoint = (
+        "task/plan-r1/step-0000:demo/tree-r1/demo/root/activation-0001"
+    )
+    client = ScriptedSupervisorClient(
+        verifications=[
+            {
+                **_decision(first_checkpoint, verdict="recoverable"),
+                "subtask_status": "not_achieved",
+                "escalation": "local_recovery",
+                "failure_category": "target_not_visible",
+            },
+        ],
+        recoveries=[
+            {
+                "checkpoint_id": first_checkpoint,
+                "issue_id": "filled-by-test",
+                "strategy_id": "look-left",
+                "kind": "scan_views",
+                "arguments": {
+                    "angles": [[-30, 10]],
+                    "perception_action": "find_object",
+                },
+                "rationale": "try a new view",
+                "expected_evidence": ["target visible"],
+                "stop_conditions": ["target absent"],
+            }
+        ],
+    )
+    original = client.plan_local_recovery
+
+    def local(snapshot, verification, issue_id):
+        client._recoveries[0]["issue_id"] = issue_id
+        return original(snapshot, verification, issue_id)
+
+    client.plan_local_recovery = local
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE), _provider(), client
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect",
+                "perception",
+                EffectRisk.OBSERVATION,
+                "target was observed",
+            )
+        ]
+    )
+    factory_calls = 0
+
+    def factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        status = (
+            py_trees.common.Status.FAILURE
+            if factory_calls == 1
+            else py_trees.common.Status.SUCCESS
+        )
+        return FakeEffect(f"scan-{factory_calls}", status, calls)
+
+    compiler = RecoveryMacroCompiler(
+        {
+            RecoveryKind.SCAN_VIEWS: lambda proposal: py_trees.behaviours.Success(
+                name=f"macro:{proposal.strategy_id}"
+            )
+        }
+    )
+    slot1 = SupervisedSubtaskSlot(
+        action_name="demo",
+        factory=factory,
+        supervisor=supervisor,
+        registry=registry,
+        recovery_compiler=compiler,
+    )
+    try:
+        for _ in range(300):
+            slot1.tick_once()
+            if slot1.status is py_trees.common.Status.SUCCESS:
+                break
+            time.sleep(0.005)
+        assert slot1.status is py_trees.common.Status.SUCCESS
+        assert len(supervisor._records) == 1
+
+        py_trees.blackboard.Blackboard.set("gpsr/plan_index", 2)
+        second_checkpoint = (
+            "task/plan-r1/step-0001:demo2/tree-r1/demo2/root/activation-0001"
+        )
+        client._verifications.append(_decision(second_checkpoint))
+        slot2 = SupervisedSubtaskSlot(
+            action_name="demo2",
+            factory=lambda: FakeEffect(
+                "scan2-1", py_trees.common.Status.FAILURE, calls
+            ),
+            supervisor=supervisor,
+            registry=registry,
+            recovery_compiler=compiler,
+        )
+        for _ in range(300):
+            slot2.tick_once()
+            if len(supervisor._records) == 2:
+                break
+            time.sleep(0.005)
+        assert len(supervisor._records) == 2, (
+            "a genuinely new subtask's first failure must still create its "
+            "own checkpoint -- Q1 must not disable checkpoint creation "
+            "beyond the specific retry subtree"
+        )
+    finally:
+        supervisor.close()
+
+
 def test_destructive_failure_aborts_and_records_operator_message():
     _seed_blackboard()
     py_trees.blackboard.Blackboard.set("gpsr/plan", [{"action": "grasp", "params": {}}])
