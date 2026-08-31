@@ -1548,6 +1548,11 @@ class BtNode_LogStepResult(Behaviour):
         # J4: the step-finished path is where at_robot() gate evidence is
         # actually written -- only once the step SUCCEEDED.
         self._bb.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.WRITE)
+        # K3: an optional method claim (e.g. grasp's "autonomous" /
+        # "referee_fallback") a step's own branch may have set before
+        # finishing -- read once into step.finished, then cleared.
+        self._bb.register_key(bb_keys.STEP_METHOD, access=Access.READ)
+        self._bb.register_key(bb_keys.STEP_METHOD, access=Access.WRITE)
 
     def update(self):
         try:
@@ -1582,22 +1587,35 @@ class BtNode_LogStepResult(Behaviour):
                 f"{action}({params}) failed",
                 overwrite=True,
             )
+        # K3: a step's own branch (e.g. grasp's guarded_primary / ex_machina)
+        # may have claimed a "method" before finishing -- fold it into this
+        # step's payload once, then clear it so a LATER step with no claim
+        # of its own never inherits it.
+        try:
+            method = self._bb.get(bb_keys.STEP_METHOD)
+        except KeyError:
+            method = None
+        if method:
+            self._bb.set(bb_keys.STEP_METHOD, None, overwrite=True)
         telemetry = get_default_telemetry()
         if telemetry is not None:
             try:
                 plan_revision = self._bb.get(bb_keys.PLAN_REVISION) or 1
                 plan_index = int(self._bb.get(bb_keys.PLAN_INDEX) or 1) - 1
+                payload = {
+                    "step_index": plan_index,
+                    "step_id": f"plan-r{plan_revision}/step-{max(0, plan_index):04d}",
+                    "plan_revision": plan_revision,
+                    "action": action,
+                    "params": params,
+                    "outcome": verdict.lower(),
+                    "feedback": getattr(self, "feedback_message", ""),
+                }
+                if method:
+                    payload["method"] = method
                 telemetry.emit(
                     "step.finished",
-                    {
-                        "step_index": plan_index,
-                        "step_id": f"plan-r{plan_revision}/step-{max(0, plan_index):04d}",
-                        "plan_revision": plan_revision,
-                        "action": action,
-                        "params": params,
-                        "outcome": verdict.lower(),
-                        "feedback": getattr(self, "feedback_message", ""),
-                    },
+                    payload,
                     task_id=self._bb.get(bb_keys.TASK_ID),
                     phase="execution",
                 )

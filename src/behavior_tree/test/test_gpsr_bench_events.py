@@ -292,3 +292,37 @@ def test_parse_events_ignores_node_states_from_a_non_executor_tree(tmp_path):
     path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
 
     assert parse_events(path) == {}
+
+
+def test_parse_events_collects_step_methods_without_disturbing_steps(tmp_path):
+    # K3 (task-K, live-manipulation sim findings, F2): a step.finished that
+    # carries a "method" claim (e.g. grasp's referee_fallback) is folded
+    # into step_methods as an (action, method) pair -- steps stays exactly
+    # (action, outcome) pairs, unchanged, since other consumers index it.
+    lines = [
+        _ev("step.finished", "gpsr-x/task-0",
+            {"action": "goto", "outcome": "succeeded"}, seq=0),
+        _ev("step.finished", "gpsr-x/task-0",
+            {"action": "grasp", "outcome": "succeeded", "method": "referee_fallback"}, seq=1),
+        _ev("step.finished", "gpsr-x/task-0",
+            {"action": "place", "outcome": "succeeded"}, seq=2),
+    ]
+    path = tmp_path / "events.jsonl"
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+
+    result = parse_events(path)[0]
+    assert result.steps == [
+        ("goto", "succeeded"), ("grasp", "succeeded"), ("place", "succeeded"),
+    ]
+    assert result.step_methods == [("grasp", "referee_fallback")]
+
+
+def test_parse_events_step_methods_empty_when_no_step_carries_a_method(tmp_path):
+    lines = [
+        _ev("step.finished", "gpsr-x/task-0", {"action": "goto", "outcome": "succeeded"}, seq=0),
+    ]
+    path = tmp_path / "events.jsonl"
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+
+    result = parse_events(path)[0]
+    assert result.step_methods == []

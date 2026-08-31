@@ -79,6 +79,16 @@ class bb_keys:
     CORRECTION_COUNT = "gpsr/correction_count"
     LAST_FAILURE = "gpsr/last_failure"
     PLAN_SPEECH = "gpsr/plan_speech"    # str — spoken rehearsal of the plan steps
+    STEP_METHOD = "gpsr/step_method"    # str — optional method claim a step's
+                                         #   own branch sets before finishing
+                                         #   (e.g. grasp's "autonomous" /
+                                         #   "referee_fallback"). Generic: any
+                                         #   step can claim one; only grasp
+                                         #   does today. Read once by
+                                         #   BtNode_LogStepResult into
+                                         #   step.finished's "method" field,
+                                         #   then CLEARED so a later step
+                                         #   without a claim never inherits it.
 
     # Per-action working keys (filled by orchestrator just before dispatch)
     TARGET_POSE = "gpsr/target_pose"            # PoseStamped
@@ -1670,8 +1680,22 @@ def create_grasp():
     guarded_primary = py_trees.composites.Sequence("grasp/try_unless_no_grasp", memory=True)
     guarded_primary.add_child(BtNode_CheckGraspAllowed("skip primary at no-grasp furniture"))
     guarded_primary.add_child(primary_with_retry)
+    # K3 (task-K, live-manipulation sim findings, F2): claim the "autonomous"
+    # method on the SUCCESS path only -- last child of a memory Sequence, so
+    # it only runs once everything above it (the whole primary grasp cycle)
+    # has actually succeeded.
+    guarded_primary.add_child(BtNode_BlackboardSet(
+        "mark grasp autonomous", bb_keys.STEP_METHOD, "autonomous",
+    ))
 
     ex_machina = py_trees.composites.Sequence("grasp/ex_machina", memory=True)
+    # K3: claim the "referee_fallback" method as the FIRST action -- the
+    # Selector only reaches ex_machina once guarded_primary has already
+    # failed, so entering this branch at all means the operator is about to
+    # ask a human referee for help; set it before the open-gripper.
+    ex_machina.add_child(BtNode_BlackboardSet(
+        "mark grasp referee fallback", bb_keys.STEP_METHOD, "referee_fallback",
+    ))
     # Tuck the arm first so it does not block the lidar during the drive.
     ex_machina.add_child(py_trees.decorators.Retry(
         "retry arm back",

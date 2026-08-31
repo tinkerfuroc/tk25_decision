@@ -23,6 +23,11 @@ class BenchResult:
     detail: str = ""
     seconds: float = 0.0
     plan: list[str] = field(default_factory=list)
+    # K3 (task-K, live-manipulation sim findings, F2): True when any of this
+    # run's step_methods (bench/events.py TaskResult.step_methods) was
+    # "referee_fallback" -- surfaces a referee-assisted grasp/step in the
+    # per-run record instead of it hiding behind an indistinguishable PASS.
+    referee_assisted: bool = False
 
 
 def matrix(results: Iterable[BenchResult]) -> dict[tuple[str, str], dict[int, tuple[int, int]]]:
@@ -86,6 +91,8 @@ def runs_section(results: Iterable[BenchResult]) -> str:
         bullet = f"- {r.entry_id} **{r.verdict}**"
         if sheet:
             bullet += f" — [sheet]({sheet})"
+        if r.referee_assisted:
+            bullet += " _(referee-assisted)_"
         lines.append(bullet)
     return "\n".join(lines) + "\n"
 

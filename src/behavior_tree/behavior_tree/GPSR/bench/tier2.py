@@ -302,7 +302,7 @@ def _run_clear_cmd(clear_cmd: Sequence[str], mapping: dict[str, str]) -> str | N
 
 def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[str],
                       timeout_s: float, poll_s: float = 1.0,
-                      ) -> tuple[str, str, float, list[str], Path | None]:
+                      ) -> tuple[str, str, float, list[str], Path | None, bool]:
     """Launch the orchestrator for a single command and score task id 1.
 
     This is tier1's ``run_group`` per-task clock semantics specialised to n=1: slot 0's
@@ -312,6 +312,11 @@ def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[
     H2 (round-2 review): the return tuple now also carries the resolved ``events_path`` (or
     ``None`` if it was never located) -- the post-run verdict guard (``_scan_planner_
     exhaustion``, called from ``run_tier2``) needs it to check for later recovery evidence.
+
+    K3 (task-K, live-manipulation sim findings, F2): also carries
+    ``referee_assisted`` -- True iff any of task 1's ``step_methods`` (bench/
+    events.py) was ``"referee_fallback"``, so a referee-assisted grasp does
+    not hide behind an indistinguishable PASS.
     """
     run_dir = Path(run_dir).resolve()
     tasks: dict[int, object] = {}
@@ -350,6 +355,7 @@ def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[
 
     task = tasks.get(1)
     plan = [a for a, _ in task.steps] if task else []
+    referee_assisted = bool(task and any(m == "referee_fallback" for _, m in task.step_methods))
     seconds = time.time() - started
     if task and task.status == "succeeded":
         verdict, detail = "PASS", ""
@@ -362,7 +368,7 @@ def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[
     else:
         # Defensive fallback; not a normal path (mirrors run_group's own fallback branch).
         verdict, detail = "TIMEOUT", f"timed out after {timeout_s:.0f}s"
-    return verdict, detail, seconds, plan, events_path
+    return verdict, detail, seconds, plan, events_path, referee_assisted
 
 
 _ANNOUNCE_RE = re.compile(r"Finished announcing (.+?)(?:\.\s*)?$")
@@ -404,6 +410,7 @@ def _write_run_json(run_dir: Path, entry: CorpusEntry, tier_label: str, result: 
         "id": entry.id, "text": entry.text, "template": entry.template,
         "feasibility": entry.feasibility, "tier": tier_label, "verdict": result.verdict,
         "detail": result.detail, "seconds": result.seconds,
+        "referee_assisted": result.referee_assisted,
     }
     scene = {}
     if (run_dir / "scene-plan.json").is_file():
@@ -498,14 +505,16 @@ def run_tier2(entries: Sequence[CorpusEntry], *, mock_config: Path, constants: P
 
             env = bench_env(mock_config=mock_config, constants=constants, plan_dir=run_dir,
                             commands=[entry.text], live_llm=live_llm)
-            verdict, detail, seconds, plan, events_path = _run_orchestrator(
+            verdict, detail, seconds, plan, events_path, referee_assisted = _run_orchestrator(
                 env=env, run_dir=run_dir, launcher=launcher, timeout_s=timeout_s)
         except Exception as exc:
             # Unexpected exception in a single run: score as ERROR with detail, continue batch.
             # This exception source is typically Popen(launcher) raising OSError for unexecutable
             # binary (which occurs outside _run_orchestrator's own try/finally), but guards all
             # unexpected exceptions in this span.
-            verdict, detail, seconds, plan, events_path = "ERROR", f"exception: {exc!r}", 0.0, [], None
+            verdict, detail, seconds, plan, events_path, referee_assisted = (
+                "ERROR", f"exception: {exc!r}", 0.0, [], None, False,
+            )
         finally:
             if recorder_proc is not None:
                 _stop(recorder_proc)
@@ -526,7 +535,7 @@ def run_tier2(entries: Sequence[CorpusEntry], *, mock_config: Path, constants: P
                 detail = detail + " | split fell back"
 
         result = BenchResult(entry.id, entry.template, entry.feasibility, TIER, verdict, detail,
-                             seconds, plan)
+                             seconds, plan, referee_assisted)
         _write_run_json(run_dir, entry, tier_label, result)
 
         if sheet_cmd:

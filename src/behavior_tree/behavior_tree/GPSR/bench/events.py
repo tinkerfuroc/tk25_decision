@@ -33,6 +33,13 @@ class TaskResult:
     status: str | None = None
     reason: str | None = None
     steps: list[tuple[str, str]] = field(default_factory=list)
+    # K3 (task-K, live-manipulation sim findings, F2): the (action, method)
+    # pairs for every step.finished that carried a "method" claim (e.g.
+    # grasp's "autonomous" / "referee_fallback") -- separate from ``steps``
+    # (kept exactly as-is: other consumers index it as (action, outcome)
+    # pairs) so a referee-assisted step can be told apart from an autonomous
+    # one without changing that shape.
+    step_methods: list[tuple[str, str]] = field(default_factory=list)
     planner_errors: int = 0
     first_seen: str | None = None
     finished_at: str | None = None
@@ -165,6 +172,9 @@ def parse_events(path: Path) -> dict[int, TaskResult]:
             result.first_seen = event.get("occurred_at")
         if kind == "step.finished":
             result.steps.append((str(payload.get("action")), str(payload.get("outcome"))))
+            method = payload.get("method")
+            if method:
+                result.step_methods.append((str(payload.get("action")), str(method)))
         elif kind == "split.accepted":
             targets = payload.get("targets")
             if isinstance(targets, list):
