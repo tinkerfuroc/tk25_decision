@@ -196,6 +196,62 @@ def test_schema_error_on_both_attempts_raises_and_emits_query_failed():
     assert failed[0]["error_type"] == "JSONDecodeError"
 
 
+def test_schema_error_from_from_dict_validation_also_gets_one_retry():
+    # Z-2 (task-O review, MEDIUM) -- the reviewer's own direct
+    # reproduction. A response can be well-formed, schema-valid-looking
+    # JSON that still raises SchemaError from VerificationDecision.from_dict
+    # (here: confidence=1.5, out of [0,1]) -- not from _decode_json_content
+    # at all. Before this fix that SchemaError was raised from OUTSIDE
+    # _query()'s retry loop entirely (in verify(), after _query() already
+    # returned successfully), getting zero retries and silently
+    # contradicting the O5 ruling's "keep total attempts <= 2 for every
+    # error class." Confirmed by direct reproduction: this used to raise
+    # after exactly 1 HTTP request, not 2.
+    bad_confidence = json.dumps({**_DEFAULT_VERIFICATION, "confidence": 1.5})
+    completions = _FakeCompletions([bad_confidence])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(), api_key="test-key", client=fake
+    )
+    decision = client.verify(_snapshot())
+    assert decision.verdict.value == "all_clear"
+    assert len(completions.requests) == 2
+
+
+def test_schema_error_from_stale_checkpoint_id_also_gets_one_retry():
+    # Z-2: _same_checkpoint() (a hallucinated/stale checkpoint_id) is
+    # another SchemaError raise site that used to run after _query()
+    # already returned -- same fix, different raise site.
+    stale = json.dumps({**_DEFAULT_VERIFICATION, "checkpoint_id": "wrong-cp"})
+    completions = _FakeCompletions([stale])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(), api_key="test-key", client=fake
+    )
+    decision = client.verify(_snapshot())
+    assert decision.verdict.value == "all_clear"
+    assert len(completions.requests) == 2
+
+
+def test_schema_error_from_from_dict_on_both_attempts_still_caps_at_two():
+    events: list[tuple[str, dict]] = []
+    bad_confidence = json.dumps({**_DEFAULT_VERIFICATION, "confidence": 1.5})
+    completions = _FakeCompletions([bad_confidence, bad_confidence])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(),
+        api_key="test-key",
+        client=fake,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    with pytest.raises(SupervisorUnavailable):
+        client.verify(_snapshot())
+    assert len(completions.requests) == 2
+    failed = [payload for event, payload in events if event == "supervisor.query.failed"]
+    assert len(failed) == 1
+    assert failed[0]["error_type"] == "SchemaError"
+
+
 def test_transport_error_retry_is_unchanged_by_the_schema_error_fix():
     completions = _FakeCompletions([RuntimeError("connection reset")])
     fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))

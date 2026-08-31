@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import threading
 import time
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol, TypeVar
 
 from .models import (
     GLOBAL_PLAN_JSON_SCHEMA,
@@ -30,6 +30,9 @@ from .prompts import (
     local_recovery_text,
     verifier_text,
 )
+
+
+_Decision = TypeVar("_Decision")
 
 
 class SupervisorClient(Protocol):
@@ -138,7 +141,12 @@ class OpenRouterSupervisorClient:
         self._client = client
 
     def verify(self, snapshot: SnapshotBundle) -> VerificationDecision:
-        raw = self._query(
+        def decode(raw: Mapping[str, Any]) -> VerificationDecision:
+            decision = VerificationDecision.from_dict(raw)
+            _same_checkpoint(snapshot, decision.checkpoint_id)
+            return decision
+
+        return self._query(
             role="verify",
             system=VERIFIER_SYSTEM_PROMPT,
             text=verifier_text(snapshot),
@@ -147,10 +155,8 @@ class OpenRouterSupervisorClient:
             effort=self.config.verify_effort,
             max_completion_tokens=4096,
             timeout_s=self.config.verify_timeout_s,
+            decode=decode,
         )
-        decision = VerificationDecision.from_dict(raw)
-        _same_checkpoint(snapshot, decision.checkpoint_id)
-        return decision
 
     def plan_local_recovery(
         self,
@@ -158,7 +164,17 @@ class OpenRouterSupervisorClient:
         verification: VerificationDecision,
         issue_id: str,
     ) -> RecoveryProposal:
-        raw = self._query(
+        def decode(raw: Mapping[str, Any]) -> RecoveryProposal:
+            raw = _decode_embedded_object(raw, "arguments")
+            decision = RecoveryProposal.from_dict(raw)
+            _same_checkpoint(snapshot, decision.checkpoint_id)
+            if decision.issue_id != issue_id:
+                raise SchemaError(
+                    f"stale issue id {decision.issue_id!r}; expected {issue_id!r}"
+                )
+            return decision
+
+        return self._query(
             role="local_recovery",
             system=LOCAL_RECOVERY_SYSTEM_PROMPT,
             text=local_recovery_text(snapshot, verification, issue_id),
@@ -167,15 +183,8 @@ class OpenRouterSupervisorClient:
             effort=self.config.plan_effort,
             max_completion_tokens=16384,
             timeout_s=self.config.plan_timeout_s,
+            decode=decode,
         )
-        raw = _decode_embedded_object(raw, "arguments")
-        decision = RecoveryProposal.from_dict(raw)
-        _same_checkpoint(snapshot, decision.checkpoint_id)
-        if decision.issue_id != issue_id:
-            raise SchemaError(
-                f"stale issue id {decision.issue_id!r}; expected {issue_id!r}"
-            )
-        return decision
 
     def plan_global_replan(
         self,
@@ -183,7 +192,13 @@ class OpenRouterSupervisorClient:
         verification: VerificationDecision,
         reason: str,
     ) -> GlobalPlanDecision:
-        raw = self._query(
+        def decode(raw: Mapping[str, Any]) -> GlobalPlanDecision:
+            raw = _decode_embedded_plan(raw)
+            decision = GlobalPlanDecision.from_dict(raw)
+            _same_checkpoint(snapshot, decision.checkpoint_id)
+            return decision
+
+        return self._query(
             role="global_replan",
             system=GLOBAL_REPLAN_SYSTEM_PROMPT,
             text=global_replan_text(snapshot, verification, reason),
@@ -192,11 +207,8 @@ class OpenRouterSupervisorClient:
             effort=self.config.plan_effort,
             max_completion_tokens=16384,
             timeout_s=self.config.plan_timeout_s,
+            decode=decode,
         )
-        raw = _decode_embedded_plan(raw)
-        decision = GlobalPlanDecision.from_dict(raw)
-        _same_checkpoint(snapshot, decision.checkpoint_id)
-        return decision
 
     def _query(
         self,
@@ -209,7 +221,8 @@ class OpenRouterSupervisorClient:
         effort: str,
         max_completion_tokens: int,
         timeout_s: float,
-    ) -> Mapping[str, Any]:
+        decode: Callable[[Mapping[str, Any]], _Decision],
+    ) -> _Decision:
         user_content: list[dict[str, Any]] = [{"type": "text", "text": text}]
         for artifact in snapshot.artifacts:
             if artifact.missing or not artifact.path or not artifact.mime_type.startswith("image/"):
@@ -241,6 +254,23 @@ class OpenRouterSupervisorClient:
                 response = self._client.chat.completions.create(**request)
                 content = response.choices[0].message.content
                 raw = _decode_json_content(content)
+                # Z-2 (task-O review, MEDIUM): the retry boundary must cover
+                # every SchemaError raise site, not just _decode_json_content
+                # (empty/non-JSON/non-object content). VerificationDecision
+                # /RecoveryProposal/GlobalPlanDecision.from_dict() (e.g.
+                # confidence out of [0,1]), _same_checkpoint() (a
+                # hallucinated/stale checkpoint_id), and
+                # _decode_embedded_object()/_decode_embedded_plan() (a
+                # malformed embedded-JSON arguments/replacement_plan string)
+                # used to run AFTER _query() already returned successfully,
+                # in verify()/plan_local_recovery()/plan_global_replan(), so
+                # a SchemaError from any of them got zero retries --
+                # contradicting "keep total attempts <= 2 for every error
+                # class". Decoding the full raw response into its typed
+                # decision here, inside the same try/except as the HTTP call
+                # and JSON parse, gives every one of those raise sites the
+                # same one-fresh-request retry.
+                decision = decode(raw)
                 self._emit(
                     "supervisor.query.completed",
                     {
@@ -254,14 +284,12 @@ class OpenRouterSupervisorClient:
                         "usage": _usage_dict(getattr(response, "usage", None)),
                     },
                 )
-                return raw
+                return decision
             except Exception as exc:
-                # O5: a malformed/empty structured response (SchemaError,
-                # or a raw json.JSONDecodeError from _decode_json_content)
-                # used to re-raise immediately here with no retry, unlike a
-                # transient transport/provider failure one request later.
-                # Give every error class the same single fresh-request
-                # retry before giving up -- total attempts stay <= 2.
+                # A malformed/empty structured response (SchemaError, or a
+                # raw json.JSONDecodeError) gets the same single
+                # fresh-request retry as a transient transport/provider
+                # failure -- total attempts stay <= 2 for every error class.
                 last_error = exc
                 if attempt == 0:
                     continue
