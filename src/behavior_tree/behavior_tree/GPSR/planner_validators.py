@@ -131,6 +131,48 @@ DEFAULT_CATEGORY_WORDS = frozenset({
 _GENERIC_OBJECT_WORDS = frozenset({"object", "it", "item", "thing"})
 
 
+def _known_object_match(
+    tokens: List[str], known_objects: Iterable[str],
+) -> Optional[Tuple[List[str], set]]:
+    """Find the known object name (from ``known_objects``) most
+    specifically matched within ``tokens``.
+
+    W-2 (round-4 review fix, MEDIUM): honors multi-word known names stored
+    underscore-joined (``orchestrator.KNOWN_OBJECT_NAMES``, e.g.
+    "white_shirt" for constants.json's "white shirt") by requiring ALL of
+    the name's own ``split("_")`` tokens to be present among ``tokens`` --
+    name-tokens SUBSET-OF query-tokens, the same shape as the existing
+    ``planner._is_physical_object_arg`` prior art (``known.split("_")``),
+    reused rather than reinvented. Prefers the known name with the MOST
+    tokens when several match, so a genuine multi-word hit
+    ("white_shirt") always wins over an incidental single-token one
+    ("shirt", from some unrelated known name that happens to share it).
+
+    Shared by ``_object_attribute_reason`` (L1a) and
+    ``orchestrator.reduce_unknown_object_query`` (L1b) so the two sites
+    can't drift into different matching schemes.
+
+    Returns ``(name_tokens, covered_query_tokens)`` for the best match, or
+    None when no known name's tokens are all covered.
+    """
+    best: Optional[Tuple[List[str], set]] = None
+    for name in known_objects:
+        name_tokens = [t for t in str(name).strip().lower().split("_") if t]
+        if not name_tokens:
+            continue
+        covered: set = set()
+        matched_all = True
+        for nt in name_tokens:
+            hit = next((ot for ot in tokens if ot == nt), None)
+            if hit is None:
+                matched_all = False
+                break
+            covered.add(hit)
+        if matched_all and (best is None or len(name_tokens) > len(best[0])):
+            best = (name_tokens, covered)
+    return best
+
+
 def _object_attribute_reason(
     obj: str, command_tokens: set, known_objects: Iterable[str],
     category_words: Iterable[str],
@@ -141,10 +183,11 @@ def _object_attribute_reason(
     that only ever said "bowl" (the spawned YCB bowl is white) -- four VLM
     scans for "red bowl" never matched anything in the scene. Reject only
     when ALL of: (i) the param is not itself a known object/category/generic
-    word, (ii) it contains a token that IS a known object name (something to
-    reduce it to), and (iii) it also carries a token the command never used
-    (the invented attribute). A param like "red mug" is accepted when the
-    command itself says "red mug" -- the LLM only copied the command.
+    word, (ii) it contains a known-object token subset (W-2: honoring
+    multi-word names like "white_shirt"), and (iii) it also carries a token
+    the command never used (the invented attribute). A param like "red mug"
+    is accepted when the command itself says "red mug" -- the LLM only
+    copied the command.
     """
     obj_norm = str(obj).strip().lower()
     if not obj_norm:
@@ -156,15 +199,20 @@ def _object_attribute_reason(
         {str(w).lower() for w in known_objects}
         | {str(w).lower() for w in category_words}
     )
-    if obj_norm in known_set or obj_norm in _GENERIC_OBJECT_WORDS:
+    # W-2: the whole-param bypass must recognise a multi-word known name
+    # spelled either way -- "white shirt" (LLM wording) or "white_shirt"
+    # (KNOWN_OBJECT_NAMES' own storage form).
+    if (obj_norm in known_set or obj_norm.replace(" ", "_") in known_set
+            or obj_norm in _GENERIC_OBJECT_WORDS):
         return None
     obj_tokens = _tokenize(obj)
     if not obj_tokens:
         return None
-    matched = [t for t in obj_tokens if t in known_set]
-    if not matched:
+    match = _known_object_match(obj_tokens, known_set)
+    if match is None:
         return None  # no known-object subset -- not this rule's business
-    extra = [t for t in obj_tokens if t not in known_set]
+    matched, covered = match
+    extra = [t for t in obj_tokens if t not in covered]
     if not extra:
         return None
     if all(t in command_tokens for t in extra):

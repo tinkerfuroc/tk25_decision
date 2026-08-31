@@ -59,6 +59,30 @@ def test_no_reduction_for_empty_query(known_objects):
     assert reduce_unknown_object_query(None) is None
 
 
+def test_reduces_multiword_known_object_query(monkeypatch):
+    # W-2 (round-4 review, MEDIUM): "instant_noodles" (underscore-joined,
+    # matching KNOWN_OBJECT_NAMES' storage convention) must be reachable
+    # from a space-worded, attributed query -- not just a bare single-word
+    # known name.
+    from behavior_tree.GPSR import orchestrator as orch
+    from behavior_tree.GPSR.orchestrator import reduce_unknown_object_query
+
+    names = {"bowl", "instant_noodles"}
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", names)
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_PROMPTS", {})
+    assert reduce_unknown_object_query("spicy instant noodles") == "instant noodles"
+
+
+def test_multiword_known_object_query_named_exactly_is_not_reduced(monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch
+    from behavior_tree.GPSR.orchestrator import reduce_unknown_object_query
+
+    names = {"bowl", "instant_noodles"}
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", names)
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_PROMPTS", {})
+    assert reduce_unknown_object_query("instant noodles") is None
+
+
 # ---------------------------------------------------------------------------
 # BtNode_ReduceObjectQuery (one-shot guard node)
 # ---------------------------------------------------------------------------

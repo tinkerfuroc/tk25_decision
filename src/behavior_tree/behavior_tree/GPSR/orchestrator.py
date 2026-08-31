@@ -48,7 +48,7 @@ from .config import (
     OPENAI_MAX_TOKENS,
 )
 from ..config import is_full_mock_mode
-from .planner_validators import validate_plan
+from .planner_validators import validate_plan, _known_object_match
 from .validators import (
     Fact,
     VerificationContext,
@@ -154,11 +154,13 @@ def reduce_unknown_object_query(prompt: str) -> Optional[str]:
     caller (``create_find_object``, see ``BtNode_ReduceObjectQuery``) uses
     this to retry a full-sweep failure ONCE with the reduced query.
 
-    Returns the known-object token found within ``prompt`` (e.g. "bowl"), or
-    None when ``prompt`` is already known (a KNOWN_OBJECT_PROMPTS key or
-    value, or a KNOWN_OBJECT_NAMES member — nothing to reduce), or when no
-    token of it is a known object name (nothing this rule can reduce it to
-    — leave it to the open-vocabulary vision system, same as L1a).
+    Returns the known-object name found within ``prompt`` (e.g. "bowl", or
+    "instant noodles" for a multi-word known name -- W-2, round-4 review
+    fix), or None when ``prompt`` is already known (a KNOWN_OBJECT_PROMPTS
+    key or value, or a KNOWN_OBJECT_NAMES member — nothing to reduce), or
+    when no known object name's tokens are all present in it (nothing this
+    rule can reduce it to — leave it to the open-vocabulary vision system,
+    same as L1a).
     """
     prompt_norm = str(prompt or "").strip()
     if not prompt_norm:
@@ -168,12 +170,15 @@ def reduce_unknown_object_query(prompt: str) -> Optional[str]:
             or prompt_norm in KNOWN_OBJECT_PROMPTS.values()):
         return None
     tokens = re.findall(r"[a-zA-Z]+", prompt_norm.lower())
-    matches = [t for t in tokens if t in KNOWN_OBJECT_NAMES]
-    if not matches:
+    # W-2 (round-4 review fix, MEDIUM): shares planner_validators.
+    # _known_object_match with L1a so a multi-word known name
+    # (KNOWN_OBJECT_NAMES stores "white_shirt" etc. underscore-joined) is
+    # reachable from a space-worded query, not just a bare single-word one.
+    match = _known_object_match(tokens, KNOWN_OBJECT_NAMES)
+    if match is None:
         return None
-    # English adjective-noun order: "red bowl" -> the noun is the LAST
-    # known-object token.
-    return matches[-1]
+    name_tokens, _covered = match
+    return " ".join(name_tokens)
 
 
 # Appliances/containers with doors the robot CANNOT open or reach into itself: a

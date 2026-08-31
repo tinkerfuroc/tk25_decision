@@ -155,6 +155,44 @@ def test_no_rejection_reason_ever_suggests_a_generic_word():
                 assert f'use "{word}"' not in reason, (obj, reason)
 
 
+def test_multiword_known_object_with_invented_attribute_is_rejected():
+    # W-2 (round-4 review, MEDIUM): constants.json's real possible_objects
+    # catalogue stores multi-word names underscore-joined ("white_shirt");
+    # an invented attribute on top of one must be caught the same way a
+    # single-word known object's is, not silently accepted because the
+    # known name's tokens were never a literal subset-of-tokens match
+    # against a single underscore-joined string.
+    known_objects = KNOWN_OBJECTS | {"white_shirt"}
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "find_object", "params": {"object": "dirty white shirt"}},
+    ]
+    ok, reason = validate_plan(
+        plan, "bring me the white shirt from the kitchen",
+        {"goto", "find_object"},
+        known_locations={"kitchen"},
+        known_objects=known_objects,
+    )
+    assert not ok
+    assert "white shirt" in reason or "white_shirt" in reason
+    assert "dirty" in reason
+
+
+def test_multiword_known_object_named_exactly_is_accepted():
+    known_objects = KNOWN_OBJECTS | {"instant_noodles"}
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "find_object", "params": {"object": "instant noodles"}},
+    ]
+    ok, reason = validate_plan(
+        plan, "bring me the instant noodles from the kitchen",
+        {"goto", "find_object"},
+        known_locations={"kitchen"},
+        known_objects=known_objects,
+    )
+    assert ok, reason
+
+
 def test_check_is_inactive_when_known_objects_not_supplied():
     # Opt-in, like known_locations: a caller that doesn't pass known_objects
     # gets today's behaviour (no rejection) — only the two-layer per-target
