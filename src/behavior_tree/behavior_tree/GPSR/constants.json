@@ -431,5 +431,11 @@
         0.0,
         47.0,
         -1.0
-    ]
+    ],
+    "team_info": {
+        "team_name": "Tinker",
+        "robot_name": "Tinker",
+        "affiliation": "Tsinghua University",
+        "country": "China"
+    }
 }

@@ -137,6 +137,13 @@ DEFAULT_OBJECT_LOCATIONS: Dict[str, str] = {}
 # spot is unknown (the override case). Populated from constants.json
 # "search_spots"; a location with no entry falls back to [itself].
 ROOM_SEARCH_SPOTS: Dict[str, List[str]] = {}
+# L4 (round-4 battery fix, run 008): the robot's own team self-knowledge --
+# "tell the person your team's country" had nothing anywhere to draw on
+# before this. Populated from constants.json's OPTIONAL "team_info" object;
+# empty when the key is absent (a constants file with no team_info must not
+# break the loader). See render_team_info_block() for how this reaches the
+# planner prompts.
+TEAM_INFO: Dict[str, str] = {}
 def reduce_unknown_object_query(prompt: str) -> Optional[str]:
     """Token-subset-reduce an unknown object vision query to a known name.
 
@@ -245,6 +252,7 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     KNOWN_OBJECT_NAMES.clear()
     DEFAULT_OBJECT_LOCATIONS.clear()
     ROOM_SEARCH_SPOTS.clear()
+    TEAM_INFO.clear()
     with open(constants_path, "r") as fh:
         constants = json.load(fh)
 
@@ -313,6 +321,46 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     # the config said (a partial override must not silently re-enable grasping from
     # a fridge / washing machine / dishwasher).
     NO_GRASP_LOCATIONS.update(ALWAYS_NO_GRASP)
+    # L4: OPTIONAL team self-knowledge (see TEAM_INFO above).
+    team_info = constants.get("team_info")
+    if isinstance(team_info, dict):
+        TEAM_INFO.update({str(k): str(v) for k, v in team_info.items()})
+
+
+def render_team_info_block(team_info: Optional[Dict[str, str]] = None) -> str:
+    """Render the "About yourself" planner-prompt block from ``TEAM_INFO``.
+
+    L4 (round-4 battery fix, run 008): "tell the person your team's
+    country" had no self-knowledge anywhere to draw on -- the planner
+    announced a refusal. Returns "" when ``team_info`` (default:
+    module-level ``TEAM_INFO``) is empty, so a constants.json with no
+    ``team_info`` key leaves every planner prompt byte-identical to today
+    (see the TOP_LAYER_SYSTEM_PROMPT / LOWER_LAYER_SYSTEM_PROMPT usage
+    sites in planner.py, which append this at the point the prompt string
+    is assembled for each LLM call).
+    """
+    info = TEAM_INFO if team_info is None else team_info
+    if not info:
+        return ""
+    facts = []
+    name = info.get("robot_name")
+    if name:
+        facts.append(f"your name is {name}")
+    team = info.get("team_name")
+    if team:
+        facts.append(f"team {team}")
+    affiliation = info.get("affiliation")
+    if affiliation:
+        facts.append(f"affiliation {affiliation}")
+    country = info.get("country")
+    if country:
+        facts.append(f"country {country}")
+    if not facts:
+        return ""
+    return (
+        "\n\nAbout yourself: " + "; ".join(facts) + ". Use these facts to "
+        "answer questions about yourself/your team via announce()."
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -91,6 +91,7 @@ from .orchestrator import (
     _offline_planner_enabled,
     _extract_json_object,
     _fallback_plan,
+    render_team_info_block,
 )
 
 
@@ -2427,8 +2428,13 @@ class GPSRPlanner:
             nonce = uuid.uuid4().hex[:8]
             temperature = min(0.9, OPENAI_TEMPERATURE + 0.2 * attempt)
             user_prompt = self._build_split_user_prompt(command, last_reason, nonce)
+            # L4 (round-4 battery fix, run 008): TOP_LAYER_SYSTEM_PROMPT is a
+            # module constant assembled at import time, so the team
+            # self-knowledge block (empty string when TEAM_INFO is unset --
+            # byte-identical to today) is appended here, at the point the
+            # prompt is actually sent for this call.
             parsed, err = _call_llm(
-                client, TOP_LAYER_SYSTEM_PROMPT, user_prompt, temperature,
+                client, TOP_LAYER_SYSTEM_PROMPT + render_team_info_block(), user_prompt, temperature,
             )
             if err is not None:
                 last_reason = err
@@ -2751,8 +2757,11 @@ class GPSRPlanner:
                 include_ancestors=not failure_reason,
                 completed_steps=completed_steps,
             )
+            # L4: same team self-knowledge append as the top layer (see that
+            # call site's comment) — empty string, byte-identical prompt,
+            # when TEAM_INFO is unset.
             parsed, err = _call_llm(
-                client, LOWER_LAYER_SYSTEM_PROMPT, user_prompt, temperature,
+                client, LOWER_LAYER_SYSTEM_PROMPT + render_team_info_block(), user_prompt, temperature,
             )
             if err is not None:
                 last_reason = err
