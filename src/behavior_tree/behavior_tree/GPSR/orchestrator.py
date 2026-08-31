@@ -156,19 +156,36 @@ def reduce_unknown_object_query(prompt: str) -> Optional[str]:
 
     Returns the known-object name found within ``prompt`` (e.g. "bowl", or
     "instant noodles" for a multi-word known name -- W-2, round-4 review
-    fix), or None when ``prompt`` is already known (a KNOWN_OBJECT_PROMPTS
-    key or value, or a KNOWN_OBJECT_NAMES member — nothing to reduce), or
-    when no known object name's tokens are all present in it (nothing this
-    rule can reduce it to — leave it to the open-vocabulary vision system,
-    same as L1a).
+    fix), or None when ``prompt`` is already an IDENTITY prompt (a
+    KNOWN_OBJECT_PROMPTS key, or a KNOWN_OBJECT_NAMES member — the plan
+    param itself was already clean, nothing to reduce), or when no known
+    object name's tokens are all present in it (nothing this rule can
+    reduce it to — leave it to the open-vocabulary vision system, same as
+    L1a).
+
+    N3 (round-5 rerun fix, run 016): a KNOWN_OBJECT_PROMPTS VALUE under a
+    DIFFERENT key -- venue enrichment (e.g. constants.rcw2026.json's
+    ``"bowl": "red bowl"``) turning a clean plan param ("bowl") into a
+    prompt ("red bowl") that IS itself a known value -- used to also return
+    None here (the L1a plan-validation guard was clean; the query never
+    even reached the scan-time token-subset match below), leaving four
+    full sweeps with `no known-object reduction for "red bowl"` and no
+    retry. Reduce value -> key instead: the query becomes the bare object
+    name venue enrichment enriched it away from. An identity value (one
+    that equals its own key, so already caught by the KNOWN_OBJECT_PROMPTS
+    membership check above) never reaches this branch.
     """
     prompt_norm = str(prompt or "").strip()
     if not prompt_norm:
         return None
     if (_normalize(prompt_norm) in KNOWN_OBJECT_NAMES
-            or prompt_norm in KNOWN_OBJECT_PROMPTS
-            or prompt_norm in KNOWN_OBJECT_PROMPTS.values()):
+            or prompt_norm in KNOWN_OBJECT_PROMPTS):
         return None
+    if prompt_norm in KNOWN_OBJECT_PROMPTS.values():
+        for key, value in KNOWN_OBJECT_PROMPTS.items():
+            if value == prompt_norm:
+                return key
+        return None  # pragma: no cover - membership just checked above
     tokens = re.findall(r"[a-zA-Z]+", prompt_norm.lower())
     # W-2 (round-4 review fix, MEDIUM): shares planner_validators.
     # _known_object_match with L1a so a multi-word known name

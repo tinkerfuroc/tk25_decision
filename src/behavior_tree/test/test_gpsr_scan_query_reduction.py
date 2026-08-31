@@ -92,6 +92,56 @@ def test_multiword_known_object_query_named_exactly_is_not_reduced(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# N3 (round-5 rerun fix, run 016): reduction must also fire when the failed
+# query equals a KNOWN_OBJECT_PROMPTS VALUE whose KEY differs -- venue
+# enrichment (constants.rcw2026.json: "bowl" -> "red bowl") turned a clean
+# plan param into a prompt that the OLD precondition treated as "already
+# known, nothing to reduce" (it IS a known value), defeating the retry for
+# four full sweeps (`no known-object reduction for "red bowl"` x4).
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def enriched_known_objects(monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch
+    # rcw2026-style: some objects carry real venue enrichment (value != key),
+    # others map to themselves (identity) -- both must coexist correctly.
+    prompts = {"bowl": "red bowl", "instant noodles": "instant noodles"}
+    names = {"bowl", "instant_noodles"}
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", names)
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_PROMPTS", prompts)
+    return prompts
+
+
+def test_reduces_venue_enriched_known_value_to_its_key(enriched_known_objects):
+    from behavior_tree.GPSR.orchestrator import reduce_unknown_object_query
+    assert reduce_unknown_object_query("red bowl") == "bowl"
+
+
+def test_identity_prompt_object_is_not_reduced(enriched_known_objects):
+    # The plan param was already clean ("bowl" IS the object's own known
+    # key) -- L1a's plan-validation guard already accepted it; nothing for
+    # the scan-time reduction to do.
+    from behavior_tree.GPSR.orchestrator import reduce_unknown_object_query
+    assert reduce_unknown_object_query("bowl") is None
+
+
+def test_identity_valued_known_object_is_not_reduced(enriched_known_objects):
+    # "instant noodles" maps to itself (no real enrichment) -- also an
+    # identity prompt, even though it is reached via the VALUES check.
+    from behavior_tree.GPSR.orchestrator import reduce_unknown_object_query
+    assert reduce_unknown_object_query("instant noodles") is None
+
+
+def test_unknown_param_reduction_still_works_alongside_venue_enrichment(
+    enriched_known_objects,
+):
+    # The existing token-subset (unknown-param) reduction path must keep
+    # working unchanged when venue enrichment is ALSO loaded.
+    from behavior_tree.GPSR.orchestrator import reduce_unknown_object_query
+    assert reduce_unknown_object_query("spicy instant noodles") == "instant noodles"
+
+
+# ---------------------------------------------------------------------------
 # BtNode_ReduceObjectQuery (one-shot guard node)
 # ---------------------------------------------------------------------------
 
