@@ -751,7 +751,21 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         # age contributes to the cumulative overhead budget -- the SAME
         # age_s just reported above, reused rather than recomputed, so a
         # future change to either can never let them silently diverge.
-        self.supervisor.record_deferral_overhead(age_s)
+        # R-3 (round-6 review fix): if this subtask currently has an
+        # active recovery (a retry in flight), this deferred intervention
+        # is a candidate to PRE-EMPT it -- pass the active recovery's
+        # identity so the controller can de-overlap this deferral's window
+        # against the recovery span it will close if/when that happens
+        # (see MissionSupervisor.record_deferral_overhead). Both are
+        # measured from the SAME retry-start moment (`_attempt_started_at`
+        # and `recovery_started` are set together in `_apply_intervention`
+        # below), so without this the two would double-count.
+        active = self._active_recovery
+        self.supervisor.record_deferral_overhead(
+            age_s,
+            issue_id=active.issue_id if active is not None else None,
+            strategy_id=active.strategy_id if active is not None else None,
+        )
 
     def _apply_intervention(self, intervention: SupervisorIntervention) -> None:
         if self._active_recovery is not None:

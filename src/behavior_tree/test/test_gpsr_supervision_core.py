@@ -779,6 +779,116 @@ def test_overhead_budget_crossing_300s_degrades_supervision() -> None:
         supervisor.close()
 
 
+# ---------------------------------------------------------------------------
+# Task R-3 (round-6 review fix, MEDIUM): the overhead accumulator must not
+# double-count a window shared by a deferral age and a recovery span.
+# `SupervisedSubtaskSlot._apply_intervention` sets `_attempt_started_at`
+# (what deferral age is measured from) and calls `recovery_started` (what
+# sets `_recovery_started_at`) at the SAME moment a retry is built. When a
+# LATER intervention pre-empts that still-in-flight retry, the recovery
+# span `recovery_finished` closes covers the EXACT SAME wall-clock interval
+# already reported as that pre-empting intervention's own deferral age --
+# both clocks share the same start point. Count the union, not the sum.
+
+
+def test_overhead_pre_emption_deferral_and_recovery_span_count_the_union_not_the_sum() -> None:
+    config = SupervisorConfig(mode=SupervisionMode.ACTIVE, overhead_budget_s=1_000_000.0)
+    supervisor = MissionSupervisor(config, _provider(), ScriptedSupervisorClient())
+    try:
+        proposal = RecoveryProposal(
+            checkpoint_id="cp-1",
+            issue_id="issue-1",
+            strategy_id="s1",
+            kind=RecoveryKind.SCAN_VIEWS,
+            arguments={"angles": [[0, 0]], "perception_action": "x"},
+            rationale="r",
+            expected_evidence=("e",),
+            stop_conditions=("s",),
+        )
+        supervisor.ledger.register(proposal)
+
+        # t=1000.0: the retry begins -- `_attempt_started_at` and
+        # `_recovery_started_at` are set together at this SAME instant in
+        # the real slot; here we drive `recovery_started` directly to
+        # isolate the overhead-accumulation math from the rest of the
+        # recovery pipeline (covered by the Q1/Q2/Q4 tests elsewhere).
+        with patch(
+            "behavior_tree.GPSR.supervision.controller.time.monotonic",
+            return_value=1000.0,
+        ):
+            supervisor.recovery_started(proposal)
+
+        # t=1015.0 (15s later): a pre-empting intervention is first
+        # noticed as deferred against this still-RUNNING retry -- the
+        # exact overlap shape the review identified. Its window, [1000,
+        # 1015], has nothing to overlap with yet.
+        with patch(
+            "behavior_tree.GPSR.supervision.controller.time.monotonic",
+            return_value=1015.0,
+        ):
+            supervisor.record_deferral_overhead(
+                15.0, issue_id="issue-1", strategy_id="s1"
+            )
+        assert supervisor._overhead_s == 15.0
+
+        # t=1020.0 (20s after the retry began): the pre-empting
+        # intervention is finally applied, closing out the still-active
+        # recovery as failed. Its span is [1000, 1020] -- 20s, which
+        # FULLY SUBSUMES the deferral's already-counted [1000, 1015]
+        # window (both start at the SAME retry-start moment).
+        with patch(
+            "behavior_tree.GPSR.supervision.controller.time.monotonic",
+            return_value=1020.0,
+        ):
+            supervisor.recovery_finished(proposal, succeeded=False)
+
+        # Union of [1000, 1015] and [1000, 1020] is 20.0s -- NOT
+        # 15.0 + 20.0 = 35.0s (the pre-fix double-count).
+        assert supervisor._overhead_s == 20.0
+    finally:
+        supervisor.close()
+
+
+def test_overhead_non_overlapping_contributions_still_sum_normally() -> None:
+    # Counterpart: two contributions for DIFFERENT (issue_id, strategy_id)
+    # keys -- or a deferral with no active recovery at all -- share no
+    # window and must still add up normally (the common/expected path:
+    # the original attempt fails, the intervention applies immediately via
+    # `_has_failed_pending_effect`, so there is no deferral to overlap).
+    config = SupervisorConfig(mode=SupervisionMode.ACTIVE, overhead_budget_s=1_000_000.0)
+    supervisor = MissionSupervisor(config, _provider(), ScriptedSupervisorClient())
+    try:
+        # No active recovery -- accumulates directly, unclamped.
+        supervisor.record_deferral_overhead(15.0)
+        assert supervisor._overhead_s == 15.0
+
+        proposal = RecoveryProposal(
+            checkpoint_id="cp-2",
+            issue_id="issue-2",
+            strategy_id="s2",
+            kind=RecoveryKind.SCAN_VIEWS,
+            arguments={"angles": [[0, 0]], "perception_action": "x"},
+            rationale="r",
+            expected_evidence=("e",),
+            stop_conditions=("s",),
+        )
+        supervisor.ledger.register(proposal)
+        with patch(
+            "behavior_tree.GPSR.supervision.controller.time.monotonic",
+            return_value=2000.0,
+        ):
+            supervisor.recovery_started(proposal)
+        with patch(
+            "behavior_tree.GPSR.supervision.controller.time.monotonic",
+            return_value=2010.0,
+        ):
+            supervisor.recovery_finished(proposal, succeeded=True)
+
+        assert supervisor._overhead_s == 15.0 + 10.0
+    finally:
+        supervisor.close()
+
+
 def test_total_error_and_overhead_budgets_degrade_in_shadow_without_skipping_queries() -> None:
     # Shadow: the accumulators/degrade flag may still tick (telemetry
     # only) but must change no OBSERVABLE behavior -- SHADOW always

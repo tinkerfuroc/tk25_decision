@@ -99,6 +99,19 @@ class MissionSupervisor:
         # whole run.
         self._overhead_s = 0.0
         self._recovery_started_at: dict[tuple[str, str], float] = {}
+        # R-3 (task-Q, round-6 review fix): a deferral-age contribution and
+        # a recovery-span contribution for the SAME (issue_id, strategy_id)
+        # can cover an overlapping wall-clock window -- `_apply_intervention`
+        # sets the slot's `_attempt_started_at` (what deferral age is
+        # measured from) and calls `recovery_started` (what sets
+        # `_recovery_started_at`) at the SAME moment a retry is built, so a
+        # LATER intervention that pre-empts that still-in-flight retry
+        # closes a recovery span that fully covers whatever deferral age
+        # was already reported for that same pre-empting intervention.
+        # Track, per (issue_id, strategy_id), the watermark up to which
+        # that key's window has already been counted -- see
+        # `_accumulate_overhead_window`.
+        self._overhead_accumulated_through: dict[tuple[str, str], float] = {}
         self._degraded = False
         # R-1 (task-Q, round-6 review fix): subtask_ids whose owning slot
         # has already hard-stopped (SupervisedSubtaskSlot._finish_hard_stop
@@ -405,8 +418,18 @@ class MissionSupervisor:
         if started_at is not None:
             # Q4: (ii) each recovery cycle span, accumulated regardless of
             # outcome -- a recovery that ultimately failed still cost the
-            # mission the time it ran.
-            self._accumulate_overhead(max(0.0, time.monotonic() - started_at))
+            # mission the time it ran. R-3: routed through the same
+            # overlap-aware window accumulator a deferral contribution for
+            # this SAME (issue_id, strategy_id) may already have reported
+            # (see `_accumulate_overhead_window`), rather than added flatly
+            # -- otherwise a pre-empting intervention's already-reported
+            # deferral age and this span would double-count their shared
+            # window.
+            self._accumulate_overhead_window(
+                key=(proposal.issue_id, proposal.strategy_id),
+                start=started_at,
+                end=time.monotonic(),
+            )
         self._emit(
             "supervisor.recovery.finished",
             {
@@ -425,7 +448,13 @@ class MissionSupervisor:
             if record is not None and record.verification is not None:
                 self._start_global(record, "three_distinct_recoveries_failed")
 
-    def record_deferral_overhead(self, age_s: float) -> None:
+    def record_deferral_overhead(
+        self,
+        age_s: float,
+        *,
+        issue_id: str | None = None,
+        strategy_id: str | None = None,
+    ) -> None:
         """Q4 (task-Q, round-6): (i) each applied intervention's deferral
         age contributes to the cumulative overhead budget. Called by
         ``SupervisedSubtaskSlot._note_deferral`` with the SAME ``age_s`` it
@@ -443,8 +472,49 @@ class MissionSupervisor:
         "first tick a pending intervention was noticed against this
         attempt's start time" logic with no additional accuracy to show
         for it.
+
+        ``issue_id``/``strategy_id`` (R-3, task-Q round-6 review fix):
+        when the deferred intervention is about to pre-empt the slot's own
+        currently-active recovery (``SupervisedSubtaskSlot._active_
+        recovery``), the caller passes that recovery's identity so this
+        contribution routes through the same overlap-aware window
+        accumulator ``recovery_finished`` uses for the (later) recovery
+        span it will close -- both are measured from the SAME retry-start
+        moment, so without this the two would double-count their shared
+        window. Omitted (the common case: no active recovery, e.g. a
+        first-attempt deferral) it accumulates directly -- there is
+        nothing for it to overlap with.
         """
-        self._accumulate_overhead(max(0.0, age_s))
+        age_s = max(0.0, age_s)
+        if age_s <= 0:
+            return
+        if issue_id is not None and strategy_id is not None:
+            now = time.monotonic()
+            self._accumulate_overhead_window(
+                key=(issue_id, strategy_id), start=now - age_s, end=now
+            )
+        else:
+            self._accumulate_overhead(age_s)
+
+    def _accumulate_overhead_window(
+        self, *, key: tuple[str, str], start: float, end: float
+    ) -> None:
+        """R-3 (task-Q, round-6 review fix): count the UNION of overlapping
+        contributions for the same ``key`` (an ``(issue_id, strategy_id)``
+        pair), not their sum. Tracks the watermark up to which this key's
+        window has already been counted (``_overhead_accumulated_through``)
+        and clamps each new contribution's effective start to
+        ``max(its own start, that watermark)`` -- a contribution entirely
+        within an already-counted span (the deferral-then-recovery-span
+        shape this fixes) contributes nothing further; a contribution that
+        extends past it only adds the new, not-yet-counted portion.
+        """
+        with self._lock:
+            accumulated_through = self._overhead_accumulated_through.get(key, start)
+            effective_start = max(start, accumulated_through)
+            amount = max(0.0, end - effective_start)
+            self._overhead_accumulated_through[key] = max(accumulated_through, end)
+        self._accumulate_overhead(amount)
 
     def _accumulate_overhead(self, amount_s: float) -> None:
         if amount_s <= 0:
