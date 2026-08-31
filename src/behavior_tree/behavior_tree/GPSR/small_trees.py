@@ -389,9 +389,19 @@ class BtNode_ExtractDetection(Behaviour):
     ``validators._SIM_PERSON_CLASS_LABELS``, not duplicated) and, on a hit,
     also writes ``bb_provenance_dst`` (if given) so the postcondition gate's
     relaxed branch can require it (see ``validators._verify``'s
-    ``person_found`` branch). This path is DEAD (always FAILURE) unless
-    ``GPSR_SIM_IDENTITY_RELAXED=1`` -- see ``validators._sim_identity_
-    relaxed_enabled``.
+    ``person_found`` branch).
+
+    W-4 (round-4 review fix, doc-only): with ``GPSR_SIM_IDENTITY_RELAXED``
+    unset, this path is dead (always FAILURE) in a REAL-vision run -- see
+    the flag check in ``update()``, right after the mocked-vision
+    short-circuit above it. That mocked-vision short-circuit runs FIRST and
+    returns SUCCESS unconditionally (irrespective of ``relaxed``/the flag),
+    so with vision mocked this node is not literally always FAILURE either
+    -- it is simply unreachable there for a DIFFERENT reason: the identical
+    short-circuit in the STRICT extract earlier in the same Selector
+    (``_person_scan_strategies``'s ``generalist_branch``) already succeeds
+    first, so the Selector never reaches this relaxed branch when vision is
+    mocked.
     """
 
     def __init__(
