@@ -2592,6 +2592,15 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._slot = int(slot)
         self._planner = planner
         self._max_replans = max(1, int(max_replans_per_target))
+        # Q3 (task-Q, round-6): cap on supervisor-initiated ("level":
+        # "supervisor") replans of the SAME target that keep TARGET_REPLAN_
+        # COUNT's "fresh start" semantics. Read once at construction, same
+        # rationale as SupervisedSubtaskSlot's stall-window env reads: a
+        # stable-for-the-life-of-the-executor setting, not something that
+        # should shift mid-mission if the env var changes.
+        self._max_supervisor_replans = max(
+            1, int(os.environ.get("GPSR_SUPERVISION_MAX_SUPERVISOR_REPLANS", "2"))
+        )
         self._tree = None
         self._node = None
         self._bb = None
@@ -2624,6 +2633,7 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._bb.register_key(bb_keys.REPLAN_REQUEST, access=Access.WRITE)
         self._bb.register_key(bb_keys.SUPERVISOR_STEP_DISPOSITION, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+        self._bb.register_key(bb_keys.SUPERVISOR_REPLAN_COUNT, access=Access.WRITE)
         self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.WRITE)
         self._bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.READ)
         self._bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
@@ -2834,6 +2844,10 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._log(f"target:{self._index}:{self._current_desc()} SUCCEEDED")
         self._bb.set(bb_keys.TARGET_INDEX, self._index + 1, overwrite=True)
         self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+        # Q3 (task-Q, round-6): reset the per-target supervisor-replan
+        # count on the same lifecycle as TARGET_REPLAN_COUNT's own clear --
+        # a genuine target completion.
+        self._bb.set(bb_keys.SUPERVISOR_REPLAN_COUNT, 0, overwrite=True)
         if self._index + 1 >= self._num_targets:
             self._state = "DONE"
         else:
@@ -2855,45 +2869,101 @@ class DynamicExecutor(py_trees.composites.Composite):
             request = {}
         if request.get("level") == "supervisor":
             self._bb.set(bb_keys.REPLAN_REQUEST, {}, overwrite=True)
-            # L1 (round-2 review): a forced-to-exhausted TARGET_REPLAN_COUNT
-            # (the UNRECOVERABLE_SKIPPED branch in ``tick()`` forces it to
-            # ``_max_replans`` right before calling this method) must not
-            # survive into the supervisor's replacement plan -- otherwise
-            # that replacement's own first genuine failure would budget-skip
-            # immediately, with zero replan attempts of its own. The
-            # supervisor is handing this target a fresh start either way.
-            self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
-            action = request.get("action")
-            if action == "abort_and_report":
-                message = str(request.get("operator_message") or reason)
-                if message:
-                    self._announce(message)
-                self._bb.set(
-                    bb_keys.TARGET_INDEX, self._num_targets, overwrite=True,
+            # Q3 (task-Q, round-6): count supervisor-initiated replans of
+            # THIS target, separately from TARGET_REPLAN_COUNT. Measured
+            # root cause this caps: RecoveryLedger's own cap fired
+            # correctly, triggering a global replan, but the supervisor
+            # branch below unconditionally reset TARGET_REPLAN_COUNT to 0
+            # ("fresh start") and returned -- bypassing the `replans >
+            # max_replans` block below, the ONLY emitter of target.failed.
+            # While the supervisor kept replanning the same failing target,
+            # target.failed was structurally unreachable and the bench
+            # timed out. Up to the cap, today's fresh-start semantics are
+            # unchanged.
+            try:
+                supervisor_replans = int(
+                    self._bb.get(bb_keys.SUPERVISOR_REPLAN_COUNT) or 0
                 )
-                self._supervisor_aborted = True
-                self._state = "DONE"
-                return
-            replacement = request.get("replacement_plan") or []
-            preserved = request.get("preserved_completed_steps")
-            if isinstance(preserved, list):
-                completed_steps = copy.deepcopy(preserved)
-            elif isinstance(preserved, int) and not isinstance(preserved, bool) and preserved >= 0:
-                get_action_plan = getattr(self._planner, "get_action_plan", None)
-                original = get_action_plan(self._slot, self._index) if callable(get_action_plan) else []
-                completed_steps = copy.deepcopy(original[:preserved]) if preserved <= len(original) else []
+            except KeyError:
+                supervisor_replans = 0
+            supervisor_replans += 1
+            self._bb.set(
+                bb_keys.SUPERVISOR_REPLAN_COUNT, supervisor_replans, overwrite=True
+            )
+            if supervisor_replans > self._max_supervisor_replans:
+                # Cap tripped: no more free fresh starts for this target.
+                # Do NOT reset TARGET_REPLAN_COUNT -- fall through to the
+                # NORMAL replan machinery below (the exact same path a
+                # plain, non-supervisor failure takes), so it counts
+                # toward max_replans and target.failed becomes reachable
+                # again. Telemetry fires exactly once, on the call that
+                # first exceeds the cap.
+                if supervisor_replans == self._max_supervisor_replans + 1:
+                    telemetry = get_default_telemetry()
+                    if telemetry is not None:
+                        try:
+                            task_id = self._bb.get(bb_keys.TASK_ID)
+                        except KeyError:
+                            task_id = None
+                        try:
+                            telemetry.emit(
+                                "supervision.replan_cap",
+                                {
+                                    "slot": self._slot,
+                                    "target_index": self._index,
+                                    "supervisor_replans": supervisor_replans,
+                                    "max_supervisor_replans": self._max_supervisor_replans,
+                                    "reason": reason,
+                                },
+                                task_id=task_id, phase="execution",
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
             else:
-                completed_steps = []
-            self._planner.replace_target_plan(
-                self._slot, self._index, replacement, reason,
-                completed_steps=completed_steps,
-            )
-            self._log(
-                f"target:{self._index}:{self._current_desc()} SUPERVISOR_REPLAN "
-                f"({len(replacement)} remaining step(s))"
-            )
-            self._state = "REQUESTING"
-            return
+                # L1 (round-2 review): a forced-to-exhausted TARGET_REPLAN_
+                # COUNT (the UNRECOVERABLE_SKIPPED branch in ``tick()``
+                # forces it to ``_max_replans`` right before calling this
+                # method) must not survive into the supervisor's
+                # replacement plan -- otherwise that replacement's own
+                # first genuine failure would budget-skip immediately, with
+                # zero replan attempts of its own. The supervisor is
+                # handing this target a fresh start either way, up to the
+                # cap above.
+                self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+                action = request.get("action")
+                if action == "abort_and_report":
+                    message = str(request.get("operator_message") or reason)
+                    if message:
+                        self._announce(message)
+                    self._bb.set(
+                        bb_keys.TARGET_INDEX, self._num_targets, overwrite=True,
+                    )
+                    self._supervisor_aborted = True
+                    self._state = "DONE"
+                    return
+                replacement = request.get("replacement_plan") or []
+                preserved = request.get("preserved_completed_steps")
+                if isinstance(preserved, list):
+                    completed_steps = copy.deepcopy(preserved)
+                elif isinstance(preserved, int) and not isinstance(preserved, bool) and preserved >= 0:
+                    get_action_plan = getattr(self._planner, "get_action_plan", None)
+                    original = get_action_plan(self._slot, self._index) if callable(get_action_plan) else []
+                    completed_steps = copy.deepcopy(original[:preserved]) if preserved <= len(original) else []
+                else:
+                    completed_steps = []
+                self._planner.replace_target_plan(
+                    self._slot, self._index, replacement, reason,
+                    completed_steps=completed_steps,
+                )
+                self._log(
+                    f"target:{self._index}:{self._current_desc()} SUPERVISOR_REPLAN "
+                    f"({len(replacement)} remaining step(s))"
+                )
+                self._state = "REQUESTING"
+                return
+            # Cap tripped above: fall through to normal machinery below,
+            # using `reason` (the supervisor's own rationale) exactly like
+            # any other target failure.
         try:
             replans = int(self._bb.get(bb_keys.TARGET_REPLAN_COUNT) or 0)
         except KeyError:
@@ -2942,6 +3012,9 @@ class DynamicExecutor(py_trees.composites.Composite):
                         pass
             self._bb.set(bb_keys.TARGET_INDEX, self._index + 1, overwrite=True)
             self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+            # Q3 (task-Q, round-6): same lifecycle as TARGET_REPLAN_COUNT's
+            # own clear -- the target has genuinely completed (skipped).
+            self._bb.set(bb_keys.SUPERVISOR_REPLAN_COUNT, 0, overwrite=True)
             if self._index + 1 >= self._num_targets:
                 self._state = "DONE"
             else:
@@ -3103,6 +3176,9 @@ class DynamicExecutor(py_trees.composites.Composite):
             self._state = "REQUESTING"
             self._bb.set(bb_keys.TARGET_INDEX, 0, overwrite=True)
             self._bb.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+            # Q3 (task-Q, round-6): fresh command activation -- same
+            # lifecycle as TARGET_REPLAN_COUNT's own reset here.
+            self._bb.set(bb_keys.SUPERVISOR_REPLAN_COUNT, 0, overwrite=True)
 
         # --- SWAP POINT A: REQUESTING, subtree ready -> swap + fall through ---
         if self._state == "REQUESTING":

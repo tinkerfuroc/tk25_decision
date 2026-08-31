@@ -226,6 +226,7 @@ class bb_keys:
     # Replan request channel (extension point; trigger logic to be announced).
     REPLAN_REQUEST = "gpsr/replan_request"       # dict {level: "target"|"command", index: int, reason: str}
     TARGET_REPLAN_COUNT = "gpsr/target_replan_count"  # int — per-target replan budget, reset when a target advances
+    SUPERVISOR_REPLAN_COUNT = "gpsr/supervisor_replan_count"  # int — Q3 (task-Q, round-6): supervisor-initiated ("level":"supervisor") replans for the CURRENT target only; same reset lifecycle as TARGET_REPLAN_COUNT (a genuine target completion), but NEVER reset by the supervisor branch itself -- past GPSR_SUPERVISION_MAX_SUPERVISOR_REPLANS it caps the "fresh start" semantics so target.failed stays reachable
     DEFERRED_PRECONDITIONS = "gpsr/deferred_preconditions"  # list[str] — canonical preconditions the active target's own plan self-establishes; verified by the postcondition gate instead of at entry
     GATE_COMPLETED_STEPS = "gpsr/gate_completed_steps"  # list[dict] — the active target's own plan steps whose established facts the postcondition gate just committed (J3): fed to the next replan as completed_steps so it is not repeated
     FACTS = "gpsr/facts"

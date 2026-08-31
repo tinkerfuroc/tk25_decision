@@ -1,12 +1,15 @@
 """Regression tests for supervision on the two-layer dynamic executor."""
 
 from datetime import datetime, timezone
+import json
 from types import SimpleNamespace
 import time
+from unittest.mock import patch
 
 import py_trees
 from py_trees.common import Access, Status
 
+from behavior_tree.GPSR import telemetry as telemetry_mod
 from behavior_tree.GPSR.orchestrator import (
     BtNode_SupervisorBarrier,
     DynamicExecutor,
@@ -371,3 +374,168 @@ def test_supervisor_replacement_swaps_at_dynamic_executor_tick_boundary() -> Non
     assert len(planner.replacements) == 1
     assert planner.replacements[0][2][0]["action"] == "announce"
     assert py_trees.blackboard.Blackboard.get(bb_keys.REPLAN_REQUEST) == {}
+
+
+# ---------------------------------------------------------------------------
+# Task Q3 (round-6, supervision-economics fix): supervisor replans stop
+# resetting the target's failure accounting after a cap. Events forensics on
+# the supervised 019 run: RecoveryLedger's own cap fired correctly, triggering
+# a global replan, but `_on_target_failure`'s supervisor branch unconditionally
+# reset TARGET_REPLAN_COUNT and returned -- bypassing the `replans >
+# max_replans` block, the ONLY emitter of target.failed. While the supervisor
+# kept replanning the same failing target, target.failed was structurally
+# unreachable and the bench timed out.
+
+
+class _Q3Planner:
+    """Always requests a supervisor replan for the SAME target -- drives
+    ``DynamicExecutor._on_target_failure``'s supervisor branch repeatedly to
+    exercise the Q3 replan cap. ``replace_target_plan``/``replan_target``
+    match the REAL ``GPSRPlanner`` signatures (unlike the pre-existing
+    ``_FakePlanner`` above, whose ``replace_target_plan`` is missing
+    ``completed_steps`` -- a known baseline failure this test does not rely
+    on or repeat)."""
+
+    def __init__(self) -> None:
+        self.plan = [{"action": "goto", "params": {"location": "kitchen"}}]
+        self.replacements: list = []
+        self.replan_calls = 0
+
+    def _get_desc(self, slot, index):
+        return "go to the kitchen"
+
+    def is_target_ready(self, slot, index):
+        return True
+
+    def get_action_plan(self, slot, index):
+        return list(self.plan)
+
+    def get_target_subtree(self, slot, index):
+        seq = py_trees.composites.Sequence("target", memory=True)
+        seq.add_children(
+            [_RequestSupervisorReplan("request replan"), BtNode_SupervisorBarrier()]
+        )
+        return seq
+
+    def replace_target_plan(self, slot, index, plan, reason, completed_steps=None):
+        self.plan = list(plan)
+        self.replacements.append((slot, index, list(plan), reason))
+
+    def replan_target(self, slot, index, reason, completed_steps=None):
+        self.replan_calls += 1
+
+
+def _seed_q3_targets() -> None:
+    py_trees.blackboard.Blackboard.clear()
+    bb = py_trees.blackboard.Client(name="q3_supervisor_replan_cap_test")
+    for key in (bb_keys.SAVED_TARGETS_PREFIX + "0", bb_keys.TARGETS):
+        bb.register_key(key, access=Access.WRITE)
+    bb.set(bb_keys.SAVED_TARGETS_PREFIX + "0", ["go to the kitchen"], overwrite=True)
+    bb.set(bb_keys.TARGETS, ["go to the kitchen"], overwrite=True)
+
+
+def test_supervisor_replan_cap_lets_target_failed_become_reachable_again(
+    tmp_path,
+) -> None:
+    # Up to GPSR_SUPERVISION_MAX_SUPERVISOR_REPLANS (2 here), a
+    # supervisor-level replan keeps today's fresh-start semantics
+    # (TARGET_REPLAN_COUNT reset to 0, planner.replace_target_plan called).
+    # Beyond the cap, the supervisor branch no longer resets it and falls
+    # through to the NORMAL replan machinery -- counting toward
+    # max_replans_per_target, so target.failed becomes reachable again
+    # instead of looping forever.
+    tele = telemetry_mod.GpsrTelemetry(tmp_path, enabled=True, trajectory_id="traj")
+    telemetry_mod.set_default_telemetry(tele)
+    _seed_q3_targets()
+    planner = _Q3Planner()
+    root = py_trees.composites.Sequence("root", memory=True)
+    with patch.dict("os.environ", {"GPSR_SUPERVISION_MAX_SUPERVISOR_REPLANS": "2"}):
+        # A tiny normal-replan budget (1): once the cap trips and the
+        # normal machinery takes over, it should not take many further
+        # supervisor-replan cycles to exhaust it and reach target.failed.
+        executor = DynamicExecutor("executor", 0, planner, max_replans_per_target=1)
+    executor._announce = lambda text: None
+    root.add_child(executor)
+    tree = py_trees.trees.BehaviourTree(root)
+    node = SimpleNamespace(get_name=lambda: "stub")
+    tree.setup(timeout=15, node=node, gpsr_tree=tree)
+
+    try:
+        for _ in range(20):
+            tree.tick()
+            if executor.status != Status.RUNNING:
+                break
+        assert executor.status == Status.FAILURE, (
+            "the perpetually-failing target must eventually reach "
+            "target.failed, not loop forever"
+        )
+        # Two fresh starts under the cap.
+        assert len(planner.replacements) == 2
+        # Beyond the cap: the normal machinery replanned/skipped instead of
+        # the supervisor's own replacement plan.
+        assert planner.replan_calls >= 1
+    finally:
+        tele.close(status="done")
+        telemetry_mod.set_default_telemetry(None)
+
+    lines = [
+        json.loads(line)
+        for line in (tele.directory / "events.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    cap_events = [e for e in lines if e["event_type"] == "supervision.replan_cap"]
+    assert len(cap_events) == 1, "telemetry must fire exactly once, on the trip"
+    assert cap_events[0]["payload"]["supervisor_replans"] == 3
+    assert cap_events[0]["payload"]["max_supervisor_replans"] == 2
+    failed = [e for e in lines if e["event_type"] == "target.failed"]
+    assert failed, "target.failed must be reachable once the cap trips"
+
+
+def test_supervisor_replan_cap_is_isolated_per_target(tmp_path) -> None:
+    # Per-target isolation: target A tripping the cap must not affect
+    # target B's own (fresh) allowance -- SUPERVISOR_REPLAN_COUNT resets on
+    # every genuine target advance (success, skip, or a new command).
+    tele = telemetry_mod.GpsrTelemetry(tmp_path, enabled=True, trajectory_id="traj")
+    telemetry_mod.set_default_telemetry(tele)
+    py_trees.blackboard.Blackboard.clear()
+    bb = py_trees.blackboard.Client(name="q3_per_target_isolation_test")
+    for key in (bb_keys.SAVED_TARGETS_PREFIX + "0", bb_keys.TARGETS):
+        bb.register_key(key, access=Access.WRITE)
+    bb.set(
+        bb_keys.SAVED_TARGETS_PREFIX + "0",
+        ["go to the kitchen", "go to the lounge"],
+        overwrite=True,
+    )
+    bb.set(
+        bb_keys.TARGETS, ["go to the kitchen", "go to the lounge"], overwrite=True
+    )
+    planner = _Q3Planner()
+    root = py_trees.composites.Sequence("root", memory=True)
+    with patch.dict("os.environ", {"GPSR_SUPERVISION_MAX_SUPERVISOR_REPLANS": "2"}):
+        executor = DynamicExecutor("executor", 0, planner, max_replans_per_target=1)
+    executor._announce = lambda text: None
+    root.add_child(executor)
+    tree = py_trees.trees.BehaviourTree(root)
+    node = SimpleNamespace(get_name=lambda: "stub")
+    tree.setup(timeout=15, node=node, gpsr_tree=tree)
+
+    try:
+        for _ in range(30):
+            tree.tick()
+            if executor.status != Status.RUNNING:
+                break
+        assert executor.status == Status.FAILURE
+    finally:
+        tele.close(status="done")
+        telemetry_mod.set_default_telemetry(None)
+
+    lines = [
+        json.loads(line)
+        for line in (tele.directory / "events.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    cap_events = [e for e in lines if e["event_type"] == "supervision.replan_cap"]
+    # Target A (index 0) trips the cap once; target B (index 1) gets its
+    # OWN fresh allowance and, driven by the same always-fail planner, trips
+    # its own cap once too -- never inheriting A's already-spent count.
+    assert [e["payload"]["target_index"] for e in cap_events] == [0, 1]
