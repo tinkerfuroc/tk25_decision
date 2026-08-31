@@ -255,9 +255,13 @@ class OpenRouterSupervisorClient:
                     },
                 )
                 return raw
-            except (SchemaError, json.JSONDecodeError):
-                raise
-            except Exception as exc:  # transient provider/transport failure
+            except Exception as exc:
+                # O5: a malformed/empty structured response (SchemaError,
+                # or a raw json.JSONDecodeError from _decode_json_content)
+                # used to re-raise immediately here with no retry, unlike a
+                # transient transport/provider failure one request later.
+                # Give every error class the same single fresh-request
+                # retry before giving up -- total attempts stay <= 2.
                 last_error = exc
                 if attempt == 0:
                     continue

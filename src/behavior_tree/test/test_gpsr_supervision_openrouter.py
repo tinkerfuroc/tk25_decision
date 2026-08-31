@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from behavior_tree.GPSR.supervision.clients import OpenRouterSupervisorClient
 from behavior_tree.GPSR.supervision.context import StaticContextProvider
 from behavior_tree.GPSR.supervision.models import (
@@ -13,6 +15,7 @@ from behavior_tree.GPSR.supervision.models import (
     Escalation,
     SubtaskStatus,
     SupervisorConfig,
+    SupervisorUnavailable,
     Verdict,
     VerificationDecision,
     WorldChange,
@@ -53,25 +56,30 @@ class _FakeCompletions:
     def create(self, **kwargs):
         self.requests.append(kwargs)
         content = self.contents.pop(0) if self.contents else json.dumps(
-            {
-                "checkpoint_id": "cp",
-                "verdict": "all_clear",
-                "bt_assessment": "agree",
-                "subtask_status": "achieved",
-                "world_change": "none",
-                "escalation": "none",
-                "failure_category": "",
-                "evidence": ["status"],
-                "rationale": "test",
-                "confidence": 0.9,
-            }
+            _DEFAULT_VERIFICATION
         )
+        if isinstance(content, BaseException):
+            raise content
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
             usage=SimpleNamespace(
                 prompt_tokens=10, completion_tokens=5, total_tokens=15
             ),
         )
+
+
+_DEFAULT_VERIFICATION = {
+    "checkpoint_id": "cp",
+    "verdict": "all_clear",
+    "bt_assessment": "agree",
+    "subtask_status": "achieved",
+    "world_change": "none",
+    "escalation": "none",
+    "failure_category": "",
+    "evidence": ["status"],
+    "rationale": "test",
+    "confidence": 0.9,
+}
 
 
 def test_openrouter_verifier_uses_luna_medium_without_temperature():
@@ -151,3 +159,49 @@ def test_openrouter_planners_decode_strict_embedded_json_fields():
         request["extra_body"]["reasoning"]["effort"] == "high"
         for request in completions.requests
     )
+
+
+def test_schema_error_gets_one_retry_like_a_transport_error():
+    # O5: a malformed/empty structured response (SchemaError, or a raw
+    # json.JSONDecodeError from _decode_json_content) used to re-raise
+    # immediately with no retry, unlike a transient transport error one
+    # request later. A single bad response from an otherwise healthy model
+    # should not be treated any differently from one dropped connection.
+    completions = _FakeCompletions(["not a json document"])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(), api_key="test-key", client=fake
+    )
+    decision = client.verify(_snapshot())
+    assert decision.verdict.value == "all_clear"
+    assert len(completions.requests) == 2
+
+
+def test_schema_error_on_both_attempts_raises_and_emits_query_failed():
+    events: list[tuple[str, dict]] = []
+    completions = _FakeCompletions(["not a json document", "still not json"])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(),
+        api_key="test-key",
+        client=fake,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    with pytest.raises(SupervisorUnavailable):
+        client.verify(_snapshot())
+    # keep total attempts <= 2 for every error class -- no third call
+    assert len(completions.requests) == 2
+    failed = [payload for event, payload in events if event == "supervisor.query.failed"]
+    assert len(failed) == 1
+    assert failed[0]["error_type"] == "JSONDecodeError"
+
+
+def test_transport_error_retry_is_unchanged_by_the_schema_error_fix():
+    completions = _FakeCompletions([RuntimeError("connection reset")])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(), api_key="test-key", client=fake
+    )
+    decision = client.verify(_snapshot())
+    assert decision.verdict.value == "all_clear"
+    assert len(completions.requests) == 2
