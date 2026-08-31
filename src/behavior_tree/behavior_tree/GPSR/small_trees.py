@@ -12,14 +12,18 @@ The factories deliberately stay shallow: they compose primitives from
 orchestrator for retries and re-planning.
 """
 
+import json
 import math
+import os
+import time
 import py_trees
 from py_trees.behaviour import Behaviour
 from py_trees.common import Access, Status
 from py_trees.blackboard import Blackboard
 from geometry_msgs.msg import PoseStamped, PointStamped, Pose, Point, Quaternion
-from std_msgs.msg import Header
+from std_msgs.msg import Header, String
 import rclpy
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
 from behavior_tree.TemplateNodes.Navigation import (
@@ -691,6 +695,137 @@ class BtNode_CheckGraspAllowed(Behaviour):
         if ask_referee:
             self.feedback_message = "object is on no-grasp furniture (shelf/cabinet/coat_rack) — skipping to ask-referee"
             return Status.FAILURE
+        return Status.SUCCESS
+
+
+class BtNode_RefereeHandObject(Behaviour):
+    """Ask the sim referee to teleport the target object into the gripper.
+
+    P (task-P): SIM f0dff4c added referee actuation -- publish the target
+    object's SEMANTIC name on ``/sim/referee/hand_object`` (std_msgs/String,
+    reliable QoS); the sim resolves it to the spawned entity, teleports it
+    to the TCP, and acks on ``/sim/referee/hand_object_result`` with
+    ``{"ok": true|false, "entity": ..., "xyz"|"error": ...}``. This makes
+    the ex_machina referee-fallback grasp physically real in sim, so the
+    delivered/placed gates verify honestly instead of trusting a
+    deterministic "close on air" SUCCESS (bench semantics: referee_assisted
+    is a legitimate PASS path).
+
+    Gated by ``GPSR_SIM_REFEREE_HANDOFF`` (truthy idiom matches
+    ``_sim_identity_relaxed_enabled()``: ``os.environ.get(...) == "1"``),
+    read once at construction -- never per-tick. Flag off (default): SUCCESS
+    immediately, no publisher/subscription ever created -- this node is
+    completely dead and the ex_machina branch is byte-identical to before
+    this task.
+
+    Flag on: publishes ``TARGET_OBJECT_NAME`` on entry (unset/empty -> log +
+    immediate SUCCESS, never publishes, never blocks) and waits (RUNNING)
+    for the ack up to ``GPSR_SIM_REFEREE_HANDOFF_TIMEOUT_S`` (default 3.0s).
+    This node NEVER FAILs the branch -- an ok:true ack, an ok:false nack, a
+    malformed/unparseable ack, and a timeout all resolve to SUCCESS (only
+    the feedback message differs), so a bad handoff degrades gracefully:
+    the flow proceeds to close-on-air and fails honestly at the
+    delivered/placed gates instead of hanging here. The ack's entity/name is
+    logged, never validated against what was asked for.
+
+    Restart discipline: ``setup()`` creates the publisher/subscription (and
+    reads the flag/timeout) at most once per instance -- re-entry after a
+    root restart re-publishes (the sim teleport is idempotent) but never
+    accumulates ROS entities.
+    """
+
+    HAND_OBJECT_TOPIC = "/sim/referee/hand_object"
+    HAND_OBJECT_RESULT_TOPIC = "/sim/referee/hand_object_result"
+    DEFAULT_TIMEOUT_S = 3.0
+
+    def __init__(self, name: str = "sim referee hand-object"):
+        super().__init__(name)
+        self._enabled = os.environ.get("GPSR_SIM_REFEREE_HANDOFF") == "1"
+        try:
+            self._timeout_s = float(
+                os.environ.get("GPSR_SIM_REFEREE_HANDOFF_TIMEOUT_S", self.DEFAULT_TIMEOUT_S)
+            )
+        except (TypeError, ValueError):
+            self._timeout_s = self.DEFAULT_TIMEOUT_S
+        self._client = None
+        self._publisher = None
+        self._subscription = None
+        self._deadline = None
+        self._ack_raw = None
+        self._skip = False
+
+    def setup(self, **kwargs):
+        if not self._enabled:
+            return
+        if self._publisher is not None:
+            # Already set up on an earlier call -- never accumulate a second
+            # publisher/subscription across re-setups (K-round restart
+            # discipline lesson).
+            return
+        try:
+            node = kwargs['node']
+        except KeyError as e:
+            error_message = "didn't find 'node' in setup's kwargs [{}]".format(self.qualified_name)
+            raise KeyError(error_message) from e
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(bb_keys.TARGET_OBJECT_NAME, access=Access.READ)
+        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
+        self._publisher = node.create_publisher(String, self.HAND_OBJECT_TOPIC, qos)
+        self._subscription = node.create_subscription(
+            String, self.HAND_OBJECT_RESULT_TOPIC, self._on_ack, qos,
+        )
+
+    def _on_ack(self, msg) -> None:
+        self._ack_raw = msg.data
+
+    def initialise(self) -> None:
+        self._ack_raw = None
+        self._deadline = None
+        self._skip = False
+        if not self._enabled:
+            return
+        try:
+            name = str(self._client.get(bb_keys.TARGET_OBJECT_NAME) or "").strip()
+        except Exception:
+            name = ""
+        if not name:
+            self._skip = True
+            self.feedback_message = "TARGET_OBJECT_NAME unset -- skipping referee handoff"
+            return
+        msg = String()
+        msg.data = name
+        self._publisher.publish(msg)
+        self._deadline = time.monotonic() + self._timeout_s
+        self.feedback_message = f"waiting for referee handoff ack ({name!r})"
+
+    def update(self) -> Status:
+        if not self._enabled:
+            self.feedback_message = "GPSR_SIM_REFEREE_HANDOFF != 1"
+            return Status.SUCCESS
+        if self._skip:
+            return Status.SUCCESS
+        if self._ack_raw is None:
+            if time.monotonic() >= self._deadline:
+                self.feedback_message = "no referee ack"
+                return Status.SUCCESS
+            return Status.RUNNING
+        return self._resolve_ack(self._ack_raw)
+
+    def _resolve_ack(self, raw: str) -> Status:
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = None
+        if not isinstance(payload, dict):
+            self.feedback_message = "referee handoff nack: malformed ack"
+            return Status.SUCCESS
+        if payload.get("ok"):
+            entity = payload.get("entity")
+            xyz = payload.get("xyz")
+            self.feedback_message = f"referee handoff ok: entity={entity} xyz={xyz}"
+        else:
+            error = payload.get("error")
+            self.feedback_message = f"referee handoff nack: {error}" if error else "referee handoff nack"
         return Status.SUCCESS
 
 
@@ -2083,6 +2218,11 @@ def create_grasp():
         message="Put it in my gripper please. Thank you.",
     ))
     ex_machina.add_child(BtNode_WaitTicks("wait", 8))
+    # P (task-P, flag-gated): make the referee handoff physically real in
+    # sim -- teleport the object to the TCP before closing on it -- when
+    # GPSR_SIM_REFEREE_HANDOFF=1. Flag off (default): SUCCESS instantly, no
+    # ROS entities created, byte-identical to before this node existed.
+    ex_machina.add_child(BtNode_RefereeHandObject("sim referee hand-object"))
     ex_machina.add_child(BtNode_GripperAction("close gripper", False))
 
     return py_trees.composites.Selector(
