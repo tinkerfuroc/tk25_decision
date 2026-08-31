@@ -27,6 +27,7 @@ from behavior_tree.GPSR.supervision.models import (
     SupervisorConfig,
     VerificationDecision,
 )
+from behavior_tree.GPSR.supervision.prompts import VERIFIER_SYSTEM_PROMPT
 from behavior_tree.GPSR.supervision.recovery import RecoveryLedger
 
 
@@ -338,6 +339,124 @@ def test_false_success_produces_typed_local_recovery() -> None:
         assert supervisor.ledger.failed_count(intervention.payload.issue_id) == 0
     finally:
         supervisor.close()
+
+
+def test_uncertain_verdict_never_produces_an_intervention() -> None:
+    # O2: uncertainty is not failure. A verifier that cannot confirm the
+    # world state (verdict=uncertain) admits it has nothing actionable to
+    # say -- even when it also asks for escalation=stop, as the old prompt
+    # instructed for a sensor-context mismatch. The controller must never
+    # turn that into an intervention; it marks the checkpoint "unverified"
+    # and lets the mission proceed.
+    config = SupervisorConfig(mode=SupervisionMode.ACTIVE)
+    events: list[tuple[str, dict]] = []
+    client = ScriptedSupervisorClient(
+        verifications=[
+            _verification(
+                "checkpoint-1",
+                verdict="uncertain",
+                escalation="stop",
+                world_change="unknown",
+                failure_category="sensor_context_mismatch",
+            )
+        ]
+    )
+    supervisor = MissionSupervisor(
+        config,
+        _provider(),
+        client,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    try:
+        supervisor.submit(_request(), _contract(), ReportedStatus.SUCCESS)
+        assert supervisor.wait_for_idle()
+        assert supervisor.consume_intervention() is None
+        assert supervisor.resolution("checkpoint-1") == "unverified"
+        assert supervisor.can_finish_subtask(_request().subtask_id) is True
+        downgrades = [payload for event, payload in events if event == "supervisor.verdict.downgraded"]
+        assert len(downgrades) == 1
+        assert downgrades[0]["checkpoint_id"] == "checkpoint-1"
+        assert downgrades[0]["failure_category"] == "sensor_context_mismatch"
+        assert downgrades[0]["escalation_requested"] == "stop"
+    finally:
+        supervisor.close()
+
+
+def test_unknown_subtask_status_never_produces_an_intervention() -> None:
+    # O2 also covers subtask_status=unknown -- the verifier admitting it
+    # cannot tell whether the subtask itself was achieved, independent of
+    # the top-level verdict label.
+    config = SupervisorConfig(mode=SupervisionMode.ACTIVE)
+    client = ScriptedSupervisorClient(
+        verifications=[
+            {
+                "checkpoint_id": "checkpoint-1",
+                "verdict": "recoverable",
+                "bt_assessment": "agree",
+                "subtask_status": "unknown",
+                "world_change": "non_destructive",
+                "escalation": "stop",
+                "failure_category": "context_incomplete",
+                "evidence": ["fixture evidence"],
+                "rationale": "scripted test decision",
+                "confidence": 0.9,
+            }
+        ]
+    )
+    supervisor = MissionSupervisor(config, _provider(), client)
+    try:
+        supervisor.submit(_request(), _contract(), ReportedStatus.SUCCESS)
+        assert supervisor.wait_for_idle()
+        assert supervisor.consume_intervention() is None
+        assert supervisor.resolution("checkpoint-1") == "unverified"
+    finally:
+        supervisor.close()
+
+
+def test_positive_failure_verdict_with_stop_escalation_still_hard_stops() -> None:
+    # O2 must not over-broaden: a POSITIVE failure finding (recoverable or
+    # unrecoverable -- the verifier actually identifying a problem, not
+    # merely admitting uncertainty) that requests escalation=stop still
+    # hard-stops the mission exactly as before.
+    for verdict in ("recoverable", "unrecoverable"):
+        config = SupervisorConfig(mode=SupervisionMode.ACTIVE)
+        client = ScriptedSupervisorClient(
+            verifications=[
+                _verification(
+                    "checkpoint-1",
+                    verdict=verdict,
+                    escalation="stop",
+                    world_change="non_destructive",
+                    failure_category="object_broken",
+                )
+            ]
+        )
+        supervisor = MissionSupervisor(config, _provider(), client)
+        try:
+            supervisor.submit(_request(), _contract(), ReportedStatus.FAILURE)
+            assert supervisor.wait_for_idle()
+            intervention = supervisor.consume_intervention()
+            assert intervention is not None
+            assert intervention.kind == "stop"
+            assert supervisor.resolution("checkpoint-1") == "stop"
+        finally:
+            supervisor.close()
+
+
+def test_verifier_prompt_instructs_the_downgraded_mismatch_escalation() -> None:
+    # O3 (prompt alignment): the instructed response for a material
+    # sensor-context mismatch must match the O2 enforcement policy -- a
+    # mismatch is an inability to verify, not a positive failure finding, so
+    # the least-aggressive escalation member (none) is instructed, not stop.
+    assert "escalation=none, failure_category=sensor_context_mismatch" in (
+        VERIFIER_SYSTEM_PROMPT
+    )
+    assert "escalation=stop" not in VERIFIER_SYSTEM_PROMPT
+
+
+def test_verifier_prompt_tells_the_model_missing_artifacts_are_not_failure() -> None:
+    prompt = VERIFIER_SYSTEM_PROMPT.lower()
+    assert "missing" in prompt and "not evidence" in prompt
 
 
 def test_outage_policy_continues_observation_success_but_stops_failure() -> None:

@@ -539,12 +539,18 @@ SCENARIO_CASES: tuple[ScenarioCase, ...] = (
                     "gpsr/target_location": "dinner_table",
                     "gpsr/camera_sync_status": "failed_consistency_check",
                 },
+                # O3 (prompt alignment): the verifier is instructed to
+                # answer escalation=none for a material sensor mismatch --
+                # a mismatch means it cannot verify this checkpoint, not
+                # that anything is confirmed wrong. O2 downgrades any
+                # uncertain verdict to "unverified" with no intervention
+                # regardless of the escalation value.
                 _verify(
                     "uncertain",
                     "agree",
                     "unknown",
                     "unknown",
-                    "stop",
+                    "none",
                     category="sensor_context_mismatch",
                     evidence=("AprilTag", "calibration", "mismatch"),
                 ),

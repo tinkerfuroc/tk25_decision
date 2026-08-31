@@ -96,11 +96,17 @@ def test_catalog_covers_every_typed_supervisor_response() -> None:
         "destructive",
         "unknown",
     }
+    # O3 (prompt alignment): the sensor-mismatch scenario (case08) now
+    # expects escalation=none, the least-aggressive member, instead of
+    # stop -- see the O2 ruling that a bare uncertain verdict is never a
+    # positive failure finding, so the verifier is no longer instructed to
+    # request stop for it. No scenario is expected to request "stop"
+    # anymore; the controller's own STOP branch still exists in code as a
+    # backstop for a genuine positive failure finding requesting it.
     assert {item.escalation for item in expectations} == {
         "none",
         "local_recovery",
         "global_replan",
-        "stop",
     }
     planners = [
         stage.planner
@@ -309,7 +315,13 @@ def test_scene_only_urdf_arm_renders_all_four_runtime_poses(
     assert set(rendered) == set(expected_directions)
 
 
-def test_stop_escalation_preempts_uncertain_local_recovery() -> None:
+def test_uncertain_sensor_mismatch_scenario_never_intervenes() -> None:
+    # Was "test_stop_escalation_preempts_uncertain_local_recovery": under
+    # the old policy a bare uncertain verdict requesting escalation=stop
+    # (the sensor-context-mismatch scenario) hard-stopped the mission. O2
+    # (uncertainty is not failure) removes that: the checkpoint completes
+    # as "unverified" and the mission proceeds -- see the case08 scenario
+    # update (scenarios.py) and the O2 ruling in the task-O brief.
     case = SCENARIO_CASES[7]
     stage = case.stages[0]
     client = ScriptedSupervisorClient(verifications=[_decision(stage)])
@@ -325,16 +337,13 @@ def test_stop_escalation_preempts_uncertain_local_recovery() -> None:
             ReportedStatus.FAILURE,
         )
         assert supervisor.wait_for_idle()
-        intervention = supervisor.consume_intervention()
-        assert intervention is not None
-        assert intervention.kind == "stop"
-        assert intervention.reason == "sensor_context_mismatch"
-        assert supervisor.resolution(stage.stage_id) == "stop"
+        assert supervisor.consume_intervention() is None
+        assert supervisor.resolution(stage.stage_id) == "unverified"
         assert [role for role, _ in client.calls] == ["verify"]
         decision = supervisor.record(stage.stage_id).verification
         assert decision is not None
         assert decision.verdict is Verdict.UNCERTAIN
-        assert decision.escalation is Escalation.STOP
+        assert decision.escalation is Escalation.NONE
         assert decision.world_change is WorldChange.UNKNOWN
     finally:
         supervisor.close()

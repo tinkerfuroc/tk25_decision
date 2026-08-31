@@ -19,6 +19,7 @@ from .models import (
     RecoveryProposal,
     ReportedStatus,
     SnapshotBundle,
+    SubtaskStatus,
     SuccessMode,
     SupervisionMode,
     SupervisorConfig,
@@ -344,6 +345,30 @@ class MissionSupervisor:
             record.stage = "shadow_complete"
             record.resolution = record.reported_status.value.lower()
             return
+        # O2 (uncertainty is not failure): a verdict of uncertain, or a
+        # subtask_status the verifier itself admits it does not know, is not
+        # a positive finding of anything wrong -- it is the verifier saying
+        # it cannot tell. Never turn that into an intervention (regardless
+        # of what escalation the free-text prompt asked for, e.g. the old
+        # sensor_context_mismatch=stop instruction): mark the checkpoint
+        # unverified and let the mission proceed. This must precede the
+        # Escalation.STOP branch below, which remains reserved for a
+        # positive failure finding (verdict recoverable/unrecoverable).
+        if (
+            decision.verdict is Verdict.UNCERTAIN
+            or decision.subtask_status is SubtaskStatus.UNKNOWN
+        ):
+            record.stage = "complete"
+            record.resolution = "unverified"
+            self._emit(
+                "supervisor.verdict.downgraded",
+                {
+                    "checkpoint_id": expected,
+                    "failure_category": decision.failure_category,
+                    "escalation_requested": decision.escalation.value,
+                },
+            )
+            return
         if decision.escalation is Escalation.STOP:
             record.stage = "complete"
             record.resolution = "stop"
@@ -367,7 +392,7 @@ class MissionSupervisor:
         )
         needs_local = (
             decision.bt_assessment is BtAssessment.FALSE_SUCCESS
-            or decision.verdict in {Verdict.RECOVERABLE, Verdict.UNCERTAIN}
+            or decision.verdict is Verdict.RECOVERABLE
             or decision.escalation is Escalation.LOCAL_RECOVERY
         )
         if force_global:

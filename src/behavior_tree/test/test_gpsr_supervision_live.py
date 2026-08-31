@@ -62,7 +62,11 @@ def test_luna_multimodal_verifier_medium(tmp_path):
         robot_pose=(1.0, 1.0, 0.0),
         arm_joints=gpsr_arm_pose_orbbec_look(),
     )
-    snapshot = FixtureContextProvider(output_dir=tmp_path).capture(request)
+    # O1: a scenario_id is required for the fixture cameras to be live
+    # frames at all -- without one they are honestly reported as missing.
+    snapshot = FixtureContextProvider(
+        output_dir=tmp_path, scenario_id="case01-arrival-clear"
+    ).capture(request)
     client = OpenRouterSupervisorClient(
         SupervisorConfig.from_env(os.environ),
         api_key=key,
@@ -108,7 +112,13 @@ def test_luna_medium_flags_cross_camera_mismatch(tmp_path):
         robot_pose=(1.0, 1.0, 0.0),
         arm_joints=gpsr_arm_pose_orbbec_look(),
     )
-    provider = FixtureContextProvider(output_dir=tmp_path)
+    # O1: a scenario_id is required so front_camera stays a live frame to
+    # cross-check the mismatched wrist frame against (without one, both
+    # cameras are honestly reported missing and there is nothing to
+    # cross-check).
+    provider = FixtureContextProvider(
+        output_dir=tmp_path, scenario_id="case01-arrival-clear"
+    )
     snapshot = provider.capture(request)
     mismatch_path = provider.fixture_dir / "wrist_camera_mismatch.jpg"
     mismatch = ArtifactRef.from_path(
@@ -135,7 +145,10 @@ def test_luna_medium_flags_cross_camera_mismatch(tmp_path):
     )
     decision = client.verify(snapshot)
     assert decision.verdict is Verdict.UNCERTAIN
-    assert decision.escalation is Escalation.STOP
+    # O3: the prompt now instructs the least-aggressive escalation (none)
+    # for a material sensor mismatch; O2 downgrades any uncertain verdict
+    # to "unverified" with no intervention regardless of escalation.
+    assert decision.escalation is Escalation.NONE
     assert decision.world_change is WorldChange.UNKNOWN
     assert decision.failure_category == "sensor_context_mismatch"
 
