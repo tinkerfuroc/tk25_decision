@@ -2548,6 +2548,17 @@ class DynamicExecutor(py_trees.composites.Composite):
             for evidence_name, key in _TARGET_GATE_EVIDENCE_KEYS:
                 if evidence_name in _TARGET_GATE_QA_EVIDENCE_NAMES:
                     self._bb.set(key, None, overwrite=True)
+            # R1 (round-3 whole-branch review): GATE_COMPLETED_STEPS is a
+            # one-shot postcondition-gate signal that must survive WITHIN a
+            # single attempt for `_on_target_failure` to consume (see its
+            # `gate_completed` read below), but a fresh subtree materialised
+            # here for the SAME target index is a NEW attempt. Leaving a
+            # stale non-empty value from the PREVIOUS attempt's gate failure
+            # would make `_on_target_failure`'s `if not gate_completed`
+            # guard skip the state-log derivation fallback for a plain step
+            # failure in this new attempt, silently dropping whatever this
+            # attempt itself completed before failing.
+            self._bb.set(bb_keys.GATE_COMPLETED_STEPS, [], overwrite=True)
         self._active_target_index = index
         # Every materialization of the same target (LLM replan OR supervisor
         # replacement, which does not bump TARGET_REPLAN_COUNT) gets a strictly

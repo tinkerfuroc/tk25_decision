@@ -1252,6 +1252,75 @@ def test_on_target_failure_two_consecutive_step_failures_prepends_entry_complete
     assert planner.replan_calls[-1] == [goto_src, grasp_x, goto_t]
 
 
+def test_swap_in_clears_stale_gate_completed_steps_for_new_same_target_attempt():
+    """R1 (round-3 whole-branch review): GATE_COMPLETED_STEPS is a one-shot
+    postcondition-gate signal for the CURRENT attempt only -- it must
+    survive within that attempt (up to `_on_target_failure`'s own read of
+    it), but a fresh subtree materialised via `_swap_in` for the SAME
+    target index starts a NEW attempt. Before the fix, only the SUCCESS
+    path and the cross-target-advance branch cleared it, so a gate failure
+    followed by a same-target replan left the STALE non-empty value in
+    place; a later plain STEP failure in the new attempt would then see a
+    non-empty `gate_completed` and skip the state-log derivation fallback
+    entirely, silently dropping whatever that new attempt itself completed.
+
+    Scenario (the reviewer's): a postcondition gate fails once, committing
+    `step_a` (GATE_COMPLETED_STEPS=[step_a], and persisted onto the
+    planner's cache entry, mirroring the real `GPSRPlanner._store`). The
+    next attempt of the SAME target is swapped in fresh, runs `step_b`,
+    then fails via a plain STEP failure at `step_c` (no gate runs this
+    attempt). The replan must receive the persisted entry [step_a]
+    prepended to THIS attempt's own derivation [step_b] -- not the stale
+    gate list [step_a] alone, which would silently drop step_b.
+    """
+    step_a = {"action": "goto", "params": {"location": "a"}}
+    step_b = {"action": "grasp", "params": {"object": "x"}}
+    step_c = {"action": "place", "params": {"location": "t"}}
+
+    attempt2_plan = [step_b, step_c]
+    planner = _ChainedStepFailurePlanner(attempt2_plan)
+    executor, _tree = _executor(planner)
+    writer = py_trees.blackboard.Client(name="r1-stale-gate-completed-steps")
+    writer.register_key(bb_keys.PLAN_INDEX, access=Access.WRITE)
+    writer.register_key(bb_keys.STATE_LOG, access=Access.WRITE)
+    writer.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
+    writer.register_key(bb_keys.TARGET_REPLAN_COUNT, access=Access.WRITE)
+    writer.set(bb_keys.TARGET_REPLAN_COUNT, 0, overwrite=True)
+
+    executor._state = "REQUESTING"
+    executor._index = 0
+    executor._active_target_index = 0
+
+    # Attempt 1's postcondition gate fails after committing step_a --
+    # simulates BtNode_TargetPostconditionCheck's partial-commit write.
+    writer.set(bb_keys.GATE_COMPLETED_STEPS, [step_a], overwrite=True)
+    executor._on_target_failure("postcondition:some_fact missing")
+    assert planner.replan_calls[-1] == [step_a]
+
+    # The planner materialises a fresh subtree for the SAME target index --
+    # a new attempt. Nothing else in this test clears GATE_COMPLETED_STEPS;
+    # only _swap_in's same-target branch (the fix under test) does.
+    executor._swap_in(0)
+    assert writer.get(bb_keys.GATE_COMPLETED_STEPS) == []
+
+    # Attempt 2's plan is [step_b, step_c] (step_a already done and
+    # persisted on the cache entry). step_b succeeds, step_c fails as a
+    # plain STEP failure -- no gate runs this attempt.
+    writer.set(bb_keys.PLAN_INDEX, 2, overwrite=True)
+    writer.set(
+        bb_keys.STATE_LOG,
+        [
+            "goto({'location': 'a'}) SUCCEEDED",
+            "grasp({'object': 'x'}) SUCCEEDED",
+            "place({'location': 't'}) FAILED",
+        ],
+        overwrite=True,
+    )
+    executor._on_target_failure("place small tree failed")
+
+    assert planner.replan_calls[-1] == [step_a, step_b]
+
+
 # ---------------------------------------------------------------------------
 # M-4 (round-3 fix review): the tree builder never passed `slot` to
 # BtNode_SplitCommand -- every slot's split telemetry/log defaulted to
