@@ -19,6 +19,16 @@ ticks bounce back the memorised SUCCESS without ever ticking the child again.
 Pure py_trees replica (no ROS): a minimal memory Sequence root of
 ``[_one_shot(enter-like stub), failing stub]`` mirrors the shape of the real
 root's first two significant children closely enough to pin the behaviour.
+
+Review note (task-K review, folded into V-2): ``create_enter_arena()`` already
+had a pre-existing, independent ``BtNode_CheckBBKeySet(ARENA_ENTERED)`` guard
+(predating this task) that alone already suppresses the greeting replay via
+blackboard state, which node-status invalidation never touches -- so this
+OneShot wrap is real, verified hardening (also spares the door-watch/
+CheckBBKeySet re-ticks), not the sole thing standing between the mission and
+the repeated "Hi, I am Tinker..." the brief attributes to it. See V-2 in the
+review for where that speech budget was actually going (create_goto()'s
+"announce going", now fixed).
 """
 from __future__ import annotations
 

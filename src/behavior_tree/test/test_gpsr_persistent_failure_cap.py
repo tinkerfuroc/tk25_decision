@@ -139,3 +139,27 @@ def test_on_exhausted_is_optional():
         cap.tick_once()
         assert cap.status is Status.FAILURE  # never raises despite no callback
         _reenter(cap)
+
+
+def test_v3_cap_is_a_pure_single_child_decorator():
+    # V-3 (task-K review, MEDIUM): an earlier revision appended a second
+    # ``announce_child`` to self.children, breaking py_trees's Decorator
+    # single-child invariant (Decorator.stop()/tip() are hardcoded to
+    # children[0] in the installed py_trees version -- an implementation
+    # detail, not a documented contract). The one-time announce now lives as
+    # a standard sibling Selector branch in create_goto() instead (see
+    # test_gpsr_goto_exhaustion_quiet.py); this decorator itself must stay a
+    # plain single-child wrapper with no children[1:] reliance anywhere.
+    child = _AlwaysFail("tuck arm (stub)")
+    cap = PersistentFailureCap("cap", child, max_failures=2, on_exhausted=None)
+
+    assert len(cap.children) == 1
+    assert cap.children[0] is child
+    assert cap.decorated is child
+    assert not hasattr(cap, "announce_child")
+
+    # Still true post-exhaustion (nothing gets appended along the way).
+    for _ in range(3):
+        cap.tick_once()
+        _reenter(cap)
+    assert len(cap.children) == 1

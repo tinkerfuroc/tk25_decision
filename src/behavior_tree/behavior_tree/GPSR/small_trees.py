@@ -89,6 +89,16 @@ class bb_keys:
                                          #   step.finished's "method" field,
                                          #   then CLEARED so a later step
                                          #   without a claim never inherits it.
+    MISSION_UNRECOVERABLE = "gpsr/mission_unrecoverable"  # bool — latched
+                                         #   True once PersistentFailureCap
+                                         #   gives up on the tuck-arm goal
+                                         #   (V-2 fix, task-K review): every
+                                         #   create_goto() instance fails
+                                         #   fast on this flag from then on,
+                                         #   so ALL of its side-effectful
+                                         #   nodes (not just the tuck retry)
+                                         #   go quiet on later root restarts.
+                                         #   Never reset once set.
 
     # Per-action working keys (filled by orchestrator just before dispatch)
     TARGET_POSE = "gpsr/target_pose"            # PoseStamped
@@ -741,29 +751,27 @@ class PersistentFailureCap(py_trees.decorators.Decorator):
     immediately WITHOUT ticking the child again -- no further goals / per-
     attempt side effects, ever.
 
-    ``announce_child`` (optional) is a second, independent behaviour ticked
-    ONLY once exhausted (never before) -- an escape hatch for a one-time
-    reaction that itself needs several ticks to complete (e.g. a ROS speech
-    call that goes RUNNING while in flight), which a synchronous
-    ``on_exhausted`` callback cannot drive to completion on its own. It is
-    appended to ``self.children`` (setup/shutdown reach it normally) and
-    should already be wrapped one-shot by the caller (see ``_one_shot``) so
-    ticking it forever after it settles is a harmless bounce, not a repeat.
+    A pure single-child ``py_trees.decorators.Decorator`` (task-K review,
+    V-3): an earlier revision appended a second ``announce_child`` to
+    ``self.children`` to deliver a one-time speech reaction on exhaustion,
+    which relied on ``Decorator.stop()``/``tip()`` only ever touching
+    ``self.decorated`` (``children[0]``) -- an implementation detail of the
+    installed py_trees version, not a documented contract. The one-time
+    reaction now lives in ``create_goto()`` instead, as a standard sibling
+    Selector branch gated on a blackboard flag ``on_exhausted`` sets (see
+    ``bb_keys.MISSION_UNRECOVERABLE`` / V-2) -- this class stays a plain,
+    generic single-child cap with no assumptions about what ``on_exhausted``
+    does.
     """
 
     def __init__(self, name: str, child: py_trees.behaviour.Behaviour,
-                 max_failures: int, on_exhausted=None,
-                 announce_child: py_trees.behaviour.Behaviour | None = None):
+                 max_failures: int, on_exhausted=None):
         super().__init__(name=name, child=child)
         self.max_failures = max_failures
         self.on_exhausted = on_exhausted
         self.consecutive_failures = 0
         self.exhausted = False
         self._fired = False
-        self.announce_child = announce_child
-        if announce_child is not None:
-            self.children.append(announce_child)
-            announce_child.parent = self
 
     def initialise(self) -> None:
         # Deliberately does NOT reset consecutive_failures / exhausted /
@@ -778,11 +786,7 @@ class PersistentFailureCap(py_trees.decorators.Decorator):
 
         if self.exhausted:
             # Cap already reached in a previous entry: do NOT tick the child
-            # again (no more goals / side effects). The (one-shot) announce
-            # is the only thing still ticked, so it can finish delivering
-            # the exhaustion speech even if that takes a few more ticks.
-            if self.announce_child is not None:
-                yield from self.announce_child.tick()
+            # again (no more goals / side effects).
             self.stop(Status.FAILURE)
             self.status = Status.FAILURE
             yield self
@@ -1026,26 +1030,34 @@ def _tuck_arm_before_goto_exhausted() -> None:
     Fires once the tuck-arm node has FAILED ``max_failures`` (5) times in a
     row -- at 3 retries/attempt that is at most 15 rejected arm goals total,
     instead of the 3000+ a broken arm controller produced in a real run
-    (F1). Telemetry only: the matching speech is wired as this cap's
-    ``announce_child`` in ``create_goto()`` (see there) rather than fired
-    from here, since delivering it needs the tree's OWN tick loop (RUNNING
-    while the TTS call is in flight) -- a synchronous callback invoked
-    mid-tick cannot drive that to completion.
+    (F1). Emits telemetry AND latches ``bb_keys.MISSION_UNRECOVERABLE`` (V-2,
+    task-K review): ``create_goto()``'s own fail-fast guard and its
+    "announce unrecoverable" branch both key off this flag, so the ENTIRE
+    goto subtree -- not just the tuck-arm retry -- goes quiet on every root
+    restart from here on, and the exhaustion speech is delivered exactly
+    once via the tree's own tick loop (see ``create_goto()``) rather than
+    from this synchronous callback, which cannot drive a multi-tick ROS
+    speech call to completion on its own.
     """
     telemetry = get_default_telemetry()
-    if telemetry is None:
-        return
-    try:
-        telemetry.emit(
-            "mission.unrecoverable",
-            {
-                "reason": "arm goal rejected/aborted repeatedly",
-                "node": "tuck arm before goto",
-            },
-            phase="execution",
-        )
-    except Exception:
-        pass
+    if telemetry is not None:
+        try:
+            telemetry.emit(
+                "mission.unrecoverable",
+                {
+                    "reason": "arm goal rejected/aborted repeatedly",
+                    "node": "tuck arm before goto",
+                },
+                phase="execution",
+            )
+        except Exception:
+            pass
+    # A plain module-level function, not a Behaviour -- no blackboard client
+    # of its own to register a key on. The static Blackboard.set() writes
+    # straight to storage (bypassing client access-control), which is fine
+    # here: this key is WRITE-once-ever, read back only via BtNode_CheckBBTrue
+    # (its own registered client) inside create_goto()'s guard/announce branch.
+    py_trees.blackboard.Blackboard.set(bb_keys.MISSION_UNRECOVERABLE, True)
 
 
 def create_goto():
@@ -1055,6 +1067,20 @@ def create_goto():
     parallel with the nav, so a slow route plan never leaves it silent.
     """
     seq = py_trees.composites.Sequence("small/goto", memory=True)
+    # V-2 (task-K review): fail fast, as the FIRST child, once the tuck-arm
+    # cap below has given up for good (bb_keys.MISSION_UNRECOVERABLE latched
+    # True) -- silences "announce going" and every other side-effectful node
+    # in this subtree on every LATER root restart, not just the tuck retry.
+    # Tick interplay on the exhaustion restart itself: the flag is only set
+    # mid-tick, inside the cap below, so THIS guard has already passed for
+    # that one tick; the memory Sequence then resumes directly at the
+    # (possibly RUNNING) announce branch until it completes. Only from the
+    # NEXT restart does this guard actually block anything -- the intended
+    # quiet loop.
+    seq.add_child(py_trees.decorators.Inverter(
+        "mission still recoverable? (fail-fast guard)",
+        BtNode_CheckBBTrue("mission unrecoverable?", bb_keys.MISSION_UNRECOVERABLE),
+    ))
     seq.add_child(BtNode_AnnounceFromBB(
         "announce going", bb_keys.TARGET_LOCATION, prefix="Going to "
     ))
@@ -1064,23 +1090,44 @@ def create_goto():
     # failures that survive root restarts (F1: an ordinary decorator's
     # initialise() would re-zero the Retry's own counter every ~500ms while
     # the root keeps failing/restarting, so it never actually gives up).
-    # After exhaustion the tuck (and so this whole goto) just quietly FAILS
-    # every tick -- no more arm goals -- after announcing once.
-    seq.add_child(PersistentFailureCap(
-        "tuck arm before goto (failure cap)",
-        _tuck_arm_for_nav("tuck arm before goto", pose_key=bb_keys.ARM_NAVIGATING),
-        max_failures=5,
-        on_exhausted=_tuck_arm_before_goto_exhausted,
-        announce_child=_one_shot(
-            BtNode_Announce(
-                "announce arm unrecoverable", bb_source=None,
-                message=(
-                    "I cannot move my arm and cannot continue. "
-                    "Please check the arm controller."
-                ),
+    # V-2 (task-K review): the cap alone only stops arm goals -- it does NOT
+    # by itself silence the rest of this subtree (that is the fail-fast
+    # guard above's job, once the flag is latched). This Selector's second
+    # branch delivers the one-time exhaustion speech exactly once, gated on
+    # the SAME flag the cap's on_exhausted sets, then keeps the branch (and
+    # so this whole goto) FAILED so the tuck never counts as satisfied.
+    seq.add_child(py_trees.composites.Selector(
+        "tuck arm or abort",
+        memory=True,
+        children=[
+            PersistentFailureCap(
+                "tuck arm before goto (failure cap)",
+                _tuck_arm_for_nav("tuck arm before goto", pose_key=bb_keys.ARM_NAVIGATING),
+                max_failures=5,
+                on_exhausted=_tuck_arm_before_goto_exhausted,
             ),
-            policy=py_trees.common.OneShotPolicy.ON_COMPLETION,
-        ),
+            py_trees.composites.Sequence(
+                "announce unrecoverable",
+                memory=True,
+                children=[
+                    BtNode_CheckBBTrue(
+                        "mission unrecoverable? (announce gate)",
+                        bb_keys.MISSION_UNRECOVERABLE,
+                    ),
+                    _one_shot(
+                        BtNode_Announce(
+                            "announce arm unrecoverable", bb_source=None,
+                            message=(
+                                "I cannot move my arm and cannot continue. "
+                                "Please check the arm controller."
+                            ),
+                        ),
+                        policy=py_trees.common.OneShotPolicy.ON_COMPLETION,
+                    ),
+                    py_trees.behaviours.Failure("stay failed"),
+                ],
+            ),
+        ],
     ))
     drive = py_trees.decorators.Retry(
         "retry goto",
