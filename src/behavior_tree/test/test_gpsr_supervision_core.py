@@ -118,15 +118,28 @@ def test_config_defaults_and_mode_toggle() -> None:
 
 
 def test_fixture_provider_renders_complete_context(tmp_path: Path) -> None:
+    # O1 (honest fixture artifacts): the hardware-free default (no
+    # scenario_id) has no live camera feed, so front/wrist camera artifacts
+    # must be honestly reported as missing rather than sent to the verifier
+    # as if they were real frames. The map/arm renders remain live-grounded
+    # from the request's actual robot_pose/arm_joints, so they still render.
     provider = FixtureContextProvider(output_dir=tmp_path)
     snapshot = provider.capture(_request())
     assert [artifact.role for artifact in snapshot.artifacts] == [
         "front_camera", "wrist_camera", "map", "arm"
     ]
-    assert all(not artifact.missing and artifact.sha256 for artifact in snapshot.artifacts)
+    by_role = {artifact.role: artifact for artifact in snapshot.artifacts}
+    assert by_role["front_camera"].missing is True
+    assert by_role["front_camera"].path is None
+    assert "hardware-free" in by_role["front_camera"].metadata["reason"]
+    assert by_role["wrist_camera"].missing is True
+    assert by_role["wrist_camera"].path is None
+    assert "hardware-free" in by_role["wrist_camera"].metadata["reason"]
+    assert not by_role["map"].missing and by_role["map"].sha256
+    assert not by_role["arm"].missing and by_role["arm"].sha256
     assert (tmp_path / "checkpoint-1-map.png").exists()
     assert (tmp_path / "checkpoint-1-arm.png").exists()
-    arm = next(artifact for artifact in snapshot.artifacts if artifact.role == "arm")
+    arm = by_role["arm"]
     assert arm.metadata["renderer"] in {
         "xarm_urdf_headless",
         "kinematic_fallback",
@@ -136,12 +149,41 @@ def test_fixture_provider_renders_complete_context(tmp_path: Path) -> None:
             "Tinker base + xarm_description visual STL"
         )
         assert float(arm.metadata["camera_elevation_deg"]) > 30.0
-    wrist = next(
-        artifact for artifact in snapshot.artifacts
-        if artifact.role == "wrist_camera"
+
+
+def test_fixture_provider_keeps_live_camera_frames_with_a_scenario_id(
+    tmp_path: Path,
+) -> None:
+    # O1: a scenario_id names fixture images that actually depict the
+    # scenario, so today's behavior (real, present artifacts) is preserved.
+    provider = FixtureContextProvider(
+        output_dir=tmp_path, scenario_id="case01-arrival-clear"
     )
-    assert wrist.metadata["view_direction"] == "upward"
-    assert wrist.metadata["provenance"] == "synthetic_hardware_free"
+    snapshot = provider.capture(_request())
+    by_role = {artifact.role: artifact for artifact in snapshot.artifacts}
+    assert by_role["front_camera"].missing is False
+    assert by_role["front_camera"].sha256
+    assert by_role["wrist_camera"].missing is False
+    assert by_role["wrist_camera"].sha256
+    assert by_role["wrist_camera"].metadata["view_direction"] == (
+        "near_vertical_upward"
+    )
+
+
+def test_fixture_provider_never_labels_a_static_artifact_as_vision_log(
+    tmp_path: Path,
+) -> None:
+    # O1: provenance strings must state what the content IS, never imply a
+    # live capture. "vision_log" falsely implied a real logged observation
+    # for a static, committed fixture image.
+    provider = FixtureContextProvider(
+        output_dir=tmp_path, scenario_id="case01-arrival-clear"
+    )
+    snapshot = provider.capture(_request())
+    front = next(a for a in snapshot.artifacts if a.role == "front_camera")
+    assert front.metadata["provenance"] == "static_fixture"
+    for artifact in snapshot.artifacts:
+        assert artifact.metadata.get("provenance") != "vision_log"
 
 
 # N1d (round-5 rerun fix): without a scenario_id -- the actual production

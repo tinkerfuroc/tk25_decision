@@ -215,50 +215,66 @@ class FixtureContextProvider:
             raise RuntimeError(
                 "the GPSR validation suite requires the xArm URDF renderer"
             )
-        front_path = self.fixture_dir / (
-            scenario.front_image if scenario else "front_camera.jpg"
-        )
-        wrist_path = self.fixture_dir / (
-            scenario.wrist_image if scenario else "wrist_camera.jpg"
-        )
-        wrist_direction = (
-            scenario.wrist_view_direction if scenario else "upward"
-        )
+        # O1 (honest fixture artifacts): without a scenario_id there is no
+        # live camera feed to send -- the hardware-free default used to ship
+        # unrelated static JPEGs as if they were real frames, which a
+        # verifier could (correctly, per its instructions) treat as a
+        # sensor/scene contradiction against the live-grounded map. Report
+        # the cameras as genuinely missing instead; the map/arm renders stay
+        # live-grounded from this request's actual robot_pose/arm_joints.
+        if scenario is None:
+            camera_artifacts = (
+                ArtifactRef.absent(
+                    role="front_camera",
+                    captured_at=captured_at,
+                    reason="hardware-free fixture: no live camera feed",
+                ),
+                ArtifactRef.absent(
+                    role="wrist_camera",
+                    captured_at=captured_at,
+                    reason="hardware-free fixture: no live camera feed",
+                ),
+            )
+        else:
+            front_path = self.fixture_dir / scenario.front_image
+            wrist_path = self.fixture_dir / scenario.wrist_image
+            camera_artifacts = (
+                ArtifactRef.from_path(
+                    role="front_camera",
+                    mime_type=_image_mime(front_path),
+                    path=front_path,
+                    captured_at=captured_at,
+                    metadata={
+                        "fixture": True,
+                        "camera": "orbbec",
+                        "scenario_id": self.scenario_id,
+                        "provenance": (
+                            "generated_hardware_free"
+                            if scenario.generated
+                            else "static_fixture"
+                        ),
+                    },
+                ),
+                ArtifactRef.from_path(
+                    role="wrist_camera",
+                    mime_type=_image_mime(wrist_path),
+                    path=wrist_path,
+                    captured_at=captured_at,
+                    metadata={
+                        "fixture": True,
+                        "camera": "wrist",
+                        "scenario_id": self.scenario_id,
+                        "view_direction": scenario.wrist_view_direction,
+                        "provenance": (
+                            "real_calibration_negative_control"
+                            if scenario.scenario_id == "case08-sensor-mismatch-stop"
+                            else "synthetic_hardware_free"
+                        ),
+                    },
+                ),
+            )
         artifacts = (
-            ArtifactRef.from_path(
-                role="front_camera",
-                mime_type=_image_mime(front_path),
-                path=front_path,
-                captured_at=captured_at,
-                metadata={
-                    "fixture": True,
-                    "camera": "orbbec",
-                    "scenario_id": self.scenario_id,
-                    "provenance": (
-                        "generated_hardware_free"
-                        if scenario and scenario.generated
-                        else "vision_log"
-                    ),
-                },
-            ),
-            ArtifactRef.from_path(
-                role="wrist_camera",
-                mime_type=_image_mime(wrist_path),
-                path=wrist_path,
-                captured_at=captured_at,
-                metadata={
-                    "fixture": True,
-                    "camera": "wrist",
-                    "scenario_id": self.scenario_id,
-                    "view_direction": wrist_direction,
-                    "provenance": (
-                        "real_calibration_negative_control"
-                        if scenario
-                        and scenario.scenario_id == "case08-sensor-mismatch-stop"
-                        else "synthetic_hardware_free"
-                    ),
-                },
-            ),
+            *camera_artifacts,
             ArtifactRef.from_path(
                 role="map",
                 mime_type="image/png",
