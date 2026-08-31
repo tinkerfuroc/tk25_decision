@@ -76,6 +76,12 @@ def _build(memory: "bool | None" = None):
     scenario below ever ticks past the generalist branch (the positive
     case succeeds there; the negative control livelocks before reaching
     it), so it plays no part in this file's memory-semantics assertions.
+
+    N2 (round-5 rerun fix): a fifth branch (the generic-person scan,
+    also GPSR_SIM_IDENTITY_RELAXED-gated but this one issues its own fresh
+    scan) now sits after the relaxed-generalist re-parse branch. Same
+    reasoning applies -- its leading guard needs no ROS server for setup(),
+    and neither scenario below ever ticks past the generalist branch.
     """
     py_trees.blackboard.Blackboard.clear()
     writer = py_trees.blackboard.Client(name="seed person scan strategies")
@@ -87,10 +93,16 @@ def _build(memory: "bool | None" = None):
     )
     if memory is not None:
         selector.memory = memory
-    assert len(selector.children) == 4, (
-        "expected [waving, specialist, generalist, relaxed_generalist]"
+    assert len(selector.children) == 5, (
+        "expected [waving, specialist, generalist, relaxed_generalist, generic_scan]"
     )
-    waving_branch, specialist_branch, generalist_branch, _relaxed_branch = selector.children
+    (
+        waving_branch,
+        specialist_branch,
+        generalist_branch,
+        _relaxed_branch,
+        _generic_scan_branch,
+    ) = selector.children
 
     # The waving specialist's guard never matches ("person liam" has no
     # "wav"), so this branch is never ticked past its guard -- but setup()
@@ -109,6 +121,15 @@ def _build(memory: "bool | None" = None):
     for child in list(generalist_branch.children):
         generalist_branch.remove_child(child)
     generalist_branch.add_child(generalist_stub)
+
+    # N2's generic_scan_branch's own BtNode_ScanForGeneralist (unlike
+    # relaxed_branch's plain re-parse leaf) also needs a ROS server for
+    # setup() -- stub it too, same pattern as the specialist branch (keep
+    # the leading guard + pin-prompt children).
+    generic_scan_stub = _RunOnceThen("generic scan (stub)", Status.FAILURE)
+    for child in list(_generic_scan_branch.children[2:]):  # keep guard + pin-prompt
+        _generic_scan_branch.remove_child(child)
+    _generic_scan_branch.add_child(generic_scan_stub)
 
     py_trees.trees.BehaviourTree(selector).setup()
     return selector, specialist_stub, generalist_stub

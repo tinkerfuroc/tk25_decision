@@ -112,6 +112,15 @@ class bb_keys:
     TARGET_PERSON_DETECTION = "gpsr/target_person_detection"
     PERSON_NAV_POSE = "gpsr/person_nav_pose"            # PoseStamped (approach goal)
     PERSON_VISION_PROMPT = "gpsr/person_vision_prompt"  # str (descriptor -> vision prompt)
+    PERSON_VISION_PROMPT_GENERIC = "gpsr/person_vision_prompt_generic"  # str — always
+                                           #   bare "person" (N2, round-5
+                                           #   rerun fix); a SEPARATE key from
+                                           #   PERSON_VISION_PROMPT so the
+                                           #   generic-scan branch's own
+                                           #   BtNode_ScanForGeneralist never
+                                           #   clobbers the descriptor-derived
+                                           #   prompt other branches re-read
+                                           #   on restarts.
     ALL_WAVING_PERSONS = "gpsr/all_waving_persons"
     PERSON_PROVENANCE = "gpsr/person_provenance"  # str — how TARGET_PERSON_POSE
                                            #   was obtained (e.g.
@@ -669,6 +678,32 @@ class BtNode_CheckGraspAllowed(Behaviour):
             self.feedback_message = "object is on no-grasp furniture (shelf/cabinet/coat_rack) — skipping to ask-referee"
             return Status.FAILURE
         return Status.SUCCESS
+
+
+class BtNode_CheckSimIdentityRelaxed(Behaviour):
+    """SUCCESS iff ``GPSR_SIM_IDENTITY_RELAXED=1``, else FAILURE.
+
+    N2 (round-5 rerun fix): guards the generic-person scan branch's OWN
+    ``BtNode_ScanForGeneralist`` call in ``_person_scan_strategies`` — unlike
+    the existing relaxed_branch (a pure re-parse of an already-run scan, so
+    it costs nothing extra when the flag is off), the generic branch issues
+    a fresh VLM call. Placing this check in FRONT of that call — the same
+    ``_sim_identity_relaxed_enabled()`` used by ``BtNode_ExtractDetection``'s
+    own internal check — keeps the whole branch structurally dead (no scan
+    ever fires) when the flag is off, instead of only failing after paying
+    for the call.
+    """
+
+    def __init__(self, name: str = "sim identity relaxed?"):
+        super().__init__(name)
+
+    def update(self):
+        from .validators import _sim_identity_relaxed_enabled
+
+        if _sim_identity_relaxed_enabled():
+            return Status.SUCCESS
+        self.feedback_message = "GPSR_SIM_IDENTITY_RELAXED != 1"
+        return Status.FAILURE
 
 
 class BtNode_BuildPersonPrompt(Behaviour):
@@ -1611,6 +1646,44 @@ def _person_scan_strategies(extra_specialist=None):
         bb_provenance_dst=bb_keys.PERSON_PROVENANCE,
     ))
     selector.add_child(relaxed_branch)
+    # N2 (round-5 rerun fix, sim run 019): the re-parse above only has
+    # something to relax when the STRICT scan above actually returned
+    # objects (just none descriptor-matching); a zero-match scan
+    # ("Scan returned 0 objects" x5 in 019, relaxed_generic never appearing)
+    # leaves it nothing to work with. Last resort before the whole selector
+    # fails: run one more, bare-"person" scan of our own (own bb key so we
+    # never clobber PERSON_VISION_PROMPT, which other branches re-read on
+    # restarts) and relax-extract THAT response instead. Placed after
+    # relaxed_branch on purpose (guarded FIRST by BtNode_CheckSimIdentityRelaxed,
+    # dead/no extra VLM call when the flag is off) so a person the strict
+    # query already found costs no extra call — this is only reached once
+    # generalist_branch AND the cheap re-parse have both failed.
+    generic_scan_branch = py_trees.composites.Sequence(
+        "generic person scan", memory=True,
+    )
+    generic_scan_branch.add_child(BtNode_CheckSimIdentityRelaxed())
+    generic_scan_branch.add_child(BtNode_BlackboardSet(
+        "pin generic person prompt",
+        bb_keys.PERSON_VISION_PROMPT_GENERIC,
+        "person",
+    ))
+    generic_scan_branch.add_child(BtNode_ScanForGeneralist(
+        name="generic person scan",
+        bb_source=bb_keys.PERSON_VISION_PROMPT_GENERIC,
+        bb_key=bb_keys.TARGET_PERSON_DETECTION,
+        use_orbbec=True,
+        transform_to_map=True,
+        sort_closest=True,
+    ))
+    generic_scan_branch.add_child(BtNode_ExtractDetection(
+        "pick relaxed generic person (fresh scan)",
+        bb_detection_src=bb_keys.TARGET_PERSON_DETECTION,
+        bb_object_dst=bb_keys.TARGET_OBJECT,
+        bb_point_dst=bb_keys.TARGET_PERSON_POSE,
+        relaxed=True,
+        bb_provenance_dst=bb_keys.PERSON_PROVENANCE,
+    ))
+    selector.add_child(generic_scan_branch)
     return selector
 
 
