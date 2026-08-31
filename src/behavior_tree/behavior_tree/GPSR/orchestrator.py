@@ -1722,6 +1722,12 @@ _TARGET_GATE_EVIDENCE_KEYS = (
     ("person_detection", bb_keys.TARGET_PERSON_DETECTION),
     ("waving_persons", bb_keys.ALL_WAVING_PERSONS),
     ("target_person_pose", bb_keys.TARGET_PERSON_POSE),
+    # L2b (round-4 battery fix, runs 008/011): the relaxed generalist
+    # extract's own provenance (BtNode_ExtractDetection relaxed mode,
+    # small_trees.py) -- overwritten below to "waving_specialist" when
+    # waving_persons is present, since that specialist's own provenance
+    # always wins over a stale relaxed_generic value.
+    ("person_provenance", bb_keys.PERSON_PROVENANCE),
     ("target_object_name", bb_keys.TARGET_OBJECT_NAME),
     ("target_object_prompt", bb_keys.TARGET_OBJECT_PROMPT),
     ("target_person_prompt", bb_keys.TARGET_PERSON_PROMPT),

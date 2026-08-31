@@ -113,6 +113,17 @@ class bb_keys:
     PERSON_NAV_POSE = "gpsr/person_nav_pose"            # PoseStamped (approach goal)
     PERSON_VISION_PROMPT = "gpsr/person_vision_prompt"  # str (descriptor -> vision prompt)
     ALL_WAVING_PERSONS = "gpsr/all_waving_persons"
+    PERSON_PROVENANCE = "gpsr/person_provenance"  # str — how TARGET_PERSON_POSE
+                                           #   was obtained (e.g.
+                                           #   "relaxed_generic" — see
+                                           #   BtNode_ExtractDetection's
+                                           #   relaxed mode, L2/L3 round-4
+                                           #   battery fix); the waving
+                                           #   specialist's own provenance
+                                           #   ("waving_specialist") is
+                                           #   synthesized in
+                                           #   orchestrator._target_gate_evidence
+                                           #   from ALL_WAVING_PERSONS instead.
     ANNOUNCE_TEXT = "gpsr/announce_text"
     QA_QUESTION = "gpsr/qa_question"       # str — the question heard for answer_question
     QA_ANSWER = "gpsr/qa_answer"
@@ -368,6 +379,19 @@ class BtNode_ExtractDetection(Behaviour):
     grabs ``objects[0]`` (the generalist already supports ``sort_closest``), and
     writes the picked object + a PointStamped of its centroid for downstream
     nodes. Returns FAILURE if the scan produced no objects.
+
+    L2a (round-4 battery fix, runs 008/011): ``relaxed=True`` is an opt-in
+    mode used by ``_person_scan_strategies``' generalist fallback (a strict-
+    then-relaxed Selector around this node) after the STRICT pass has
+    already failed to descriptor-match. Instead of blindly taking
+    ``objects[0]``, it picks the first detection whose label token-matches
+    the generic person-class labels (shared with
+    ``validators._SIM_PERSON_CLASS_LABELS``, not duplicated) and, on a hit,
+    also writes ``bb_provenance_dst`` (if given) so the postcondition gate's
+    relaxed branch can require it (see ``validators._verify``'s
+    ``person_found`` branch). This path is DEAD (always FAILURE) unless
+    ``GPSR_SIM_IDENTITY_RELAXED=1`` -- see ``validators._sim_identity_
+    relaxed_enabled``.
     """
 
     def __init__(
@@ -377,12 +401,16 @@ class BtNode_ExtractDetection(Behaviour):
         bb_object_dst: str,
         bb_point_dst: str,
         target_frame: str = "map",
+        relaxed: bool = False,
+        bb_provenance_dst: str = None,
     ):
         super().__init__(name)
         self._src = bb_detection_src
         self._object_dst = bb_object_dst
         self._point_dst = bb_point_dst
         self._target_frame = target_frame
+        self._relaxed = relaxed
+        self._provenance_dst = bb_provenance_dst
         self._client = None
 
     def setup(self, **kwargs):
@@ -390,6 +418,8 @@ class BtNode_ExtractDetection(Behaviour):
         self._client.register_key(self._src, access=Access.READ)
         self._client.register_key(self._object_dst, access=Access.WRITE)
         self._client.register_key(self._point_dst, access=Access.WRITE)
+        if self._provenance_dst:
+            self._client.register_key(self._provenance_dst, access=Access.WRITE)
 
     def update(self):
         from behavior_tree.config import is_subsystem_mocked
@@ -409,6 +439,15 @@ class BtNode_ExtractDetection(Behaviour):
             )
             self.feedback_message = "MOCK(vision): synthetic detection at origin"
             return Status.SUCCESS
+
+        if self._relaxed:
+            from .validators import _sim_identity_relaxed_enabled
+            if not _sim_identity_relaxed_enabled():
+                self.feedback_message = (
+                    "relaxed extraction disabled (GPSR_SIM_IDENTITY_RELAXED != 1)"
+                )
+                return Status.FAILURE
+
         try:
             result = self._client.get(self._src)
         except Exception as exc:
@@ -420,7 +459,20 @@ class BtNode_ExtractDetection(Behaviour):
             self.feedback_message = "Scan returned 0 objects"
             return Status.FAILURE
 
-        picked = objects[0]
+        if self._relaxed:
+            from .validators import _SIM_PERSON_CLASS_LABELS, _item_label, _label_tokens
+            picked = None
+            for candidate in objects:
+                label = _item_label(candidate)
+                if label and any(tok in _SIM_PERSON_CLASS_LABELS for tok in _label_tokens(label)):
+                    picked = candidate
+                    break
+            if picked is None:
+                self.feedback_message = "relaxed extraction: no generic person-class detection"
+                return Status.FAILURE
+        else:
+            picked = objects[0]
+
         self._client.set(self._object_dst, picked, overwrite=True)
 
         header = getattr(result, "header", None)
@@ -428,8 +480,11 @@ class BtNode_ExtractDetection(Behaviour):
             header = Header(frame_id=self._target_frame, stamp=rclpy.time.Time().to_msg())
         point_stamped = PointStamped(header=header, point=picked.centroid)
         self._client.set(self._point_dst, point_stamped, overwrite=True)
+        if self._relaxed and self._provenance_dst:
+            self._client.set(self._provenance_dst, "relaxed_generic", overwrite=True)
+        prefix = "Relaxed-picked" if self._relaxed else "Picked"
         self.feedback_message = (
-            f"Picked detection at ({picked.centroid.x:.2f}, {picked.centroid.y:.2f})"
+            f"{prefix} detection at ({picked.centroid.x:.2f}, {picked.centroid.y:.2f})"
         )
         return Status.SUCCESS
 
@@ -462,6 +517,18 @@ class BtNode_PointToPoseStamped(Behaviour):
         if isinstance(point, PoseStamped):
             self._client.set(self._pose_key, point, overwrite=True)
             return Status.SUCCESS
+        if point is None:
+            # L2c (round-4 battery fix, runs 008/011): a relaxed person-found
+            # gate can VALIDATE before the scan actually materialized a pose
+            # (see validators._verify's person_found branch) -- without this
+            # check the raw None fell into the generic "Unsupported type"
+            # branch below, logging a useless "...: NoneType". Name the real
+            # cause instead: the scan never wrote a pose.
+            self.feedback_message = (
+                f"no {self._point_key} recorded — the person scan must "
+                "succeed first"
+            )
+            return Status.FAILURE
         if not isinstance(point, PointStamped):
             self.feedback_message = f"Unsupported type for {self._point_key}: {type(point)}"
             return Status.FAILURE
@@ -1510,6 +1577,30 @@ def _person_scan_strategies(extra_specialist=None):
         bb_point_dst=bb_keys.TARGET_PERSON_POSE,
     ))
     selector.add_child(generalist_branch)
+    # L2a/L3 (round-4 battery fix, runs 008/011/019): under
+    # GPSR_SIM_IDENTITY_RELAXED=1, when the strict descriptor-specific
+    # extract above fails, accept the best GENERIC person-class detection
+    # from the SAME scan response (BtNode_ScanForGeneralist already wrote it
+    # to TARGET_PERSON_DETECTION before returning FAILURE — see that node's
+    # docstring — so no second scan is needed here) and materialize a real
+    # pose + provenance for it. Applies to every descriptor including waving
+    # ones (L3): the waving specialist branch above still runs FIRST and
+    # wins whenever it CAN detect waving; this is only reached once BOTH the
+    # specialist and the strict generalist match have failed. Dead
+    # (FAILURE) whenever the env flag is off — BtNode_ExtractDetection's
+    # relaxed mode checks it itself.
+    relaxed_branch = py_trees.composites.Sequence(
+        "generalist relaxed person scan", memory=True,
+    )
+    relaxed_branch.add_child(BtNode_ExtractDetection(
+        "pick relaxed generic person",
+        bb_detection_src=bb_keys.TARGET_PERSON_DETECTION,
+        bb_object_dst=bb_keys.TARGET_OBJECT,
+        bb_point_dst=bb_keys.TARGET_PERSON_POSE,
+        relaxed=True,
+        bb_provenance_dst=bb_keys.PERSON_PROVENANCE,
+    ))
+    selector.add_child(relaxed_branch)
     return selector
 
 

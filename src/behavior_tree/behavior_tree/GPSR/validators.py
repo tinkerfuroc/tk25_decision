@@ -522,6 +522,29 @@ def _is_person_name_arg(arg: str) -> bool:
     return arg not in _SIM_PERSON_DESCRIPTORS
 
 
+def _relaxed_person_pose_materialized(evidence: Mapping[str, Any]) -> bool:
+    """True when the scan behind this evidence actually materialized a pose
+    the executor can act on.
+
+    L2b (round-4 battery fix, runs 008/011): a leftover
+    ``BtNode_ScanForGeneralist`` detection response (stored even on a
+    no-match FAILURE — see that node's docstring) used to be enough on its
+    own for the relaxed branch below to VALIDATE person_found(), but nothing
+    had actually written ``TARGET_PERSON_POSE`` — the next
+    ``approach_person`` step then crashed with "Unsupported type for
+    gpsr/target_person_pose: NoneType" (the 008/011 regression this guards).
+    Require ALSO that a pose was materialized: either ``TARGET_PERSON_POSE``
+    is set (``evidence["target_person_pose"]``), or the relaxed extract's
+    own provenance marker is present (``person_provenance ==
+    "relaxed_generic"``, written by ``BtNode_ExtractDetection``'s relaxed
+    mode alongside the very pose it writes — see small_trees.py).
+    """
+    return (
+        evidence.get("target_person_pose") is not None
+        or evidence.get("person_provenance") == "relaxed_generic"
+    )
+
+
 def _action_verdict(fact: Fact, context: VerificationContext) -> Optional[VerificationResult]:
     if context.phase != "postcondition":
         return None
@@ -662,9 +685,13 @@ def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContex
                     for label in labels
                     for token in _label_tokens(label)
                 )
+                and _relaxed_person_pose_materialized(evidence)
             ):
                 # J13: unified reason for any relaxed argument -- name or
-                # descriptor, the sim models neither.
+                # descriptor, the sim models neither. L2b (round-4 battery
+                # fix): also requires _relaxed_person_pose_materialized -- a
+                # VALID verdict here always means a pose was actually
+                # written, so approach_person has something to act on.
                 return _result(
                     Verdict.VALID,
                     f"sim mode: descriptor {fact.args[0]} not modelled",

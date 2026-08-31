@@ -59,15 +59,24 @@ class _RunOnceThen(py_trees.behaviour.Behaviour):
 
 def _build(memory: "bool | None" = None):
     """Real _person_scan_strategies() with an always-matching attribute
-    specialist (so selector.children == [waving, specialist, generalist]),
-    scan leaves replaced by _RunOnceThen stubs.
+    specialist (so selector.children == [waving, specialist, generalist,
+    relaxed_generalist]), scan leaves replaced by _RunOnceThen stubs.
 
     `memory=None` (the default) leaves the constructor's own `memory` value
     untouched, so the positive test actually pins whatever
     `_person_scan_strategies()` builds in production. Passing an explicit
     bool overrides the flag post-construction (`Selector.tick()` reads
     `self.memory` live, so this is equivalent to constructing it either
-    way) -- used only by the negative control to force the pre-fix shape."""
+    way) -- used only by the negative control to force the pre-fix shape.
+
+    L2a/L3 (round-4 battery fix): a fourth branch (the relaxed generalist
+    fallback, GPSR_SIM_IDENTITY_RELAXED-gated) now sits after the
+    generalist branch. It is left un-stubbed -- its leaf
+    (BtNode_ExtractDetection) needs no ROS server for setup(), and neither
+    scenario below ever ticks past the generalist branch (the positive
+    case succeeds there; the negative control livelocks before reaching
+    it), so it plays no part in this file's memory-semantics assertions.
+    """
     py_trees.blackboard.Blackboard.clear()
     writer = py_trees.blackboard.Client(name="seed person scan strategies")
     writer.register_key(bb_keys.TARGET_PERSON_PROMPT, access=Access.WRITE)
@@ -78,8 +87,10 @@ def _build(memory: "bool | None" = None):
     )
     if memory is not None:
         selector.memory = memory
-    assert len(selector.children) == 3, "expected [waving, specialist, generalist]"
-    waving_branch, specialist_branch, generalist_branch = selector.children
+    assert len(selector.children) == 4, (
+        "expected [waving, specialist, generalist, relaxed_generalist]"
+    )
+    waving_branch, specialist_branch, generalist_branch, _relaxed_branch = selector.children
 
     # The waving specialist's guard never matches ("person liam" has no
     # "wav"), so this branch is never ticked past its guard -- but setup()
