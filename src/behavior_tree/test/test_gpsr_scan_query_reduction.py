@@ -73,6 +73,14 @@ def test_reduces_multiword_known_object_query(monkeypatch):
     assert reduce_unknown_object_query("spicy instant noodles") == "instant noodles"
 
 
+def test_reduces_pluralized_known_object_query(known_objects):
+    # W-3 (round-4 review, LOW/MEDIUM): a pluralized attributed query
+    # ("red bowls") must still reduce, tolerant of the QUERY's own
+    # pluralization, not just an exact-cased known name.
+    from behavior_tree.GPSR.orchestrator import reduce_unknown_object_query
+    assert reduce_unknown_object_query("red bowls") == "bowl"
+
+
 def test_multiword_known_object_query_named_exactly_is_not_reduced(monkeypatch):
     from behavior_tree.GPSR import orchestrator as orch
     from behavior_tree.GPSR.orchestrator import reduce_unknown_object_query

@@ -52,7 +52,7 @@ from .modifiable_nodes import (
 )
 from .planner_validators import (
     validate_plan, validate_dag, uncovered_postcondition_reason, established_predicates,
-    _norm_loc, DEFAULT_CATEGORY_WORDS, _IRREGULAR_PLURALS,
+    _norm_loc, DEFAULT_CATEGORY_WORDS, _IRREGULAR_PLURALS, _singular_candidates,
 )
 from .validators import apply_fact_transitions, canonical_fact, parse_fact
 from .small_trees import (
@@ -483,23 +483,10 @@ def _retracting_addition(removed_fact: str, additions: List[str]) -> Optional[st
 # its words is "item") still counts as an object reference.
 _GENERIC_OBJECT_WORDS = frozenset({"object", "it", "item", "items", "thing", "things"})
 
-
-def _singular_candidates(word: str) -> set:
-    """X1-L1 (round-3 fix2 review): candidate singular forms of ``word`` --
-    the irregular map ``_same_object`` uses (people -> person, ...) plus the
-    plain +s/+es strip -- so a plural like "bowls"/"boxes" matches a known
-    singular object name the same way ``_same_object`` already tolerates it
-    for count/held provenance.
-    """
-    candidates = {word}
-    irregular = _IRREGULAR_PLURALS.get(word)
-    if irregular:
-        candidates.add(irregular)
-    if word.endswith("es") and len(word) > 2:
-        candidates.add(word[:-2])
-    if word.endswith("s") and len(word) > 1:
-        candidates.add(word[:-1])
-    return candidates
+# X1-L1 (round-3 fix2 review) / W-3 (round-4 review fix): ``_singular_candidates``
+# now lives in ``planner_validators`` (imported above) -- the single source of
+# truth beside the ``_IRREGULAR_PLURALS`` map it depends on, shared with L1a/
+# L1b's ``_known_object_match``. Was previously a duplicate local copy here.
 
 
 def _is_physical_object_arg(value: str) -> bool:

@@ -193,6 +193,23 @@ def test_multiword_known_object_named_exactly_is_accepted():
     assert ok, reason
 
 
+def test_pluralized_invented_attribute_object_is_rejected():
+    # W-3 (round-4 review, LOW/MEDIUM): the LLM pluralizing ("red bowls" vs.
+    # the command's singular "bowl") must not be enough to dodge the guard
+    # -- a near-exact repeat of run-016's shape.
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "find_object", "params": {"object": "red bowls"}},
+    ]
+    ok, reason = validate_plan(
+        plan, "bring me the bowl from the kitchen", {"goto", "find_object"},
+        known_locations={"kitchen"},
+        known_objects=KNOWN_OBJECTS,
+    )
+    assert not ok
+    assert 'use "bowl"' in reason
+
+
 def test_check_is_inactive_when_known_objects_not_supplied():
     # Opt-in, like known_locations: a caller that doesn't pass known_objects
     # gets today's behaviour (no rejection) — only the two-layer per-target

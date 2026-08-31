@@ -148,6 +148,11 @@ def _known_object_match(
     ("white_shirt") always wins over an incidental single-token one
     ("shirt", from some unrelated known name that happens to share it).
 
+    W-3 (round-4 review fix, LOW/MEDIUM): each query token is compared via
+    ``_singular_candidates`` (not literal equality), so a pluralized query
+    token ("bowls") still matches a known singular name token ("bowl") --
+    the LLM pluralizing was otherwise enough to dodge the whole check.
+
     Shared by ``_object_attribute_reason`` (L1a) and
     ``orchestrator.reduce_unknown_object_query`` (L1b) so the two sites
     can't drift into different matching schemes.
@@ -163,7 +168,9 @@ def _known_object_match(
         covered: set = set()
         matched_all = True
         for nt in name_tokens:
-            hit = next((ot for ot in tokens if ot == nt), None)
+            hit = next(
+                (ot for ot in tokens if nt in _singular_candidates(ot)), None,
+            )
             if hit is None:
                 matched_all = False
                 break
@@ -359,6 +366,29 @@ _IRREGULAR_PLURALS = {
     "dishes": "dish",
     "glasses": "glass",
 }
+
+
+def _singular_candidates(word: str) -> set:
+    """Candidate singular forms of ``word`` -- ``_IRREGULAR_PLURALS`` above
+    plus the plain +s/+es strip, so a plural like "bowls"/"boxes" matches a
+    known singular object name the same way ``_same_object`` already
+    tolerates it for count/held provenance.
+
+    W-3 (round-4 review fix): the single source of truth for this, reused
+    by ``_known_object_match`` below (L1a/L1b's object-attribute guard) AND
+    by ``planner._is_physical_object_arg`` (which used to define its own
+    identical copy -- moved here to live beside the ``_IRREGULAR_PLURALS``
+    map it depends on, so the two call sites can't drift out of sync).
+    """
+    candidates = {word}
+    irregular = _IRREGULAR_PLURALS.get(word)
+    if irregular:
+        candidates.add(irregular)
+    if word.endswith("es") and len(word) > 2:
+        candidates.add(word[:-2])
+    if word.endswith("s") and len(word) > 1:
+        candidates.add(word[:-1])
+    return candidates
 
 
 def _same_object(a: str, b: str) -> bool:
