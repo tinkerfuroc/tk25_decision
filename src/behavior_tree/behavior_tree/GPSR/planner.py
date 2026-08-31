@@ -3325,6 +3325,11 @@ class GPSRPlanner:
 
             step_seq.add_child(wrap_action_factory(
                 action, _build_step_tree, get_default_supervisor(),
+                # M2a (task-M, round-4 battery fix): a FIXED identity
+                # assigned at construction, not derived from the shared
+                # live ``gpsr/plan_index`` blackboard key -- see
+                # SupervisedSubtaskSlot.current_subtask_id.
+                target_slot=slot, target_index=index, step_index=k,
             ))
             step_seq.add_child(BtNode_LogStepResult(
                 f"log:{slot}:{index}:{k}", succeeded=True,

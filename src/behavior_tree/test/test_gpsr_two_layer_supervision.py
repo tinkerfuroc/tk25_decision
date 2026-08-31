@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
+import time
 
 import py_trees
 from py_trees.common import Access, Status
@@ -14,13 +15,21 @@ from behavior_tree.GPSR.planner import GPSRPlanner
 from behavior_tree.GPSR.small_trees import bb_keys
 from behavior_tree.GPSR.supervision.clients import ScriptedSupervisorClient
 from behavior_tree.GPSR.supervision.context import StaticContextProvider
+from behavior_tree.GPSR.supervision.contracts import NodeContractRegistry
 from behavior_tree.GPSR.supervision.controller import MissionSupervisor
 from behavior_tree.GPSR.supervision.models import (
     ArtifactRef,
+    EffectRisk,
+    NodeContract,
+    RecoveryKind,
     SupervisionMode,
     SupervisorConfig,
 )
-from behavior_tree.GPSR.supervision.runtime import set_default_supervisor
+from behavior_tree.GPSR.supervision.recovery import RecoveryMacroCompiler
+from behavior_tree.GPSR.supervision.runtime import (
+    SupervisedSubtaskSlot,
+    set_default_supervisor,
+)
 
 
 def _provider() -> StaticContextProvider:
@@ -94,6 +103,165 @@ def test_build_target_subtree_step_factory_builds_a_fresh_subtree_every_call() -
         assert second.parent is None
     finally:
         set_default_supervisor(None)
+        supervisor.close()
+
+
+class _ScriptedLeaf(py_trees.behaviour.Behaviour):
+    """Minimal scripted effect leaf -- local stand-in for a real small tree,
+    avoiding the ROS/action-client plumbing a real ``goto``/``announce``
+    factory needs, since these multi-slot tests are about slot IDENTITY and
+    GATING (M2), not about any particular action's real behaviour."""
+
+    def __init__(self, name: str, result: Status, calls: list) -> None:
+        super().__init__(name)
+        self.result = result
+        self.calls = calls
+
+    def update(self) -> Status:
+        self.calls.append(self.name)
+        return self.result
+
+
+def _seed_two_layer_blackboard() -> None:
+    py_trees.blackboard.Blackboard.clear()
+    for key, value in {
+        "gpsr/task_id": "task",
+        "gpsr/plan_revision": 1,
+        "gpsr/plan_index": 0,
+        "gpsr/command": "test command",
+        "gpsr/current_params": {},
+        "gpsr/state_log": [],
+        "gpsr/arm_navigating": [0.0] * 7,
+    }.items():
+        py_trees.blackboard.Blackboard.set(key, value)
+
+
+def test_multi_slot_dispatch_active_slot_consumes_idle_slot_never_ticks() -> None:
+    """M2 (task-M, round-4 battery fix) multi-slot integration test: two
+    ``SupervisedSubtaskSlot``s built with a FIXED (target_slot,
+    target_index, step_index) identity -- exactly as
+    ``GPSRPlanner.build_target_subtree`` builds one slot per plan step --
+    sitting under a dispatcher-like memory ``Sequence``, driven the way the
+    orchestrator drives one step at a time (``BtNode_MaterialiseStep`` bumps
+    ``gpsr/plan_index`` before ticking each step's slot). A fixture
+    intervention targeted at the ACTIVE (goto) slot is applied by it,
+    cleanly (no crash, M1); the IDLE (announce, not yet reached) slot is
+    never ticked at all under this architecture -- the Sequence's own
+    memory gating structurally cannot reach it while goto is RUNNING, and
+    its status (``INVALID``, unset) proves that directly."""
+    _seed_two_layer_blackboard()
+    calls: list[str] = []
+    goto_checkpoint = (
+        "task/target-0-0/plan-r1/step-0000:goto/tree-r1/goto/root/activation-0001"
+    )
+    client = ScriptedSupervisorClient(
+        verifications=[
+            {
+                "checkpoint_id": goto_checkpoint,
+                "verdict": "recoverable",
+                "bt_assessment": "agree",
+                "subtask_status": "not_achieved",
+                "world_change": "none",
+                "escalation": "local_recovery",
+                "failure_category": "target_not_visible",
+                "evidence": ["script"],
+                "rationale": "runtime test",
+                "confidence": 0.95,
+            }
+        ],
+        recoveries=[
+            {
+                "checkpoint_id": goto_checkpoint,
+                "issue_id": "filled-by-test",
+                "strategy_id": "retry-goto",
+                "kind": "scan_views",
+                "arguments": {"angles": [[0, 0]], "perception_action": "goto"},
+                "rationale": "retry",
+                "expected_evidence": ["arrived"],
+                "stop_conditions": ["arrived"],
+            }
+        ],
+    )
+    original = client.plan_local_recovery
+
+    def local(snapshot, verification, issue_id):
+        client._recoveries[0]["issue_id"] = issue_id
+        return original(snapshot, verification, issue_id)
+
+    client.plan_local_recovery = local
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "_ScriptedLeaf", "navigation", EffectRisk.OBSERVATION, "arrived"
+            )
+        ]
+    )
+    compiler = RecoveryMacroCompiler(
+        {
+            RecoveryKind.SCAN_VIEWS: lambda proposal: py_trees.behaviours.Success(
+                name=f"macro:{proposal.strategy_id}"
+            )
+        }
+    )
+    goto_calls = 0
+
+    def goto_factory():
+        nonlocal goto_calls
+        goto_calls += 1
+        status = Status.FAILURE if goto_calls == 1 else Status.SUCCESS
+        return _ScriptedLeaf(f"goto-{goto_calls}", status, calls)
+
+    goto_slot = SupervisedSubtaskSlot(
+        action_name="goto",
+        factory=goto_factory,
+        supervisor=supervisor,
+        registry=registry,
+        recovery_compiler=compiler,
+        target_slot=0,
+        target_index=0,
+        step_index=0,
+    )
+    announce_slot = SupervisedSubtaskSlot(
+        action_name="announce",
+        factory=lambda: _ScriptedLeaf("announce-idle", Status.SUCCESS, calls),
+        supervisor=supervisor,
+        registry=registry,
+        target_slot=0,
+        target_index=0,
+        step_index=1,
+    )
+    dispatcher = py_trees.composites.Sequence("dispatcher-like", memory=True)
+    dispatcher.add_child(goto_slot)
+    dispatcher.add_child(announce_slot)
+    try:
+        # BtNode_MaterialiseStep's real effect for step 0: plan_index := 1.
+        py_trees.blackboard.Blackboard.set("gpsr/plan_index", 1)
+        for _ in range(300):
+            dispatcher.tick_once()
+            if goto_slot.tree_revision == 2:
+                break
+            time.sleep(0.005)
+        assert goto_slot.tree_revision == 2, "goto slot never applied its recovery"
+        assert announce_slot.status is Status.INVALID, (
+            "the idle announce slot was ticked while goto was still RUNNING"
+        )
+        assert "announce-idle" not in calls
+        # Drain to completion -- proves no crash across the whole sequence,
+        # including the handoff into the (now genuinely active) announce
+        # slot.
+        for _ in range(300):
+            dispatcher.tick_once()
+            if dispatcher.status is Status.SUCCESS:
+                break
+            time.sleep(0.005)
+        assert dispatcher.status is Status.SUCCESS
+        assert calls[-1] == "announce-idle"
+    finally:
         supervisor.close()
 
 

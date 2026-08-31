@@ -265,6 +265,9 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         supervisor: MissionSupervisor,
         registry: NodeContractRegistry | None = None,
         recovery_compiler: RecoveryMacroCompiler | None = None,
+        target_slot: int | None = None,
+        target_index: int | None = None,
+        step_index: int | None = None,
     ) -> None:
         self.action_name = action_name
         self.factory = factory
@@ -277,6 +280,29 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
         self._active_recovery: RecoveryProposal | None = None
         self._hard_stop_reason: str | None = None
         self._release_after_global = False
+        # M2 (task-M, round-4 battery fix): the builder that pre-builds one
+        # slot PER PLAN STEP (``GPSRPlanner.build_target_subtree``) can have
+        # several ``SupervisedSubtaskSlot`` instances live in the tree at
+        # once (this target's own later steps, plus a pipelined next
+        # target's whole tree, pre-built ahead of the swap). Deriving this
+        # slot's identity from ``gpsr/plan_index`` (a single, LIVE,
+        # process-global blackboard value) at call time means two DIFFERENT
+        # slot instances -- e.g. the same action name at the same relative
+        # step position in two different targets, since ``DynamicExecutor``
+        # does not bump ``gpsr/plan_revision`` on an ordinary target-to-
+        # target swap, only on a supervisor replan -- can compute the exact
+        # same id string. When the caller knows which (target_slot,
+        # target_index, step_index) this slot was built for (the two-layer
+        # ``build_target_subtree`` path always does), pass it here so the id
+        # is FIXED at construction and scoped to this slot alone, never
+        # recomputed from shared global state. Callers that construct a slot
+        # directly (unit tests, the legacy flat dispatcher in
+        # ``create_dispatcher``, which genuinely does reuse one slot across
+        # every occurrence of an action) omit these and keep the previous,
+        # live-plan_index-derived id -- see ``current_subtask_id`` below.
+        self.target_slot = target_slot
+        self.target_index = target_index
+        self.step_index = step_index
         child = self._materialize_subtask()
         super().__init__(name=f"adaptive:{action_name}", child=child)
         self._adaptive_slot = True
@@ -287,8 +313,16 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
     def current_subtask_id(self) -> str:
         task_id = str(_bb_get("gpsr/task_id", "task"))
         plan_revision = int(_bb_get("gpsr/plan_revision", 1) or 1)
-        plan_index = max(0, int(_bb_get("gpsr/plan_index", 1) or 1) - 1)
-        return f"{task_id}/plan-r{plan_revision}/step-{plan_index:04d}:{self.action_name}"
+        if self.step_index is not None:
+            step = self.step_index
+        else:
+            step = max(0, int(_bb_get("gpsr/plan_index", 1) or 1) - 1)
+        if self.target_slot is not None and self.target_index is not None:
+            return (
+                f"{task_id}/target-{self.target_slot}-{self.target_index}"
+                f"/plan-r{plan_revision}/step-{step:04d}:{self.action_name}"
+            )
+        return f"{task_id}/plan-r{plan_revision}/step-{step:04d}:{self.action_name}"
 
     def build_capture_request(
         self,
@@ -362,13 +396,26 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
 
     def tick(self):
         self.logger.debug("%s.tick()" % self.__class__.__name__)
+        # M2b (task-M, round-4 battery fix): captured BEFORE `initialise()`
+        # (which never touches `self.status`) -- True only when this slot
+        # was already RUNNING as of the end of its OWN previous tick, i.e.
+        # this is not its first ever activation. The slot's own status is
+        # the one piece of state it owns outright; using it (rather than
+        # any global/shared blackboard value) to gate consumption means an
+        # idle/not-yet-reached slot -- which the tree has never ticked, so
+        # never reaches this method at all -- and a slot on its very first
+        # tick -- which cannot yet have any checkpoint/intervention of its
+        # own, since one requires this slot's child to have already ticked
+        # to a terminal status once -- both correctly never consume.
+        is_active = self.status == Status.RUNNING
         if self.status != Status.RUNNING:
             self.initialise()
         self.supervisor.poll()
         current_subtask = self.current_subtask_id()
-        intervention = self.supervisor.consume_intervention(subtask_id=current_subtask)
-        if intervention is not None:
-            self._apply_intervention(intervention)
+        if is_active:
+            intervention = self.supervisor.consume_intervention(subtask_id=current_subtask)
+            if intervention is not None:
+                self._apply_intervention(intervention)
 
         if self._hard_stop_reason is not None:
             self.status = Status.RUNNING
@@ -631,6 +678,10 @@ def wrap_action_factory(
     action_name: str,
     factory: Callable[[], py_trees.behaviour.Behaviour],
     supervisor: MissionSupervisor | None,
+    *,
+    target_slot: int | None = None,
+    target_index: int | None = None,
+    step_index: int | None = None,
 ) -> py_trees.behaviour.Behaviour:
     if supervisor is None or supervisor.config.mode is SupervisionMode.OFF:
         return factory()
@@ -638,6 +689,9 @@ def wrap_action_factory(
         action_name=action_name,
         factory=factory,
         supervisor=supervisor,
+        target_slot=target_slot,
+        target_index=target_index,
+        step_index=step_index,
     )
 
 

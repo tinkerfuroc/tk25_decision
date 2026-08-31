@@ -885,3 +885,123 @@ def test_local_recovery_detaches_old_child_before_attaching_replacement():
         )
     finally:
         supervisor.close()
+
+
+def test_idle_slot_never_consumes_even_with_a_colliding_subtask_id():
+    """Pins M2b independent of id derivation (M2a): two slots built WITHOUT
+    a fixed (target_slot, target_index, step_index) identity fall back to
+    the old global-plan_index-derived id, so with the same action_name and
+    blackboard state they compute the IDENTICAL subtask_id -- a genuine
+    string collision. The active slot queues a real local_recovery
+    intervention against that shared id; the idle slot (built identically,
+    but never yet ticked) must not consume it on its first tick even though
+    the ids match exactly."""
+    _seed_blackboard()
+    calls: list[str] = []
+    checkpoint = (
+        "task/plan-r1/step-0000:demo/tree-r1/"
+        "demo/root/activation-0001"
+    )
+    client = ScriptedSupervisorClient(
+        verifications=[
+            {
+                **_decision(checkpoint, verdict="recoverable"),
+                "subtask_status": "not_achieved",
+                "escalation": "local_recovery",
+                "failure_category": "target_not_visible",
+            }
+        ],
+        recoveries=[
+            {
+                "checkpoint_id": checkpoint,
+                "issue_id": "filled-by-test",
+                "strategy_id": "retry",
+                "kind": "scan_views",
+                "arguments": {"angles": [[0, 0]], "perception_action": "demo"},
+                "rationale": "retry",
+                "expected_evidence": ["ok"],
+                "stop_conditions": ["ok"],
+            }
+        ],
+    )
+    original = client.plan_local_recovery
+
+    def local(snapshot, verification, issue_id):
+        client._recoveries[0]["issue_id"] = issue_id
+        return original(snapshot, verification, issue_id)
+
+    client.plan_local_recovery = local
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect", "perception", EffectRisk.OBSERVATION, "observed"
+            )
+        ]
+    )
+    compiler = RecoveryMacroCompiler(
+        {
+            RecoveryKind.SCAN_VIEWS: lambda proposal: py_trees.behaviours.Success(
+                name=f"macro:{proposal.strategy_id}"
+            )
+        }
+    )
+    active_slot = SupervisedSubtaskSlot(
+        action_name="demo",
+        factory=lambda: FakeEffect(
+            "active-fail", py_trees.common.Status.FAILURE, calls
+        ),
+        supervisor=supervisor,
+        registry=registry,
+        recovery_compiler=compiler,
+    )
+    idle_slot = SupervisedSubtaskSlot(
+        action_name="demo",
+        factory=lambda: FakeEffect(
+            "idle-leaf", py_trees.common.Status.SUCCESS, calls
+        ),
+        supervisor=supervisor,
+        registry=registry,
+        recovery_compiler=compiler,
+    )
+    try:
+        assert active_slot.current_subtask_id() == idle_slot.current_subtask_id()
+        # Tick #1 submits the checkpoint (the child fails synchronously) but
+        # -- being this slot's very first tick -- never attempts to consume
+        # anything (M2b); nothing is queued yet regardless, since
+        # verification is asynchronous.
+        active_slot.tick_once()
+        assert active_slot.status is py_trees.common.Status.RUNNING
+        # Advance the async verification -> local_recovery pipeline via
+        # `poll()` directly, NOT through any slot's `tick()` -- ticking
+        # `active_slot` again would immediately consume its own
+        # intervention in that same call, leaving no window to observe it
+        # queued-but-unconsumed.
+        for _ in range(300):
+            supervisor.poll()
+            if supervisor._interventions:
+                break
+            time.sleep(0.005)
+        assert supervisor._interventions, (
+            "expected a queued local_recovery intervention"
+        )
+        pending = len(supervisor._interventions)
+        assert idle_slot.status is not py_trees.common.Status.RUNNING
+        idle_slot.tick_once()
+        assert len(supervisor._interventions) == pending, (
+            "an idle slot with a colliding subtask_id consumed an "
+            "intervention that was never meant for it"
+        )
+        assert "idle-leaf" not in calls
+        for _ in range(300):
+            active_slot.tick_once()
+            if active_slot.tree_revision == 2:
+                break
+            time.sleep(0.005)
+        assert active_slot.tree_revision == 2
+    finally:
+        supervisor.close()
