@@ -86,6 +86,19 @@ class MissionSupervisor:
         # rest of the run rather than keep issuing queries a broken
         # verifier will just keep failing. Reset on any successful verdict.
         self._consecutive_errors = 0
+        # Q4 (task-Q, round-6 supervision-economics fix): TOTAL query
+        # failures over the whole run, never reset (unlike the consecutive
+        # counter above) -- a verifier flaky enough to error every third
+        # call never trips the consecutive path but still costs the
+        # mission real time on every failed query.
+        self._total_errors = 0
+        # Q4: cumulative overhead budget -- applied-intervention deferral
+        # age (reported by the slot, see `record_deferral_overhead`) plus
+        # recovery-cycle span (`recovery_started` -> `recovery_finished`,
+        # tracked in `_recovery_started_at` below), accumulated over the
+        # whole run.
+        self._overhead_s = 0.0
+        self._recovery_started_at: dict[tuple[str, str], float] = {}
         self._degraded = False
 
     def submit(
@@ -289,6 +302,15 @@ class MissionSupervisor:
             record = self._records.get(proposal.checkpoint_id)
             if record is not None:
                 record.stage = "recovery_executing"
+            # Q4 (task-Q, round-6): remember when this recovery cycle
+            # started so `recovery_finished` can add its span to the
+            # cumulative overhead budget. Keyed by (issue_id, strategy_id)
+            # -- validate_recovery_macro/RecoveryLedger.register already
+            # reject a duplicate fingerprint for the same issue, so this
+            # pair is always a fresh key at this point.
+            self._recovery_started_at[
+                (proposal.issue_id, proposal.strategy_id)
+            ] = time.monotonic()
         self._emit(
             "supervisor.recovery.started",
             {
@@ -310,6 +332,14 @@ class MissionSupervisor:
                 record.resolution = (
                     "recovery_succeeded" if succeeded else "recovery_failed"
                 )
+            started_at = self._recovery_started_at.pop(
+                (proposal.issue_id, proposal.strategy_id), None
+            )
+        if started_at is not None:
+            # Q4: (ii) each recovery cycle span, accumulated regardless of
+            # outcome -- a recovery that ultimately failed still cost the
+            # mission the time it ran.
+            self._accumulate_overhead(max(0.0, time.monotonic() - started_at))
         self._emit(
             "supervisor.recovery.finished",
             {
@@ -327,6 +357,53 @@ class MissionSupervisor:
             record = self._records.get(checkpoint_id or "")
             if record is not None and record.verification is not None:
                 self._start_global(record, "three_distinct_recoveries_failed")
+
+    def record_deferral_overhead(self, age_s: float) -> None:
+        """Q4 (task-Q, round-6): (i) each applied intervention's deferral
+        age contributes to the cumulative overhead budget. Called by
+        ``SupervisedSubtaskSlot._note_deferral`` with the SAME ``age_s`` it
+        already computes for the ``intervention.deferred`` telemetry event
+        -- one contribution per intervention (``_note_deferral`` itself
+        only calls this once per checkpoint_id, on the first tick it
+        notices the deferral), not accumulated again on every later tick
+        the same intervention stays deferred.
+
+        Chose slot-side reporting (over reconstructing the deferral
+        contribution controller-side from checkpoint timestamps) because
+        ``_note_deferral`` already computes the exact age value the
+        ruling asks to reuse, at the exact point it becomes known -- a
+        controller-side reconstruction would need to duplicate that same
+        "first tick a pending intervention was noticed against this
+        attempt's start time" logic with no additional accuracy to show
+        for it.
+        """
+        self._accumulate_overhead(max(0.0, age_s))
+
+    def _accumulate_overhead(self, amount_s: float) -> None:
+        if amount_s <= 0:
+            return
+        with self._lock:
+            self._overhead_s += amount_s
+            total = self._overhead_s
+        if total >= self.config.overhead_budget_s:
+            self._maybe_degrade("overhead_budget", extra={"overhead_s": total})
+
+    def _maybe_degrade(self, reason: str, *, extra: Mapping[str, Any] | None = None) -> bool:
+        """Set `_degraded` at most once; emit `supervisor.degraded` only on
+        the call that actually flips it. Shared by every degrade trigger
+        (consecutive errors, total errors, overhead budget) so exactly one
+        reason -- whichever trips first -- is ever reported, matching the
+        existing "fires exactly once" contract.
+        """
+        with self._lock:
+            if self._degraded:
+                return False
+            self._degraded = True
+        payload: dict[str, Any] = {"reason": reason}
+        if extra:
+            payload.update(extra)
+        self._emit("supervisor.degraded", payload)
+        return True
 
     def record(self, checkpoint_id: str) -> CheckpointRecord | None:
         with self._lock:
@@ -581,13 +658,9 @@ class MissionSupervisor:
         record.resolution = "unavailable"
         record.unverified = True
         self._consecutive_errors += 1
-        just_degraded = False
-        if (
-            not self._degraded
-            and self._consecutive_errors >= self.config.max_consecutive_errors
-        ):
-            self._degraded = True
-            just_degraded = True
+        # Q4 (task-Q, round-6): TOTAL query failures, never reset within
+        # the run -- alongside the existing consecutive-run counter above.
+        self._total_errors += 1
         self._emit(
             "supervisor.unavailable",
             {
@@ -596,12 +669,20 @@ class MissionSupervisor:
                 "continued_unverified": True,
             },
         )
-        if just_degraded:
-            self._emit(
-                "supervisor.degraded",
-                {
+        if self._consecutive_errors >= self.config.max_consecutive_errors:
+            self._maybe_degrade(
+                "consecutive_errors",
+                extra={
                     "checkpoint_id": request.checkpoint_id,
                     "consecutive_errors": self._consecutive_errors,
+                },
+            )
+        elif self._total_errors >= self.config.max_total_errors:
+            self._maybe_degrade(
+                "total_errors",
+                extra={
+                    "checkpoint_id": request.checkpoint_id,
+                    "total_errors": self._total_errors,
                 },
             )
 

@@ -109,6 +109,16 @@ class SupervisorConfig:
     plan_timeout_s: float = 120.0
     run_live_tests: bool = False
     max_consecutive_errors: int = 5
+    # Q4 (task-Q, round-6 supervision-economics fix): cumulative, per-run,
+    # NEVER reset within the run (unlike max_consecutive_errors, which
+    # resets on any successful verdict) -- total query failures over the
+    # whole mission degrade supervision even when no single streak ever
+    # reaches max_consecutive_errors.
+    max_total_errors: int = 12
+    # Q4: cumulative overhead budget in seconds -- applied-intervention
+    # deferral age plus recovery-cycle span, accumulated over the whole
+    # run; crossing it degrades supervision the same way.
+    overhead_budget_s: float = 300.0
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "SupervisorConfig":
@@ -134,6 +144,14 @@ class SupervisorConfig:
             raise ValueError(
                 "GPSR_SUPERVISION_MAX_CONSECUTIVE_ERRORS must be positive"
             )
+        max_total_errors = int(env.get("GPSR_SUPERVISION_MAX_TOTAL_ERRORS", "12"))
+        if max_total_errors < 1:
+            raise ValueError("GPSR_SUPERVISION_MAX_TOTAL_ERRORS must be positive")
+        overhead_budget_s = float(
+            env.get("GPSR_SUPERVISION_OVERHEAD_BUDGET_S", "300.0")
+        )
+        if overhead_budget_s <= 0:
+            raise ValueError("GPSR_SUPERVISION_OVERHEAD_BUDGET_S must be positive")
         return cls(
             mode=mode,
             success_mode=success_mode,
@@ -145,6 +163,8 @@ class SupervisorConfig:
             plan_timeout_s=float(env.get("GPSR_SUPERVISOR_PLAN_TIMEOUT_S", "120")),
             run_live_tests=_truthy(env.get("GPSR_RUN_LIVE_LLM_TESTS", "0")),
             max_consecutive_errors=max_consecutive_errors,
+            max_total_errors=max_total_errors,
+            overhead_budget_s=overhead_budget_s,
         )
 
 

@@ -723,6 +723,11 @@ class SupervisedSubtaskSlot(py_trees.decorators.Decorator):
             "intervention.deferred",
             {"checkpoint_id": intervention.checkpoint_id, "age_s": age_s},
         )
+        # Q4 (task-Q, round-6): (i) each applied intervention's deferral
+        # age contributes to the cumulative overhead budget -- the SAME
+        # age_s just reported above, reused rather than recomputed, so a
+        # future change to either can never let them silently diverge.
+        self.supervisor.record_deferral_overhead(age_s)
 
     def _apply_intervention(self, intervention: SupervisorIntervention) -> None:
         if self._active_recovery is not None:

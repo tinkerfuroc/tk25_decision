@@ -19,6 +19,7 @@ from behavior_tree.GPSR.supervision.models import (
     CaptureRequest,
     EffectRisk,
     NodeContract,
+    RecoveryKind,
     RecoveryProposal,
     ReportedStatus,
     SchemaError,
@@ -29,6 +30,7 @@ from behavior_tree.GPSR.supervision.models import (
 )
 from behavior_tree.GPSR.supervision.prompts import VERIFIER_SYSTEM_PROMPT
 from behavior_tree.GPSR.supervision.recovery import RecoveryLedger
+from unittest.mock import patch
 
 
 def _request(checkpoint_id: str = "checkpoint-1") -> CaptureRequest:
@@ -575,6 +577,169 @@ def test_config_default_and_env_max_consecutive_errors() -> None:
         {"GPSR_SUPERVISION_MAX_CONSECUTIVE_ERRORS": "2"}
     )
     assert custom.max_consecutive_errors == 2
+
+
+# ---------------------------------------------------------------------------
+# Task Q4 (round-6, supervision-economics fix): cumulative error/overhead
+# budgets degrade supervision. The consecutive-only degrade policy
+# (max_consecutive_errors, reset on any success) let 10 total errors across
+# the measured 019 run never degrade anything -- its longest streak was only
+# 3. Alongside the existing consecutive counter: a per-run TOTAL error budget
+# (never reset within the run) and a cumulative overhead budget (deferral
+# ages + recovery-cycle spans).
+
+
+def test_config_default_and_env_total_errors_and_overhead_budget() -> None:
+    default = SupervisorConfig.from_env({})
+    assert default.max_total_errors == 12
+    assert default.overhead_budget_s == 300.0
+    custom = SupervisorConfig.from_env(
+        {
+            "GPSR_SUPERVISION_MAX_TOTAL_ERRORS": "3",
+            "GPSR_SUPERVISION_OVERHEAD_BUDGET_S": "45",
+        }
+    )
+    assert custom.max_total_errors == 3
+    assert custom.overhead_budget_s == 45.0
+
+
+def test_total_error_and_overhead_counters_start_at_zero_on_a_fresh_controller() -> None:
+    config = SupervisorConfig(mode=SupervisionMode.ACTIVE)
+    supervisor = MissionSupervisor(config, _provider(), ScriptedSupervisorClient())
+    try:
+        assert supervisor._total_errors == 0
+        assert supervisor._overhead_s == 0.0
+        assert supervisor._degraded is False
+    finally:
+        supervisor.close()
+
+
+def test_twelve_non_consecutive_errors_degrade_via_the_total_error_budget() -> None:
+    # 12 errors, each immediately followed by a successful verdict that
+    # resets the CONSECUTIVE counter -- it never gets anywhere near
+    # max_consecutive_errors (5, well above the longest streak of 1 here).
+    # The cumulative TOTAL budget (12) still degrades supervision.
+    config = SupervisorConfig(
+        mode=SupervisionMode.ACTIVE, max_consecutive_errors=5, max_total_errors=12
+    )
+    events: list[tuple[str, dict]] = []
+    verifications: list = []
+    for index in range(12):
+        verifications.append(RuntimeError("offline"))
+        verifications.append(_verification(f"cp-ok-{index}"))
+    client = ScriptedSupervisorClient(verifications=verifications)
+    supervisor = MissionSupervisor(
+        config,
+        _provider(),
+        client,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    try:
+        for index in range(12):
+            supervisor.submit(
+                _request(f"cp-err-{index}"), _contract(), ReportedStatus.SUCCESS
+            )
+            assert supervisor.wait_for_idle()
+            supervisor.submit(
+                _request(f"cp-ok-{index}"), _contract(), ReportedStatus.SUCCESS
+            )
+            assert supervisor.wait_for_idle()
+        assert supervisor._total_errors == 12
+        # The consecutive counter was reset to 0 by every "-ok-" success
+        # BEFORE the final error -- it never got anywhere near
+        # max_consecutive_errors (5); at most 1 by the time the 12th error
+        # itself trips the total budget (its own paired success is skipped
+        # once degraded, per O4's skip_query gate, so it never gets a
+        # chance to reset the counter one last time -- that is the
+        # existing O4 behavior, not part of what Q4 changes).
+        assert supervisor._consecutive_errors <= 1
+        degraded = [p for e, p in events if e == "supervisor.degraded"]
+        assert len(degraded) == 1
+        assert degraded[0]["reason"] == "total_errors"
+        assert supervisor._degraded is True
+    finally:
+        supervisor.close()
+
+
+def test_overhead_budget_crossing_300s_degrades_supervision() -> None:
+    # (i) each applied intervention's deferral age -- reported directly via
+    # `record_deferral_overhead`, the same seam `SupervisedSubtaskSlot.
+    # _note_deferral` reports through -- and (ii) each recovery cycle's
+    # span (`recovery_started` -> `recovery_finished`) both accumulate.
+    config = SupervisorConfig(mode=SupervisionMode.ACTIVE, overhead_budget_s=100.0)
+    events: list[tuple[str, dict]] = []
+    supervisor = MissionSupervisor(
+        config,
+        _provider(),
+        ScriptedSupervisorClient(),
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    try:
+        supervisor.record_deferral_overhead(40.0)
+        assert supervisor._overhead_s == 40.0
+        assert supervisor._degraded is False
+        assert not [p for e, p in events if e == "supervisor.degraded"]
+
+        proposal = RecoveryProposal(
+            checkpoint_id="cp-1",
+            issue_id="issue-1",
+            strategy_id="s1",
+            kind=RecoveryKind.SCAN_VIEWS,
+            arguments={"angles": [[0, 0]], "perception_action": "x"},
+            rationale="r",
+            expected_evidence=("e",),
+            stop_conditions=("s",),
+        )
+        supervisor.ledger.register(proposal)
+        # Patch the controller module's clock (not the slot's injectable
+        # one -- `recovery_started`/`recovery_finished` read `time.
+        # monotonic` directly) so the test does not need to sleep 70s.
+        with patch(
+            "behavior_tree.GPSR.supervision.controller.time.monotonic",
+            side_effect=[1000.0, 1070.0],
+        ):
+            supervisor.recovery_started(proposal)
+            supervisor.recovery_finished(proposal, succeeded=True)
+
+        # 40.0 + 70.0 = 110.0 >= 100.0 -> degraded.
+        assert supervisor._overhead_s == 110.0
+        degraded = [p for e, p in events if e == "supervisor.degraded"]
+        assert len(degraded) == 1
+        assert degraded[0]["reason"] == "overhead_budget"
+        assert supervisor._degraded is True
+    finally:
+        supervisor.close()
+
+
+def test_total_error_and_overhead_budgets_degrade_in_shadow_without_skipping_queries() -> None:
+    # Shadow: the accumulators/degrade flag may still tick (telemetry
+    # only) but must change no OBSERVABLE behavior -- SHADOW always
+    # queries regardless of `_degraded` (MissionSupervisor.submit's
+    # skip_query gate is `mode is ACTIVE and self._degraded`).
+    config = SupervisorConfig(mode=SupervisionMode.SHADOW, max_total_errors=2)
+    client = ScriptedSupervisorClient(
+        verifications=[
+            RuntimeError("offline"),
+            RuntimeError("offline"),
+            _verification("cp-after"),
+        ]
+    )
+    supervisor = MissionSupervisor(config, _provider(), client)
+    try:
+        supervisor.submit(_request("cp-1"), _contract(), ReportedStatus.SUCCESS)
+        assert supervisor.wait_for_idle()
+        supervisor.submit(_request("cp-2"), _contract(), ReportedStatus.SUCCESS)
+        assert supervisor.wait_for_idle()
+        assert supervisor._total_errors == 2
+        assert supervisor._degraded is True
+
+        supervisor.submit(_request("cp-after"), _contract(), ReportedStatus.SUCCESS)
+        assert supervisor.wait_for_idle()
+        # Every submission still queried -- degraded had no effect in SHADOW.
+        assert [role for role, _ in client.calls] == ["verify", "verify", "verify"]
+        assert supervisor.record("cp-after").stage == "shadow_complete"
+    finally:
+        supervisor.close()
 
 
 def test_recovery_ledger_counts_only_distinct_executed_failures() -> None:
