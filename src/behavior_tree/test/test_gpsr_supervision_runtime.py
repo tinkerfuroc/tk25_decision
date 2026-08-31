@@ -139,6 +139,119 @@ def test_failure_waits_for_verifier_and_false_failure_becomes_success():
         supervisor.close()
 
 
+def test_uncertain_verdict_after_genuine_failure_resolves_to_failure():
+    # O2 hang regression: SupervisedEffect.tick() masks a genuinely reported
+    # FAILURE as outward RUNNING until self.supervisor.resolution(...) ==
+    # "success" (a false_failure override) -- every OTHER pre-O2 terminal
+    # resolution ("recovery", "global", "stop") was always paired with a
+    # queued intervention that the slot consumes to force it out of that
+    # masked RUNNING state. O2's new "unverified" resolution creates NO
+    # intervention, so without also being treated as terminal here, a
+    # genuinely-failed checkpoint whose verifier came back uncertain would
+    # mask as RUNNING forever. It must resolve to the real FAILURE instead
+    # (uncertainty must not fabricate a false success either).
+    _seed_blackboard()
+    calls: list[str] = []
+    checkpoint = (
+        "task/plan-r1/step-0000:demo/tree-r1/"
+        "demo/root/activation-0001"
+    )
+    client = ScriptedSupervisorClient(
+        verifications=[
+            {
+                "checkpoint_id": checkpoint,
+                "verdict": "uncertain",
+                "bt_assessment": "agree",
+                "subtask_status": "unknown",
+                "world_change": "unknown",
+                "escalation": "none",
+                "failure_category": "sensor_context_mismatch",
+                "evidence": ["script"],
+                "rationale": "cannot verify this checkpoint",
+                "confidence": 0.4,
+            }
+        ]
+    )
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect",
+                "perception",
+                EffectRisk.OBSERVATION,
+                "effect happened",
+            )
+        ]
+    )
+    slot = SupervisedSubtaskSlot(
+        action_name="demo",
+        factory=lambda: FakeEffect("fail", py_trees.common.Status.FAILURE, calls),
+        supervisor=supervisor,
+        registry=registry,
+    )
+    try:
+        for _ in range(100):
+            slot.tick_once()
+            if slot.status is not py_trees.common.Status.RUNNING:
+                break
+            time.sleep(0.005)
+        assert slot.status is py_trees.common.Status.FAILURE
+        assert supervisor.resolution(checkpoint) == "unverified"
+        assert supervisor.consume_intervention() is None
+    finally:
+        supervisor.close()
+
+
+def test_query_error_after_genuine_failure_resolves_to_failure():
+    # O4 hang regression, same shape as the O2 test above: a query error
+    # now resolves as "unavailable" with no intervention, so a genuinely
+    # failed checkpoint whose verifier errored out must also resolve to
+    # the real FAILURE rather than mask as RUNNING forever.
+    _seed_blackboard()
+    calls: list[str] = []
+    checkpoint = (
+        "task/plan-r1/step-0000:demo/tree-r1/"
+        "demo/root/activation-0001"
+    )
+    client = ScriptedSupervisorClient(verifications=[RuntimeError("offline")])
+    supervisor = MissionSupervisor(
+        SupervisorConfig(mode=SupervisionMode.ACTIVE),
+        _provider(),
+        client,
+    )
+    registry = NodeContractRegistry(
+        [
+            NodeContract(
+                "FakeEffect",
+                "perception",
+                EffectRisk.OBSERVATION,
+                "effect happened",
+            )
+        ]
+    )
+    slot = SupervisedSubtaskSlot(
+        action_name="demo",
+        factory=lambda: FakeEffect("fail", py_trees.common.Status.FAILURE, calls),
+        supervisor=supervisor,
+        registry=registry,
+    )
+    try:
+        for _ in range(100):
+            slot.tick_once()
+            if slot.status is not py_trees.common.Status.RUNNING:
+                break
+            time.sleep(0.005)
+        assert slot.status is py_trees.common.Status.FAILURE
+        assert supervisor.resolution(checkpoint) == "unavailable"
+        assert supervisor.consume_intervention() is None
+    finally:
+        supervisor.close()
+
+
 def test_uncertain_stop_verdict_after_child_success_still_returns_success():
     # O2 retro-fail regression test: hybrid success mode holds an
     # already-SUCCESS child RUNNING until the pending verification
@@ -1343,7 +1456,24 @@ def test_premature_intervention_against_a_running_child_is_deferred_then_applied
 
 def test_intervention_against_an_already_failed_child_bypasses_the_stall_threshold():
     _seed_blackboard()
-    client = ScriptedSupervisorClient(verifications=[])
+    # O2/O4 fix note: this used to script an empty verifications deque so
+    # the async verify() call would raise "no scripted response remains"
+    # in the background almost immediately. That relied on the OLD
+    # behavior where ANY non-"success" resolution (pending, or -- after a
+    # race with that near-instant background error -- "stop") mapped to
+    # outward RUNNING. Now "unavailable" is itself a terminal resolution
+    # (see SupervisedEffect.tick()'s _UNVERIFIED_RESOLUTIONS branch), so
+    # that race made the effect resolve to its real FAILURE before this
+    # assertion, flaking this test on the runtime fix rather than testing
+    # what it means to: hold the query genuinely pending so the RUNNING
+    # assertion below is about the query, not a race with it.
+    release = threading.Event()
+
+    def delayed():
+        release.wait(2)
+        raise RuntimeError("still verifying")
+
+    client = ScriptedSupervisorClient(verifications=[delayed])
     supervisor = MissionSupervisor(SupervisorConfig(mode=SupervisionMode.ACTIVE), _provider(), client)
     registry = NodeContractRegistry(
         [NodeContract("FakeEffect", "perception", EffectRisk.OBSERVATION, "observed")]
@@ -1368,6 +1498,7 @@ def test_intervention_against_an_already_failed_child_bypasses_the_stall_thresho
         # immediately, because the child already failed.
         assert slot._may_apply_intervention_now(intervention) is True
     finally:
+        release.set()
         supervisor.close()
 
 

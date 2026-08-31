@@ -41,6 +41,12 @@ from .recovery import (
 _DEFAULT_SUPERVISOR: MissionSupervisor | None = None
 _DEFAULT_LOCK = threading.RLock()
 
+# O2/O4: checkpoint resolutions that give up trying to verify a genuinely
+# reported FAILURE without ever queuing an intervention (see
+# SupervisedEffect.tick()) -- "unverified" is an uncertain verdict (O2),
+# "unavailable" is a broken/errored supervisor query (O4).
+_UNVERIFIED_RESOLUTIONS = frozenset({"unverified", "unavailable"})
+
 
 def set_default_supervisor(supervisor: MissionSupervisor | None) -> None:
     global _DEFAULT_SUPERVISOR
@@ -267,7 +273,23 @@ class SupervisedEffect(py_trees.decorators.Decorator):
             new_status = self._terminal_status
         else:
             resolution = self.supervisor.resolution(self._checkpoint_id or "")
-            new_status = Status.SUCCESS if resolution == "success" else Status.RUNNING
+            if resolution == "success":
+                new_status = Status.SUCCESS
+            elif resolution in _UNVERIFIED_RESOLUTIONS:
+                # O2/O4 (uncertainty/unavailability is not failure, but it
+                # is not a fabricated success either): "unverified" (an
+                # uncertain verdict) and "unavailable" (a broken/errored
+                # query) are terminal resolutions that -- unlike
+                # recovery/global/stop -- never queue an intervention for
+                # this slot to consume. Every other non-"success"
+                # resolution here relies on that queued intervention to
+                # pull the effect out of this masked RUNNING state; without
+                # this branch a genuinely-failed checkpoint whose verifier
+                # came back uncertain or errored would mask as RUNNING
+                # forever. Let the real, already-reported FAILURE stand.
+                new_status = self._terminal_status
+            else:
+                new_status = Status.RUNNING
 
         if new_status != Status.RUNNING:
             self.stop(new_status)
