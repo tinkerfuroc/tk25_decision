@@ -38,7 +38,7 @@ from .orchestrator import (
     load_knowledge_from_constants,
 )
 from .planner import GPSRPlanner
-from .small_trees import bb_keys, create_enter_arena
+from .small_trees import bb_keys, create_enter_arena, _one_shot
 from .telemetry import GpsrTelemetry, set_default_telemetry
 from .supervision.controller import MissionSupervisor
 from .supervision.runtime import (
@@ -130,8 +130,11 @@ def createGPSROrchestrator(
     # stows the arm to the orbbec-look pose before sensing the door.
     _arm_constants_to_bb(root)
     # The robot starts OUTSIDE the arena in front of the door: wait for it to
-    # open and enter — once, before anything else.
-    root.add_child(create_enter_arena())
+    # open and enter — once, before anything else. K1: OneShot-wrapped so a
+    # later root restart (a memory Sequence replays from child 0 on ANY
+    # sibling failure) never re-ticks this after it has already SUCCEEDED
+    # once -- no repeat "Hi, I am Tinker..." / re-detect (F1).
+    root.add_child(_one_shot(create_enter_arena()))
     # GPSR: go to the command point ONCE to receive all commands there.
     if has_command_point():
         root.add_child(create_goto_command_point())

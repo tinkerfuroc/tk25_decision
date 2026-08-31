@@ -797,6 +797,30 @@ def _pantilt_sweep(label: str, tilts, make_detect, pan_deg=None):
     return sweep
 
 
+def _one_shot(child: py_trees.behaviour.Behaviour) -> py_trees.decorators.OneShot:
+    """Wrap ``child`` so it runs through to completion only ONCE.
+
+    K1 (task-K, live-manipulation sim findings, F1): the orchestrator root is
+    a ``py_trees.composites.Sequence(memory=True)`` ticked forever. A memory
+    Sequence resumes only from a RUNNING child -- on FAILURE every child is
+    invalidated and the next tick restarts from child 0. When a LATER sibling
+    keeps failing (e.g. the arm action server rejecting every goal), an
+    ALREADY-SUCCEEDED earlier child (like the entry-arena subtree) would
+    otherwise be re-ticked in full on every one of those restarts -- re-
+    announcing, re-detecting, etc. ``OneShot(ON_SUCCESSFUL_COMPLETION)``
+    fixes that: once ``child`` SUCCEEDS, later ticks bounce back the
+    memorised SUCCESS without ever ticking ``child`` again.
+
+    Named after ``child`` (not a fixed literal) so wrapping a subtree at its
+    call site does not change what shows up in name-based lookups (tests,
+    ``tree_serialization``, the tick visualizer) -- the wrapper is invisible
+    by name, only its behaviour differs.
+    """
+    return py_trees.decorators.OneShot(
+        child.name, child, py_trees.common.OneShotPolicy.ON_SUCCESSFUL_COMPLETION,
+    )
+
+
 def create_enter_arena():
     """Enter the arena ONCE, at mission start.
 
