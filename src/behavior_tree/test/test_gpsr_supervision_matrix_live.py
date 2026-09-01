@@ -137,15 +137,24 @@ def test_luna_three_run_ten_case_matrix(tmp_path: Path) -> None:
     )
     if not key:
         pytest.skip("OpenRouter credential is not configured")
+    # Model/effort are env-overridable so the same matrix can benchmark
+    # candidate verifier models (GPSR_SUPERVISOR_MODEL /
+    # GPSR_SUPERVISOR_VERIFY_EFFORT / GPSR_SUPERVISOR_PLAN_EFFORT).
     config = SupervisorConfig(
-        model="openai/gpt-5.6-luna",
-        verify_effort="medium",
-        plan_effort="high",
+        model=os.environ.get("GPSR_SUPERVISOR_MODEL", "openai/gpt-5.6-luna"),
+        verify_effort=os.environ.get("GPSR_SUPERVISOR_VERIFY_EFFORT", "medium"),
+        plan_effort=os.environ.get("GPSR_SUPERVISOR_PLAN_EFFORT", "high"),
         verify_timeout_s=120.0,
         plan_timeout_s=180.0,
         run_live_tests=True,
     )
-    client = OpenRouterSupervisorClient(config, api_key=key)
+    usage_events: list[dict] = []
+
+    def _collect_usage(event: str, payload) -> None:
+        if event == "supervisor.query.completed":
+            usage_events.append(dict(payload.get("usage") or {}))
+
+    client = OpenRouterSupervisorClient(config, api_key=key, telemetry=_collect_usage)
     stages = _selected_stages()
     repetitions = int(os.environ.get("GPSR_LIVE_REPETITIONS", "3"))
     if repetitions < 1:
@@ -162,6 +171,7 @@ def test_luna_three_run_ten_case_matrix(tmp_path: Path) -> None:
     for repetition in range(1, repetitions + 1):
         for case, stage in stages:
             started = time.monotonic()
+            usage_before = len(usage_events)
             errors: list[str] = []
             observed = None
             try:
@@ -183,6 +193,11 @@ def test_luna_three_run_ten_case_matrix(tmp_path: Path) -> None:
                     "latency_ms": round(
                         (time.monotonic() - started) * 1000.0, 1
                     ),
+                    "usage": (
+                        usage_events[-1]
+                        if len(usage_events) > usage_before
+                        else None
+                    ),
                 }
             )
 
@@ -193,6 +208,7 @@ def test_luna_three_run_ten_case_matrix(tmp_path: Path) -> None:
             if expectation is None:
                 continue
             started = time.monotonic()
+            usage_before = len(usage_events)
             errors = []
             observed = None
             try:
@@ -257,6 +273,11 @@ def test_luna_three_run_ten_case_matrix(tmp_path: Path) -> None:
                     "latency_ms": round(
                         (time.monotonic() - started) * 1000.0, 1
                     ),
+                    "usage": (
+                        usage_events[-1]
+                        if len(usage_events) > usage_before
+                        else None
+                    ),
                 }
             )
 
@@ -274,6 +295,13 @@ def test_luna_three_run_ten_case_matrix(tmp_path: Path) -> None:
         "actual_call_count": len(records),
         "passed": sum(1 for item in records if item["passed"]),
         "failed": sum(1 for item in records if not item["passed"]),
+        "total_prompt_tokens": sum(
+            (item["usage"] or {}).get("prompt_tokens") or 0 for item in records
+        ),
+        "total_completion_tokens": sum(
+            (item["usage"] or {}).get("completion_tokens") or 0
+            for item in records
+        ),
         "records": records,
     }
     report_path = Path(
