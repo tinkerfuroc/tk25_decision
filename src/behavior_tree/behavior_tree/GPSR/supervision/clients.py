@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 from collections import deque
 import json
+import os
 from pathlib import Path
 import threading
 import time
@@ -250,6 +251,7 @@ class OpenRouterSupervisorClient:
         started = time.monotonic()
         last_error: Exception | None = None
         for attempt in range(2):
+            content: Any = None
             try:
                 response = self._client.chat.completions.create(**request)
                 content = response.choices[0].message.content
@@ -291,17 +293,27 @@ class OpenRouterSupervisorClient:
                 # fresh-request retry as a transient transport/provider
                 # failure -- total attempts stay <= 2 for every error class.
                 last_error = exc
+                # Task R: a SchemaError body is currently discarded the
+                # moment it propagates, so the 6-9 persistent verifier
+                # failures per sim run are untypeable offline -- capture the
+                # raw response for each failed attempt of the *retried
+                # unit's own* schema-class errors only. Transport/timeout
+                # errors keep today's behavior exactly (no capture).
+                if isinstance(exc, (SchemaError, json.JSONDecodeError)):
+                    _persist_schema_error_body(snapshot, role, attempt + 1, content)
                 if attempt == 0:
                     continue
-        self._emit(
-            "supervisor.query.failed",
-            {
-                "role": role,
-                "checkpoint_id": snapshot.request.checkpoint_id,
-                "model": self.config.model,
-                "error_type": type(last_error).__name__ if last_error else "unknown",
-            },
-        )
+        failure_payload: dict[str, Any] = {
+            "role": role,
+            "checkpoint_id": snapshot.request.checkpoint_id,
+            "model": self.config.model,
+            "error_type": type(last_error).__name__ if last_error else "unknown",
+        }
+        if isinstance(last_error, (SchemaError, json.JSONDecodeError)):
+            failure_payload["raw_content_snippet"] = _content_snippet(content)
+            failure_payload["error_message"] = str(last_error)
+            failure_payload["attempt"] = attempt + 1
+        self._emit("supervisor.query.failed", failure_payload)
         raise SupervisorUnavailable(
             f"{role} query failed after two attempts: {type(last_error).__name__}"
         ) from last_error
@@ -314,15 +326,27 @@ class OpenRouterSupervisorClient:
                 pass
 
 
-def _decode_json_content(content: Any) -> Mapping[str, Any]:
+def _stringify_content(content: Any) -> str:
+    """Best-effort flatten of a chat-completion message content field."""
+    # Handles the multi-part list shape ([{"type": "text", "text": ...}])
+    # the same way _decode_json_content always has; anything that isn't a
+    # string or a list of such parts becomes "" (matching the previous
+    # `not isinstance(content, str)` rejection in that function).
     if isinstance(content, list):
-        content = "".join(
+        return "".join(
             item.get("text", "") if isinstance(item, Mapping) else str(item)
             for item in content
         )
-    if not isinstance(content, str) or not content.strip():
+    if isinstance(content, str):
+        return content
+    return ""
+
+
+def _decode_json_content(content: Any) -> Mapping[str, Any]:
+    text = _stringify_content(content)
+    if not text.strip():
         raise SchemaError("model returned empty structured content")
-    text = content.strip()
+    text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
         if lines and lines[0].startswith("```"):
@@ -379,6 +403,74 @@ def _same_checkpoint(snapshot: SnapshotBundle, response_checkpoint_id: str) -> N
         raise SchemaError(
             f"stale checkpoint {response_checkpoint_id!r}; expected {expected!r}"
         )
+
+
+_SCHEMA_ERROR_BODY_LIMIT_BYTES = 32 * 1024
+_SCHEMA_ERROR_TRUNCATION_MARKER = "...[truncated]"
+
+
+def _content_snippet(content: Any, limit: int = 500) -> str:
+    """500-char, whitespace-collapsed preview for the failed-query event."""
+    collapsed = " ".join(_stringify_content(content).split())
+    return collapsed[:limit]
+
+
+def _truncate_body(text: str) -> str:
+    encoded = text.encode("utf-8", errors="replace")
+    if len(encoded) <= _SCHEMA_ERROR_BODY_LIMIT_BYTES:
+        return text
+    marker = _SCHEMA_ERROR_TRUNCATION_MARKER.encode("utf-8")
+    keep = max(_SCHEMA_ERROR_BODY_LIMIT_BYTES - len(marker), 0)
+    return encoded[:keep].decode("utf-8", errors="ignore") + _SCHEMA_ERROR_TRUNCATION_MARKER
+
+
+def _safe_checkpoint_name(checkpoint_id: str) -> str:
+    # Same sanitisation FixtureContextProvider.capture() uses for its own
+    # artifact filenames (context.py) -- keep the two conventions aligned so
+    # a debug file sits next to the map/arm renders it names.
+    return "".join(
+        char if char.isalnum() or char in "-_" else "_" for char in checkpoint_id
+    )[:120]
+
+
+def _artifact_debug_dir(snapshot: SnapshotBundle) -> Path | None:
+    """Return the directory a context provider already wrote artifacts into."""
+    # Derived from the first artifact that actually has a path (camera
+    # artifacts may be legitimately absent; map/arm renders are not).
+    # Returns None when nothing in the snapshot carries a real path -- e.g.
+    # a ContextProvider or test double that never persisted anything.
+    for artifact in snapshot.artifacts:
+        if artifact.missing or not artifact.path:
+            continue
+        return Path(artifact.path).parent
+    return None
+
+
+def _fallback_debug_dir() -> Path:
+    # Same root + "debug" convention GpsrTelemetry uses for its run-scoped
+    # NDJSON audit log (behavior_tree/GPSR/telemetry.py); the client has no
+    # trajectory id to scope by, so these land in a shared "schema_errors"
+    # leaf instead, distinguished by the checkpoint-id filename prefix.
+    base = Path(os.environ.get("BT_GPSR_PLAN_DIR", "gpsr_runs"))
+    return base / "debug" / "schema_errors"
+
+
+def _persist_schema_error_body(
+    snapshot: SnapshotBundle, role: str, attempt: int, content: Any
+) -> None:
+    """Best-effort dump of a failed attempt's raw response body to disk."""
+    # So a persistent SchemaError/JSONDecodeError can be classified offline.
+    # Must never raise: a failed write cannot mask the original SchemaError
+    # or crash the query path (task R requirement 2).
+    try:
+        directory = _artifact_debug_dir(snapshot) or _fallback_debug_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        body = _truncate_body(_stringify_content(content))
+        checkpoint = _safe_checkpoint_name(snapshot.request.checkpoint_id)
+        path = directory / f"{checkpoint}_schema_error_{role}_{attempt}.txt"
+        path.write_text(body, encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _usage_dict(usage: Any) -> Mapping[str, Any]:

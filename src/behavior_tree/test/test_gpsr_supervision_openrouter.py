@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,16 @@ from behavior_tree.GPSR.supervision.models import (
     VerificationDecision,
     WorldChange,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_schema_error_fallback_dir(tmp_path, monkeypatch):
+    # Task R: a SchemaError with no reachable artifact directory (every
+    # snapshot below uses ArtifactRef.absent -- path=None) falls back to the
+    # gpsr_runs/debug-style dir GpsrTelemetry uses. Pin it under tmp_path so
+    # the existing SchemaError-retry tests in this file don't leave
+    # gpsr_runs/debug/schema_errors litter in the repo working tree.
+    monkeypatch.setenv("BT_GPSR_PLAN_DIR", str(tmp_path))
 
 
 def _snapshot():
@@ -261,3 +272,170 @@ def test_transport_error_retry_is_unchanged_by_the_schema_error_fix():
     decision = client.verify(_snapshot())
     assert decision.verdict.value == "all_clear"
     assert len(completions.requests) == 2
+
+
+# --- Task R: capture the raw malformed body a SchemaError discards -------
+
+
+def _debug_dir(tmp_path):
+    return tmp_path / "debug" / "schema_errors"
+
+
+def test_schema_error_persists_raw_body_on_attempt_1(tmp_path):
+    completions = _FakeCompletions(["not a json document"])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(), api_key="test-key", client=fake
+    )
+    decision = client.verify(_snapshot())
+    assert decision.verdict.value == "all_clear"  # attempt 2 succeeds, unaffected
+    files = sorted(_debug_dir(tmp_path).glob("*schema_error_verify_1.txt"))
+    assert len(files) == 1
+    assert files[0].read_text(encoding="utf-8") == "not a json document"
+
+
+def test_schema_error_on_both_attempts_persists_two_distinguishable_files(tmp_path):
+    completions = _FakeCompletions(["not a json document", "still not json"])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(), api_key="test-key", client=fake
+    )
+    with pytest.raises(SupervisorUnavailable):
+        client.verify(_snapshot())
+    attempt_1 = list(_debug_dir(tmp_path).glob("*schema_error_verify_1.txt"))
+    attempt_2 = list(_debug_dir(tmp_path).glob("*schema_error_verify_2.txt"))
+    assert len(attempt_1) == 1
+    assert len(attempt_2) == 1
+    assert attempt_1[0].read_text(encoding="utf-8") == "not a json document"
+    assert attempt_2[0].read_text(encoding="utf-8") == "still not json"
+
+
+def test_schema_error_body_truncated_at_32kb_with_marker(tmp_path):
+    oversized = "A" * (40 * 1024)
+    completions = _FakeCompletions([oversized])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(), api_key="test-key", client=fake
+    )
+    client.verify(_snapshot())  # attempt 2's default response succeeds
+    files = list(_debug_dir(tmp_path).glob("*schema_error_verify_1.txt"))
+    assert len(files) == 1
+    body = files[0].read_text(encoding="utf-8")
+    assert body.endswith("...[truncated]")
+    assert len(body.encode("utf-8")) <= 32 * 1024
+
+
+def test_schema_error_persists_next_to_checkpoint_artifacts_when_reachable(tmp_path, monkeypatch):
+    # A different directory than the fallback pinned by the autouse fixture
+    # -- confirms the client prefers the checkpoint's own artifact dir over
+    # the telemetry-style fallback when a real artifact path is available.
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    map_path = artifact_dir / "cp-map.png"
+    map_path.write_bytes(b"fake-png-bytes")
+    now = datetime.now(timezone.utc).isoformat()
+    provider = StaticContextProvider(
+        (
+            ArtifactRef.from_path(
+                role="map", mime_type="image/png", path=map_path, captured_at=now
+            ),
+        )
+    )
+    request = CaptureRequest(
+        checkpoint_id="cp",
+        task_id="task",
+        subtask_id="subtask",
+        tree_revision="1",
+        plan_revision=1,
+        original_instruction="inspect the table",
+        subtask_goal="find the bottle",
+        terminal_node={"reported_status": "SUCCESS"},
+        next_node=None,
+        subtask_tree={"nodes": []},
+        blackboard={},
+        execution_history=(),
+        recovery_ledger=(),
+    )
+    snapshot = provider.capture(request)
+    completions = _FakeCompletions(["not a json document"])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(), api_key="test-key", client=fake
+    )
+
+    def decode(raw):
+        return VerificationDecision.from_dict(raw)
+
+    client._query(
+        role="verify",
+        system="s",
+        text="t",
+        snapshot=snapshot,
+        schema={},
+        effort="medium",
+        max_completion_tokens=10,
+        timeout_s=1.0,
+        decode=decode,
+    )
+    artifact_dir_files = list(artifact_dir.glob("*schema_error_verify_1.txt"))
+    assert len(artifact_dir_files) == 1
+    assert not _debug_dir(tmp_path).exists()
+
+
+def test_schema_error_failed_event_carries_snippet_message_and_attempt():
+    events: list[tuple[str, dict]] = []
+    completions = _FakeCompletions(["not a json document", "  still\n\tnot   json  "])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(),
+        api_key="test-key",
+        client=fake,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    with pytest.raises(SupervisorUnavailable):
+        client.verify(_snapshot())
+    failed = [payload for event, payload in events if event == "supervisor.query.failed"]
+    assert len(failed) == 1
+    payload = failed[0]
+    assert payload["attempt"] == 2
+    assert payload["raw_content_snippet"] == "still not json"
+    assert "expecting value" in payload["error_message"].lower()
+
+
+def test_transport_error_never_captures_anything(tmp_path):
+    events: list[tuple[str, dict]] = []
+    completions = _FakeCompletions(
+        [RuntimeError("connection reset"), RuntimeError("connection reset")]
+    )
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(),
+        api_key="test-key",
+        client=fake,
+        telemetry=lambda event, payload: events.append((event, dict(payload))),
+    )
+    with pytest.raises(SupervisorUnavailable):
+        client.verify(_snapshot())
+    assert not _debug_dir(tmp_path).exists()
+    failed = [payload for event, payload in events if event == "supervisor.query.failed"]
+    assert len(failed) == 1
+    assert "raw_content_snippet" not in failed[0]
+    assert "error_message" not in failed[0]
+    assert "attempt" not in failed[0]
+
+
+def test_persistence_failure_does_not_mask_the_original_schema_error(monkeypatch):
+    # An unwritable debug dir (or any other persistence failure) must never
+    # crash the query path or swallow the real SchemaError.
+    def _boom(self, *args, **kwargs):
+        raise OSError("read-only filesystem")
+
+    monkeypatch.setattr(Path, "mkdir", _boom)
+    completions = _FakeCompletions(["not a json document", "still not json"])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(), api_key="test-key", client=fake
+    )
+    with pytest.raises(SupervisorUnavailable) as excinfo:
+        client.verify(_snapshot())
+    assert isinstance(excinfo.value.__cause__, json.JSONDecodeError)
