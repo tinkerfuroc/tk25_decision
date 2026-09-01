@@ -169,14 +169,14 @@ class CommandGenerator:
             "thinnest",
         ]
 
+        # Self-referential talk items ("something about yourself", "your teams
+        # name/country/affiliation") are deliberately excluded: supporting them
+        # was judged unnecessary, so generated corpora skip them (team_info in
+        # constants.json holds filler values as a safety net for old corpora).
         self.talk_list = [
-            "something about yourself",
             "the time",
             "what day is today",
             "what day is tomorrow",
-            "your teams name",
-            "your teams country",
-            "your teams affiliation",
             "the day of the week",
             "the day of the month",
         ]

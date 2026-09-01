@@ -185,9 +185,9 @@
         -1.0
     ],
     "team_info": {
-        "team_name": "Tinker",
+        "team_name": "A",
         "robot_name": "Tinker",
-        "affiliation": "Tsinghua University",
-        "country": "China"
+        "affiliation": "B",
+        "country": "C"
     }
 }
