@@ -382,6 +382,138 @@ def test_schema_error_persists_next_to_checkpoint_artifacts_when_reachable(tmp_p
     assert not _debug_dir(tmp_path).exists()
 
 
+_SUPERVISION_FIXTURES_DIR = Path(__file__).resolve().parents[1] / (
+    "behavior_tree/GPSR/supervision/fixtures"
+)
+
+
+def _live_request():
+    return CaptureRequest(
+        checkpoint_id="cp-live",
+        task_id="task",
+        subtask_id="subtask",
+        tree_revision="1",
+        plan_revision=1,
+        original_instruction="inspect the table",
+        subtask_goal="find the bottle",
+        terminal_node={"reported_status": "SUCCESS"},
+        next_node=None,
+        subtask_tree={"nodes": []},
+        blackboard={},
+        execution_history=(),
+        recovery_ledger=(),
+    )
+
+
+def _run_query_expecting_schema_error(client, snapshot):
+    def decode(raw):
+        return VerificationDecision.from_dict(raw)
+
+    client._query(
+        role="verify",
+        system="s",
+        text="t",
+        snapshot=snapshot,
+        schema={},
+        effort="medium",
+        max_completion_tokens=10,
+        timeout_s=1.0,
+        decode=decode,
+    )
+
+
+def test_schema_error_prefers_temp_map_dir_over_fixture_tree_camera_dir(tmp_path):
+    # S-1 regression (review of f0419ea): FixtureContextProvider(scenario_id=...)
+    # -- the live-LLM validation path -- builds snapshot.artifacts as
+    # (*camera_artifacts, map, arm), with the camera artifacts pointing into
+    # the git-tracked, checksum-manifested supervision/fixtures/ tree. The
+    # per-request map/arm renders (into a temp/output dir) must win over the
+    # fixture-tree camera artifacts when deriving the debug dir -- a
+    # SchemaError capture must never land inside the source tree.
+    assert (_SUPERVISION_FIXTURES_DIR / "front_camera.jpg").exists()
+    now = datetime.now(timezone.utc).isoformat()
+    render_dir = tmp_path / "live-renders"
+    render_dir.mkdir()
+    map_path = render_dir / "cp-live-map.png"
+    map_path.write_bytes(b"fake-map-png")
+    provider = StaticContextProvider(
+        (
+            ArtifactRef.from_path(
+                role="front_camera",
+                mime_type="image/jpeg",
+                path=_SUPERVISION_FIXTURES_DIR / "front_camera.jpg",
+                captured_at=now,
+            ),
+            ArtifactRef.from_path(
+                role="wrist_camera",
+                mime_type="image/jpeg",
+                path=_SUPERVISION_FIXTURES_DIR / "wrist_camera.jpg",
+                captured_at=now,
+            ),
+            ArtifactRef.from_path(
+                role="map", mime_type="image/png", path=map_path, captured_at=now
+            ),
+        )
+    )
+    snapshot = provider.capture(_live_request())
+    completions = _FakeCompletions(["not a json document"])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(), api_key="test-key", client=fake
+    )
+    _run_query_expecting_schema_error(client, snapshot)
+    render_dir_files = list(render_dir.glob("*schema_error_verify_1.txt"))
+    assert len(render_dir_files) == 1
+    fixture_txt_files = list(_SUPERVISION_FIXTURES_DIR.glob("*schema_error*"))
+    assert fixture_txt_files == []
+
+
+def test_schema_error_falls_back_when_only_fixture_tree_paths_are_available(tmp_path):
+    # S-1 regression: every real artifact path lives under the source tree
+    # (as if a provider only ever had fixture-rooted images to offer) --
+    # the guard must reject all of them and use the gpsr_runs-style
+    # fallback instead of ever writing under supervision/.
+    now = datetime.now(timezone.utc).isoformat()
+    provider = StaticContextProvider(
+        (
+            ArtifactRef.from_path(
+                role="map",
+                mime_type="image/jpeg",
+                path=_SUPERVISION_FIXTURES_DIR / "front_camera.jpg",
+                captured_at=now,
+            ),
+            ArtifactRef.from_path(
+                role="arm",
+                mime_type="image/jpeg",
+                path=_SUPERVISION_FIXTURES_DIR / "wrist_camera.jpg",
+                captured_at=now,
+            ),
+            ArtifactRef.from_path(
+                role="front_camera",
+                mime_type="image/jpeg",
+                path=_SUPERVISION_FIXTURES_DIR / "front_camera.jpg",
+                captured_at=now,
+            ),
+            ArtifactRef.from_path(
+                role="wrist_camera",
+                mime_type="image/jpeg",
+                path=_SUPERVISION_FIXTURES_DIR / "wrist_camera.jpg",
+                captured_at=now,
+            ),
+        )
+    )
+    snapshot = provider.capture(_live_request())
+    completions = _FakeCompletions(["not a json document"])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = OpenRouterSupervisorClient(
+        SupervisorConfig(), api_key="test-key", client=fake
+    )
+    _run_query_expecting_schema_error(client, snapshot)
+    fallback_files = list(_debug_dir(tmp_path).glob("*schema_error_verify_1.txt"))
+    assert len(fallback_files) == 1
+    assert list(_SUPERVISION_FIXTURES_DIR.glob("*schema_error*")) == []
+
+
 def test_schema_error_failed_event_carries_snippet_message_and_attempt():
     events: list[tuple[str, dict]] = []
     completions = _FakeCompletions(["not a json document", "  still\n\tnot   json  "])

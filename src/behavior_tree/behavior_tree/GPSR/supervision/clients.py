@@ -433,16 +433,49 @@ def _safe_checkpoint_name(checkpoint_id: str) -> str:
     )[:120]
 
 
+# S-1 (review of f0419ea, MEDIUM): the supervision package's own directory
+# -- home to the git-tracked, sha256-manifest-checked `fixtures/` tree
+# FixtureContextProvider(scenario_id=...) serves front_camera/wrist_camera
+# artifacts from (context.py's O1 comment; only hit with a scenario_id, the
+# live-LLM validation path -- see test_gpsr_supervision_live.py /
+# test_gpsr_supervision_matrix_live.py). Never write a debug capture inside
+# this tree: a SchemaError there would dump raw LLM output straight into
+# the repo's committed fixtures directory.
+_SUPERVISION_PACKAGE_DIR = Path(__file__).resolve().parent
+
+# Prefer roles a context provider renders fresh per-request (map/arm, into
+# its own output/temp dir) over roles that may be static, repo-committed
+# fixture images (front_camera/wrist_camera) when picking a debug dir --
+# tuple order in `snapshot.artifacts` alone isn't safe: FixtureContextProvider
+# builds it as (*camera_artifacts, map, arm), so cameras sort first.
+_DEBUG_DIR_ROLE_PREFERENCE = ("map", "arm", "front_camera", "wrist_camera")
+
+
 def _artifact_debug_dir(snapshot: SnapshotBundle) -> Path | None:
     """Return the directory a context provider already wrote artifacts into."""
-    # Derived from the first artifact that actually has a path (camera
-    # artifacts may be legitimately absent; map/arm renders are not).
-    # Returns None when nothing in the snapshot carries a real path -- e.g.
-    # a ContextProvider or test double that never persisted anything.
-    for artifact in snapshot.artifacts:
+    # Derived from the first artifact -- preference-ordered, see
+    # _DEBUG_DIR_ROLE_PREFERENCE -- that actually has a path (camera
+    # artifacts may be legitimately absent; map/arm renders are not) whose
+    # directory isn't inside the source tree. Returns None when nothing in
+    # the snapshot qualifies -- e.g. a ContextProvider or test double that
+    # never persisted anything, or one that only has fixture-tree paths.
+    by_role = {artifact.role: artifact for artifact in snapshot.artifacts}
+    ordered = [by_role[role] for role in _DEBUG_DIR_ROLE_PREFERENCE if role in by_role]
+    ordered += [
+        artifact
+        for artifact in snapshot.artifacts
+        if artifact.role not in _DEBUG_DIR_ROLE_PREFERENCE
+    ]
+    for artifact in ordered:
         if artifact.missing or not artifact.path:
             continue
-        return Path(artifact.path).parent
+        candidate = Path(artifact.path).resolve().parent
+        try:
+            candidate.relative_to(_SUPERVISION_PACKAGE_DIR)
+        except ValueError:
+            return candidate
+        # else: candidate sits inside the supervision package tree (e.g.
+        # the committed fixtures/ dir) -- keep looking, never write there.
     return None
 
 
