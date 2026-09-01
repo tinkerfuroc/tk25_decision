@@ -237,13 +237,31 @@ class OpenRouterSupervisorClient:
                     },
                 }
             )
+        if self.config.response_format == "json_object":
+            # For models that reject OpenRouter's strict json_schema format
+            # (e.g. deepseek-v4-flash-vision: "Supported formats:
+            # json_object") the schema travels as prompt text instead; the
+            # client-side from_dict()/SchemaError validation below remains
+            # the actual contract in both modes.
+            response_format: dict[str, Any] = {"type": "json_object"}
+            system = (
+                system
+                + "\n\nRespond with a single JSON object that validates against"
+                " this JSON Schema (no prose, no markdown fences):\n"
+                + json.dumps(dict(schema).get("schema", dict(schema)))
+            )
+        else:
+            response_format = {
+                "type": "json_schema",
+                "json_schema": dict(schema),
+            }
         request = {
             "model": self.config.model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
             ],
-            "response_format": {"type": "json_schema", "json_schema": dict(schema)},
+            "response_format": response_format,
             "max_completion_tokens": max_completion_tokens,
             "extra_body": {"reasoning": {"effort": effort}},
             "timeout": timeout_s,

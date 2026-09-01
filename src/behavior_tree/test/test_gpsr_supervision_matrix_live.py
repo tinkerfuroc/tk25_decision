@@ -144,6 +144,9 @@ def test_luna_three_run_ten_case_matrix(tmp_path: Path) -> None:
         model=os.environ.get("GPSR_SUPERVISOR_MODEL", "openai/gpt-5.6-luna"),
         verify_effort=os.environ.get("GPSR_SUPERVISOR_VERIFY_EFFORT", "medium"),
         plan_effort=os.environ.get("GPSR_SUPERVISOR_PLAN_EFFORT", "high"),
+        response_format=os.environ.get(
+            "GPSR_SUPERVISOR_RESPONSE_FORMAT", "json_schema"
+        ),
         verify_timeout_s=120.0,
         plan_timeout_s=180.0,
         run_live_tests=True,

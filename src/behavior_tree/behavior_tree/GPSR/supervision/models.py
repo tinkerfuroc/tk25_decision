@@ -119,6 +119,12 @@ class SupervisorConfig:
     # deferral age plus recovery-cycle span, accumulated over the whole
     # run; crossing it degrades supervision the same way.
     overhead_budget_s: float = 300.0
+    # "json_schema" sends OpenRouter strict structured output; "json_object"
+    # is for models that reject json_schema (e.g. deepseek-v4-flash-vision) --
+    # the schema is then appended to the system prompt as text and the
+    # existing client-side from_dict()/SchemaError validation remains the
+    # actual contract either way.
+    response_format: str = "json_schema"
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "SupervisorConfig":
@@ -152,6 +158,13 @@ class SupervisorConfig:
         )
         if overhead_budget_s <= 0:
             raise ValueError("GPSR_SUPERVISION_OVERHEAD_BUDGET_S must be positive")
+        response_format = (
+            env.get("GPSR_SUPERVISOR_RESPONSE_FORMAT", "json_schema").strip().lower()
+        )
+        if response_format not in {"json_schema", "json_object"}:
+            raise ValueError(
+                "GPSR_SUPERVISOR_RESPONSE_FORMAT must be json_schema or json_object"
+            )
         return cls(
             mode=mode,
             success_mode=success_mode,
@@ -165,6 +178,7 @@ class SupervisorConfig:
             max_consecutive_errors=max_consecutive_errors,
             max_total_errors=max_total_errors,
             overhead_budget_s=overhead_budget_s,
+            response_format=response_format,
         )
 
 
