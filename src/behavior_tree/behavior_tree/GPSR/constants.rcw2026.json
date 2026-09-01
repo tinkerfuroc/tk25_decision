@@ -185,9 +185,9 @@
         -1.0
     ],
     "team_info": {
-        "team_name": "A",
+        "team_name": "Tinker",
         "robot_name": "Tinker",
-        "affiliation": "B",
-        "country": "C"
+        "affiliation": "X University",
+        "country": "Y Country"
     }
 }
