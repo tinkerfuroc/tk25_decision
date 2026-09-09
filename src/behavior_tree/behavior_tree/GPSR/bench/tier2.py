@@ -300,6 +300,41 @@ def _run_clear_cmd(clear_cmd: Sequence[str], mapping: dict[str, str]) -> str | N
     return _run_hook(clear_cmd, mapping, timeout=60, label="clear", tail_bytes=2000)
 
 
+def _apply_grasp_truth_gate(verdict: str, detail: str, run_dir: Path) -> tuple[str, str]:
+    """Bench-oracle gate: downgrade a PASS to FAIL when sim physics truth shows
+    that no object was ever actually retained by the gripper -- i.e. the run
+    "succeeded" on a closed-on-air grasp and the BT/referee belief was a false
+    positive (soup-can run 20260908T062739: verdict PASS / referee_assisted=false
+    while the can never moved and was never gripped).
+
+    Reads ``run_dir/grasp_truth.json`` written by the grasp-truth probe
+    (``tools/grasp_truth_probe.py`` in the sim worktree), which subscribes to the
+    sim's ``/sim/truth/object_state`` (retained_by_gripper) for the run. This is a
+    BENCH ORACLE used strictly AFTER THE FACT to score the run -- never a runtime
+    input of the stack or the behaviour tree (the hardware-parity / no-sim-only-
+    guards contract applies to runtime, not to post-run scoring).
+
+    Graceful and conservative: only a PASS is ever downgraded, and only when the
+    probe wrote a definite ``any_object_retained == False``. A missing/unparseable
+    file, or a ``None``/absent field (no probe, or probe couldn't decide), leaves
+    the verdict untouched -- so runs without the probe score exactly as before.
+    """
+    if verdict != "PASS":
+        return verdict, detail
+    try:
+        data = json.loads((Path(run_dir) / "grasp_truth.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return verdict, detail  # no truth captured -> leave the verdict unchanged
+    if data.get("any_object_retained") is False:  # explicit False only
+        note = ("grasp false-positive: no object was ever retained by the gripper "
+                "per sim truth (closed on air)")
+        disp = data.get("max_xy_disp_m")
+        if isinstance(disp, (int, float)):
+            note += f"; target moved only {disp * 1000:.0f}mm"
+        return "FAIL", note
+    return verdict, detail
+
+
 def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[str],
                       timeout_s: float, poll_s: float = 1.0,
                       ) -> tuple[str, str, float, list[str], Path | None, bool]:
@@ -368,6 +403,9 @@ def _run_orchestrator(*, env: dict[str, str], run_dir: Path, launcher: Sequence[
     else:
         # Defensive fallback; not a normal path (mirrors run_group's own fallback branch).
         verdict, detail = "TIMEOUT", f"timed out after {timeout_s:.0f}s"
+    # Bench-oracle truth gate: a BT/referee "succeeded" that physics truth shows
+    # closed on air (no object ever retained) is a false positive -> FAIL.
+    verdict, detail = _apply_grasp_truth_gate(verdict, detail, run_dir)
     return verdict, detail, seconds, plan, events_path, referee_assisted
 
 

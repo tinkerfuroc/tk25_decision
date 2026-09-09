@@ -534,3 +534,44 @@ def test_tier2_offline_planner_skips_the_preflight_even_with_llm_check_true(tmp_
         reset_cmd=["true"], settle_s=0, live_llm=False)
 
     assert results[0].verdict == "PASS"
+
+
+# --- grasp-truth bench-oracle gate (_apply_grasp_truth_gate) --------------------
+# A PASS that physics truth shows closed on air (no object ever retained) must be
+# downgraded to FAIL; everything else (retained, missing file, non-PASS) is left
+# untouched. /sim/truth is used here strictly as an after-the-fact bench oracle.
+
+def _write_truth(run_dir: Path, payload: dict) -> Path:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "grasp_truth.json").write_text(json.dumps(payload), encoding="utf-8")
+    return run_dir
+
+
+def test_grasp_truth_gate_downgrades_pass_on_closed_on_air(tmp_path):
+    rd = _write_truth(tmp_path, {"any_object_retained": False, "max_xy_disp_m": 0.0007})
+    verdict, detail = tier2._apply_grasp_truth_gate("PASS", "", rd)
+    assert verdict == "FAIL"
+    assert "closed on air" in detail
+    assert "1mm" in detail  # 0.0007 m -> 0.7 mm -> rounds to 1 mm
+
+
+def test_grasp_truth_gate_keeps_pass_when_retained(tmp_path):
+    rd = _write_truth(tmp_path, {"any_object_retained": True, "max_xy_disp_m": 0.42})
+    assert tier2._apply_grasp_truth_gate("PASS", "", rd) == ("PASS", "")
+
+
+def test_grasp_truth_gate_graceful_when_file_missing(tmp_path):
+    # No probe ran -> no grasp_truth.json -> verdict unchanged (runs unaffected).
+    assert tier2._apply_grasp_truth_gate("PASS", "orig", tmp_path) == ("PASS", "orig")
+
+
+def test_grasp_truth_gate_graceful_when_field_absent(tmp_path):
+    # Probe ran but could not decide retention -> leave the verdict alone.
+    rd = _write_truth(tmp_path, {"samples": 0})
+    assert tier2._apply_grasp_truth_gate("PASS", "orig", rd) == ("PASS", "orig")
+
+
+def test_grasp_truth_gate_only_touches_pass(tmp_path):
+    rd = _write_truth(tmp_path, {"any_object_retained": False})
+    assert tier2._apply_grasp_truth_gate("FAIL", "x", rd) == ("FAIL", "x")
+    assert tier2._apply_grasp_truth_gate("TIMEOUT", "y", rd) == ("TIMEOUT", "y")
