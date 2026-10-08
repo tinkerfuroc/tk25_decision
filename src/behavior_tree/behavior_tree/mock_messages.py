@@ -579,6 +579,7 @@ class GoToApproach(MockAction):
             self.timeout_sec = 0.0
             self.robot_pose_override = None
             self.debug = False
+            self.target_is_person = False
 
     class Result(MockAction.Result):
         def __init__(self):

@@ -3128,8 +3128,12 @@ def create_approach_person(
         "retry approach",
         BtNode_Approach(
             "approach person",
-            bb_target_key=bb_keys.TARGET_PERSON_POSE,
+            # PERSON_NAV_POSE: the same point flattened to z=0 one step
+            # earlier; with target_is_person the planner uses its person
+            # rules (issue-2 2d: the 3-D centroid's z selected object rules).
+            bb_target_key=bb_keys.PERSON_NAV_POSE,
             max_distance=approach_max_distance,
+            target_is_person=True,
         ),
         num_failures=2,
     ))
