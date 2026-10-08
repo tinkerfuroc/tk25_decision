@@ -237,7 +237,13 @@ class ServiceHandler(py_trees.behaviour.Behaviour):
         print("Connecting to service %s" % self.service_name)
         self.client = self.node.create_client(self.service_type, self.service_name)
         print("Created client for service %s" % self.service_name)
+        waited_s = 0
         while not self.client.wait_for_service(timeout_sec=1.0):
+            waited_s += 1
+            if waited_s % 10 == 0:
+                # Loud on purpose: a dead server otherwise hangs the tree
+                # silently inside setup (no tick, no telemetry).
+                print(f"⚠ still waiting for service {self.service_name} ({waited_s}s)")
             self.logger.debug("service not available, waiting again...")
         print("Finished setting up service handler")
 

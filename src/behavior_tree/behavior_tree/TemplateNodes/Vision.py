@@ -82,6 +82,40 @@ from .ActionBase import ActionHandler
 from .structs import Person
 
 
+def vision_scan_timeout_s() -> float:
+    """Return the wall-clock budget for one generalist vision request.
+
+    A hung service future must not hold a GPSR pan/tilt sweep until the
+    command-level timeout.  ``0`` disables the local budget for deployments
+    that intentionally allow unbounded inference.
+    """
+    raw = os.environ.get("GPSR_VISION_SCAN_TIMEOUT_S")
+    if raw is None:
+        return 90.0
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 90.0
+    return float("inf") if value <= 0.0 else value
+
+
+def vision_scan_grace_s() -> float:
+    """Allow a just-finished request to win the timeout race.
+
+    The live generalist service can finish while the behavior-tree tick is
+    crossing its wall-clock deadline.  Cancelling at that exact boundary
+    discarded valid detections, so keep the future alive for a small,
+    configurable grace period before declaring the scan failed.
+    """
+    raw = os.environ.get("GPSR_VISION_SCAN_GRACE_S")
+    if raw is None:
+        return 0.0
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class BtNode_ScanFor(ServiceHandler):
     """
     Scans for objects using YOLO-based detection.
@@ -250,6 +284,9 @@ class BtNode_ScanForGeneralist(ServiceHandler):
         self.return_depth_image = return_depth_image
         self.return_segments = return_segments
         self.read = self.object is None
+        self._scan_started_at = None
+        self._scan_timeout_s = vision_scan_timeout_s()
+        self._scan_grace_s = vision_scan_grace_s()
 
     def setup(self, **kwargs):
         ServiceHandler.setup(self, **kwargs)
@@ -269,6 +306,7 @@ class BtNode_ScanForGeneralist(ServiceHandler):
 
     def initialise(self) -> None:
         super().initialise()
+        self._scan_started_at = time.monotonic()
 
         if self.mock_mode:
             if self.read:
@@ -347,6 +385,21 @@ class BtNode_ScanForGeneralist(ServiceHandler):
             self.bb_write_client.set(self.bb_key, result, overwrite=True)
             self.feedback_message = (
                 f"ScanForGeneralist for {self.object} failed status={result.status}: {result.error_msg}"
+            )
+            return pytree.common.Status.FAILURE
+        started_at = getattr(self, "_scan_started_at", None)
+        timeout_s = getattr(self, "_scan_timeout_s", vision_scan_timeout_s())
+        elapsed = time.monotonic() - started_at if started_at is not None else 0.0
+        grace_s = getattr(self, "_scan_grace_s", vision_scan_grace_s())
+        if started_at is not None and elapsed >= timeout_s + grace_s:
+            cancel = getattr(self.response, "cancel", None)
+            if callable(cancel):
+                try:
+                    cancel()
+                except Exception as exc:  # best effort; failure still unblocks BT
+                    self.logger.warning("generalist scan cancellation failed: %s", exc)
+            self.feedback_message = (
+                f"generalist scan timeout after {timeout_s:.1f}s (+{grace_s:.1f}s grace) for {self.object}"
             )
             return pytree.common.Status.FAILURE
         self.feedback_message = "Still scanning (generalist)..."
@@ -1386,9 +1439,9 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
 
     `update()` holds RUNNING until `/pan_tilt_controller/state` reports
     `feedback_ok` and `|state - cmd| < SETTLE_EPS_DEG` for
-    `SETTLE_SAMPLES_REQUIRED` consecutive samples, OR until
-    `SETTLE_TIMEOUT_SEC` elapses (in which case it warns and returns
-    SUCCESS so a stuck servo doesn't block the whole tree).
+    `SETTLE_SAMPLES_REQUIRED` consecutive samples, or until
+    `SETTLE_TIMEOUT_SEC` elapses. Best-effort callers proceed on timeout;
+    callers that require the view can set `require_settled=True`.
     """
 
     PAN_TILT_COMMAND_TOPIC  = "/pan_tilt_controller/cmd"
@@ -1396,6 +1449,7 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
     SETTLE_EPS_DEG          = 1.5
     SETTLE_SAMPLES_REQUIRED = 1
     SETTLE_TIMEOUT_SEC      = 2.0
+    RETRY_INTERVAL_SEC      = 0.25
 
     def __init__(self, 
                  name: str, 
@@ -1405,6 +1459,7 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
                  x_key: Optional[str] = None,
                  y_key: Optional[str] = None,
                  speed_key: Optional[str] = None,
+                 require_settled: bool = False,
                  ):
         """
         x_key and y_key takes in RADIANS. x and y are in DEGREES.
@@ -1421,6 +1476,8 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self._settle_count = 0
         self._settle_deadline = None
         self._skip_settle = False
+        self._last_publish_time = None
+        self.require_settled = bool(require_settled)
         self.x_key = x_key
         self.y_key = y_key
         self.speed_key = speed_key
@@ -1483,8 +1540,12 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self._cmd_pan_deg = pan_deg
         self._cmd_tilt_deg = tilt_deg
         self._settle_count = 0
-        self._settle_deadline = time.time() + self.SETTLE_TIMEOUT_SEC
+        self._settle_deadline = time.monotonic() + self.SETTLE_TIMEOUT_SEC
         self._skip_settle = False
+
+    def _publish_target(self) -> None:
+        self.publisher.publish(self._build_command_msg(self.x, self.y))
+        self._last_publish_time = time.monotonic()
 
     def initialise(self) -> None:
         if self.x_key:
@@ -1498,41 +1559,45 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
             self._skip_settle = True
             return
         
-        msg = self._build_command_msg(self.x, self.y)
-        self.publisher.publish(msg)
+        self._arm_settle(self.x, self.y)
+        self._publish_target()
         self.logger.info(
             f"Publishing PanTiltCommand ABSOLUTE pan={self.x:+.2f}° "
             f"tilt={self.y:+.2f}° speed_raw={int(self.speed)}"
         )
-        self._arm_settle(self.x, self.y)
 
     def update(self) -> Status:
         if self.mock_mode or self._skip_settle:
             return pytree.common.Status.SUCCESS
 
         state = self._latest_state
-        now = time.time()
-        if state is None or not getattr(state, 'feedback_ok', False):
-            if now > self._settle_deadline:
-                print("PanTilt settle timeout (no feedback); proceeding")
-                return pytree.common.Status.SUCCESS
-            return pytree.common.Status.RUNNING
-
-        pan_err  = abs(math.degrees(state.pan_rad)  - self._cmd_pan_deg)
-        tilt_err = abs(math.degrees(state.tilt_rad) - self._cmd_tilt_deg)
-        if pan_err < self.SETTLE_EPS_DEG and tilt_err < self.SETTLE_EPS_DEG:
+        now = time.monotonic()
+        feedback_ok = state is not None and getattr(state, "feedback_ok", False)
+        pan_err = tilt_err = None
+        if feedback_ok:
+            pan_err = abs(math.degrees(state.pan_rad) - self._cmd_pan_deg)
+            tilt_err = abs(math.degrees(state.tilt_rad) - self._cmd_tilt_deg)
+        if feedback_ok and pan_err < self.SETTLE_EPS_DEG and tilt_err < self.SETTLE_EPS_DEG:
             self._settle_count += 1
             if self._settle_count >= self.SETTLE_SAMPLES_REQUIRED:
+                self.feedback_message = "Pan/tilt target reached"
                 return pytree.common.Status.SUCCESS
         else:
             self._settle_count = 0
 
-        if now > self._settle_deadline:
-            print(
-                f"PanTilt settle timeout (pan_err={pan_err:.2f}°, "
-                f"tilt_err={tilt_err:.2f}°); proceeding"
-            )
+        if now >= self._settle_deadline:
+            if feedback_ok:
+                detail = f"Pan/tilt did not settle (pan_err={pan_err:.2f}°, tilt_err={tilt_err:.2f}°)"
+            else:
+                detail = "Pan/tilt feedback unavailable"
+            self.feedback_message = detail
+            if self.require_settled:
+                return pytree.common.Status.FAILURE
+            print(f"{detail}; proceeding")
             return pytree.common.Status.SUCCESS
+
+        if now - self._last_publish_time >= self.RETRY_INTERVAL_SEC:
+            self._publish_target()
         return pytree.common.Status.RUNNING
 
     async def wait_seconds(self, seconds):

@@ -183,3 +183,45 @@ def test_strict_mode_unaffected_by_relaxed_flag(monkeypatch):
     calls = {c.args[0]: c.args[1] for c in node._client.set.call_args_list}
     assert calls["gpsr/target_object"] is picked
     assert "gpsr/person_provenance" not in calls
+
+
+def test_gesture_scan_prefers_body_candidate_over_room_anchor(monkeypatch):
+    """An extended pointing limb must not turn the sofa centroid into a goal."""
+    from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+    from behavior_tree.GPSR import small_trees
+
+    anchor = PoseStamped(
+        pose=Pose(position=Point(x=-2.184, y=-3.837, z=0.0),
+                  orientation=Quaternion(w=1.0))
+    )
+    import behavior_tree.GPSR.orchestrator as orchestrator
+    monkeypatch.setattr(orchestrator, "KNOWN_LOCATIONS", {"sofa": anchor})
+    monkeypatch.setattr(orchestrator, "ROOM_SEARCH_SPOTS", {"living_room": ["sofa"]})
+
+    near_anchor = _FakeItem("person pointing to the left", x=-2.20, y=-3.79)
+    body = _FakeItem("person pointing to the left", x=-3.80, y=-3.95)
+
+    ordered = small_trees.BtNode_ExtractDetection._prefer_body_candidate(
+        [near_anchor, body], "person pointing to the left", "living_room"
+    )
+
+    assert ordered == [body, near_anchor]
+
+
+def test_non_gesture_scan_keeps_detector_order(monkeypatch):
+    from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+    from behavior_tree.GPSR import small_trees
+
+    anchor = PoseStamped(
+        pose=Pose(position=Point(x=-2.184, y=-3.837, z=0.0),
+                  orientation=Quaternion(w=1.0))
+    )
+    import behavior_tree.GPSR.orchestrator as orchestrator
+    monkeypatch.setattr(orchestrator, "KNOWN_LOCATIONS", {"sofa": anchor})
+    monkeypatch.setattr(orchestrator, "ROOM_SEARCH_SPOTS", {"living_room": ["sofa"]})
+    first = _FakeItem("person", x=-2.20, y=-3.79)
+    second = _FakeItem("person", x=-3.80, y=-3.95)
+
+    assert small_trees.BtNode_ExtractDetection._prefer_body_candidate(
+        [first, second], "person", "living_room"
+    ) == [first, second]

@@ -17,7 +17,7 @@ from pathlib import Path
 from behavior_tree.GPSR.bench.corpus import (
     EDGE_COMMANDS, generate_corpus, generate_sim_corpus, read_jsonl, write_jsonl,
 )
-from behavior_tree.GPSR.bench.report import BenchResult, write_report
+from behavior_tree.GPSR.bench.report import BenchResult, pass_streak, write_report
 from behavior_tree.GPSR.bench.tier0 import run_tier0
 from behavior_tree.GPSR.bench.tier1 import run_tier1
 from behavior_tree.GPSR.bench.tier2 import DEFAULT_RESET_CMD, run_tier2
@@ -78,9 +78,14 @@ def _corpus_seed(entries):
     return None
 
 
-def _finish(results, out: Path, corpus: Path, *, meta: dict | None = None) -> int:
-    summary = write_report(results, out, corpus_path=corpus, meta=meta)
+def _finish(results, out: Path, corpus: Path, *, meta: dict | None = None,
+            required_streak: int | None = None) -> int:
+    results = list(results)
+    summary = write_report(results, out, corpus_path=corpus, meta=meta,
+                           required_streak=required_streak)
     print(summary.read_text())
+    if required_streak is not None:
+        return 0 if pass_streak(results, required=required_streak)["met"] else 1
     return 0 if results and all(r.verdict == "PASS" for r in results) else 1
 
 
@@ -149,7 +154,8 @@ def cmd_tier2(args) -> int:
             "only_class": args.only_class, "live_llm": not args.offline_planner,
             "llm_check": not args.skip_llm_check, "seed": _corpus_seed(entries),
             "source_path": _resolved_source_path()}
-    return _finish(results, Path(args.out), Path(args.corpus), meta=meta)
+    return _finish(results, Path(args.out), Path(args.corpus), meta=meta,
+                   required_streak=args.require_streak)
 
 
 def cmd_report(args) -> int:
@@ -201,6 +207,8 @@ def build_parser() -> argparse.ArgumentParser:
             t.add_argument("--start", type=int, default=0, help="skip this many entries before running")
             t.add_argument("--skip-llm-check", action="store_true",
                             help="skip the one-shot OpenRouter LLM preflight probe before the first entry")
+            t.add_argument("--require-streak", type=int, default=None, metavar="N",
+                           help="require N consecutive clean planner+physical passes for a zero exit code")
         t.set_defaults(func=func)
 
     r = sub.add_parser("report", help="re-render SUMMARY.md from report.json")

@@ -87,6 +87,22 @@ def is_start_alias(value: Any) -> bool:
 # dropped-follow-tail rule must not demand a goto() to them.
 FOLLOW_DIRECTION_WORDS = frozenset({"left", "right"})
 
+# A target whose declared result is ``answered(...)`` must make the speech
+# action explicit in its materialised plan.  The answer-producing actions
+# (``llm_fallback``, ``count``, ``describe_person`` and friends) only fill a
+# report buffer; they do not prove that the result was delivered to anyone.
+# Keep this small, local vocabulary here rather than importing planner.py (the
+# planner imports this module).
+_PERSON_WORDS_RE = re.compile(
+    r"\b(?:person|people|human|humans|someone|somebody|guest|"
+    r"man|woman|boy|girl|child|lady|gentleman|alex|sarah|john|emma|liam|olivia)\b",
+    re.IGNORECASE,
+)
+_PERSON_SPEECH_RE = re.compile(
+    r"\b(?:say|tell|speak|talk|announce|answer|inform|report)\b",
+    re.IGNORECASE,
+)
+
 
 def _norm_loc(name: str) -> str:
     """Normalise a location name for matching: lowercase, spaces -> underscores.
@@ -454,14 +470,17 @@ def uncovered_postcondition_reason(
     collect every miss), naming every registry establisher for its predicate.
     """
     established = established_predicates(plan)
-    self_nav_destinations = {
+    self_nav_destinations = [
         nav_fact.args[0]
         for step in plan
         if isinstance(step, dict)
         for f in self_established_facts(step)
         for nav_fact, _err in (parse_fact(f),)
         if nav_fact is not None and nav_fact.predicate == "at_robot" and nav_fact.args
-    }
+    ]
+    final_nav_destination = (
+        self_nav_destinations[-1] if self_nav_destinations else None
+    )
 
     for condition in postconditions or []:
         fact, _error = parse_fact(condition)
@@ -475,11 +494,12 @@ def uncovered_postcondition_reason(
             # I5: an operator-alias postcondition (at_robot(me)/at_robot(the
             # operator)/...) is covered by a goto to ANY operator alias
             # (typically start_position, per the split prompt) -- not just
-            # an exact string match.
-            if fact.args and (
-                fact.args[0] in self_nav_destinations
+            # an exact string match. Only the last navigation establishes
+            # where the robot is when the plan completes.
+            if fact.args and final_nav_destination is not None and (
+                fact.args[0] == final_nav_destination
                 or (is_start_alias(fact.args[0])
-                    and any(is_start_alias(dest) for dest in self_nav_destinations))
+                    and is_start_alias(final_nav_destination))
             ):
                 continue
         elif fact.predicate in established:
@@ -493,6 +513,144 @@ def uncovered_postcondition_reason(
             "add one of: " + ", ".join(establishers)
         )
     return None
+
+
+def _has_answered_postcondition(postconditions: Optional[Iterable[str]]) -> bool:
+    """Return whether a target declares an ``answered(...)`` result."""
+    for condition in postconditions or []:
+        fact, _error = parse_fact(condition)
+        if fact is not None and fact.predicate == "answered":
+            return True
+    return False
+
+
+def _person_directed_answer_requires_approach(
+    command: str,
+    plan: List[Dict[str, Any]],
+    prior_plan: Optional[Iterable[Dict[str, Any]]],
+) -> bool:
+    """Whether an answer target is speaking to a person in the scene.
+
+    The split layer commonly emits a bare follow-up target such as ``say what
+    day it is`` after a preceding ``find_person`` target.  In that shape the
+    target text has no addressee, so the accepted ancestor plan is the useful
+    context.  Explicit operator wording always wins and keeps a normal report
+    target from being mistaken for person-directed speech.
+    """
+    text = str(command or "")
+    # ``OPERATOR_REPORT_RE`` covers tell/report/show/give/bring ... me and
+    # ``to me``; also handle the common explicit operator synonyms here.
+    if OPERATOR_REPORT_RE.search(text.lower()) or re.search(
+        r"\b(?:operator|user|commander|command\s+point)\b", text,
+        re.IGNORECASE,
+    ):
+        return False
+    has_person_context = bool(_PERSON_WORDS_RE.search(text))
+    ancestors = list(prior_plan or [])
+    has_person_context = has_person_context or any(
+        isinstance(step, dict) and step.get("action") == "find_person"
+        for step in ancestors
+    )
+    if not has_person_context:
+        return False
+    # A person-directed answer requires an actual speech-bearing action.  The
+    # explicit announce requirement below normally guarantees this, but keep
+    # the predicate here readable and robust for callers that reuse it.
+    return any(
+        isinstance(step, dict)
+        and step.get("action") in {"announce", "ask_person", "answer_question", "describe_person"}
+        for step in plan
+    )
+
+
+def _person_answer_approach_reason(
+    command: str,
+    plan: List[Dict[str, Any]],
+    prior_plan: Optional[Iterable[Dict[str, Any]]],
+) -> Optional[str]:
+    """Reject person-directed speech unless approach precedes the answer."""
+    if not _person_directed_answer_requires_approach(command, plan, prior_plan):
+        return None
+    answer_positions = [
+        i for i, step in enumerate(plan)
+        if isinstance(step, dict) and step.get("action") in {
+            "announce", "ask_person", "answer_question", "describe_person",
+        }
+    ]
+    if not answer_positions:
+        return None
+    first_answer = min(answer_positions)
+    if any(
+        isinstance(step, dict) and step.get("action") == "approach_person"
+        for step in plan[:first_answer]
+    ):
+        return None
+    if any(
+        isinstance(step, dict) and step.get("action") == "approach_person"
+        for step in (prior_plan or [])
+    ):
+        return None
+    return (
+        "person-directed answer requires a preceding approach_person() "
+        "step before the announcement"
+    )
+
+
+# Actions that gather an answer or a report into a blackboard buffer.  The
+# legacy one-layer planner does not have the split target's postconditions
+# available, so its call to ``validate_plan`` cannot use the
+# ``answered(...)`` coverage check below.  Keep this small action-level guard
+# as the equivalent safety net for that path.  The action implementations may
+# also speak progress/result text internally, but that output is not an
+# auditable plan step and cannot satisfy the command's final report.
+_ANSWER_PRODUCING_ACTIONS = frozenset({
+    "count", "describe_person", "ask_person", "answer_question",
+    "vlm_fallback", "llm_fallback",
+})
+
+
+def _explicit_answer_announce_reason(
+    plan: List[Dict[str, Any]],
+) -> Optional[str]:
+    """Require a real ``announce`` after every answer-producing action.
+
+    ``BtNode_PlanActions`` (the legacy planner) validates only a command string
+    and an action vocabulary; it has no target postcondition list to tell it
+    that a result must be delivered.  Without this check, a bare
+    ``llm_fallback``/``count``/``describe_person`` plan is accepted and the
+    evaluator may mark it as answered even though no explicit, inspectable
+    speech step exists.  Acknowledgement announces are planning-failure
+    apologies and do not count as delivering an answer.
+
+    The returned reason names the first missing result announcement.  A plan
+    with multiple result actions must have an announcement after the final
+    one; an announcement before a result cannot report that result.
+    """
+    result_positions = [
+        i for i, step in enumerate(plan)
+        if isinstance(step, dict)
+        and step.get("action") in _ANSWER_PRODUCING_ACTIONS
+    ]
+    if not result_positions:
+        return None
+
+    # An explicit acknowledgement is an apology for an incomplete plan, not
+    # the requested answer.  Keep it out of the set of valid report steps.
+    announce_positions = [
+        i for i, step in enumerate(plan)
+        if isinstance(step, dict)
+        and step.get("action") == "announce"
+        and not bool((step.get("params") or {}).get("acknowledgement"))
+    ]
+    last_result = max(result_positions)
+    if any(i > last_result for i in announce_positions):
+        return None
+    action = str(plan[last_result].get("action"))
+    return (
+        f"{action}() gathers the requested result but does not deliver it; "
+        "add an explicit announce() step after the result (and after any "
+        "goto(start_position) needed to report to the operator)"
+    )
 
 
 def validate_plan(
@@ -548,14 +706,18 @@ def validate_plan(
     saw_ask_person = False
     saw_vlm_fallback = False
     saw_llm_fallback = False
+    pending_llm_announce = False
     saw_count = False
     saw_describe_person = False
     saw_goto_destinations: set = set()
     recorded_labels: set = set()  # labels fixed by an earlier record_position
 
-    # Seed cross-target state from an earlier target's accepted plan.
-    if prior_plan:
-        for step in prior_plan:
+    # Seed cross-target state from an earlier target's accepted plan.  Materialise
+    # the iterable once because the person-directed answer check below also
+    # needs to inspect the same ancestor steps.
+    prior_steps = list(prior_plan or [])
+    if prior_steps:
+        for step in prior_steps:
             if not isinstance(step, dict):
                 continue
             action = step.get("action")
@@ -568,10 +730,13 @@ def validate_plan(
                 saw_vlm_fallback = True
             elif action == "llm_fallback":
                 saw_llm_fallback = True
+                pending_llm_announce = True
             elif action == "count":
                 saw_count = True
             elif action == "describe_person":
                 saw_describe_person = True
+            elif action == "announce":
+                pending_llm_announce = False
             elif action == "record_position":
                 lab = params.get("label")
                 if isinstance(lab, str) and lab.strip():
@@ -599,6 +764,7 @@ def validate_plan(
             saw_vlm_fallback = True
         if action == "llm_fallback":
             saw_llm_fallback = True
+            pending_llm_announce = True
         if action == "count":
             saw_count = True
         if action == "describe_person":
@@ -607,6 +773,11 @@ def validate_plan(
         # the REPORT_INFO buffer, so it needs a prior result-producing action
         # (count / describe_person / ask_person / vlm_fallback / llm_fallback).
         # A bare announce with nothing gathered would speak an empty/stale buffer.
+        if action == "announce":
+            # ``llm_fallback`` gathers an answer into REPORT_INFO.  Speech is a
+            # separate, explicit plan action so the materialized plan and the
+            # announcement artifact can be audited together.
+            pending_llm_announce = False
         if action == "announce" and not (params.get("text") or params.get("message")):
             if not (saw_count or saw_describe_person or saw_ask_person
                     or saw_vlm_fallback or saw_llm_fallback):
@@ -689,6 +860,43 @@ def validate_plan(
                     f"params[{k!r}]={v!r}. Resolve the literal value or "
                     "refuse the step — never emit unresolved templates."
                 )
+
+    if pending_llm_announce:
+        return False, (
+            "llm_fallback() must be followed by an explicit announce() step; "
+            "the fallback only gathers the answer into REPORT_INFO"
+        )
+
+    # Legacy BtNode_PlanActions calls this validator without a target's
+    # postconditions.  Enforce the same explicit-report contract from the
+    # materialised actions themselves so a bare count/describe/fallback plan
+    # cannot be accepted as a completed answer.
+    # ``postconditions`` callers use the target-level answered(...) check
+    # immediately below.  Keep this action-level fallback for the legacy path
+    # specifically (which passes no postconditions), so the two checks do not
+    # change the reason/order of the split-layer diagnostics.
+    if postconditions is None:
+        explicit_answer_reason = _explicit_answer_announce_reason(plan)
+        if explicit_answer_reason is not None:
+            return False, explicit_answer_reason
+
+    # An ``answered(...)`` postcondition is a communication result.  Gathering
+    # an answer in a fallback/count/description buffer is not equivalent to
+    # delivering it, so require an explicit announce step in the accepted
+    # materialised plan.  This catches the historical plans that were marked
+    # valid despite never speaking the requested result.
+    if _has_answered_postcondition(postconditions) and not any(
+        isinstance(step, dict) and step.get("action") == "announce"
+        for step in plan
+    ):
+        return False, (
+            "answered(...) targets require an explicit announce() step; "
+            "answer_question/llm_fallback/count only gather the result"
+        )
+
+    person_reason = _person_answer_approach_reason(command, plan, prior_steps)
+    if person_reason is not None:
+        return False, person_reason
 
     # Rule: category-to-instance collapse.
     # If the command mentions a category and the plan has a find_object whose

@@ -76,23 +76,23 @@ def _real_vision(monkeypatch):
 
 
 def _build(*, strict_objects, generic_objects):
-    """Real _person_scan_strategies() (no extra_specialist -> selector.children
-    == [waving, generalist, relaxed, generic_scan]), scan leaves replaced by
-    controllable stubs. ``strict_objects``/``generic_objects`` are the
-    detection lists the strict/generic scans "find" (empty list == the scan
-    ran but matched nothing, same shape a real zero-match response has)."""
+    """Build the real strategy selector with controllable scan leaves.
+
+    In relaxed simulator mode the generic branch is intentionally promoted
+    to the front, so branches are located by their stable names rather than
+    by priority order.
+    """
     py_trees.blackboard.Blackboard.clear()
     writer = py_trees.blackboard.Client(name="seed person scan strategies")
     writer.register_key(bb_keys.TARGET_PERSON_PROMPT, access=Access.WRITE)
     writer.set(bb_keys.TARGET_PERSON_PROMPT, "person", overwrite=True)
 
     selector = small_trees._person_scan_strategies()
-    assert len(selector.children) == 4, (
-        "expected [waving, generalist, relaxed_generalist, generic_scan]"
-    )
-    waving_branch, generalist_branch, _relaxed_branch, generic_scan_branch = (
-        selector.children
-    )
+    assert len(selector.children) == 4
+    branches = {child.name: child for child in selector.children}
+    waving_branch = branches["waving person branch"]
+    generalist_branch = branches["generalist person scan"]
+    generic_scan_branch = branches["generic person scan"]
 
     # The waving guard never matches a bare "person" descriptor -- but
     # setup() still walks the branch, and its real scan leaf needs a ROS
@@ -141,8 +141,7 @@ def _tick_to_completion(selector, max_ticks: int = 6):
 
 
 def test_zero_match_strict_scan_falls_through_to_generic_scan(monkeypatch):
-    """flag on + strict scan returns 0 objects + generic scan finds a
-    person -> pose written, provenance relaxed_generic, strategy succeeds."""
+    """Relaxed simulator mode uses the generic scan as the first branch."""
     monkeypatch.setenv("GPSR_SIM_IDENTITY_RELAXED", "1")
     picked = _FakeItem("person")
     selector, strict_stub, generic_stub = _build(
@@ -152,7 +151,7 @@ def test_zero_match_strict_scan_falls_through_to_generic_scan(monkeypatch):
     _tick_to_completion(selector)
 
     assert selector.status is Status.SUCCESS
-    assert strict_stub.ticks == 1
+    assert strict_stub.ticks == 0
     assert generic_stub.ticks == 1
     assert py_trees.blackboard.Blackboard.get(bb_keys.TARGET_OBJECT) is picked
     assert py_trees.blackboard.Blackboard.exists(bb_keys.TARGET_PERSON_POSE)
@@ -186,8 +185,7 @@ def test_flag_off_generic_branch_is_never_ticked(monkeypatch):
 
 
 def test_strict_scan_success_never_reaches_the_generic_scan(monkeypatch):
-    """A person already found by the strict query costs no extra VLM
-    call -- the generic scan branch must not even be ticked."""
+    """The promoted generic scan wins before the descriptor-specific scan."""
     monkeypatch.setenv("GPSR_SIM_IDENTITY_RELAXED", "1")
     picked = _FakeItem("person")
     selector, strict_stub, generic_stub = _build(
@@ -197,8 +195,30 @@ def test_strict_scan_success_never_reaches_the_generic_scan(monkeypatch):
     _tick_to_completion(selector)
 
     assert selector.status is Status.SUCCESS
-    assert strict_stub.ticks == 1
-    assert generic_stub.ticks == 0, (
-        "generalist_branch already succeeded -- the generic scan is the "
-        "last resort, not tried when unnecessary"
+    assert strict_stub.ticks == 0
+    assert generic_stub.ticks == 1
+
+
+def test_person_scans_request_masks_for_self_arm_filtering():
+    """All generalist person scans retain masks for self-arm filtering."""
+    from behavior_tree.TemplateNodes.Vision import BtNode_ScanForGeneralist
+
+    selector = small_trees._person_scan_strategies()
+    branches = {child.name: child for child in selector.children}
+    strict_scan = branches["generalist person scan"].children[0]
+    generic_scan = branches["generic person scan"].children[2]
+    assert isinstance(strict_scan, BtNode_ScanForGeneralist)
+    assert isinstance(generic_scan, BtNode_ScanForGeneralist)
+    assert strict_scan.return_segments is True
+    assert generic_scan.return_segments is True
+
+    specialist_selector = small_trees._person_scan_strategies(
+        extra_specialist={"gate": "pointing to the left"},
     )
+    specialist = next(
+        child for child in specialist_selector.children
+        if child.name == "pointing to the left person branch"
+    )
+    specialist_scan = specialist.children[2]
+    assert isinstance(specialist_scan, BtNode_ScanForGeneralist)
+    assert specialist_scan.return_segments is True

@@ -145,6 +145,10 @@ def default_node_contracts() -> NodeContractRegistry:
             "BtNode_ScanAndPlace",
             "BtNode_FoldClothingAction",
             "BtNode_FoldClothingDn",
+            # Simulator referee handoff physically moves the target object
+            # into the gripper and therefore belongs to the same irreversible
+            # manipulation contract as the normal grasp path.
+            "BtNode_RefereeHandObject",
         ),
         "manipulation",
         EffectRisk.IRREVERSIBLE,

@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import textwrap
 import time
@@ -107,6 +108,10 @@ def test_tier2_pass_run_orders_reset_recorder_sheet_and_writes_run_json(tmp_path
     assert run_json["id"] == "c0"
     assert run_json["verdict"] == "PASS"
     assert run_json["text"] == "go to the sofa"
+    progress = json.loads((tmp_path / "out" / "progress.json").read_text())
+    assert progress["status"] == "complete"
+    assert progress["completed"] == progress["expected"] == 1
+    assert progress["results"][0]["entry_id"] == "c0"
 
 
 def test_tier2_reset_failure_scores_error_without_launching_orchestrator(tmp_path):
@@ -166,16 +171,16 @@ def test_tier2_substitutes_run_dir_as_an_absolute_path(tmp_path):
 def test_tier2_unexecutable_launcher_stops_recorder_and_scores_error(tmp_path):
     entries = [_entry(0, "go to the sofa")]
 
-    # Monkeypatch tier2._stop to record which Popen objects were stopped and call the real implementation.
+    # Record which recorder Popen objects were stopped and call the real implementation.
     stopped_procs = []
-    real_stop = tier2._stop
+    real_stop = tier2._stop_recorder
 
-    def patched_stop(proc):
+    def patched_stop(proc, **kwargs):
         stopped_procs.append(proc)
-        real_stop(proc)
+        real_stop(proc, **kwargs)
 
     # Launcher path is unexecutable, will raise OSError in Popen.
-    with mock.patch.object(tier2, "_stop", side_effect=patched_stop):
+    with mock.patch.object(tier2, "_stop_recorder", side_effect=patched_stop):
         results = run_tier2(entries, mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
                             out_dir=tmp_path / "out", timeout_s=20,
                             launcher=["/nonexistent/path/to/orchestrator"],
@@ -187,11 +192,38 @@ def test_tier2_unexecutable_launcher_stops_recorder_and_scores_error(tmp_path):
     recorder_proc = stopped_procs[0]
 
     # Assert (b) the recorder process is no longer alive after run_tier2 returns
-    assert recorder_proc.poll() is not None, "Recorder process should not be alive after _stop"
+    assert recorder_proc.poll() is not None, "Recorder process should not be alive after shutdown"
 
     # Assert (c) the entry's verdict is ERROR with detail starting "exception:"
     assert results[0].verdict == "ERROR", f"Expected verdict ERROR, got {results[0].verdict}"
     assert results[0].detail.startswith("exception:"), f"Expected detail to start with 'exception:', got {results[0].detail}"
+
+
+def test_recorder_stop_waits_for_graceful_flush(tmp_path):
+    marker = tmp_path / "recorder-flushed"
+    script = tmp_path / "slow_recorder.py"
+    script.write_text(textwrap.dedent(f"""
+        import pathlib, signal, sys, time
+        def stop(_sig, _frame):
+            time.sleep(0.4)
+            pathlib.Path({str(marker)!r}).touch()
+            raise SystemExit(0)
+        signal.signal(signal.SIGINT, stop)
+        pathlib.Path({str(tmp_path / 'recorder-ready')!r}).touch()
+        while True:
+            time.sleep(1)
+    """))
+    proc = subprocess.Popen([sys.executable, str(script)], start_new_session=True)
+    ready = tmp_path / "recorder-ready"
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and not ready.exists():
+        time.sleep(0.01)
+    assert ready.exists()
+
+    tier2._stop_recorder(proc, timeout_s=2)
+
+    assert marker.exists()
+    assert proc.returncode == 0
 
 
 def test_tier2_sheet_failure_doesnt_change_verdict(tmp_path):

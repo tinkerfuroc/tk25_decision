@@ -16,7 +16,8 @@ DEFAULT_LAUNCHER = ["ros2", "run", "behavior_tree", "gpsr-orchestrator"]
 
 
 def bench_env(*, mock_config: Path, constants: Path, plan_dir: Path, commands: Sequence[str],
-              live_llm: bool) -> dict[str, str]:
+              live_llm: bool, sim_identity_relaxed: bool = True,
+              start_outside_arena: bool | None = None) -> dict[str, str]:
     # The orchestrator is launched with cwd=plan_dir (see run_group); if BT_GPSR_PLAN_DIR were
     # left relative, the orchestrator would re-resolve it against that same cwd and nest its
     # telemetry under plan_dir/plan_dir/debug/... instead of plan_dir/debug/..., so
@@ -33,11 +34,16 @@ def bench_env(*, mock_config: Path, constants: Path, plan_dir: Path, commands: S
         "BT_GPSR_PLAN_DIR": str(plan_dir),
         "GPSR_DEBUG_TELEMETRY": "1",
         "BT_LISTEN_MOCK_TYPED": "0",
-        # Sim persons carry no name identity -- every tier-2 run is
-        # against the sim, so this is always on here (never set for a
-        # real-robot launch, which does not go through bench_env at all).
-        "GPSR_SIM_IDENTITY_RELAXED": "1",
     })
+    if start_outside_arena is not None:
+        env["GPSR_START_OUTSIDE_ARENA"] = "1" if start_outside_arena else "0"
+    # Tier 1 uses synthetic identity relaxation because its vision and
+    # navigation boundaries are mocked. Live tier-2 runs may opt out so a
+    # descriptor-specific recipient must be selected from real detections.
+    if sim_identity_relaxed:
+        env["GPSR_SIM_IDENTITY_RELAXED"] = "1"
+    else:
+        env.pop("GPSR_SIM_IDENTITY_RELAXED", None)
     return env
 
 

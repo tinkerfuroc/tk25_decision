@@ -38,6 +38,74 @@ def known_objects(monkeypatch):
     return names
 
 
+# ---------------------------------------------------------------------------
+# Category expansion (sim battery 2026-09-25): "food" / "kitchen items" must
+# reach the detector as every member's description, ' . '-joined (the
+# generalist's multi-class open-vocab grammar), never as the bare noun.
+# ---------------------------------------------------------------------------
+@pytest.fixture()
+def rcw_categories(monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch
+    prompts = {"banana": "yellow banana", "soup": "red tomato soup can",
+               "sugar_box": "yellow sugar box", "mug": "red ceramic mug", "bowl": "red bowl"}
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_PROMPTS", prompts)
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", set(prompts))
+    monkeypatch.setattr(orch, "KNOWN_CATEGORIES", {
+        "food": ["soup", "sugar_box", "banana"], "kitchen_item": ["bowl", "mug"], "drink": [],
+    })
+
+
+@pytest.mark.parametrize("word", ["food", "foods", "Food", " food "])
+def test_category_prompt_expands_to_every_member_description(rcw_categories, word):
+    from behavior_tree.GPSR.orchestrator import object_prompt_for
+    assert object_prompt_for(word) == "red tomato soup can . yellow sugar box . yellow banana"
+
+
+def test_plural_multiword_category_expands(rcw_categories):
+    from behavior_tree.GPSR.orchestrator import object_prompt_for, category_members
+    assert category_members("kitchen items") == ["bowl", "mug"]
+    assert object_prompt_for("kitchen items") == "red bowl . red ceramic mug"
+
+
+def test_known_object_and_unknown_word_are_unchanged(rcw_categories):
+    from behavior_tree.GPSR.orchestrator import object_prompt_for
+    assert object_prompt_for("banana") == "yellow banana"
+    assert object_prompt_for("drink") == "drink"        # configured but empty here
+    assert object_prompt_for("teddy bear") == "teddy bear"
+
+
+def test_loader_reads_categories_from_constants(tmp_path, monkeypatch):
+    import json
+    from behavior_tree.GPSR import orchestrator as orch
+    constants = {
+        "possible_objects": {"banana": "yellow banana", "bowl": "red bowl"},
+        "categories": {"_comment": "x", "fruits": ["banana", "not_an_object"], "dishes": ["bowl"]},
+    }
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(constants))
+    orch.load_knowledge_from_constants(str(path))
+    assert orch.KNOWN_CATEGORIES == {"fruit": ["banana"], "dish": ["bowl"]}
+    assert orch.object_prompt_for("fruit") == "yellow banana"
+
+
+def test_category_expanded_prompt_is_not_reduced(rcw_categories):
+    # Sim battery 2026-09-26 run s70718-003: the ' . '-joined expansion of
+    # "food" is every member's known description already; the token-subset
+    # rule used to pick one arbitrary member ("sugar box") and spend a second
+    # full sweep on it.
+    from behavior_tree.GPSR.orchestrator import object_prompt_for, reduce_unknown_object_query
+    assert reduce_unknown_object_query(object_prompt_for("food")) is None
+
+
+def test_find_object_sweep_includes_a_steep_down_tilt():
+    # Same run: the bedroom spot stands 0.3-0.5 m from the side table, so the
+    # objects sit 55-65 deg below the head camera; 0/20 never framed them.
+    from behavior_tree.GPSR.small_trees import OBJECT_TILT_DEG, create_find_object
+    assert OBJECT_TILT_DEG[-1] >= 45.0
+    names = {getattr(n, "name", "") for n in _walk(create_find_object())}
+    assert "find_object pan=+0 tilt=+45" in names
+
+
 def test_reduces_unknown_attributed_query_to_known_subset(known_objects):
     from behavior_tree.GPSR.orchestrator import reduce_unknown_object_query
     assert reduce_unknown_object_query("red bowl") == "bowl"

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>GPSR Command Console</title>
+<style>
+  :root {
+    --bg: #10141a; --panel: #171d26; --line: #263041;
+    --text: #dbe4f0; --dim: #8494ab;
+    --accent: #4da3ff; --ok: #3fbf7f; --bad: #ff6b6b; --run: #ffc14d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0;
+  }
+  header h1 { font-size: 16px; margin: 0; }
+  .pill { padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; }
+  .pill.running { color: var(--run); border-color: var(--run); }
+  .pill.down { color: var(--bad); border-color: var(--bad); }
+  .pill.up { color: var(--ok); border-color: var(--ok); }
+  .pill.idle { color: var(--dim); }
+  .pill.telemetry-on { color: var(--ok); border-color: var(--ok); }
+  main { display: grid; grid-template-columns: 380px 1fr; gap: 14px; padding: 14px 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 0 0 10px; }
+  textarea#cmd {
+    width: 100%; min-height: 64px; resize: vertical;
+    background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+    font: 14px/1.4 inherit;
+  }
+  .row { display: flex; gap: 8px; margin-top: 8px; }
+  button {
+    background: #1d2736; color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 14px; cursor: pointer; font: inherit;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #08121f; font-weight: 600; }
+  button.danger { border-color: var(--bad); color: var(--bad); }
+  button:disabled { opacity: .45; cursor: default; }
+  .meta { color: var(--dim); font-size: 12px; margin-top: 8px; word-break: break-all; }
+  .current-cmd { font-size: 15px; margin: 6px 0; }
+  ol.steps { list-style: none; margin: 0; padding: 0; }
+  ol.steps li {
+    display: flex; gap: 10px; align-items: baseline;
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px;
+  }
+  ol.steps li.running { border-color: var(--run); background: rgba(255,193,77,.08); }
+  ol.steps li.succeeded { border-color: rgba(63,191,127,.4); }
+  ol.steps li.failed, ol.steps li.error { border-color: var(--bad); background: rgba(255,107,107,.07); }
+  .idx { color: var(--dim); font-variant-numeric: tabular-nums; min-width: 3ch; }
+  .action { font-weight: 600; min-width: 12ch; }
+  .params { color: var(--dim); word-break: break-all; }
+  .state { margin-left: auto; font-size: 12px; white-space: nowrap; }
+  .state.succeeded { color: var(--ok); } .state.failed, .state.error { color: var(--bad); }
+  .state.running { color: var(--run); } .state.pending { color: var(--dim); }
+  .slot-h { margin: 14px 0 6px; font-size: 13px; color: var(--accent); }
+  .slot-h.active { color: var(--run); }
+  #feed { font: 12px/1.5 ui-monospace, monospace; max-height: 260px; overflow-y: auto; }
+  #feed .ev { display: flex; gap: 8px; padding: 1px 0; color: var(--dim); }
+  #feed .ev b { color: var(--text); font-weight: 500; }
+  #feed .t { color: #566a87; white-space: nowrap; }
+  .err { color: var(--bad); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>GPSR Command Console</h1>
+  <span class="pill idle" id="orch-pill">orchestrator: idle</span>
+  <span class="pill idle" id="stack-pill">stack: —</span>
+  <span class="pill idle" id="tel-pill">telemetry: —</span>
+</header>
+<main>
+  <section class="panel">
+    <h2>Command</h2>
+    <textarea id="cmd" placeholder="e.g. bring me the coke from the kitchen&#10;(multiple: separate with |)"></textarea>
+    <div class="row">
+      <button class="primary" id="send">Start run</button>
+      <button id="rand">Random command</button>
+      <button class="danger" id="stop">Stop</button>
+    </div>
+    <div class="err" id="cmd-err"></div>
+    <div class="meta" id="stack-hint"></div>
+    <h2 style="margin-top:16px">Ongoing command</h2>
+    <div class="current-cmd" id="current-cmd">—</div>
+    <div class="meta" id="run-meta"></div>
+    <div class="meta" id="orch-meta"></div>
+  </section>
+  <section>
+    <div class="panel" style="margin-bottom:14px">
+      <h2>Plan</h2>
+      <div id="plans"><span class="meta">No plan yet — start a run or wait for an external orchestrator.</span></div>
+    </div>
+    <div class="panel">
+      <h2>Event feed</h2>
+      <div id="feed"></div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let sending = false;
+
+function fmtParams(p) {
+  return Object.entries(p || {}).map(([k, v]) => k + '=' + JSON.stringify(v)).join(' ');
+}
+function stepRow(s) {
+  const li = document.createElement('li');
+  li.className = s.status;
+  li.innerHTML = '<span class="idx">' + String(s.index).padStart(2, '0') + '</span>' +
+    '<span class="action">' + (s.action || '?') + '</span>' +
+    '<span class="params">' + fmtParams(s.params) + '</span>' +
+    '<span class="state ' + s.status + '">' + s.status + '</span>';
+  return li;
+}
+function renderPlans(telemetry) {
+  const host = $('plans');
+  host.textContent = '';
+  const plans = (telemetry && telemetry.plans) || [];
+  if (!plans.length) {
+    host.innerHTML = '<span class="meta">No plan yet — start a run or wait for an external orchestrator.</span>';
+    return;
+  }
+  for (const plan of plans) {
+    const h = document.createElement('div');
+    h.className = 'slot-h' + (plan.active_slot ? ' active' : '');
+    h.textContent = 'Command slot ' + plan.slot + (plan.active_slot ? ' — executing' : '') +
+      ' (revision ' + plan.revision + ')';
+    host.appendChild(h);
+    const ol = document.createElement('ol');
+    ol.className = 'steps';
+    for (const s of plan.steps) ol.appendChild(stepRow(s));
+    if (!plan.steps.length) {
+      const li = document.createElement('li');
+      li.innerHTML = '<span class="params">plan has no steps</span>';
+      ol.appendChild(li);
+    }
+    host.appendChild(ol);
+  }
+}
+function renderFeed(recent) {
+  const feed = $('feed');
+  feed.textContent = '';
+  for (const ev of (recent || []).slice(-40).reverse()) {
+    const row = document.createElement('div');
+    row.className = 'ev';
+    const t = (ev.occurred_at || '').slice(11, 23);
+    let detail = '';
+    if (ev.event_type === 'step.finished') {
+      const p = ev.payload || {};
+      detail = p.action + ' → ' + p.outcome;
+    } else if (ev.event_type === 'plan.materialized') {
+      const p = ev.payload || {};
+      detail = (p.steps || []).map(s => s.action).join(' → ');
+    } else if (ev.event_type === 'run.finished') {
+      detail = 'status=' + (ev.payload || {}).status;
+    }
+    row.innerHTML = '<span class="t">' + t + '</span><b>' + ev.event_type + '</b><span>' + detail + '</span>';
+    feed.appendChild(row);
+  }
+}
+async function poll() {
+  let data = null;
+  try { data = await (await fetch('/api/state')).json(); } catch (e) { return; }
+  const orch = data.orchestrator || {}, tel = data.telemetry || {};
+
+  const pill = $('orch-pill');
+  pill.textContent = 'orchestrator: ' + (orch.running ? 'pid ' + orch.pid : (orch.returncode != null ? 'exited (' + orch.returncode + ')' : 'idle'));
+  pill.className = 'pill ' + (orch.running ? 'running' : 'idle');
+
+  const sp = $('stack-pill');
+  const stack = data.stack;
+  if (stack === null || stack === undefined) {
+    sp.textContent = 'stack: —'; sp.className = 'pill idle'; $('stack-hint').textContent = '';
+  } else {
+    const missing = Object.entries(stack).filter(([k, v]) => !v).map(([k]) => k);
+    const up = missing.length === 0;
+    sp.textContent = 'stack: ' + (up ? 'up' : 'down');
+    sp.className = 'pill ' + (up ? 'up' : 'down');
+    sp.title = up ? 'announce + action servers detected' :
+      'missing: ' + missing.join(', ');
+    $('stack-hint').textContent = up ? '' :
+      'GPSR stack not detected (missing: ' + missing.join(', ') + '). ' +
+      'Start will block at the first service node — bring up Stages 1-5 (gpsr-stack up) first.';
+  }
+
+  const tp = $('tel-pill');
+  const hb = tel.last_heartbeat_at ? new Date(tel.last_heartbeat_at) : null;
+  const fresh = hb && (Date.now() - hb.getTime()) < 15000;
+  tp.textContent = 'telemetry: ' + (tel.trajectory_id ? (fresh ? 'live' : 'stale') : '—');
+  tp.className = 'pill ' + (fresh ? 'telemetry-on' : 'idle');
+
+  $('current-cmd').textContent = orch.command || '—';
+  $('run-meta').textContent = (tel.run_status ? 'run: ' + tel.run_status +
+    (tel.run_finished_status ? ' (' + tel.run_finished_status + ')' : '') : '') +
+    (tel.trajectory_id ? ' · ' + tel.trajectory_id : '');
+  $('orch-meta').textContent = orch.log ? 'log: ' + orch.log : '';
+
+  renderPlans(tel);
+  renderFeed(tel.recent);
+
+  const tail = (orch.log_tail || []).slice(-8);
+  if (tail.length) {
+    const pre = $('cmd-err');
+    if (!sending) {
+      pre.textContent = '';
+      for (const l of tail) {
+        const d = document.createElement('div');
+        d.textContent = l.length > 200 ? l.slice(0, 200) + '…' : l;
+        pre.appendChild(d);
+      }
+      pre.className = 'meta';
+    }
+  }
+  if (!orch.running) { $('send').disabled = false; sending = false; }
+}
+async function post(path) {
+  const res = await fetch(path, {method: 'POST'});
+  return res.json();
+}
+$('send').onclick = async () => {
+  const text = $('cmd').value.trim();
+  if (!text) return;
+  sending = true; $('send').disabled = true; $('cmd-err').textContent = '';
+  const r = await post('/api/command?text=' + encodeURIComponent(text));
+  if (!r.ok) {
+    $('cmd-err').textContent = r.error || 'failed to start';
+    $('cmd-err').className = 'err';
+    $('send').disabled = false; sending = false;
+  }
+  setTimeout(poll, 400);
+};
+$('stop').onclick = async () => { await post('/api/stop'); setTimeout(poll, 400); };
+$('rand').onclick = async () => {
+  const r = await fetch('/api/random').then(r => r.json());
+  if (r.ok) { $('cmd').value = r.text; } else { $('cmd-err').textContent = r.error || 'generator failed'; }
+};
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>

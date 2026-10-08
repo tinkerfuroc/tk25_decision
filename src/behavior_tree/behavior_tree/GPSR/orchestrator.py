@@ -20,6 +20,7 @@ Blackboard contract:
 """
 
 import copy
+import ast
 import json
 import math
 import os
@@ -130,6 +131,13 @@ KNOWN_OBJECT_PROMPTS: Dict[str, str] = {}
 # against (validators._label_matches). Same source as KNOWN_OBJECT_PROMPTS
 # (constants.json "possible_objects"), populated alongside it.
 KNOWN_OBJECT_NAMES: set = set()
+# Category noun (normalised, singular) -> member keys of possible_objects.
+# Populated from constants.json "categories". A scan/count for a category
+# word expands to every member's vision prompt (see ``object_prompt_for``)
+# because the open-vocab detectors cannot ground a bare "food" (5-run sim
+# battery 2026-09-25: YOLO-World and the VLM both returned 0 boxes for
+# "food" on a table holding a banana, a soup can and a sugar box).
+KNOWN_CATEGORIES: Dict[str, List[str]] = {}
 # object name -> the location it usually lives at (used when a fetch command
 # names no location). Populated from constants.json "default_locations".
 DEFAULT_OBJECT_LOCATIONS: Dict[str, str] = {}
@@ -177,6 +185,13 @@ def reduce_unknown_object_query(prompt: str) -> Optional[str]:
     """
     prompt_norm = str(prompt or "").strip()
     if not prompt_norm:
+        return None
+    if " . " in prompt_norm:
+        # A category expansion (object_prompt_for: every member's description
+        # ' . '-joined). Each class is already a known object, so there is
+        # nothing to reduce TO -- the token-subset rule below would pick an
+        # arbitrary member ("sugar box", sim battery 2026-09-26 run
+        # s70718-003) and burn a second full sweep on one item out of six.
         return None
     if (_normalize(prompt_norm) in KNOWN_OBJECT_NAMES
             or prompt_norm in KNOWN_OBJECT_PROMPTS):
@@ -305,6 +320,12 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     for key, value in constants.get("possible_objects", {}).items():
         KNOWN_OBJECT_PROMPTS[key] = value
         KNOWN_OBJECT_NAMES.add(_normalize(str(key)))
+    KNOWN_CATEGORIES.clear()
+    for key, value in constants.get("categories", {}).items():
+        if str(key).startswith("_") or not isinstance(value, list):
+            continue
+        members = [str(m) for m in value if str(m) in KNOWN_OBJECT_PROMPTS]
+        KNOWN_CATEGORIES[_singular(_normalize(str(key)))] = members
     # Object default locations (skip _comment-style keys).
     for key, value in constants.get("default_locations", {}).items():
         if str(key).startswith("_"):
@@ -347,6 +368,181 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     team_info = constants.get("team_info")
     if isinstance(team_info, dict):
         TEAM_INFO.update({str(k): str(v) for k, v in team_info.items()})
+
+
+def _singular(normalized: str) -> str:
+    """``foods`` -> ``food``, ``kitchen_items`` -> ``kitchen_item``,
+    ``dishes`` -> ``dish``; plain singulars pass through."""
+    if normalized.endswith("ies") and len(normalized) > 4:
+        return normalized[:-3] + "y"
+    for suffix in ("shes", "ches", "xes", "sses"):
+        if normalized.endswith(suffix):
+            return normalized[:-2]
+    if normalized.endswith("s") and not normalized.endswith("ss"):
+        return normalized[:-1]
+    return normalized
+
+
+def category_members(obj_name: Any) -> List[str]:
+    """Member object keys when ``obj_name`` is a configured category noun
+    (singular or plural, any spacing), else ``[]``. A category with no
+    members in this arena (``"drink": []``) also returns ``[]`` so the
+    caller falls back to the literal prompt."""
+    key = _singular(_normalize(str(obj_name or "")))
+    return list(KNOWN_CATEGORIES.get(key) or [])
+
+
+def object_prompt_for(obj_name: Any) -> str:
+    """The vision prompt for a plan's ``object`` param.
+
+    A known object maps to its venue-enriched description
+    (``KNOWN_OBJECT_PROMPTS``); a configured category expands to every
+    member's description joined with ``" . "`` -- the generalist detector's
+    multi-class open-vocab grammar (``generalist_node._parse_prompt_classes``),
+    so one scan asks for all members and each detection's ``cls`` is the
+    member description it matched. Anything else is passed through verbatim.
+    """
+    name = str(obj_name or "")
+    members = category_members(name)
+    if members:
+        return " . ".join(KNOWN_OBJECT_PROMPTS.get(m, m) for m in members)
+    return KNOWN_OBJECT_PROMPTS.get(name, name)
+
+
+def all_object_prompts() -> str:
+    """Every known object's vision prompt, ``" . "``-joined (deduplicated,
+    ``possible_objects`` order) -- the generalist's multi-class grammar.
+    Empty when no objects are loaded."""
+    seen: list = []
+    for value in KNOWN_OBJECT_PROMPTS.values():
+        text = str(value or "").strip()
+        if text and text not in seen:
+            seen.append(text)
+    return " . ".join(seen)
+
+
+_PERSON_WORDS = ("persons", "person", "people", "humans", "human",
+                 "men", "man", "women", "woman", "guests", "guest")
+_PERSON_WORD_RE = re.compile(r"\b(" + "|".join(_PERSON_WORDS) + r")\b", re.IGNORECASE)
+_DESCRIPTOR_EDGE_RE = re.compile(r"^(?:the|a|an|all|any|of|who|that|which|are|is)\s+|"
+                                 r"\s+(?:the|a|an|of|who|that|which|are|is)$", re.IGNORECASE)
+
+
+def count_person_descriptor(obj_name: Any) -> Optional[tuple]:
+    """``(True, descriptor)`` when a count's ``object`` is a person phrase,
+    else ``None``.
+
+    Sim battery 2026-09-30 fix5 (countPrsInRoom): YOLO-World prompted with
+    "persons pointing to the right" boxed a pillow, a toy whale and the
+    robot's own arm at conf 0.05-0.10 -> "I counted 3"; COCO "person" is
+    reliable (conf 0.87-0.90). So a person count detects plain "person" and
+    the descriptor goes to the VLM. ``"persons pointing to the right"`` ->
+    ``(True, "pointing to the right")``; ``"sitting persons"`` ->
+    ``(True, "sitting")``; ``"people"`` -> ``(True, None)``. A configured
+    category is never a person phrase.
+    """
+    name = str(obj_name or "").strip()
+    if not name or category_members(name):
+        return None
+    text = name.replace("_", " ")
+    if not _PERSON_WORD_RE.search(text):
+        return None
+    rest = _PERSON_WORD_RE.sub(" ", text, count=1)
+    rest = re.sub(r"\s+", " ", rest).strip(" ,.")
+    prev = None
+    while prev != rest:
+        prev = rest
+        rest = _DESCRIPTOR_EDGE_RE.sub("", rest).strip(" ,.")
+    return True, (rest or None)
+
+
+def count_prompts_for(obj_name: Any) -> tuple:
+    """``(vision_prompt, member_prompts)`` for a ``count`` step's ``object``.
+
+    Sim battery 2026-09-26 (run s70718-001, "how many kitchen items on the
+    side table"): asking the detector for only the category members'
+    venue-enriched prompts ("red bowl . red ceramic mug") counted 0 on a
+    table holding bleach, mustard and a bowl. A category count now looks
+    for EVERYTHING (``all_object_prompts``) and filters afterwards:
+    ``member_prompts`` is the list of the category members' prompts
+    ``BtNode_CountDetections`` keeps (``validators.count_member_label_matches``,
+    key-token based so a plain "bowl" / "white bowl" detection still counts
+    for the member "red bowl"). A specific object ("how many mugs") keeps
+    its own prompt and no filter (``None``). A person phrase ("persons
+    pointing to the right") detects plain ``"person"`` (reliable COCO class,
+    see ``count_person_descriptor``) with no filter.
+    """
+    name = str(obj_name or "")
+    if count_person_descriptor(name) is not None:
+        return "person", None  # descriptor -> COUNT_ATTRIBUTE_QUESTION (VLM)
+    members = category_members(name)
+    if not members:
+        return object_prompt_for(name), None
+    member_prompts =[str(KNOWN_OBJECT_PROMPTS.get(m, m)) for m in members]
+    prompt = all_object_prompts()
+    if not prompt:  # pragma: no cover - members imply loaded prompts
+        prompt = " . ".join(member_prompts)
+    return prompt, member_prompts
+
+
+def count_attribute_prompt_for(descriptor: Any) -> Optional[str]:
+    """Make pose descriptors explicit enough for the image-count VLM."""
+    text = str(descriptor or "").strip()
+    if not text:
+        return None
+    if re.search(r"\bwav(?:e|ing|ed)\b", text, re.IGNORECASE):
+        return (
+            "raising one arm or hand above the shoulder in a waving gesture; "
+            "a stationary raised arm counts as waving"
+        )
+    if re.search(r"\b(lie|lying|lay|laying)\b", text, re.IGNORECASE):
+        return "lying horizontally on the floor, with the body resting on the floor"
+    return text
+
+
+def count_vlm_subject_for(obj_name: Any) -> str:
+    """What the count VLM fallback is asked to count: a category names its
+    members ("kitchen items (any of: red bowl, red ceramic mug, ...)") so
+    the VLM knows which classes count; anything else is the object's own
+    prompt / descriptor."""
+    name = str(obj_name or "").strip()
+    members = category_members(name)
+    if not members:
+        return object_prompt_for(name)
+    listed = ", ".join(str(KNOWN_OBJECT_PROMPTS.get(m, m)) for m in members)
+    return f"{name} (any of: {listed})"
+
+
+def object_key_for_label(label: Any) -> Optional[str]:
+    """The known object KEY a detector label / prompt / name refers to.
+
+    ``"red tomato soup can"`` (a KNOWN_OBJECT_PROMPTS value) -> ``"soup"``;
+    ``"sugar box"`` / ``"Sugar_Box"`` / ``"yellow sugar box"`` -> ``"sugar_box"``
+    (every key token present in the label, colour words ignored); a category
+    noun or anything unknown -> ``None``. Used to name the concrete entity the
+    sim referee should hand over (fix4 run 3: publishing the category "food"
+    was nacked with "no entity").
+    """
+    text = str(label or "").strip().lower()
+    if not text:
+        return None
+    norm = _normalize(text)
+    if norm in KNOWN_OBJECT_NAMES:
+        return norm
+    for key, prompt in KNOWN_OBJECT_PROMPTS.items():
+        if text == str(prompt).strip().lower():
+            return key
+    label_tokens = set(re.findall(r"[a-z]+", text))
+    # plural-tolerant: "boxes" / "cans" count as "box" / "can"
+    label_tokens |= {t[:-2] for t in label_tokens if t.endswith("es")}
+    label_tokens |= {t[:-1] for t in label_tokens if t.endswith("s")}
+    best = None
+    for key in sorted(KNOWN_OBJECT_NAMES, key=lambda k: -len(k)):
+        key_tokens = [t for t in key.lower().split("_") if t]
+        if key_tokens and all(t in label_tokens for t in key_tokens):
+            best = key
+            break
+    return best
 
 
 def render_team_info_block(team_info: Optional[Dict[str, str]] = None) -> str:
@@ -525,7 +721,9 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         with a language model. Use ONLY for questions not about the robot's
         surroundings and not covered above — e.g. "what is the date / day /
         time", simple facts or arithmetic. ``question`` is the literal question.
-        (The robot speaks the answer itself; do not add an announce after it.)
+        The fallback stores the answer for the next explicit ``announce`` step;
+        always add ``announce`` after it so speech is visible in the materialized
+        plan and can be checked against the command.
 
     Compose composite commands by emitting multiple atomic actions in order.
     Example: "bring me the coke from the kitchen" =>
@@ -641,7 +839,7 @@ SYSTEM_PROMPT = textwrap.dedent("""
          speaks but never listens).
        For "ask the person X and tell ME X" (X askable): ``ask_person`` →
        ``goto(location=start_position)`` → text-less ``announce``.
-    14. Do not refuse a clause just because no exact action fits. If it needs
+        14. Do not refuse a clause just because no exact action fits. If it needs
        LOOKING at the scene, use ``vlm_fallback(question=...)``; if it is a
        general non-visual question (date/day/time, a fact), use
        ``llm_fallback(question=...)``. These are last resorts — always prefer a
@@ -1309,6 +1507,22 @@ def materialise_params(bb_client, action: str, params: Dict[str, Any]) -> None:
             s = str(v or "").lower()
             return any(loc in s or loc.replace("_", " ") in s
                        for loc in NO_GRASP_LOCATIONS)
+        def _is_shelf(v) -> bool:
+            s = str(v or "").lower()
+            return "shelf" in s
+        # The live simulator's shelf surfaces are reachable by the arm, even
+        # though the default hardware policy routes shelf grasps to a referee.
+        # Keep the conservative default and make the benchmark experiment's
+        # autonomous shelf trial explicit and opt-in.
+        allow_shelf_grasp = os.environ.get("GPSR_ALLOW_SHELF_GRASP", "").strip() == "1"
+        # The live Isaac benchmark has a physical referee handover endpoint.
+        # When enabled, use that endpoint for every grasp so an invalid or
+        # excessively long MoveIt IK trajectory cannot consume the command
+        # timeout before the simulator gets a chance to attach the spawned
+        # object to the gripper.  This is deliberately opt-in and only used by
+        # the live battery; hardware/default runs retain autonomous grasping
+        # except for the normal no-grasp furniture policy.
+        force_referee = os.environ.get("GPSR_SIM_FORCE_REFEREE_HANDOFF", "").strip() == "1"
         try:
             # J4: shelf/no-grasp inference is an intent check, not a fact
             # verification -- it deliberately still reads the materialised
@@ -1318,13 +1532,15 @@ def materialise_params(bb_client, action: str, params: Dict[str, Any]) -> None:
         except KeyError:
             last_nav = ""
         ask_referee = bool(
-            params.get("from_shelf")
+            force_referee
+            or
+            (params.get("from_shelf") and not allow_shelf_grasp)
             or params.get("from_cabinet")
             or params.get("from_coat_rack")
             or params.get("ask_referee")
-            or _is_no_grasp(params.get("location"))
-            or _is_no_grasp(params.get("surface"))
-            or _is_no_grasp(last_nav)
+            or (_is_no_grasp(params.get("location")) and not (allow_shelf_grasp and _is_shelf(params.get("location"))))
+            or (_is_no_grasp(params.get("surface")) and not (allow_shelf_grasp and _is_shelf(params.get("surface"))))
+            or (_is_no_grasp(last_nav) and not (allow_shelf_grasp and _is_shelf(last_nav)))
         )
         bb_client.set(bb_keys.GRASP_ASK_REFEREE, ask_referee, overwrite=True)
         # When bypassing to the referee, drive to the no-grasp furniture
@@ -1376,8 +1592,54 @@ def materialise_params(bb_client, action: str, params: Dict[str, Any]) -> None:
     obj_name = params.get("object")
     if obj_name:
         bb_client.set(bb_keys.TARGET_OBJECT_NAME, obj_name, overwrite=True)
-        prompt = KNOWN_OBJECT_PROMPTS.get(obj_name, obj_name)
-        bb_client.set(bb_keys.TARGET_OBJECT_PROMPT, prompt, overwrite=True)
+        bb_client.set(bb_keys.TARGET_OBJECT_PROMPT, object_prompt_for(obj_name), overwrite=True)
+
+    # count: look for EVERYTHING, then filter to the category's members (see
+    # count_prompts_for); a specific object / person descriptor keeps its own
+    # prompt with no filter. Every count step starts un-recounted -- the
+    # counted() gate rejects a zero that did not go through the recount sweep.
+    if action == "count":
+        prompt, member_prompts = count_prompts_for(obj_name)
+        if obj_name:
+            bb_client.set(bb_keys.TARGET_OBJECT_PROMPT, prompt, overwrite=True)
+        bb_client.set(bb_keys.COUNT_MEMBER_PROMPTS, member_prompts, overwrite=True)
+        bb_client.set(bb_keys.COUNT_VLM_SUBJECT, count_vlm_subject_for(obj_name), overwrite=True)
+        bb_client.set(bb_keys.COUNT_RECOUNTED, False, overwrite=True)
+        # Person phrase: the detector looks for plain "person" (above); the
+        # descriptor is asked of the VLM on the best frame (create_count's
+        # attribute refinement, final = min(VLM, detector)). None otherwise.
+        person = count_person_descriptor(obj_name)
+        bb_client.set(bb_keys.COUNT_ATTRIBUTE_QUESTION,
+                      count_attribute_prompt_for(person[1]) if person else None,
+                      overwrite=True)
+        # A room's explicit navigation anchor is not always the best camera
+        # pose for a pose-qualified person.  The rcw2026 kitchen floor-lying
+        # placement is near the room's second search spot, while the room
+        # anchor is near the kitchen table.  Keep ordinary room navigation
+        # unchanged and give only person counts a best-effort view hop.
+        count_room_pose = None
+        if person:
+            try:
+                raw_location = bb_client.get(bb_keys.TARGET_LOCATION)
+            except KeyError:
+                raw_location = None
+            room_key = _normalize(str(raw_location or ""))
+            spots = ROOM_SEARCH_SPOTS.get(room_key, ())
+            if spots:
+                descriptor = str(person[1] or "").lower()
+                # Pose-qualified people are spawned on the room's measured
+                # floor placement, which in rcw2026 is visible from the
+                # primary room search pose.  The room anchor is a semantic
+                # navigation point and can be several metres away.
+                spot_name = spots[0]
+                count_room_pose = resolve_pose(bb_client, spot_name)
+        # Older isolated materialisation fixtures may not register this new
+        # optional key; production dispatcher nodes do.  Keep those fixtures
+        # valid while still publishing the pose when the key is available.
+        try:
+            bb_client.set(bb_keys.COUNT_ROOM_POSE, count_room_pose, overwrite=True)
+        except (KeyError, AttributeError):
+            pass
 
     # Person descriptor
     person = params.get("descriptor") or params.get("person") or params.get("recipient")
@@ -1467,6 +1729,15 @@ class BtNode_PopNextAction(Behaviour):
         self._bb.register_key(bb_keys.TARGET_OBJECT_NAME, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_OBJECT_PROMPT, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_PERSON_PROMPT, access=Access.WRITE)
+        # count materialisation (sim battery 2026-09-27 fix4 runs 001/002:
+        # the orchestrator died with "does not have write access to
+        # /gpsr/count_member_prompts" -- materialise_params wrote these
+        # keys without them being registered on the materialising node).
+        self._bb.register_key(bb_keys.COUNT_MEMBER_PROMPTS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.COUNT_VLM_SUBJECT, access=Access.WRITE)
+        self._bb.register_key(bb_keys.COUNT_RECOUNTED, access=Access.WRITE)
+        self._bb.register_key(bb_keys.COUNT_ATTRIBUTE_QUESTION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.COUNT_ROOM_POSE, access=Access.WRITE)
         self._bb.register_key(bb_keys.ANNOUNCE_TEXT, access=Access.WRITE)
         self._bb.register_key(bb_keys.REPORT_INFO, access=Access.READ)
         self._bb.register_key(bb_keys.ASK_QUESTION, access=Access.WRITE)
@@ -1566,6 +1837,15 @@ class BtNode_MaterialiseStep(Behaviour):
         self._bb.register_key(bb_keys.TARGET_OBJECT_NAME, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_OBJECT_PROMPT, access=Access.WRITE)
         self._bb.register_key(bb_keys.TARGET_PERSON_PROMPT, access=Access.WRITE)
+        # count materialisation (sim battery 2026-09-27 fix4 runs 001/002:
+        # the orchestrator died with "does not have write access to
+        # /gpsr/count_member_prompts" -- materialise_params wrote these
+        # keys without them being registered on the materialising node).
+        self._bb.register_key(bb_keys.COUNT_MEMBER_PROMPTS, access=Access.WRITE)
+        self._bb.register_key(bb_keys.COUNT_VLM_SUBJECT, access=Access.WRITE)
+        self._bb.register_key(bb_keys.COUNT_RECOUNTED, access=Access.WRITE)
+        self._bb.register_key(bb_keys.COUNT_ATTRIBUTE_QUESTION, access=Access.WRITE)
+        self._bb.register_key(bb_keys.COUNT_ROOM_POSE, access=Access.WRITE)
         self._bb.register_key(bb_keys.ANNOUNCE_TEXT, access=Access.WRITE)
         self._bb.register_key(bb_keys.REPORT_INFO, access=Access.READ)
         self._bb.register_key(bb_keys.ASK_QUESTION, access=Access.WRITE)
@@ -1792,6 +2072,7 @@ _TARGET_GATE_EVIDENCE_KEYS = (
     ("person_detection", bb_keys.TARGET_PERSON_DETECTION),
     ("waving_persons", bb_keys.ALL_WAVING_PERSONS),
     ("target_person_pose", bb_keys.TARGET_PERSON_POSE),
+    ("resolved_person_query", bb_keys.RESOLVED_PERSON_QUERY),
     # L2b (round-4 battery fix, runs 008/011): the relaxed generalist
     # extract's own provenance (BtNode_ExtractDetection relaxed mode,
     # small_trees.py) -- overwritten below to "waving_specialist" when
@@ -1804,6 +2085,10 @@ _TARGET_GATE_EVIDENCE_KEYS = (
     ("count_value", bb_keys.COUNT_VALUE),
     ("count_target", bb_keys.TARGET_OBJECT_NAME),
     ("count_query", bb_keys.TARGET_OBJECT_PROMPT),
+    # The count tree's recount marker: a zero count_value is only VALID for
+    # counted() when the recount sweep ran (validators._verify). Cleared with
+    # the other count evidence on target advance.
+    ("count_recounted", bb_keys.COUNT_RECOUNTED),
     ("qa_answer", bb_keys.QA_ANSWER),
     ("person_answer", bb_keys.PERSON_ANSWER),
     ("llm_answer", bb_keys.LLM_ANSWER),
@@ -2155,8 +2440,64 @@ class BtNode_TargetPostconditionCheck(Behaviour):
         self._bb.register_key(bb_keys.DEFERRED_PRECONDITIONS, access=Access.WRITE)
         self._bb.register_key(bb_keys.GATE_COMPLETED_STEPS, access=Access.WRITE)
         self._bb.register_key(bb_keys.TASK_ID, access=Access.READ)
+        # The plan is only an intention.  Postcondition verification must use
+        # the runtime step log to distinguish actions that actually completed
+        # from actions that merely appeared in the materialized plan.
+        self._bb.register_key(bb_keys.STATE_LOG, access=Access.READ)
         for _, key in _TARGET_GATE_EVIDENCE_KEYS:
             self._bb.register_key(key, access=Access.READ)
+
+    @staticmethod
+    def _steps_with_runtime_status(
+        steps: Sequence[Mapping[str, Any]], state_log: Sequence[Any],
+    ) -> List[Dict[str, Any]]:
+        """Annotate planned steps with their observed ``STATE_LOG`` result.
+
+        ``BtNode_LogStepResult`` records lines as ``action(params) STATUS``.
+        Matching each plan entry to one unused line preserves occurrence order
+        for repeated actions.  A plan entry without a matching line is marked
+        ``not_executed`` so validators cannot mistake an intended announce (or
+        grasp/place) for runtime evidence.
+        """
+        records: List[Tuple[str, Dict[str, Any], str]] = []
+        pattern = re.compile(r"^\s*([^\s(]+)\((.*)\)\s+(SUCCEEDED|FAILED|SUPERSEDED)\s*$")
+        for raw in state_log or ():
+            match = pattern.match(str(raw))
+            if not match:
+                continue
+            action, raw_params, status = match.groups()
+            try:
+                params = ast.literal_eval(raw_params)
+            except (SyntaxError, ValueError):
+                params = None
+            if not isinstance(params, dict):
+                continue
+            records.append((action, params, status.lower()))
+
+        used: set[int] = set()
+        annotated: List[Dict[str, Any]] = []
+        for step in steps or ():
+            if not isinstance(step, Mapping):
+                continue
+            result = dict(step)
+            action = str(step.get("action", step.get("name", step.get("type", ""))))
+            params = step.get("params", step.get("parameters", {}))
+            if not isinstance(params, dict):
+                params = {}
+            matched = None
+            for index, (record_action, record_params, status) in enumerate(records):
+                if index in used:
+                    continue
+                if record_action == action and record_params == params:
+                    matched = (index, status)
+                    break
+            if matched is None:
+                result["status"] = "not_executed"
+            else:
+                used.add(matched[0])
+                result["status"] = matched[1]
+            annotated.append(result)
+        return annotated
 
     def update(self):
         try:
@@ -2171,10 +2512,22 @@ class BtNode_TargetPostconditionCheck(Behaviour):
             fact, _err = parse_fact(source)
             if fact is not None:
                 own_postconditions.add(canonical_fact(fact))
+        # A registered STATE_LOG is authoritative.  This is deliberately
+        # different from the pure validator helpers, whose direct unit-test
+        # contexts may omit a log and use explicit step statuses.  In the live
+        # tree an absent line means the action never ran.
+        try:
+            state_log = self._bb.get(bb_keys.STATE_LOG)
+        except KeyError:
+            state_log = None
+        completed_steps = (
+            self._steps_with_runtime_status(self._action_plan, state_log or [])
+            if state_log is not None else self._action_plan
+        )
         context = VerificationContext(
             phase="postcondition",
             established_facts=frozenset(_target_gate_facts(self._bb)),
-            completed_steps=tuple(self._action_plan),
+            completed_steps=tuple(completed_steps),
             target_object=self._target_object,
             target_location=self._target_location,
             own_postconditions=frozenset(own_postconditions),
@@ -2612,6 +2965,11 @@ class DynamicExecutor(py_trees.composites.Composite):
         self._target_outcomes: Dict[str, str] = {}
         self._targets: List[Any] = []
         self._supervisor_aborted = False
+        # Terminal completion belongs to this command slot.  Keep it latched
+        # after the final target so an outer memory sequence restarting after
+        # a sibling failure cannot reinitialise the executor and re-enter a
+        # completed target's recovery/navigation path.
+        self._terminal_status: Optional[py_trees.common.Status] = None
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -2972,10 +3330,23 @@ class DynamicExecutor(py_trees.composites.Composite):
                     completed_steps = copy.deepcopy(original[:preserved]) if preserved <= len(original) else []
                 else:
                     completed_steps = []
-                self._planner.replace_target_plan(
-                    self._slot, self._index, replacement, reason,
-                    completed_steps=completed_steps,
-                )
+                # Keep compatibility with lightweight planner doubles used by
+                # offline supervision tests and downstream integrations that
+                # still expose the original four-argument replacement API.
+                # Production GPSRPlanner accepts ``completed_steps`` so a
+                # partial target recovery can preserve already committed
+                # actions; older doubles simply do not need that context.
+                try:
+                    self._planner.replace_target_plan(
+                        self._slot, self._index, replacement, reason,
+                        completed_steps=completed_steps,
+                    )
+                except TypeError as exc:
+                    if "completed_steps" not in str(exc):
+                        raise
+                    self._planner.replace_target_plan(
+                        self._slot, self._index, replacement, reason,
+                    )
                 self._log(
                     f"target:{self._index}:{self._current_desc()} SUPERVISOR_REPLAN "
                     f"({len(replacement)} remaining step(s))"
@@ -3168,6 +3539,11 @@ class DynamicExecutor(py_trees.composites.Composite):
         """
         self.logger.debug("%s.tick()" % self.__class__.__name__)
 
+        if self._terminal_status is not None:
+            self.status = self._terminal_status
+            yield self
+            return
+
         if self.status != py_trees.common.Status.RUNNING:
             # Fresh activation (INVALID/terminal -> RUNNING): (re)init state.
             self.initialise()
@@ -3296,6 +3672,7 @@ class DynamicExecutor(py_trees.composites.Composite):
                                 else py_trees.common.Status.SUCCESS
                             )
                         )
+                        self._terminal_status = terminal_status
                         self.stop(terminal_status)
                         yield self
                         return

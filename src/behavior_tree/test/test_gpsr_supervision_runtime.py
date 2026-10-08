@@ -712,6 +712,33 @@ def test_all_registered_effect_leaves_are_wrapped_in_gpsr_action_factories():
         # of internal bookkeeping leaf as BtNode_ExtractDetection above, no
         # real-world effect to supervise.
         "BtNode_ReduceObjectQuery",
+        # Sim battery 2026-09-26 (real place + 360 deg survey): blackboard-
+        # only geometry / guard leaves. The real-world effects around them
+        # (BtNode_GetPointCloud, BtNode_Place, BtNode_CaptureCurrentPose,
+        # BtNode_GotoAction) are the contracted ones.
+        "BtNode_SurfacePointFromCloud",
+        "BtNode_CheckRoomSurveyDue",
+        "BtNode_YawOffsetPose",
+        # Sim battery 2026-09-30 fix5: blackboard-only count / re-aim math.
+        "BtNode_CountKeepUnclassified",
+        "BtNode_CountCombine",
+        "BtNode_YawTowardDetection",
+        "Failure",
+        # Guards and blackboard-only bookkeeping introduced by the count,
+        # delivery, relaxed-identity, and referee fallback paths. These do
+        # not change the external world and are intentionally not contracts.
+        "BtNode_CheckOperatorDelivery",
+        "BtNode_CheckResolvedDeliveryTarget",
+        "BtNode_RecordResolvedPersonQuery",
+        "BtNode_CheckDetectionUsable",
+        "BtNode_FurnitureStandoffPose",
+        "BtNode_CheckSimIdentityRelaxed",
+        "BtNode_CountKeepMax",
+        "BtNode_CheckCountPositive",
+        "BtNode_CountWavingPersons",
+        "BtNode_ComposeRefereeRequest",
+        "BtNode_ParseCountFromAnswer",
+        "Success",
         "BtNode_RegisterLabeledPose",
         "BtNode_SetReportInfo",
         "BtNode_VLMQuery",

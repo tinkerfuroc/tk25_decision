@@ -48,6 +48,7 @@
 #
 
 from typing import Any, Optional
+import os
 import py_trees as pytree
 
 # from tinker_decision_msgs.srv import Grasp, Drop
@@ -175,8 +176,20 @@ class BtNode_Grasp(ActionHandler):
                 (e.g. "plate", "bowl"); if None, falls back to
                 vision_result.objects[0].cls, then empty string
         """
+        # A grasp server can accept a goal and then stop publishing feedback
+        # while its planner exhausts candidates.  GPSR needs the bounded
+        # referee fallback to remain reachable; keep the default unchanged for
+        # other callers and opt in through the live-battery environment.
+        timeout_ticks = 0
+        raw_timeout = os.environ.get("GPSR_GRASP_ACTION_TIMEOUT_S")
+        if raw_timeout:
+            try:
+                timeout_ticks = max(1, round(float(raw_timeout) / 0.5))
+            except (TypeError, ValueError):
+                timeout_ticks = 0
         super(BtNode_Grasp, self).__init__(
-            name, Grasp, action_name, bb_source, wait_for_server_timeout_sec=-3
+            name, Grasp, action_name, bb_source, wait_for_server_timeout_sec=-3,
+            action_timeout_ticks=timeout_ticks,
         )
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self._bb_key_vision_res = bb_key_vision_res
@@ -765,14 +778,38 @@ class BtNode_GripperAction(ActionHandler):
         open_gripper: bool,
         action_name: str = "/xarm_gripper/gripper_action",
         wait_for_server_timeout_sec: float = -3,
+        action_timeout_sec: float = 45.0,
     ):
         super().__init__(
             name, GripperCommand, action_name, None, wait_for_server_timeout_sec
         )
+        if action_timeout_sec <= 0.0:
+            raise ValueError("gripper action timeout must be positive")
+        self.action_timeout_sec = float(action_timeout_sec)
         if open_gripper:
             self.goal = 0.0
         else:
             self.goal = 0.78
+
+    def initialise(self):
+        """Start a gripper goal with a bounded client-side wait.
+
+        The gripper action does not expose the legacy feedback fields consumed
+        by :class:`ActionHandler`, so ``feedback_callback`` below intentionally
+        does not refresh ``feedback_timeout``.  Set the timeout after the base
+        initialisation resets its per-goal state; this bounds an accepted goal
+        whose result response is lost without changing mock-mode behaviour.
+        """
+        super().initialise()
+        self.feedback_timeout = self.action_timeout_sec
+
+    def goal_timeout(self):
+        """Cancel a gripper goal that did not produce a result in time."""
+        self.feedback_message = (
+            f"gripper action timed out after {self.action_timeout_sec:.1f}s"
+        )
+        self.send_cancel_request()
+        return pytree.common.Status.FAILURE
 
     def send_goal(self):
         try:
@@ -791,13 +828,12 @@ class BtNode_GripperAction(ActionHandler):
         pass
 
     def process_result(self):
-        return pytree.common.Status.SUCCESS
-        # if self.result_message.result.position:
-        #     self.feedback_message = f"Gripper action successful"
-        #     return pytree.common.Status.SUCCESS
-        # else:
-        #     self.feedback_message = f"Gripper action failed"
-        #     return pytree.common.Status.FAILURE
+        if self.result_status == action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = "Gripper action successful"
+            return pytree.common.Status.SUCCESS
+        status = self.status_strings.get(self.result_status, self.result_status)
+        self.feedback_message = f"Gripper action failed with status {status}"
+        return pytree.common.Status.FAILURE
 
 
 class BtNode_PointTo(ActionHandler):

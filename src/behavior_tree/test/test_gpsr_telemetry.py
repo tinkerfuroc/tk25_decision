@@ -83,3 +83,40 @@ def test_ros_attach_replays_startup_events_and_batch_completion_is_terminal(tmp_
     assert event_types.count("tree.tick_observed") == 1
     terminal = next(event for event in published if event["event_type"] == "run.finished")
     assert terminal["payload"]["status"] == "succeeded"
+
+
+def test_batch_terminal_latch_preserves_inner_failure(tmp_path, monkeypatch) -> None:
+    class Status:
+        def __init__(self, name):
+            self.name = name
+
+    class Behaviour:
+        def __init__(self, name, status, children=()):
+            self.name = name
+            self.status = Status(status)
+            self.feedback_message = ""
+            self.children = list(children)
+
+    class Decorator:
+        def __init__(self, child):
+            self.name = "batch command flow"
+            self.status = Status("SUCCESS")
+            self.decorated = child
+            self.children = [child]
+
+    telemetry = GpsrTelemetry(tmp_path, trajectory_id="trajectory-latched", enabled=True)
+    root = Behaviour("GPSR orchestrator", "RUNNING", [
+        Decorator(Behaviour("batch_command_flow_two_layer", "FAILURE")),
+        Behaviour("idle", "RUNNING"),
+    ])
+    tree = type("Tree", (), {"root": root, "count": 1})()
+    telemetry.post_tick_handler()(tree)
+    telemetry.close()
+
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "debug" / "trajectory-latched" / "events.jsonl").read_text().splitlines()
+    ]
+    terminal = next(event for event in events if event["event_type"] == "run.finished")
+    assert terminal["payload"]["status"] == "failed"
+    assert terminal["payload"]["summary"]["inner_tree_status"] == "FAILURE"

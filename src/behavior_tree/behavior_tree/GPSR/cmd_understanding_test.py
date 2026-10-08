@@ -28,6 +28,12 @@ import openai
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+# ``planner_validators`` is a package module and uses relative imports.  This
+# file is commonly run directly (the command in the module docstring does
+# that), so make the workspace package root importable before loading it.
+PACKAGE_ROOT = HERE.parents[2]  # .../src/behavior_tree
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
 
 from _official_cmd_gen import CommandGenerator  # vendored upstream
 from config import (
@@ -36,35 +42,33 @@ from config import (
     OPENAI_TEMPERATURE,
     OPENAI_MAX_TOKENS,
 )
-from planner_validators import validate_plan as shared_validate_plan
+try:
+    # Package invocation (``python -m behavior_tree.GPSR...``).
+    from .planner_validators import validate_plan as shared_validate_plan
+    from .action_contracts import ACTION_CONTRACTS
+except ImportError:
+    # Direct script invocation (the documented/offline planner-only path).
+    from behavior_tree.GPSR.planner_validators import validate_plan as shared_validate_plan
+    from behavior_tree.GPSR.action_contracts import ACTION_CONTRACTS
 
 
-CONSTANTS_PATH = HERE / "constants.json"
+# Keep the offline harness on the same constants file as the runtime.  The
+# simulator/battery selects a scene with ``GPSR_CONSTANTS_PATH``; silently
+# reading the repository default here makes room validation disagree with the
+# planner that will execute the command.
+CONSTANTS_PATH = Path(os.environ.get("GPSR_CONSTANTS_PATH", str(HERE / "constants.json")))
 REPORT_PATH = HERE / "cmd_understanding_results.md"
 NUM_COMMANDS = 30
 SEED = 42
 
-ACTION_FACTORY_NAMES = {
-    "goto",
-    "find_object",
-    "find_person",
-    "approach_person",
-    "describe_person",
-    "ask_person",
-    "report_answer",
-    "follow",
-    "guide",
-    "grasp",
-    "place",
-    "deliver",
-    "count",
-    "answer_question",
-    "announce",
-    "record_position",
-    "vlm_fallback",
-    "llm_fallback",
-    "report_view",
-}
+# Keep the offline validator's vocabulary identical to the production
+# planner's action contracts.  The old hand-maintained set drifted: it listed
+# removed ``report_answer``/``report_view`` actions and omitted live
+# ``search_object``/``open``.  That made planner-only sweeps report false
+# unknown-action failures and could hide whether the LLM emitted a real
+# action.  ``ACTION_CONTRACTS`` is the canonical registry used by
+# ``GPSRPlanner`` and ``small_trees.ACTION_FACTORIES``.
+ACTION_FACTORY_NAMES = frozenset(ACTION_CONTRACTS)
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +90,22 @@ class StubKnowledge:
 
 def load_user_vocabulary() -> StubKnowledge:
     raw = json.loads(CONSTANTS_PATH.read_text())
-    rooms_raw = list(raw.get("egpsr_rooms", {}).keys())
     poses_raw = list(raw.get("possible_poses", {}).keys())
+    # Runtime ``load_knowledge_from_constants`` treats every search_spots key
+    # as a room alias (unless it is a comment).  Mirror that behaviour for
+    # planner-only tests; many scene files intentionally leave egpsr_rooms
+    # empty while defining rooms through search_spots.
+    rooms_raw = list(raw.get("egpsr_rooms", {}).keys())
+    room_names = {
+        "kitchen", "living_room", "office", "bedroom", "bathroom",
+        "laundry_room", "dining_room", "hallway", "garage", "corridor",
+    }
+    rooms_raw.extend(
+        key for key, value in raw.get("search_spots", {}).items()
+        if not str(key).startswith("_") and isinstance(value, list) and value
+        and (key in room_names or str(key).endswith("_room"))
+    )
+    rooms_raw = list(dict.fromkeys(str(room) for room in rooms_raw))
 
     # Rooms = top-level rooms only.
     rooms = [r for r in rooms_raw if r not in {"QA_point"}]
@@ -156,13 +174,9 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         record their answer. Use for any fact you can ONLY get by asking — the
         person's name, age, favourite drink, where they live. ``question`` is
         the literal sentence to speak ("What is your name?"). Plan
-        ``find_person`` then ``approach_person`` FIRST. The answer is remembered
-        for a later ``report_answer``.
-    - report_answer()
-        Speak the answer captured by the most recent ``ask_person`` back to the
-        person in front of the robot. Use for "ask the person X and tell ME X":
-        ``ask_person`` at the person, then ``goto(location=start_position)``,
-        then ``report_answer``.
+        ``find_person`` then ``approach_person`` FIRST. For "ask the person X
+        and tell ME X", follow with ``goto(location=start_position)`` then a
+        text-less ``announce`` to report the buffered answer.
     - follow(person?: str)
         Continuously follow a person. ``person`` is optional and informational.
         Plan ``find_person`` then ``approach_person`` before it so the robot
@@ -175,8 +189,14 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         to them before leading). Never use ``guide`` to express "go
         yourself" — that is ``goto``.
     - grasp(object: str)
-        Pick up an object that is currently in view of the arm/vision system.
-        Always plan find_object + goto first.
+        Pick up an object from the surface in front of the robot. ``grasp``
+        performs its own arm-camera scan; do not emit ``find_object`` before
+        it. Always plan ``goto(location=...)`` first so the robot is at the
+        surface where the object is.
+    - open(location: str)
+        Ask a human referee to open a closed refrigerator, washing machine,
+        dishwasher, or cabinet. Emit ``goto(location=...)`` first, then
+        ``open(location=...)`` before searching or grasping its contents.
     - place(location: str)
         Place the currently-held object at ``location``. The robot navigates
         to ``location`` itself — do not add a separate ``goto`` before it.
@@ -187,16 +207,19 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         do not add a separate ``goto`` to ``recipient_location`` before it.
         For "deliver/bring it to me", set ``recipient_location=start_position``.
     - count(object: str)
-        Count visible instances of ``object`` and announce the number.
-        count() performs its own visual scan — NEVER emit find_object for
-        the same object before count. If the command names a location, emit
-        goto first, then count directly.
+        Count visible instances of ``object`` and announce the number on the
+        spot. count() performs its own visual scan — NEVER emit find_object
+        for the same object before count. If the command names a location,
+        emit goto first, then count directly. If it says to tell ME the
+        number, follow count with ``goto(location=start_position)`` then a
+        text-less ``announce``.
     - answer_question()
         Listen to a question and answer it.
-    - announce(text: str)
-        Speak the literal ``text``. Use for "tell me the time/day", team
-        info, reporting results, explaining a refusal — any spoken output.
-        ``text`` must be the final resolved phrase.
+    - announce(text?: str)
+        Speak fixed ``text`` when supplied, or with no text speak the most
+        recent buffered result from count, describe_person, ask_person,
+        vlm_fallback, or llm_fallback. Use the text-less form after returning
+        to ``start_position`` to report a gathered result to the operator.
     - record_position(label: str)
         Capture the robot's CURRENT pose and remember it under ``label`` for
         the rest of this task, so a later ``goto(location=<label>)`` can return
@@ -210,13 +233,9 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         with a vision model, speaking the answer where it looks. Use ONLY when a
         clause needs the robot to LOOK at something and NO specific action
         covers it (colour/state/contents of a thing). Navigate there first.
-        Never follow it with a templated announce. For "go look at X and tell
-        ME": vlm_fallback at X → goto(start_position) → report_view. Prefer
+        For "go look at X and tell ME", follow with
+        ``goto(location=start_position)`` and text-less ``announce``. Prefer
         count / describe_person / find_object when they fit.
-    - report_view()
-        Speak what the most recent ``vlm_fallback`` saw back to the operator
-        (visual twin of report_answer). Use after returning to start_position
-        for "go look at X, then tell ME".
     - llm_fallback(question: str)
         LAST-RESORT general-knowledge fallback: answer a NON-visual question
         (date/day/time, a fact, arithmetic) with a language model. ``question``
@@ -294,7 +313,7 @@ SYSTEM_PROMPT = textwrap.dedent("""
          DRINK, where they are from — use ``ask_person(question=...)``. NEVER
          use ``describe_person`` for these, and NEVER a bare ``announce``.
        For "ask the person X and tell ME X" (X askable): ``ask_person`` →
-       ``goto(location=start_position)`` → ``report_answer``.
+       ``goto(location=start_position)`` → text-less ``announce``.
     14. Do not refuse a clause just because no exact action fits. If it needs
        LOOKING at the scene, use ``vlm_fallback(question=...)``; if it is a
        general non-visual question (date/day/time, a fact), use
@@ -337,6 +356,10 @@ CATEGORY_WORDS = frozenset({
     "snack", "snacks",
     "food", "foods",
 })
+PERSON_WORDS = frozenset({
+    "person", "persons", "people", "human", "humans", "someone",
+    "somebody", "guest", "guests", "man", "woman", "men", "women",
+})
 
 
 def validate_plan(plan: List[Dict[str, Any]], kb: StubKnowledge, command: str) -> Dict[str, Any]:
@@ -368,7 +391,15 @@ def validate_plan(plan: List[Dict[str, Any]], kb: StubKnowledge, command: str) -
         if loc and loc not in known_loc_set:
             unknown_locations.append(loc)
         obj = params.get("object")
-        if obj and obj not in known_obj_set:
+        # ``count`` accepts a free-form person descriptor (e.g. "waving
+        # person" or "people pointing left"); the runtime routes those to
+        # the dedicated person detector/VLM rather than constants.json.
+        is_person_query = (
+            isinstance(obj, str)
+            and any(word in set(obj.lower().replace("_", " ").split())
+                    for word in PERSON_WORDS)
+        )
+        if obj and obj not in known_obj_set and not is_person_query:
             unknown_objects.append(obj)
 
     # Shared validator (the one the orchestrator uses at runtime). It runs on

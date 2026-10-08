@@ -334,14 +334,32 @@ class GpsrTelemetry:
                 # is the actual mission boundary and gives the dashboard an
                 # unambiguous completed/failed lifecycle.
                 batch_status = None
+                batch_inner_status = None
                 for child in getattr(tree.root, "children", []):
-                    if getattr(child, "name", "") == "batch_command_flow":
+                    if getattr(child, "name", "") in {"batch_command_flow", "batch command flow"}:
                         batch_status = getattr(getattr(child, "status", None), "name", None)
+                        # The production boundary is FailureIsSuccess so the
+                        # outer node can latch the mission after a failure.
+                        # Inspect its decorated child to preserve the real
+                        # planner/execution outcome in telemetry.
+                        decorated = getattr(child, "decorated", None)
+                        if decorated is None:
+                            decorated = getattr(child, "child", None)
+                        batch_inner_status = getattr(
+                            getattr(decorated, "status", None), "name", None,
+                        )
                         break
                 if batch_status in {"SUCCESS", "FAILURE"}:
+                    terminal_status = "failed" if batch_inner_status == "FAILURE" else (
+                        "succeeded" if batch_status == "SUCCESS" else "failed"
+                    )
                     self.finish(
-                        status="succeeded" if batch_status == "SUCCESS" else "failed",
-                        summary={"reason": "batch_command_flow", "tree_status": batch_status},
+                        status=terminal_status,
+                        summary={
+                            "reason": "batch_command_flow",
+                            "tree_status": batch_status,
+                            "inner_tree_status": batch_inner_status,
+                        },
                     )
                 now = time.monotonic()
                 if self._terminal_status is None and now - last_heartbeat >= 2.0:

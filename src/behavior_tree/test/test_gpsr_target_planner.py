@@ -8,15 +8,291 @@ from behavior_tree.GPSR import planner as planner_module
 from behavior_tree.GPSR.planner import (
     GPSRPlanner,
     TOP_LAYER_SYSTEM_PROMPT,
+    _adjust_report_waypoint_for_benchmark,
     _append_report_target_if_needed,
+    _drop_person_answer_navigation,
+    _is_benchmark_local_report_target,
     _build_lower_layer_user_prompt,
+    _ensure_person_approach,
     _log_split_acceptance,
     _merge_transport_targets,
     _normalise_targets,
+    _drop_post_delivery_recipient_find_targets,
+    _drop_redundant_delivery_navigation,
+    _deterministic_prior_plan,
+    _kept_indices,
+    _remap_modification_step_indices,
     _reject_person_object_handling,
+    _repair_person_answer_location,
     _self_navigates_toward,
 )
 from behavior_tree.GPSR.planner_validators import validate_dag
+
+
+def test_person_search_gets_deterministic_approach_for_later_answer():
+    targets = [
+        {"id": "find", "desc": "find a person raising their right arm in the kitchen",
+         "postconditions": ["person_found(person_raising_right_arm)"]},
+        {"id": "answer", "desc": "say what day is tomorrow",
+         "depends_on": ["find"], "postconditions": ["answered(what_day_is_tomorrow)"]},
+    ]
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "find_person", "params": {"descriptor": "person raising right arm"}},
+        {"action": "announce", "params": {}},
+    ]
+
+    repaired, inserted = _ensure_person_approach(plan, targets[0], 0, targets)
+
+    assert [step["action"] for step in repaired] == [
+        "goto", "find_person", "approach_person", "announce",
+    ]
+    assert inserted == [2]
+
+
+def test_cross_target_answer_validator_gets_approach_from_deterministic_prior_intent():
+    """Concurrent lower-layer planning must carry the inserted approach handoff.
+
+    The answer worker can run before the search worker stores its live plan, so
+    its validator context is compiled from target metadata.  That synthetic
+    context must match the planner-owned ``approach_person`` insertion.
+    """
+    targets = [
+        {"id": "find", "desc": "find a waving person in the kitchen",
+         "depends_on": [], "postconditions": ["person_found(waving_person)"]},
+        {"id": "answer", "desc": "say what day is tomorrow",
+         "depends_on": ["find"], "postconditions": ["answered(day)"]},
+    ]
+
+    prior = _deterministic_prior_plan(targets, 1)
+
+    assert [step["action"] for step in prior] == [
+        "find_person", "approach_person",
+    ]
+
+
+def test_adjacent_person_answer_without_declared_dependency_keeps_handoff_context():
+    targets = [
+        {"id": "find", "desc": "find a waving person in the kitchen",
+         "depends_on": [], "postconditions": ["person_found(waving_person)"]},
+        {"id": "answer", "desc": "say what day is tomorrow",
+         "depends_on": [], "postconditions": ["answered(day)"]},
+    ]
+
+    prior = _deterministic_prior_plan(targets, 1)
+
+    assert [step["action"] for step in prior] == [
+        "find_person", "approach_person",
+    ]
+
+
+def test_person_search_does_not_approach_for_operator_report():
+    targets = [
+        {"id": "find", "desc": "find a person raising their right arm in the kitchen",
+         "postconditions": ["person_found(person_raising_right_arm)"]},
+        {"id": "answer", "desc": "tell me what day is tomorrow",
+         "depends_on": ["find"], "postconditions": ["answered(what_day_is_tomorrow)"]},
+    ]
+    plan = [{"action": "find_person", "params": {"descriptor": "person raising right arm"}}]
+
+    repaired, inserted = _ensure_person_approach(plan, targets[0], 0, targets)
+
+    assert repaired == plan
+    assert inserted == []
+
+
+def test_cross_target_person_answer_drops_return_navigation():
+    targets = [
+        {"id": "find", "desc": "find the waving person in the kitchen",
+         "postconditions": ["person_found(waving_person)"]},
+        {"id": "answer", "desc": "say what time it is", "depends_on": ["find"],
+         "postconditions": ["answered(time)"]},
+    ]
+    plan = [
+        {"action": "goto", "params": {"location": "start_position"}},
+        {"action": "announce", "params": {}},
+    ]
+
+    repaired, dropped = _drop_person_answer_navigation(plan, targets[1], 1, targets)
+
+    assert repaired == [plan[1]]
+    assert dropped == ["deterministic:person-answer-goto"]
+
+
+def test_person_answer_metadata_drops_contradictory_start_position():
+    targets = [
+        {"id": "find", "desc": "find the waving person in the kitchen",
+         "postconditions": ["person_found(waving_person)"]},
+        {"id": "answer", "desc": "say what time it is", "depends_on": ["find"],
+         "postconditions": ["at_robot(start_position)", "answered(time)"]},
+    ]
+
+    repaired = _repair_person_answer_location(targets)
+
+    assert repaired[1]["postconditions"] == ["answered(time)"]
+
+
+def test_drop_redundant_find_person_after_delivery():
+    targets = [
+        {"id": "t1", "desc": "fetch bowl", "object": "bowl", "location": "side_table_02",
+         "depends_on": [], "preconditions": [], "postconditions": ["held(bowl)"]},
+        {"id": "t2", "desc": "deliver bowl to the person pointing left", "object": "bowl",
+         "location": "living_room", "depends_on": ["t1"], "preconditions": ["held(bowl)"],
+         "postconditions": ["delivered(bowl,person_pointing_left)"]},
+        {"id": "t3", "desc": "find the person pointing left", "object": "", "location": "living_room",
+         "depends_on": [], "preconditions": [], "postconditions": ["person_found(person_pointing_left)"]},
+    ]
+
+    result = _drop_post_delivery_recipient_find_targets(targets)
+
+    assert [target["id"] for target in result] == ["t1", "t2"]
+
+
+def test_keep_find_person_before_delivery():
+    targets = [
+        {"id": "t1", "desc": "find the person pointing left", "object": "", "location": "living_room",
+         "depends_on": [], "preconditions": [], "postconditions": ["person_found(person_pointing_left)"]},
+        {"id": "t2", "desc": "deliver bowl to the person pointing left", "object": "bowl",
+         "location": "living_room", "depends_on": ["t1"], "preconditions": ["held(bowl)"],
+         "postconditions": ["delivered(bowl,person_pointing_left)"]},
+    ]
+
+    assert _drop_post_delivery_recipient_find_targets(targets) == targets
+
+
+def test_keep_explicit_later_person_search_after_delivery():
+    targets = [
+        {"id": "t1", "desc": "deliver bowl to Alex", "object": "bowl", "location": "living_room",
+         "depends_on": [], "preconditions": ["held(bowl)"],
+         "postconditions": ["delivered(bowl,alex)"]},
+        {"id": "t2", "desc": "find Alex again", "object": "", "location": "living_room",
+         "depends_on": ["t1"], "preconditions": [],
+         "postconditions": ["person_found(alex)"]},
+    ]
+
+    assert _drop_post_delivery_recipient_find_targets(
+        targets, command="deliver the bowl to Alex, then find Alex again"
+    ) == targets
+
+
+def _redundant_delivery_step_plan():
+    return [
+        {"action": "goto", "params": {"location": "living room"}},
+        {"action": "find_person", "params": {"descriptor": "Person Pointing Left"}},
+        {"action": "deliver", "params": {
+            "object": "bowl",
+            "recipient": "person_pointing_left",
+            "recipient_location": "living_room",
+        }},
+    ]
+
+
+def test_drop_matching_delivery_owned_navigation_prefix():
+    plan = _redundant_delivery_step_plan()
+
+    result, dropped = _drop_redundant_delivery_navigation(
+        plan,
+        target={"desc": "deliver bowl to person pointing left", "postconditions": [
+            "delivered(bowl,person_pointing_left)"
+        ]},
+    )
+
+    assert result == [plan[2]]
+    assert dropped == ["delivery-owned navigation/search prefix"]
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"command": "find person pointing left, then deliver the bowl"},
+    {"target": {"desc": "find person pointing left, then deliver bowl", "postconditions": []}},
+])
+def test_keep_delivery_prefix_when_target_explicitly_requests_person_search(kwargs):
+    plan = _redundant_delivery_step_plan()
+    target = {"desc": "deliver bowl to person pointing left", "postconditions": [
+        "delivered(bowl,person_pointing_left)"
+    ]}
+    if "target" in kwargs:
+        target = kwargs["target"]
+
+    result, dropped = _drop_redundant_delivery_navigation(
+        plan, target=target, command=kwargs.get("command"),
+    )
+
+    assert result == plan
+    assert dropped == []
+
+
+def test_keep_delivery_prefix_when_target_requires_person_found():
+    plan = _redundant_delivery_step_plan()
+
+    result, dropped = _drop_redundant_delivery_navigation(
+        plan,
+        target={"desc": "find person and deliver bowl", "postconditions": [
+            "person_found(person_pointing_left)",
+            "delivered(bowl,person_pointing_left)",
+        ]},
+    )
+
+    assert result == plan
+    assert dropped == []
+
+
+def test_keep_modified_find_person_step_before_delivery():
+    plan = _redundant_delivery_step_plan()
+
+    result, dropped = _drop_redundant_delivery_navigation(
+        plan,
+        target={"desc": "deliver bowl to person pointing left", "postconditions": []},
+        modifications=[{"action": "find_person", "step_index": 1, "template": "special_scan"}],
+    )
+
+    assert result == plan
+    assert dropped == []
+
+
+def test_surviving_modification_index_tracks_delivery_prefix_cleanup():
+    plan = _redundant_delivery_step_plan() + [
+        {"action": "announce", "params": {"text": "Here you go"}},
+    ]
+    cleaned, _dropped = _drop_redundant_delivery_navigation(plan)
+    kept_raw_indices = _kept_indices(plan, cleaned)
+    old_to_new = {old: new for new, old in enumerate(kept_raw_indices)}
+
+    modifications, dropped = _remap_modification_step_indices(
+        [{"action": "announce", "step_index": 3, "template": "announce_text"}],
+        old_to_new,
+        cleaned,
+        raw_len=len(plan),
+    )
+
+    assert modifications[0]["step_index"] == 1
+    assert dropped == []
+
+
+@pytest.mark.parametrize("field,value", [
+    ("recipient", "another person"),
+    ("recipient_location", "kitchen"),
+])
+def test_keep_delivery_prefix_when_recipient_or_location_does_not_match(field, value):
+    plan = _redundant_delivery_step_plan()
+    plan[2]["params"][field] = value
+
+    result, dropped = _drop_redundant_delivery_navigation(plan)
+
+    assert result == plan
+    assert dropped == []
+
+
+@pytest.mark.parametrize("plan_mutation", [
+    lambda plan: plan[:2],
+    lambda plan: [plan[0], plan[1], {"action": "announce", "params": {}}, plan[2]],
+])
+def test_keep_incomplete_or_non_adjacent_delivery_prefix(plan_mutation):
+    plan = plan_mutation(_redundant_delivery_step_plan())
+
+    result, dropped = _drop_redundant_delivery_navigation(plan)
+
+    assert result == plan
+    assert dropped == []
 
 
 def test_normalise_targets_emits_canonical_defaults_and_stable_ids():
@@ -230,6 +506,105 @@ def test_j8_answered_with_no_speech_verb_or_addressee_gets_a_report_target():
     assert len(result) == 2
     assert result[1]["depends_on"] == ["t0"]
     assert result[1]["preconditions"] == ["answered(the day)"]
+
+
+def test_j8_default_report_returns_to_operator(monkeypatch):
+    """The normal planner contract keeps the report at start_position.
+
+    The live-battery shortcut is opt-in via GPSR_REPORT_AT_CURRENT=1.  Keep
+    this regression beside the shortcut tests so a benchmark environment
+    cannot silently change the planner-only action sequence.
+    """
+    monkeypatch.delenv("GPSR_REPORT_AT_CURRENT", raising=False)
+    targets = [{
+        "id": "t0", "desc": "count how many items are on the side table",
+        "object": "items", "location": "side_table", "depends_on": [],
+        "preconditions": [], "postconditions": ["counted(items)"],
+    }]
+
+    result = _append_report_target_if_needed(targets)
+
+    assert result[1]["location"] == "start_position"
+    assert result[1]["postconditions"] == [
+        "at_robot(start_position)", "answered(the requested information)",
+    ]
+
+
+def test_benchmark_retargets_blank_llm_report_to_latest_task_location(monkeypatch):
+    monkeypatch.setenv("GPSR_REPORT_AT_CURRENT", "1")
+    targets = [
+        {"id": "t0", "desc": "count how many items are on the side table",
+         "object": "items", "location": "side_table", "depends_on": [],
+         "preconditions": [], "postconditions": ["counted(items)"]},
+        {"id": "t1", "desc": "report the result to the operator",
+         "object": "", "location": "", "depends_on": ["t0"],
+         "preconditions": ["counted(items)"], "postconditions": ["answered(the count)"]},
+    ]
+    result = _adjust_report_waypoint_for_benchmark(targets)
+    assert result[1]["location"] == "side_table"
+    assert result[0]["postconditions"] == ["counted(items)", "at_robot(side_table)"]
+    assert result[1]["postconditions"] == ["answered(the count)"]
+
+
+def test_benchmark_synthetic_report_moves_existing_waypoint_fact_to_count_target(monkeypatch):
+    monkeypatch.setenv("GPSR_REPORT_AT_CURRENT", "1")
+    targets = [{
+        "id": "t0", "desc": "count how many items are on the side table",
+        "object": "items", "location": "side_table", "depends_on": [],
+        "preconditions": [], "postconditions": ["counted(items)"],
+    }]
+
+    result = _adjust_report_waypoint_for_benchmark(
+        _append_report_target_if_needed(targets),
+    )
+
+    assert result[0]["postconditions"] == ["counted(items)", "at_robot(side_table)"]
+    assert result[1]["location"] == "side_table"
+    assert result[1]["postconditions"] == ["answered(the requested information)"]
+
+
+def test_benchmark_local_report_uses_deterministic_textless_announce(monkeypatch):
+    monkeypatch.setenv("GPSR_REPORT_AT_CURRENT", "1")
+    target = {
+        "id": "t1", "desc": "report the result to the operator",
+        "object": "", "location": "side_table", "depends_on": ["t0"],
+        "preconditions": ["counted(items)"],
+        "postconditions": ["answered(the count)"],
+    }
+    planner = GPSRPlanner()
+    planner._offline_mock = False
+    with planner._lock:
+        planner._slot_context[0] = {
+            "command": "count items on the side table and report the result",
+            "targets": [target],
+        }
+
+    def unexpected_llm_client():
+        raise AssertionError("benchmark-local report should not call the LLM")
+
+    monkeypatch.setattr(planner, "_new_client", unexpected_llm_client)
+    planner.plan_target(
+        0, 0, target["desc"], command="count items on the side table and report the result",
+        target=target, all_targets=[target],
+    )
+
+    assert planner.is_target_ready(0, 0)
+    assert planner.get_error(0, 0) is None
+    assert planner.get_action_plan(0, 0) == [
+        {"action": "announce", "params": {}},
+    ]
+
+
+def test_benchmark_does_not_treat_single_target_count_as_report_only(monkeypatch):
+    monkeypatch.setenv("GPSR_REPORT_AT_CURRENT", "1")
+    target = {
+        "id": "t0", "desc": "tell me how many mugs are on the side table",
+        "object": "mugs", "location": "side_table", "depends_on": [],
+        "preconditions": [],
+        "postconditions": ["answered(how many mugs are on the side table)"],
+    }
+
+    assert not _is_benchmark_local_report_target(target)
 
 
 def test_j8_meet_and_say_your_teams_name_gets_no_report_target():

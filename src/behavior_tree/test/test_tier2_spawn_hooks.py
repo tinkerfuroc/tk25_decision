@@ -34,7 +34,10 @@ def _entry(i, text):
 
 def _fake_orchestrator(tmp_path: Path, marker: Path | None = None) -> list[str]:
     script = tmp_path / "fake_orch_spawn.py"
-    marker_line = f"open({str(marker)!r}, 'w').close()" if marker is not None else "pass"
+    marker_line = (
+        f"open({str(marker)!r}, 'w').write(os.environ.get('GPSR_SIM_IDENTITY_RELAXED', '<unset>'))"
+        if marker is not None else "pass"
+    )
     script.write_text(textwrap.dedent(f"""
         import json, os, time
         {marker_line}
@@ -54,6 +57,31 @@ def test_bench_env_carries_the_sim_identity_relaxation_flag(tmp_path):
     env = tier1.bench_env(mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
                           plan_dir=tmp_path / "plan", commands=["go to the sofa"], live_llm=False)
     assert env["GPSR_SIM_IDENTITY_RELAXED"] == "1"
+
+
+def test_bench_env_strict_mode_removes_inherited_relaxation(tmp_path, monkeypatch):
+    monkeypatch.setenv("GPSR_SIM_IDENTITY_RELAXED", "1")
+    env = tier1.bench_env(mock_config=tmp_path / "m.json", constants=tmp_path / "c.json",
+                          plan_dir=tmp_path / "plan", commands=["go to the sofa"],
+                          live_llm=False, sim_identity_relaxed=False)
+    assert "GPSR_SIM_IDENTITY_RELAXED" not in env
+
+
+def test_tier2_preserves_strict_identity_mode_when_parent_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("GPSR_SIM_IDENTITY_RELAXED", raising=False)
+    marker = tmp_path / "identity-mode"
+    results = run_tier2(
+        [_entry(0, "go to the sofa")],
+        mock_config=tmp_path / "m.json",
+        constants=tmp_path / "c.json",
+        out_dir=tmp_path / "out",
+        timeout_s=20,
+        launcher=_fake_orchestrator(tmp_path, marker=marker),
+        reset_cmd=["true"],
+        settle_s=0,
+    )
+    assert results[0].verdict == "PASS"
+    assert marker.read_text() == "<unset>"
 
 
 def test_run_tier2_spawn_cmd_runs_before_the_recorder_and_writes_scene(tmp_path):

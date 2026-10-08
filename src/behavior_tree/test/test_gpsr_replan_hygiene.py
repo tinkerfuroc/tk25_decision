@@ -216,6 +216,48 @@ def test_plan_target_accepts_identical_plan_on_final_attempt(monkeypatch):
     assert p.get_action_plan(0, 0) == same["plan"]  # honest hand-back, not the fallback
 
 
+def test_plan_target_marks_gate_only_failure_unrecoverable_when_llm_only_repeats_completed_steps(monkeypatch):
+    """Sim battery 2026-09-25 run s70718-004: deliver() completed but the
+    postcondition gate said UNKNOWN; every replan re-emitted the same
+    (already completed) deliver, which the completed-step guard dropped to an
+    empty plan -- 4 attempts, then 3 hollow acknowledgement fallbacks burned
+    the whole replan budget. That shape is UNRECOVERABLE up front: the
+    executor must end the target on the first such exhaustion.
+    """
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {"command": "bring me a food", "targets": [
+        {"id": "t0", "desc": "deliver the food to me", "object": "food", "location": "",
+         "depends_on": [], "postconditions": ["delivered(food,operator)"]}]}
+    completed = [{"action": "deliver", "params": {"object": "food", "recipient": "me"},
+                  "status": "succeeded"}]
+    same = {"plan": [{"action": "deliver", "params": {"object": "food", "recipient": "me"}}]}
+    monkeypatch.setattr(planner_mod, "_call_llm", lambda *a, **k: (same, None))
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(planner_mod, "validate_plan_modifications", lambda *a, **k: (True, ""))
+
+    p.plan_target(0, 0, "deliver the food to me", command="bring me a food", target_obj="food",
+                  failure_reason="postcondition unmet: delivered(food,operator) (UNKNOWN)",
+                  completed_steps=completed)
+    error = p.get_error(0, 0)
+    assert isinstance(error, str) and error.startswith(planner_mod.UNRECOVERABLE_ERROR_PREFIX), error
+    assert "completed" in error
+
+
+def test_plan_target_empty_plan_without_completed_steps_still_falls_back(monkeypatch):
+    p = planner_mod.GPSRPlanner(max_attempts=2)
+    monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
+    monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
+    p._slot_context[0] = {"command": "c", "targets": [{"id": "t0", "desc": "d", "object": "", "location": "", "depends_on": []}]}
+    monkeypatch.setattr(planner_mod, "_call_llm", lambda *a, **k: ({"plan": []}, None))
+    monkeypatch.setattr(planner_mod, "validate_plan", lambda *a, **k: (True, ""))
+    p.plan_target(0, 0, "d", command="c")
+    error = p.get_error(0, 0)
+    assert error is not None and not error.startswith(planner_mod.UNRECOVERABLE_ERROR_PREFIX)
+    assert p.get_action_plan(0, 0) and p.get_action_plan(0, 0)[0]["action"] == "announce"
+
+
 def test_executor_passes_leaf_feedback_as_replan_reason():
     leaf = py_trees.behaviours.Failure("gate")
     leaf.feedback_message = "precondition unmet: at_robot(kitchen_table) (invalid)"

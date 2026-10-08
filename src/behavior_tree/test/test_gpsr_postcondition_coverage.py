@@ -68,34 +68,31 @@ def test_announce_covers_answered_postcondition():
     assert ok, reason
 
 
-def test_llm_fallback_alone_covers_answered_postcondition():
-    # H1 (round-2 fix): the sim defect this brief is fixing -- "tell me what
-    # day it is" plans llm_fallback(question=...) and the prompt explicitly
-    # says do NOT add an announce after it. Bare llm_fallback must cover
-    # answered(...) on its own now.
-    plan = [{"action": "llm_fallback", "params": {"question": "what day is today"}}]
+def test_llm_fallback_requires_explicit_announce_for_answered_postcondition():
+    # Gathering an answer in the fallback buffer does not deliver it.  The
+    # materialized plan must contain an explicit announce step.
+    plan = [
+        {"action": "llm_fallback", "params": {"question": "what day is today"}},
+        {"action": "announce", "params": {}},
+    ]
     ok, reason = validate_plan(
-        plan, "tell me what day it is", {"llm_fallback"},
+        plan, "tell me what day it is", {"llm_fallback", "announce"},
         postconditions=["answered(what day is today)"],
     )
     assert ok, reason
 
 
-def test_describe_person_covers_answered_postcondition_x2():
-    # X2 (round-3 fix review, source-pinned tier0 sweep): "identify the
-    # gesture of the person at shelf_02" split into
-    # answered(gesture_of_person_at_shelf_02), but describe_person
-    # (action_contracts.py) established NOTHING -- coverage rejected EVERY
-    # [goto, find_person, describe_person] plan -> fallback. describe_person
-    # now establishes answered(question) like ask_person/count/announce.
+def test_describe_person_requires_approach_and_announce_for_answered_postcondition():
     plan = [
         {"action": "goto", "params": {"location": "shelf_02"}},
         {"action": "find_person", "params": {}},
+        {"action": "approach_person", "params": {}},
         {"action": "describe_person", "params": {}},
+        {"action": "announce", "params": {}},
     ]
     ok, reason = validate_plan(
         plan, "identify the gesture of the person at shelf_02",
-        {"goto", "find_person", "describe_person"},
+        {"goto", "find_person", "approach_person", "describe_person", "announce"},
         postconditions=["answered(gesture of the person at shelf_02)"],
     )
     assert ok, reason
@@ -105,9 +102,10 @@ def test_goto_vlm_fallback_covers_answered_postcondition():
     plan = [
         {"action": "goto", "params": {"location": "kitchen"}},
         {"action": "vlm_fallback", "params": {"question": "what colour is the mug"}},
+        {"action": "announce", "params": {}},
     ]
     ok, reason = validate_plan(
-        plan, "what colour is the mug", {"goto", "vlm_fallback"},
+        plan, "what colour is the mug", {"goto", "vlm_fallback", "announce"},
         postconditions=["answered(what colour is the mug)"],
     )
     assert ok, reason
@@ -182,6 +180,31 @@ def test_at_robot_coverage_accepts_matching_goto_destination():
     assert ok, reason
 
 
+def test_at_robot_coverage_rejects_destination_superseded_by_final_goto():
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "goto", "params": {"location": "start_position"}},
+    ]
+    ok, reason = validate_plan(
+        plan, "go to the kitchen and report to me", {"goto"},
+        postconditions=["at_robot(kitchen)"],
+    )
+    assert not ok
+    assert "at_robot(kitchen)" in reason
+
+
+def test_at_robot_coverage_uses_final_goto_destination():
+    plan = [
+        {"action": "goto", "params": {"location": "start_position"}},
+        {"action": "goto", "params": {"location": "kitchen"}},
+    ]
+    ok, reason = validate_plan(
+        plan, "go to the kitchen", {"goto"},
+        postconditions=["at_robot(kitchen)"],
+    )
+    assert ok, reason
+
+
 @pytest.mark.parametrize("alias", [
     "operator", "me", "the user", "the operator", "command point",
     "instruction point", "start_position", "start",
@@ -205,6 +228,16 @@ def test_at_robot_coverage_treats_operator_aliases_as_one_destination(alias):
     plan = [{"action": "goto", "params": {"location": "start_position"}}]
     reason = uncovered_postcondition_reason(plan, [f"at_robot({alias})"])
     assert reason is None, reason
+
+
+def test_at_robot_operator_alias_uses_final_navigation_destination():
+    plan = [
+        {"action": "goto", "params": {"location": "kitchen"}},
+        {"action": "goto", "params": {"location": "start_position"}},
+    ]
+    assert uncovered_postcondition_reason(plan, ["at_robot(operator)"]) is None
+    reason = uncovered_postcondition_reason(plan, ["at_robot(kitchen)"])
+    assert reason is not None
 
 
 def test_at_robot_coverage_still_rejects_a_genuinely_different_destination():

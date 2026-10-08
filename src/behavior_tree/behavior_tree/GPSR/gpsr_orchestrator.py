@@ -57,6 +57,19 @@ DEFAULT_PLAN_DIR = Path(os.environ.get("BT_GPSR_PLAN_DIR", "gpsr_runs")).resolve
 NUM_COMMANDS = int(os.environ.get("BT_GPSR_NUM_COMMANDS", "3"))
 
 
+def _start_outside_arena() -> bool:
+    """Whether to run the physical door-entry gate at mission startup.
+
+    Real GPSR deployments begin in front of the door, so the default remains
+    ``True``.  The RCW2026 simulator scenario places the robot at its command
+    point inside the arena (``initial_pose=[-2, -2, 0]``); its bench launcher
+    sets ``GPSR_START_OUTSIDE_ARENA=0`` to avoid asking for a door that is
+    already behind the robot.
+    """
+    raw = os.environ.get("GPSR_START_OUTSIDE_ARENA", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
 def _arm_constants_to_bb(seq: py_trees.composites.Sequence) -> None:
     """Seed the arm navigating/scan/orbbec-look poses the small trees consume."""
     arm_nav, arm_scan = _load_arm_constants()
@@ -129,29 +142,113 @@ def createGPSROrchestrator(
     # Arm poses must be on the blackboard before arena entry: the door watch
     # stows the arm to the orbbec-look pose before sensing the door.
     _arm_constants_to_bb(root)
-    # The robot starts OUTSIDE the arena in front of the door: wait for it to
-    # open and enter — once, before anything else. K1: OneShot-wrapped so a
-    # later root restart (a memory Sequence replays from child 0 on ANY
-    # sibling failure) never re-ticks this after it has already SUCCEEDED
-    # once -- no repeat "Hi, I am Tinker..." / re-detect (F1).
-    root.add_child(_one_shot(create_enter_arena()))
-    # GPSR: go to the command point ONCE to receive all commands there.
-    if has_command_point():
-        root.add_child(create_goto_command_point())
+    # Physical robots start OUTSIDE the arena in front of the door. The seeded
+    # simulator scenario starts at command_point (-2,-2), already inside, so
+    # its battery opts out with GPSR_START_OUTSIDE_ARENA=0. In that mode latch
+    # the entry state before the gate; this prevents a false door request and
+    # keeps the production default safe for hardware.
+    start_outside = _start_outside_arena()
+    if not start_outside:
+        root.add_child(BtNode_WriteToBlackboard(
+            "seed simulator arena entered", bb_namespace="", bb_source=None,
+            bb_key=bb_keys.ARENA_ENTERED, object=True,
+        ))
+        if telemetry is not None:
+            telemetry.emit("arena.entry_skipped", {
+                "reason": "simulator starts inside arena",
+            }, phase="startup")
+    # Real deployments start OUTSIDE the arena in front of the door: wait for
+    # it to open and enter once.  The simulator starts at command_point inside
+    # the arena; its bench sets GPSR_START_OUTSIDE_ARENA=0 and skips this gate.
+    # K1: OneShot prevents replay after a later sibling failure restarts the
+    # memory root sequence.
+    if _start_outside_arena():
+        root.add_child(_one_shot(create_enter_arena()))
+    # GPSR: go to the command point ONCE to receive all commands there.  The
+    # RCW2026 scenario already spawns Tinker at that exact pose; sending a
+    # second Nav2 goal there only spins/replans while AMCL settles and can
+    # restart the outer sequence.  Hardware and any explicit outside start
+    # retain the normal command-point drive.
+    if has_command_point() and start_outside:
+        # A later task failure can restart the root sequence.  Latch this
+        # successful entry navigation so recovery retries the failed task
+        # instead of repeatedly sending the robot back to (-2, -2).
+        root.add_child(_one_shot(create_goto_command_point()))
+    elif has_command_point() and telemetry is not None:
+        telemetry.emit("arena.command_point_skipped", {
+            "reason": "simulator starts at command_point",
+        }, phase="startup")
     # Capture the command-point start pose once (operator spot for deliveries).
     root.add_child(create_orchestrator_init())
     # TWO-LAYER batch flow: top split + parallel per-target planning up front,
     # then a DynamicExecutor per slot swaps ready target subtrees into the
     # RUNNING tree at runtime. PLANNER is the module-level decoupled orchestrator.
-    root.add_child(create_batch_command_flow_new(
+    # The batch is the mission boundary.  A failed plan or execution must be
+    # terminal for this run: allowing FAILURE to bubble into this outer memory
+    # Sequence restarts command intake on the next tick and can livelock the
+    # planner.  Keep the wrapper name stable for telemetry and structure tests.
+    batch_flow = create_batch_command_flow_new(
         PLANNER,
         num_commands=n,
         make_intake=make_intake,
         max_replans_per_target=max_corrections,
         emit_plan_dir=str(plan_dir),
+    )
+    root.add_child(py_trees.decorators.FailureIsSuccess(
+        "batch command flow", batch_flow,
     ))
     root.add_child(py_trees.behaviours.Running("idle"))
     return root
+
+
+class TickStallWatchdog:
+    """Dump every thread's Python stack once the tree stops ticking.
+
+    GPSR sim battery 2026-09-30 fix6: three runs froze right after
+    ``plan.materialized`` (no tick, no telemetry, no log line) for the whole
+    1500 s budget, and the live process could not be inspected from outside.
+    A daemon thread watches the post-tick timestamp; after ``stall_s`` without
+    a tick it writes ``faulthandler`` tracebacks of all threads to stderr (the
+    run's orchestrator.log) and repeats every ``stall_s`` while still stalled.
+    ``GPSR_TICK_STALL_S`` overrides the threshold (<= 0 disables).
+    """
+
+    def __init__(self, stall_s: float = 60.0):
+        import threading
+        import time
+        self._time = time
+        self.stall_s = float(os.environ.get("GPSR_TICK_STALL_S", stall_s) or 0)
+        self.last_tick = time.monotonic()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="tick-stall-watchdog", daemon=True)
+
+    def post_tick(self, _tree=None) -> None:
+        self.last_tick = self._time.monotonic()
+
+    def start(self) -> None:
+        if self.stall_s > 0:
+            self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def check(self) -> bool:
+        """True (and stacks dumped) when the tree has been silent too long."""
+        import faulthandler
+        import sys
+        silent = self._time.monotonic() - self.last_tick
+        if self.stall_s <= 0 or silent < self.stall_s:
+            return False
+        print(f"[gpsr-orchestrator] TICK STALL: no tick for {silent:.0f}s -- thread stacks follow",
+              file=sys.stderr, flush=True)
+        faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+        sys.stderr.flush()
+        return True
+
+    def _run(self) -> None:
+        while not self._stop.wait(min(self.stall_s, 10.0)):
+            if self.check():
+                self.last_tick = self._time.monotonic()  # next dump after another stall_s
 
 
 def main():
@@ -175,15 +272,32 @@ def main():
     from .command_logger import create_command_logger, combine_post_tick_handlers
     log_tree, shutdown_logger = create_command_logger(str(DEFAULT_PLAN_DIR / "logs"))
     trace_tree = telemetry.post_tick_handler()
+    watchdog = TickStallWatchdog()
     tree.tick_tock(
         period_ms=500.0,
-        post_tick_handler=combine_post_tick_handlers(print_tree, log_tree, trace_tree),
+        post_tick_handler=combine_post_tick_handlers(print_tree, log_tree, trace_tree, watchdog.post_tick),
     )
+    watchdog.start()
     try:
-        rclpy.spin(tree.node)
+        # A malformed message on one of the simulator bridge subscriptions can
+        # make rclpy's executor raise while converting a queued sample.  The
+        # old one-shot ``rclpy.spin`` let that transient conversion error kill
+        # the whole battery halfway through a command.  ``spin_once`` consumes
+        # the offending sample and lets the behaviour-tree timer continue.
+        while rclpy.ok():
+            try:
+                rclpy.spin_once(tree.node, timeout_sec=1.0)
+            except RuntimeError as exc:
+                if "Unable to convert call argument" not in str(exc):
+                    raise
+                print(
+                    f"[gpsr-orchestrator] ignoring malformed bridge message: {exc}",
+                    flush=True,
+                )
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        watchdog.stop()
         supervisor = get_default_supervisor()
         if supervisor is not None:
             supervisor.close()

@@ -79,6 +79,7 @@ def _stub_orchestrator_dependencies(monkeypatch, *, command_point):
 def test_current_factory_seeds_arm_then_enters_arena_before_command_flow(
     monkeypatch, tmp_path
 ):
+    monkeypatch.delenv("GPSR_START_OUTSIDE_ARENA", raising=False)
     captured, intake = _stub_orchestrator_dependencies(
         monkeypatch, command_point=True
     )
@@ -114,6 +115,7 @@ def test_current_factory_seeds_arm_then_enters_arena_before_command_flow(
 def test_command_point_step_is_optional_but_arena_entry_is_not(
     monkeypatch, tmp_path
 ):
+    monkeypatch.delenv("GPSR_START_OUTSIDE_ARENA", raising=False)
     _stub_orchestrator_dependencies(monkeypatch, command_point=False)
 
     root = gpsr.createGPSROrchestrator(
@@ -125,3 +127,25 @@ def test_command_point_step_is_optional_but_arena_entry_is_not(
     assert names[:3] == ["set GPSR run id", "seed arm constants", "enter arena"]
     assert "command point" not in names
     assert names[-3:] == ["orchestrator init", "batch command flow", "idle"]
+
+
+def test_simulator_inside_arena_skips_door_entry(monkeypatch, tmp_path):
+    """The RCW2026 sim starts at command_point, already inside the arena."""
+    _stub_orchestrator_dependencies(monkeypatch, command_point=True)
+    monkeypatch.setenv("GPSR_START_OUTSIDE_ARENA", "0")
+
+    root = gpsr.createGPSROrchestrator(commands=["go to the kitchen"], plan_dir=Path(tmp_path))
+
+    names = [child.name for child in root.children]
+    assert "enter arena" not in names
+    assert "command point" not in names
+    assert names[:2] == ["set GPSR run id", "seed arm constants"]
+
+
+def test_production_defaults_to_door_entry(monkeypatch, tmp_path):
+    _stub_orchestrator_dependencies(monkeypatch, command_point=False)
+    monkeypatch.delenv("GPSR_START_OUTSIDE_ARENA", raising=False)
+
+    root = gpsr.createGPSROrchestrator(commands=["go to the kitchen"], plan_dir=Path(tmp_path))
+
+    assert root.children[2].name == "enter arena"

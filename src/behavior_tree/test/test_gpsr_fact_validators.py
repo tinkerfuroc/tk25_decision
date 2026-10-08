@@ -117,11 +117,70 @@ def test_missing_held_precondition_is_unknown():
 
 
 def test_count_zero_is_valid_but_missing_count_is_unknown():
+    # Precondition phase: a zero artifact was already gated when produced.
     present, _ = _check("counted(cups)", evidence={"count_value": 0})
     absent, _ = _check("counted(cups)")
     assert present.verdict is Verdict.VALID
     assert present.confidence == 1.0
     assert absent.verdict is Verdict.UNKNOWN
+
+
+_POST = dict(phase="postcondition", own_postconditions=frozenset({"counted(cups)"}))
+
+
+# Sim battery 2026-09-26 (run s70718-001): a zero count from one out-of-frame
+# look was accepted while bleach, mustard and a bowl sat on the table. Zero is
+# suspicious at the postcondition gate (the one committing the count step's
+# own result) -- INVALID unless the count tree's recount sweep marked it.
+@pytest.mark.parametrize("zero", [0, "0", 0.0])
+def test_count_zero_without_recount_is_invalid_at_postcondition(zero):
+    result, _ = _check(
+        "counted(cups)", evidence={"count_value": zero, "count_target": "cups"},
+        context=_context(**_POST),
+    )
+    assert result.verdict is Verdict.INVALID
+    assert result.evidence == "count is zero — recount"
+
+
+@pytest.mark.parametrize("marker", [True, 1, "yes"])
+def test_count_zero_with_recount_marker_is_valid_at_postcondition(marker):
+    result, _ = _check(
+        "counted(cups)",
+        evidence={"count_value": 0, "count_target": "cups", "count_recounted": marker},
+        context=_context(**_POST),
+    )
+    assert result.verdict is Verdict.VALID
+
+
+def test_count_zero_recount_false_is_still_invalid_at_postcondition():
+    result, _ = _check(
+        "counted(cups)", evidence={"count_value": 0, "count_recounted": False},
+        context=_context(**_POST),
+    )
+    assert result.verdict is Verdict.INVALID
+
+
+def test_count_zero_without_recount_stays_valid_as_a_precondition():
+    result, _ = _check("counted(cups)", evidence={"count_value": 0, "count_target": "cups"})
+    assert result.verdict is Verdict.VALID
+
+
+def test_positive_count_needs_no_recount_marker_at_postcondition():
+    result, _ = _check(
+        "counted(cups)", evidence={"count_value": 2, "count_target": "cups"},
+        context=_context(**_POST),
+    )
+    assert result.verdict is Verdict.VALID
+
+
+def test_zero_recount_gate_still_checks_provenance():
+    result, _ = _check(
+        "counted(cups)",
+        evidence={"count_value": 0, "count_target": "plates", "count_recounted": True},
+        context=_context(**_POST),
+    )
+    assert result.verdict is Verdict.INVALID
+    assert result.evidence == "count artifact target provenance mismatch"
 
 
 class _Detection:
@@ -142,6 +201,71 @@ def test_detection_artifacts_are_valid_when_objects_are_nonempty(predicate, evid
     requested = "cup" if predicate == "object_seen" else "alex"
     result, _ = _check(f"{predicate}({requested})", evidence={evidence_key: response})
     assert result.verdict is Verdict.VALID
+
+
+@pytest.fixture()
+def rcw_categories(monkeypatch):
+    """Sim battery 2026-09-25: a category scan asks for every member's
+    description, so the detection label is the member ("yellow banana"),
+    never the category word the fact names ("food")."""
+    from behavior_tree.GPSR import orchestrator as orch
+    prompts = {"banana": "yellow banana", "soup": "red tomato soup can",
+               "sugar_box": "yellow sugar box", "mug": "red ceramic mug", "bowl": "red bowl"}
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_PROMPTS", prompts)
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", set(prompts))
+    monkeypatch.setattr(orch, "KNOWN_CATEGORIES", {
+        "food": ["soup", "sugar_box", "banana"], "kitchen_item": ["bowl", "mug"], "drink": [],
+    })
+
+
+@pytest.mark.parametrize(
+    ("fact_text", "label"),
+    [
+        ("object_seen(food)", "yellow banana"),
+        ("object_seen(foods)", "sugar_box"),
+        ("object_seen(food)", "red tomato soup can"),
+        ("object_seen(kitchen items)", "red ceramic mug"),
+    ],
+)
+def test_object_seen_accepts_a_configured_category_member_label(rcw_categories, fact_text, label):
+    result, _ = _check(fact_text, evidence={"object_detection": _Detection([label])})
+    assert result.verdict is Verdict.VALID, result
+    assert "category" in result.evidence
+
+
+def test_object_seen_accepts_exact_object_prompt_alias(monkeypatch):
+    """The detector reports the configured prompt, not the planner key."""
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_PROMPTS", {"cheez_it": "red cracker box"})
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", {"cheez_it"})
+    result, _ = _check(
+        "object_seen(cheez_it)",
+        evidence={"object_detection": {"objects": [{"label": "red cracker box"}]}},
+    )
+    assert result.verdict is Verdict.VALID
+
+
+def test_object_seen_rejects_unrelated_exact_object_prompt(monkeypatch):
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_PROMPTS", {"cheez_it": "red cracker box"})
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", {"cheez_it"})
+    result, _ = _check(
+        "object_seen(cheez_it)",
+        evidence={"object_detection": {"objects": [{"label": "red bowl"}]}},
+    )
+    assert result.verdict is Verdict.INVALID
+
+
+@pytest.mark.parametrize(
+    ("fact_text", "label"),
+    [
+        ("object_seen(food)", "red ceramic mug"),   # a kitchen item, not food
+        ("object_seen(drink)", "yellow banana"),    # category with no members here
+    ],
+)
+def test_object_seen_rejects_a_label_outside_the_category(rcw_categories, fact_text, label):
+    result, _ = _check(fact_text, evidence={"object_detection": _Detection([label])})
+    assert result.verdict is Verdict.INVALID
 
 
 @pytest.mark.parametrize(
@@ -224,6 +348,30 @@ def test_person_found_matches_specialist_name_token_label():
     assert result.verdict is Verdict.VALID
 
 
+@pytest.mark.parametrize(
+    ("requested", "label", "expected"),
+    [
+        (
+            "person_pointing_left",
+            "Detect a person pointing to their left with one arm extended sideways",
+            Verdict.VALID,
+        ),
+        (
+            "person_pointing_left",
+            "Detect a person pointing to their right with one arm extended sideways",
+            Verdict.INVALID,
+        ),
+    ],
+)
+def test_person_found_matches_free_text_descriptor_phrase(requested, label, expected):
+    """VLM labels may describe a pose instead of echoing the fact key."""
+    result, _ = _check(
+        f"person_found({requested})",
+        evidence={"person_detection": {"objects": [{"label": label}]}},
+    )
+    assert result.verdict is expected
+
+
 def test_object_seen_matches_category_prompted_class_prefix_label():
     """run 003 evidence: search_object reported three kitchen-item instances."""
     result, _ = _check(
@@ -274,6 +422,18 @@ def test_exact_requested_object_still_valid_when_possible_objects_loaded(monkeyp
     result, _ = _check(
         "object_seen(bowl)",
         evidence={"object_detection": {"objects": [{"label": "bowl"}]}},
+    )
+    assert result.verdict is Verdict.VALID
+
+
+def test_exact_requested_object_accepts_configured_prompt_label(monkeypatch):
+    """The detector reports the configured VLM prompt, not the planner key."""
+    from behavior_tree.GPSR import orchestrator as orch
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_NAMES", {"cheez_it"})
+    monkeypatch.setattr(orch, "KNOWN_OBJECT_PROMPTS", {"cheez_it": "red cracker box"})
+    result, _ = _check(
+        "object_seen(cheez_it)",
+        evidence={"object_detection": {"objects": [{"label": "red cracker box"}]}},
     )
     assert result.verdict is Verdict.VALID
 
@@ -369,15 +529,95 @@ def test_waving_specialist_descriptor_is_provenance_not_named_identity():
 
 def test_counted_matches_provenance_and_zero_is_preserved():
     matching, _ = _check(
-        "counted(cups)", evidence={"count_value": 0, "count_target": "cups"}
+        "counted(cups)",
+        evidence={"count_value": 0, "count_target": "cups", "count_recounted": True},
     )
     mismatching, _ = _check(
         "counted(cups)", evidence={"count_value": 2, "count_target": "plates"}
     )
-    fallback, _ = _check("counted(cups)", evidence={"count_value": 0})
+    fallback, _ = _check(
+        "counted(cups)", evidence={"count_value": 0, "count_recounted": True}
+    )
     assert matching.verdict is Verdict.VALID
     assert mismatching.verdict is Verdict.INVALID
     assert fallback.verdict is Verdict.VALID
+
+
+@pytest.mark.parametrize(
+    ("fact_text", "count_target"),
+    [
+        # Sim battery 2026-09-25 run s70718-002: the split named the fact
+        # ``counted(persons_pointing_right)`` while the count step's artifact
+        # kept the command phrase -- the stop-words "to the" are the only
+        # difference. Same count, same target; must not be INVALID.
+        ("counted(persons_pointing_right)", "persons pointing to the right"),
+        ("counted(persons pointing to the right)", "persons_pointing_right"),
+        ("counted(person raising left arm)", "persons raising their left arm"),
+        ("counted(kitchen items)", "kitchen_items"),
+    ],
+)
+def test_counted_provenance_ignores_stop_words(fact_text, count_target):
+    result, _ = _check(fact_text, evidence={"count_value": 1, "count_target": count_target})
+    assert result.verdict is Verdict.VALID, result
+
+
+def test_counted_provenance_still_rejects_a_different_head_noun():
+    result, _ = _check(
+        "counted(persons pointing to the right)",
+        evidence={"count_value": 1, "count_target": "chairs pointing to the right"},
+    )
+    assert result.verdict is Verdict.INVALID
+
+
+@pytest.mark.parametrize(
+    ("recipient_param", "fact_recipient"),
+    [
+        # Sim battery 2026-09-25 run s70718-004: the split canonicalised
+        # "bring it to me" as ``delivered(food,operator)`` while the deliver
+        # step kept ``recipient="me"`` -- one destination, two spellings.
+        ("me", "operator"),
+        ("operator", "me"),
+        ("the operator", "start_position"),
+        ("command point", "operator"),
+    ],
+)
+def test_deliver_action_verdict_accepts_operator_aliases(recipient_param, fact_recipient):
+    result, _ = _check(
+        f"delivered(food,{fact_recipient})",
+        context=_context(
+            phase="postcondition",
+            completed_steps=(_step("deliver", object="food", recipient=recipient_param,
+                                   recipient_location="start_position"),),
+        ),
+    )
+    assert result.verdict is Verdict.VALID, result
+    assert "action-verdict fallback" in result.evidence
+
+
+def test_deliver_action_verdict_still_rejects_a_different_named_recipient():
+    result, _ = _check(
+        "delivered(food,alex)",
+        context=_context(
+            phase="postcondition",
+            completed_steps=(_step("deliver", object="food", recipient="me"),),
+        ),
+    )
+    assert result.verdict is Verdict.UNKNOWN
+
+
+def test_deliver_action_verdict_matches_room_qualified_recipient():
+    result, _ = _check(
+        "delivered(bowl,person_pointing_left_in_living_room)",
+        context=_context(
+            phase="postcondition",
+            completed_steps=(_step(
+                "deliver", object="bowl",
+                recipient="person pointing to the left",
+                recipient_location="living_room",
+            ),),
+        ),
+    )
+    assert result.verdict is Verdict.VALID, result
 
 
 def test_answered_matches_question_provenance_with_weak_fallback():
@@ -581,6 +821,7 @@ def _step(action, **params):
         ("held(plant pot)", _step("grasp", object="plant pot"), {}),
         ("placed(plant pot,kitchen table)", _step("place", object="plant pot", location="kitchen table"), {"target_object": "plant pot"}),
         ("delivered(plant pot,alex)", _step("deliver", object="plant pot", recipient="alex"), {}),
+        ("delivered(bowl,person_pointing_left)", _step("deliver", object="bowl", recipient="person pointing to the left"), {}),
         ("at_robot(kitchen)", _step("goto", location="kitchen"), {}),
     ],
 )

@@ -1,11 +1,14 @@
 """resolve_pose room fallback: goto(room) must resolve to a real map pose.
 
-Regression for the 2026-08-27 battery, where all four room-targeted runs
+Regression for the 2026-08-27 battery, where room-targeted runs
 "navigated" to the robot's own start pose (goals within 10 cm of spawn,
-drifting with AMCL) because rcw2026 constants define rooms only as
-``search_spots`` sweep lists, not as ``possible_poses``/``egpsr_rooms``
-waypoints, and ``resolve_pose`` returned ``None`` — leaving the previous
+drifting with AMCL) because rcw2026 constants did not provide room
+waypoints and ``resolve_pose`` returned ``None`` — leaving the previous
 ``TARGET_POSE`` silently in effect.
+
+The living-room room anchor is now explicit as well: its sofa search spot is
+the correct object-search target, but its heading points at the command-scene
+person rather than at the sofa.
 """
 from __future__ import annotations
 
@@ -133,7 +136,7 @@ def test_resolve_pose_prefers_known_location_over_alias_defensively(_rcw2026_loc
     assert orch_mod.resolve_pose(_ExplodingBB(), "operator") is sentinel
 
 
-def test_loader_aliases_rcw2026_rooms_to_search_spot_poses():
+def test_loader_maps_rooms_to_explicit_or_search_spot_poses():
     from pathlib import Path
     from behavior_tree.GPSR import orchestrator as orch_mod
     constants = (
@@ -143,14 +146,55 @@ def test_loader_aliases_rcw2026_rooms_to_search_spot_poses():
     try:
         for room in ("kitchen", "living_room", "bedroom", "laundry_room"):
             assert room in orch_mod.KNOWN_LOCATIONS, room
-        # Aliased to the first search spot's pose object.
-        assert (
-            orch_mod.KNOWN_LOCATIONS["living_room"]
-            is orch_mod.KNOWN_LOCATIONS["sofa"]
-        )
-        assert (
-            orch_mod.KNOWN_LOCATIONS["kitchen"]
-            is orch_mod.KNOWN_LOCATIONS["kitchen_table"]
-        )
+        # Living-room navigation has a dedicated person-facing anchor; object
+        # searches still retain sofa as their first sweep spot.
+        assert orch_mod.KNOWN_LOCATIONS["living_room"] is not orch_mod.KNOWN_LOCATIONS["sofa"]
+        assert orch_mod.KNOWN_LOCATIONS["living_room"].pose.position.x == pytest.approx(-2.24)
+        assert orch_mod.KNOWN_LOCATIONS["living_room"].pose.position.y == pytest.approx(-3.16)
+        # The room anchor must face the command-scene person, not the sofa
+        # search surface (about -153 degrees in the rcw2026 map frame).
+        assert orch_mod.KNOWN_LOCATIONS["living_room"].pose.orientation.z == pytest.approx(-0.9722, abs=1e-4)
+        assert orch_mod.KNOWN_LOCATIONS["living_room"].pose.orientation.w == pytest.approx(0.2341, abs=1e-4)
+        assert orch_mod.KNOWN_LOCATIONS["kitchen"] is not orch_mod.KNOWN_LOCATIONS["kitchen_table"]
+    finally:
+        orch_mod.load_knowledge_from_constants(str(constants))
+
+
+def test_explicit_kitchen_room_anchor_does_not_change_table_search_pose():
+    from pathlib import Path
+    from behavior_tree.GPSR import orchestrator as orch_mod
+
+    constants = Path(orch_mod.__file__).parent / "constants.rcw2026.json"
+    orch_mod.load_knowledge_from_constants(str(constants))
+    try:
+        room = orch_mod.KNOWN_LOCATIONS["kitchen"]
+        table = orch_mod.KNOWN_LOCATIONS["kitchen_table"]
+        assert room.pose.position.x == pytest.approx(1.17)
+        assert room.pose.position.y == pytest.approx(-3.55)
+        assert orch_mod.ROOM_SEARCH_SPOTS["kitchen"] == ["kitchen_table", "shelf_02"]
+        assert orch_mod.resolve_pose(_EmptyBB(), "kitchen") is room
+        assert orch_mod.resolve_pose(_EmptyBB(), "kitchen_table") is table
+        assert table.pose.position.x == pytest.approx(3.412)
+        assert table.pose.position.y == pytest.approx(-2.238)
+    finally:
+        orch_mod.load_knowledge_from_constants(str(constants))
+
+
+def test_explicit_living_room_anchor_does_not_change_object_search_spots():
+    from pathlib import Path
+    from behavior_tree.GPSR import orchestrator as orch_mod
+
+    constants = Path(orch_mod.__file__).parent / "constants.rcw2026.json"
+    orch_mod.load_knowledge_from_constants(str(constants))
+    try:
+        room = orch_mod.KNOWN_LOCATIONS["living_room"]
+        sofa = orch_mod.KNOWN_LOCATIONS["sofa"]
+        assert room is not sofa
+        assert room.pose.position.x == pytest.approx(-2.24)
+        assert room.pose.position.y == pytest.approx(-3.16)
+        assert room.pose.orientation.z == pytest.approx(-0.9722, abs=1e-4)
+        assert orch_mod.ROOM_SEARCH_SPOTS["living_room"] == ["sofa", "side_table"]
+        assert orch_mod.resolve_pose(_EmptyBB(), "living_room") is room
+        assert orch_mod.resolve_pose(_EmptyBB(), "sofa") is sofa
     finally:
         orch_mod.load_knowledge_from_constants(str(constants))

@@ -376,6 +376,52 @@ def test_supervisor_replacement_swaps_at_dynamic_executor_tick_boundary() -> Non
     assert py_trees.blackboard.Blackboard.get(bb_keys.REPLAN_REQUEST) == {}
 
 
+def test_dynamic_executor_terminal_success_is_idempotent_after_outer_restart() -> None:
+    """A committed final postcondition must not re-enter target recovery.
+
+    The production root is a memory Sequence. If a later sibling causes it to
+    restart, a completed executor must remain terminal instead of resetting its
+    target index and rebuilding the just-completed subtree (which can issue a
+    stale recovery/navigation goal).
+    """
+
+    class _CompletedTargetPlanner:
+        def __init__(self) -> None:
+            self.builds = 0
+
+        def _get_desc(self, slot, index):
+            return "deliver the object"
+
+        def get_action_plan(self, slot, index):
+            return [{"action": "deliver", "params": {"object": "bowl"}}]
+
+        def get_target_subtree(self, slot, index):
+            self.builds += 1
+            return py_trees.behaviours.Success("postcondition gate committed")
+
+    _seed_q3_targets()
+    planner = _CompletedTargetPlanner()
+    root = py_trees.composites.Sequence("root", memory=True)
+    executor = DynamicExecutor("executor", 0, planner)
+    root.add_child(executor)
+    tree = py_trees.trees.BehaviourTree(root)
+    node = SimpleNamespace(get_name=lambda: "stub")
+    tree.setup(timeout=15, node=node, gpsr_tree=tree)
+
+    tree.tick()
+    assert root.status is Status.SUCCESS
+    assert executor.status is Status.SUCCESS
+    assert executor._state == "DONE"
+    assert planner.builds == 1
+
+    # Simulate an outer memory-sequence restart after the command completed.
+    root.stop(Status.INVALID)
+    tree.tick()
+    assert root.status is Status.SUCCESS
+    assert executor.status is Status.SUCCESS
+    assert planner.builds == 1
+
+
 # ---------------------------------------------------------------------------
 # Task Q3 (round-6, supervision-economics fix): supervisor replans stop
 # resetting the target's failure accounting after a cap. Events forensics on

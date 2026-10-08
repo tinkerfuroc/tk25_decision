@@ -27,6 +27,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard, BtNode_WaitTicks
 from behavior_tree.TemplateNodes.Navigation import (
+    BtNode_Approach,
     BtNode_GotoAction,
     BtNode_ConvertGraspPose,
     BtNode_CaptureCurrentPose,
@@ -37,10 +38,12 @@ from behavior_tree.TemplateNodes.Vision import (
     BtNode_TurnPanTilt,
     BtNode_FeatureExtraction,
     BtNode_DoorDetection,
+    BtNode_GetPointCloud,
 )
 from behavior_tree.TemplateNodes.Manipulation import (
     BtNode_MoveArmSingle,
     BtNode_GripperAction,
+    BtNode_Place,
 )
 
 from behavior_tree.StoringGroceries.customNodes import (
@@ -106,6 +109,10 @@ class bb_keys:
 
     # Per-action working keys (filled by orchestrator just before dispatch)
     TARGET_POSE = "gpsr/target_pose"            # PoseStamped
+    # Navigation scratch goal.  ``TARGET_POSE`` remains the semantic map
+    # waypoint used by contracts/gates; create_goto writes a furniture-safe
+    # standoff here before sending the Nav2 action.
+    NAV_GOAL_POSE = "gpsr/nav_goal_pose"        # PoseStamped
     TARGET_LOCATION = "gpsr/target_location"    # str
     TARGET_OBJECT_NAME = "gpsr/target_object_name"     # str
     TARGET_OBJECT_PROMPT = "gpsr/target_object_prompt" # str (vision prompt)
@@ -113,6 +120,7 @@ class bb_keys:
     TARGET_OBJECT = "gpsr/target_object"        # vision Object pick used by grasp
     TARGET_PERSON_PROMPT = "gpsr/target_person_prompt"  # str
     TARGET_PERSON_POSE = "gpsr/target_person_pose"      # PoseStamped/PointStamped
+    RESOLVED_PERSON_QUERY = "gpsr/resolved_person_query"  # dict[str, str]
     TARGET_PERSON_DETECTION = "gpsr/target_person_detection"
     PERSON_NAV_POSE = "gpsr/person_nav_pose"            # PoseStamped (approach goal)
     PERSON_VISION_PROMPT = "gpsr/person_vision_prompt"  # str (descriptor -> vision prompt)
@@ -141,6 +149,87 @@ class bb_keys:
     QA_QUESTION = "gpsr/qa_question"       # str — the question heard for answer_question
     QA_ANSWER = "gpsr/qa_answer"
     COUNT_VALUE = "gpsr/count_value"
+    # Counting (sim battery 2026-09-26, run s70718-001: one tilt-10 look
+    # asking only for the category members' enriched prompts counted 0 on
+    # a table holding bleach, mustard and a bowl -- and the gate accepted it).
+    COUNT_MEMBER_PROMPTS = "gpsr/count_member_prompts"  # list[str] | None --
+                                           #   a category count asks the
+                                           #   detector for EVERY known object
+                                           #   (TARGET_OBJECT_PROMPT) and
+                                           #   BtNode_CountDetections keeps only
+                                           #   detections matching one of these
+                                           #   member prompts (key-token match,
+                                           #   colour-tolerant). None/empty ->
+                                           #   count every detection.
+    COUNT_VLM_SUBJECT = "gpsr/count_vlm_subject"  # str -- what the VLM fallback
+                                           #   is asked to count ("kitchen items
+                                           #   (red bowl, ...)"), so it knows
+                                           #   which classes count as members.
+    COUNT_RECOUNTED = "gpsr/count_recounted"  # bool -- the full recount sweep
+                                           #   ran before a zero was accepted;
+                                           #   the counted() gate rejects a
+                                           #   zero count without it.
+    COUNT_VIEW_VALUE = "gpsr/count_view_value"  # int -- member count of the
+                                           #   view just scanned (scratch).
+    COUNT_VIEW_COUNTS = "gpsr/count_view_counts"  # list[int] -- member counts
+                                           #   from this sweep's individual
+                                           #   pan/tilt views.
+    COUNT_BEST_PAN_RAD = "gpsr/count_best_pan_rad"  # float -- pan of that view
+    COUNT_ATTR_DETECTION = "gpsr/count_attr_detection"  # whole-body re-look frame
+    COUNT_ATTR_VLM_VALUE = "gpsr/count_attr_vlm_value"  # int -- VLM count on it
+    COUNT_ROOM_POSE = "gpsr/count_room_pose"  # PoseStamped | None -- optional
+                                           # room search view for person counts;
+                                           # room anchors can be too far from a
+                                           # pose-specific actor (notably the
+                                           # rcw2026 floor-lying kitchen actor).
+    COUNT_BEST_DETECTION = "gpsr/count_best_detection"  # the sweep view's
+                                           #   response with the highest count
+                                           #   (frame for the VLM fallback).
+    COUNT_SWEEP_DONE = "gpsr/count_sweep_done"  # bool -- early-stop latch: a
+                                           #   view already counted >= 1 and the
+                                           #   next view added nothing.
+    # Sim battery 2026-09-30 fix5 (countPrsInRoom): YOLO-World prompted with
+    # "persons pointing to the right" boxed a pillow, a toy whale and the
+    # robot's own arm at conf 0.05-0.10 -> "I counted 3". A person count now
+    # detects plain COCO "person" and asks the VLM about the descriptor.
+    COUNT_ATTRIBUTE_QUESTION = "gpsr/count_attribute_question"  # str | None --
+                                           #   the descriptor of a person count
+                                           #   ("pointing to the right"); set ->
+                                           #   the VLM refines the detector's N
+                                           #   on the best frame, final = min.
+    COUNT_VLM_VALUE = "gpsr/count_vlm_value"  # int -- scratch: a VLM count
+                                           #   parsed by a count refinement.
+    # fix5 countObjOnPlcmt: a detection labelled with the whole ' . '-joined
+    # multi-class prompt cannot be classified against a category's members.
+    COUNT_VIEW_UNCLASSIFIED = "gpsr/count_view_unclassified"  # int -- scratch:
+                                           #   unclassifiable detections in the
+                                           #   view just scanned.
+    COUNT_UNCLASSIFIED = "gpsr/count_unclassified"  # int -- max unclassified
+                                           #   detections over the sweep's views.
+    COUNT_UNCLASSIFIED_DETECTION = "gpsr/count_unclassified_detection"  # the
+                                           #   view response holding them (the
+                                           #   frame the VLM counts instead).
+    # fix5 goToLoc/grasp: the wrist detection re-look (create_grasp).
+    GRASP_START_POSE = "gpsr/grasp_start_pose"    # PoseStamped (map) -- heading
+                                           #   before the re-look rotated the base.
+    GRASP_VIEW_GOAL = "gpsr/grasp_view_goal"      # PoseStamped (map) -- the
+                                           #   re-look's rotate-in-place goal.
+    GRASP_HEAD_DETECTION = "gpsr/grasp_head_detection"  # orbbec detection
+                                           #   (map frame) used to re-aim the base.
+    GRASP_HEAD_OBJECT = "gpsr/grasp_head_object"  # closest object of it (scratch)
+    GRASP_HEAD_POINT = "gpsr/grasp_head_point"    # PointStamped (map) -- its
+                                           #   centroid; the drive-up target.
+    REFEREE_REQUEST_TEXT = "gpsr/referee_request_text"  # str -- the composed
+                                           #   "Dear referee, ..." request the
+                                           #   grasp ex_machina branch speaks.
+    REFEREE_SEEN_COUNT = "gpsr/referee_seen_count"  # int -- scratch for the
+                                           #   ex_machina look-first sweep.
+    REFEREE_HANDOFF_ENTITY = "gpsr/referee_handoff_entity"  # str -- known
+                                           #   object KEY the sim referee should
+                                           #   hand over (resolved from the
+                                           #   label the look-first sweep saw;
+                                           #   a category name like "food"
+                                           #   resolves to no sim entity).
     VLM_ANSWER = "gpsr/vlm_answer"
     DESCRIBE_FEATURES = "gpsr/describe_features"   # str — textual person description
     DESCRIBE_IMAGE = "gpsr/describe_image"         # sensor_msgs/Image comparison crop
@@ -203,6 +292,23 @@ class bb_keys:
                                            #   grasp branch does not ask twice.
                                            #   Reset False per task.
 
+    # Real placement (sim battery 2026-09-26 run s70718-003: the old place
+    # opened the gripper from the tucked pose and dropped the banana on the
+    # floor). Filled by create_place's own scan, read by BtNode_Place.
+    PLACE_ENV_POINTS = "gpsr/place_env_points"      # PointCloud2 — wrist RealSense
+                                           #   cloud of the destination surface
+                                           #   (octomap input for place_action)
+    PLACE_TARGET_POINT = "gpsr/place_target_point"  # PointStamped (base_link) —
+                                           #   TCP target above a free spot on
+                                           #   the detected surface plane
+    PLACE_ORIENTATION = "gpsr/place_orientation"    # Pose — zero quaternion, so
+                                           #   place_action reuses the stored
+                                           #   grasp orientation (or horizontal)
+    # 360 deg room survey (create_survey_room / BtNode_RotateInPlace): the
+    # current map pose and the same pose yawed by the survey step.
+    SURVEY_CAPTURE_POSE = "gpsr/survey_capture_pose"  # PoseStamped (map)
+    SURVEY_GOAL_POSE = "gpsr/survey_goal_pose"        # PoseStamped (map)
+
     # Arena entry (GPSR starts OUTSIDE the arena, in front of the door)
     DOOR_STATUS = "gpsr/door_status"       # int — 1 open / 0 closed (BtNode_DoorDetection)
     ARENA_ENTERED = "gpsr/arena_entered"   # truthy once the robot has crossed the
@@ -237,6 +343,14 @@ ARM_ACTION_NAME = "joint_move_action"
 GRASP_SERVICE_NAME = "start_grasp"
 WAVING_THRESHOLD_METERS = 6.0
 
+# Nav2's footprint inflation can make a semantic furniture waypoint (and a
+# room anchor whose first search spot is furniture) sit inside the obstacle
+# halo.  Back away along the waypoint's facing direction before sending the
+# goal.  This is deliberately below the arm's normal working distance and is
+# applied only to static furniture/room locations, never command_point or a
+# runtime alias.
+FURNITURE_STANDOFF_DISTANCE_M = 0.35
+
 # Fixed capacity for the room sweep (create_search_object). The dispatcher
 # builds every small tree once, before any command, so the sweep cannot size
 # itself to the runtime location's spot list — it is built with this many
@@ -248,13 +362,73 @@ SEARCH_POSE_KEYS = [f"gpsr/search_pose_{i}" for i in range(MAX_SEARCH_SPOTS)]
 
 # Pan-tilt search sweep (degrees). When looking for a target the robot tries
 # every (pan, tilt) combination in turn, stopping at the first one where the
-# target is detected (see _pantilt_sweep). Higher tilt looks up, lower looks
-# down (matching the existing nodes: 45 = up at a standing person, 20 = down at
-# a table, 0 = level). Each list is swept in order, pan-inner / tilt-outer, so
-# the first tilt is the primary look.
+# target is detected (see _pantilt_sweep). Positive tilt looks DOWN (the
+# tk26_vision pan_tilt.yaml convention, home_tilt_deg 30; the sim's
+# level-forward aim correction matches it): 0 = level, 20 = a table a metre
+# or more away, 45 = a surface right in front of the robot or a person's
+# body from the head camera. Each list is swept in order, pan-inner /
+# tilt-outer, so the first tilt is the primary look.
+# Sim battery 2026-09-26 run s70718-003: the bedroom search spot stands
+# 0.3-0.5 m from side_table_02 with the objects ~0.7 m below the camera,
+# i.e. 55-65 deg down. With only 0/20 the whole sweep looked over the arena
+# walls (vision_log snapshots: wall tops and sky) and 36 scans saw nothing;
+# the one "hit" in the pre-fix battery was a VLM false positive on that
+# view. 45 deg puts a close surface inside the 58.7 deg vertical FOV.
 PAN_SWEEP_DEG = [0.0, 45.0, -45.0]   # centre first, then left, then right
-HUMAN_TILT_DEG = [45.0, 20.0]        # up at a standing person, then lower
-OBJECT_TILT_DEG = [0.0, 20.0]        # level, then angled down at a surface
+HUMAN_TILT_DEG = [45.0, 20.0]        # down at a person's body, then higher
+# People stand in the open floor of a room, which from a search spot (the
+# robot faces the furniture) is often well off to the side: in the rcw2026
+# arena three of the four room persons sit 77-89 deg off the spot's heading
+# (sim placements 2026-09-30), outside a +-45 deg pan. Person searches and
+# person counts therefore also look +-90 deg (pan range is +-120).
+HUMAN_PAN_SWEEP_DEG = [0.0, 45.0, -45.0, 90.0, -90.0]
+OBJECT_TILT_DEG = [0.0, 20.0, 45.0]  # level, a far surface, then a close one
+# Counting looks progressively further DOWN: sim battery 2026-09-26 run
+# s70718-001 counted from a single tilt-10 look while the side table stood
+# 0.6 m below the camera, 0.5-1 m away -- out of frame. 60 is the pan-tilt's
+# tilt limit (modifiable_nodes.TILT_RANGE_DEG).
+COUNT_TILT_DEG = [20.0, 45.0, 60.0]
+# Head tilt for the person-attribute re-look (whole body incl. raised arms).
+PERSON_ATTRIBUTE_TILT_DEG = 10.0
+# Sim battery 2026-09-30 fix5: YOLO-World's 0.05-0.10 boxes (pillow, toy
+# whale, the robot's own arm) were counted as persons. Detections that carry a
+# real confidence below this are dropped from counts; the VLM path reports 1.0.
+COUNT_MIN_CONF = 0.25
+# Objects get a lower floor: sim battery 2026-10-01 fix8 run s70718-001 saw
+# the mustard bottle on the side table only at 0.11-0.14 and the 0.25 floor
+# turned a count of 3 into 1. The person false positives above were all
+# <= 0.10, so persons keep 0.25.
+COUNT_MIN_CONF_OBJECT = 0.10
+# Self-occlusion: a person box that reaches into the bottom SELF_OCCLUSION_
+# BOTTOM_FRAC of the head-camera image AND spans more than SELF_OCCLUSION_
+# WIDTH_FRAC of its width is the robot's own arm / gripper.
+SELF_OCCLUSION_BOTTOM_FRAC = 0.25
+SELF_OCCLUSION_WIDTH_FRAC = 0.40
+# Grasp detection re-look (create_grasp): base yaw offsets (deg, relative to
+# the heading the grasp started from) for the last wrist views.
+GRASP_RELOOK_YAW_DEG = [15.0, -15.0]
+GRASP_HEAD_TILT_DEG = 45.0
+# Sim battery 2026-10-01 fix8 run s70718-004: from the kitchen_table nav pose
+# (chairs around the round table) the food stood ~1 m away -- out of the
+# wrist camera's view and beyond the arm's reach -- and all four wrist views
+# saw nothing. After the head camera finds the object, drive up to it first
+# (go_to_approach, best effort) to about this distance.
+#
+# Keep the furniture approach just outside the inflated east edge. For
+# side_table_02 the bowl centroid is x~=0.43 and the pose audit's free east
+# approach is x=1.172, so 0.75 m avoids the x~=1.03 candidate produced by
+# 0.60 m while remaining within the wrist camera and arm working range.
+GRASP_APPROACH_DISTANCE_M = 0.75
+# Sim rerun59: the confirmed living-room person centroid drifted ~1.4 m from
+# the simulator truth and the deployed go_to_approach ring ([0.45, 1.00] m)
+# had no free candidate around that stale point. Delivery can search a wider
+# ring so a clear stand pose near the actual person remains reachable.
+DELIVERY_PERSON_MAX_DISTANCE_M = 1.60
+# The simulator's referee hold releases on the first open-gripper command, but
+# the object still needs a few physics steps to fall clear of the hand.  Four
+# ticks was shorter than the truth probe's still-in-hand settling window in
+# rerun81, so keep the handoff open long enough for the release to be observed.
+DELIVERY_RELEASE_SETTLE_TICKS = 20
 
 
 # ---------------------------------------------------------------------------
@@ -348,10 +522,23 @@ class BtNode_AnnounceFromBB(Behaviour):
         self._inner.initialise()
 
     def update(self):
-        return self._inner.update()
+        status = self._inner.update()
+        # Sim battery 2026-09-26 (runs s70718-000/-004): the ex_machina
+        # "ask referee" announce DID speak "Dear referee, please help me
+        # grasp the soup" (the node went RUNNING -> SUCCESS, i.e. the TTS
+        # service call completed), but this wrapper never copied the inner
+        # node's feedback -- the tree dump showed "ask referee [✓]" with an
+        # empty message, so the bench's announcements.txt extractor (which
+        # scans orchestrator.log for "Finished announcing ...") never saw
+        # it and the referee request looked silent. Mirror the inner
+        # feedback so every AnnounceFromBB is auditable like a plain
+        # BtNode_Announce.
+        self.feedback_message = self._inner.feedback_message
+        return status
 
     def terminate(self, new_status):
         self._inner.terminate(new_status)
+        self.feedback_message = self._inner.feedback_message
 
 
 class BtNode_SetReportInfo(Behaviour):
@@ -440,6 +627,12 @@ class BtNode_ExtractDetection(Behaviour):
     def setup(self, **kwargs):
         self._client = self.attach_blackboard_client(name=self.name)
         self._client.register_key(self._src, access=Access.READ)
+        # Room-qualified person scans need the semantic room anchor to reject
+        # a detector centroid pulled onto the furniture in front of the camera.
+        # Keep this read optional at runtime so old standalone trees remain
+        # valid when they do not materialise a location.
+        self._client.register_key(bb_keys.TARGET_LOCATION, access=Access.READ)
+        self._client.register_key(bb_keys.TARGET_PERSON_PROMPT, access=Access.READ)
         self._client.register_key(self._object_dst, access=Access.WRITE)
         self._client.register_key(self._point_dst, access=Access.WRITE)
         if self._provenance_dst:
@@ -482,6 +675,40 @@ class BtNode_ExtractDetection(Behaviour):
         if not objects:
             self.feedback_message = "Scan returned 0 objects"
             return Status.FAILURE
+        # Sim battery 2026-10-01 fix9 run s70718-000: sort_closest put the
+        # robot's OWN ARM (a "person" box across the bottom of the head image)
+        # first, and the person approach drove to the robot's own position.
+        # Same filter as the count path; needs the scan's segments for boxes.
+        width, height = BtNode_CountDetections._image_size(result)
+        segments = list(getattr(result, "segments", None) or [])
+        own_arm = [
+            i for i, obj in enumerate(objects)
+            if BtNode_CountDetections.is_self_occlusion(
+                BtNode_CountDetections._raw_label(obj),
+                BtNode_CountDetections._bbox(obj, segments[i] if i < len(segments) else None),
+                width, height)
+        ]
+        if own_arm:
+            objects = [obj for i, obj in enumerate(objects) if i not in own_arm]
+            if not objects:
+                self.feedback_message = "Scan saw only the robot's own arm"
+                return Status.FAILURE
+
+        # A pointing/raised-arm segmentation can put the 3-D centroid on the
+        # extended limb. In a room-qualified scan the first (closest) result
+        # is often the sofa/table anchor rather than the person's body. If a
+        # second person result is materially farther from that anchor, prefer
+        # it. This is deliberately restricted to gesture-qualified prompts so
+        # ordinary person scans keep their detector ordering.
+        try:
+            descriptor = str(self._client.get(bb_keys.TARGET_PERSON_PROMPT) or "")
+        except Exception:
+            descriptor = ""
+        try:
+            location = str(self._client.get(bb_keys.TARGET_LOCATION) or "")
+        except Exception:
+            location = ""
+        objects = self._prefer_body_candidate(objects, descriptor, location)
 
         if self._relaxed:
             from .validators import _SIM_PERSON_CLASS_LABELS, _item_label, _label_tokens
@@ -511,6 +738,61 @@ class BtNode_ExtractDetection(Behaviour):
             f"{prefix} detection at ({picked.centroid.x:.2f}, {picked.centroid.y:.2f})"
         )
         return Status.SUCCESS
+
+    @staticmethod
+    def _prefer_body_candidate(objects, descriptor: str = "", location: str = ""):
+        """Return gesture-person detections with a furniture-anchor hit last.
+
+        The generalist requests ``sort_closest``. For room searches this can
+        make an extended pointing arm / sofa edge win over the person's body.
+        The semantic room pose is only a rejection anchor; no simulator truth
+        is consulted, and with no usable anchor the detector order is kept.
+        """
+        objects = list(objects or [])
+        if len(objects) < 2:
+            return objects
+        text = f"{descriptor} {' '.join(str(getattr(o, 'cls', '')) for o in objects)}".lower()
+        if not any(token in text for token in ("point", "rais", "wav")):
+            return objects
+        key = str(location or "").strip().lower().replace(" ", "_")
+        if not key:
+            return objects
+        try:
+            from .orchestrator import KNOWN_LOCATIONS, ROOM_SEARCH_SPOTS
+            if key not in ROOM_SEARCH_SPOTS:
+                return objects
+            anchor = KNOWN_LOCATIONS.get(key)
+            if anchor is None:
+                for spot in ROOM_SEARCH_SPOTS.get(key, ()):
+                    anchor = KNOWN_LOCATIONS.get(spot)
+                    if anchor is not None:
+                        break
+            if anchor is None:
+                return objects
+            pose = getattr(anchor, "pose", anchor)
+            point = getattr(pose, "position", pose)
+            ax, ay = float(point.x), float(point.y)
+        except (AttributeError, TypeError, ValueError, ImportError):
+            return objects
+
+        def dist(item):
+            try:
+                c = item.centroid
+                return math.hypot(float(c.x) - ax, float(c.y) - ay)
+            except (AttributeError, TypeError, ValueError):
+                return None
+
+        first_distance = dist(objects[0])
+        if first_distance is None or first_distance > 0.65:
+            return objects
+        ranked = [(dist(item), index, item) for index, item in enumerate(objects)]
+        usable = [entry for entry in ranked if entry[0] is not None]
+        if not usable:
+            return objects
+        farthest_distance, farthest_index, _ = max(usable, key=lambda entry: entry[0])
+        if farthest_index == 0 or farthest_distance < first_distance + 0.40:
+            return objects
+        return [objects[farthest_index], *objects[:farthest_index], *objects[farthest_index + 1:]]
 
 
 class BtNode_PointToPoseStamped(Behaviour):
@@ -599,6 +881,142 @@ class BtNode_CheckBBContains(Behaviour):
         return Status.FAILURE
 
 
+class BtNode_CheckOperatorDelivery(Behaviour):
+    """Guard the direct handoff path used by ``deliver(..., me)``.
+
+    ``materialise_params`` resolves ``recipient_location`` into
+    ``TARGET_LOCATION`` before the delivery tree runs.  The operator aliases
+    all resolve to the captured command-point pose, so a visual person search
+    is unnecessary and can move the robot away from the handoff pose.
+    """
+
+    _ALIASES = {
+        "start_position", "instruction_point", "start", "operator",
+        "me", "the_user", "the_operator",
+    }
+
+    def __init__(self, name: str = "operator delivery?"):
+        super().__init__(name)
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(bb_keys.TARGET_LOCATION, access=Access.READ)
+
+    def update(self):
+        try:
+            raw = self._client.get(bb_keys.TARGET_LOCATION)
+        except Exception:
+            raw = None
+        key = str(raw or "").strip().lower().replace(" ", "_")
+        if key in self._ALIASES:
+            return Status.SUCCESS
+        self.feedback_message = f"recipient {raw!r} is not the operator"
+        return Status.FAILURE
+
+
+class BtNode_CheckResolvedDeliveryTarget(Behaviour):
+    """Guard reuse of a matching person target already resolved in this target.
+
+    A planner may split ``goto(room) -> find_person -> approach_person`` from
+    the final ``deliver`` step. In that shape ``deliver`` has no
+    ``recipient_location`` of its own; navigating ``TARGET_POSE`` again would
+    send the robot back to the room anchor and discard the person pose it just
+    approached. Reuse requires the saved successful-search descriptor to
+    match the delivery recipient, and an explicit delivery location to match
+    the location used by that search.
+    """
+
+    def __init__(self, name: str = "resolved delivery target?", *, require_nav: bool = True):
+        super().__init__(name)
+        self._require_nav = bool(require_nav)
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(bb_keys.CURRENT_PARAMS, access=Access.READ)
+        self._client.register_key(bb_keys.TARGET_PERSON_POSE, access=Access.READ)
+        self._client.register_key(bb_keys.RESOLVED_PERSON_QUERY, access=Access.READ)
+        self._client.register_key(bb_keys.TARGET_LOCATION, access=Access.READ)
+        if self._require_nav:
+            self._client.register_key(bb_keys.PERSON_NAV_POSE, access=Access.READ)
+
+    def update(self):
+        try:
+            params = self._client.get(bb_keys.CURRENT_PARAMS) or {}
+        except Exception:
+            params = {}
+        if not isinstance(params, dict):
+            params = {}
+        recipient = next((params.get(key) for key in ("recipient", "person", "descriptor")
+                          if str(params.get(key) or "").strip()), None)
+        if recipient is None:
+            self.feedback_message = "delivery has no recipient descriptor"
+            return Status.FAILURE
+        try:
+            query = self._client.get(bb_keys.RESOLVED_PERSON_QUERY)
+        except Exception:
+            query = None
+        if not isinstance(query, dict):
+            self.feedback_message = "no confirmed person search context"
+            return Status.FAILURE
+
+        def normalized(value):
+            return " ".join(str(value or "").casefold().replace("_", " ").split()).strip(" .,;:!?")
+
+        if not normalized(query.get("descriptor")) or normalized(query.get("descriptor")) != normalized(recipient):
+            self.feedback_message = "confirmed person search does not match delivery recipient"
+            return Status.FAILURE
+        delivery_location = params.get("recipient_location") or params.get("location")
+        if delivery_location and normalized(query.get("location")) != normalized(delivery_location):
+            self.feedback_message = "confirmed person search does not match delivery location"
+            return Status.FAILURE
+        try:
+            person_pose = self._client.get(bb_keys.TARGET_PERSON_POSE)
+        except Exception:
+            person_pose = None
+        if person_pose is None:
+            self.feedback_message = "no resolved recipient person pose"
+            return Status.FAILURE
+        if self._require_nav:
+            try:
+                nav_pose = self._client.get(bb_keys.PERSON_NAV_POSE)
+            except Exception:
+                nav_pose = None
+            if nav_pose is None:
+                self.feedback_message = "recipient pose has not been approached"
+                return Status.FAILURE
+        self.feedback_message = "reusing resolved recipient pose"
+        return Status.SUCCESS
+
+
+class BtNode_RecordResolvedPersonQuery(Behaviour):
+    """Associate a confirmed person pose with the query that produced it."""
+
+    def __init__(self, name: str = "record resolved person query"):
+        super().__init__(name)
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(bb_keys.TARGET_PERSON_PROMPT, access=Access.READ)
+        self._client.register_key(bb_keys.TARGET_PERSON_POSE, access=Access.READ)
+        self._client.register_key(bb_keys.TARGET_LOCATION, access=Access.READ)
+        self._client.register_key(bb_keys.RESOLVED_PERSON_QUERY, access=Access.WRITE)
+
+    def update(self):
+        try:
+            descriptor = str(self._client.get(bb_keys.TARGET_PERSON_PROMPT) or "").strip()
+            location = str(self._client.get(bb_keys.TARGET_LOCATION) or "").strip()
+            person_pose = self._client.get(bb_keys.TARGET_PERSON_POSE)
+        except Exception:
+            descriptor, location, person_pose = "", "", None
+        query = {"descriptor": descriptor, "location": location} if descriptor and person_pose is not None else None
+        self._client.set(bb_keys.RESOLVED_PERSON_QUERY, query, overwrite=True)
+        self.feedback_message = "recorded confirmed person search" if query else "person search has no reusable pose"
+        return Status.SUCCESS
+
+
 class BtNode_CheckBBKeySet(Behaviour):
     """SUCCESS iff ``key`` exists on the blackboard and is not None.
 
@@ -627,6 +1045,43 @@ class BtNode_CheckBBKeySet(Behaviour):
             self.feedback_message = f"{self._key} is None"
             return Status.FAILURE
         return Status.SUCCESS
+
+
+class BtNode_CheckDetectionUsable(Behaviour):
+    """SUCCESS only when a detection response contains a usable frame.
+
+    A generalist scan can return a response object with a captured RGB frame
+    even when it failed to match anything. Image consumers must not treat
+    that failed response as attribute evidence: doing so turns a VLM zero on
+    an empty re-look into a confirmed zero and discards a valid detector hit.
+    """
+
+    def __init__(self, name: str, bb_detection_key: str):
+        super().__init__(name)
+        self._key = bb_detection_key
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._key, access=Access.READ)
+
+    @staticmethod
+    def is_usable(response) -> bool:
+        if response is None or getattr(response, "status", None) != 0:
+            return False
+        return bool(getattr(response, "objects", None) or [])
+
+    def update(self):
+        try:
+            response = self._client.get(self._key)
+        except Exception:
+            response = None
+        if self.is_usable(response):
+            return Status.SUCCESS
+        status = getattr(response, "status", None)
+        objects = len(getattr(response, "objects", None) or []) if response is not None else 0
+        self.feedback_message = f"no usable detection frame (status={status}, objects={objects})"
+        return Status.FAILURE
 
 
 class BtNode_CheckBBTrue(Behaviour):
@@ -697,6 +1152,23 @@ class BtNode_CheckGraspAllowed(Behaviour):
             self.feedback_message = "object is on no-grasp furniture (shelf/cabinet/coat_rack) — skipping to ask-referee"
             return Status.FAILURE
         return Status.SUCCESS
+
+
+class BtNode_CheckEnvFlag(Behaviour):
+    """Gate simulator-only recovery paths without touching the blackboard."""
+
+    def __init__(self, name: str, variable: str, expected: str = "1"):
+        super().__init__(name)
+        self._variable = variable
+        self._expected = expected
+
+    def update(self) -> Status:
+        value = os.environ.get(self._variable, "")
+        if value == self._expected:
+            self.feedback_message = f"{self._variable}={self._expected}"
+            return Status.SUCCESS
+        self.feedback_message = f"{self._variable} is not enabled"
+        return Status.FAILURE
 
 
 class BtNode_RefereeHandObject(Behaviour):
@@ -770,6 +1242,7 @@ class BtNode_RefereeHandObject(Behaviour):
             raise KeyError(error_message) from e
         self._client = self.attach_blackboard_client(name=self.name)
         self._client.register_key(bb_keys.TARGET_OBJECT_NAME, access=Access.READ)
+        self._client.register_key(bb_keys.REFEREE_HANDOFF_ENTITY, access=Access.READ)
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self._publisher = node.create_publisher(String, self.HAND_OBJECT_TOPIC, qos)
         self._subscription = node.create_subscription(
@@ -785,10 +1258,17 @@ class BtNode_RefereeHandObject(Behaviour):
         self._skip = False
         if not self._enabled:
             return
-        try:
-            name = str(self._client.get(bb_keys.TARGET_OBJECT_NAME) or "").strip()
-        except Exception:
-            name = ""
+        # Prefer the concrete object key the compose node resolved from what
+        # the look-first sweep saw (REFEREE_HANDOFF_ENTITY); the raw target
+        # name is the fallback (a category like "food" is no sim entity).
+        name = ""
+        for key in (bb_keys.REFEREE_HANDOFF_ENTITY, bb_keys.TARGET_OBJECT_NAME):
+            try:
+                name = str(self._client.get(key) or "").strip()
+            except Exception:
+                name = ""
+            if name:
+                break
         if not name:
             self._skip = True
             self.feedback_message = "TARGET_OBJECT_NAME unset -- skipping referee handoff"
@@ -952,20 +1432,252 @@ class BtNode_CountDetections(Behaviour):
     With ``fail_if_zero=True`` a zero count returns FAILURE so a Selector
     parent can hand over to a fallback strategy (the detector finding nothing
     is more often a detection miss than a true zero).
+
+    ``bb_member_prompts_key`` (sim battery 2026-09-26, run s70718-001): a
+    category count now asks the detector for EVERY known object and filters
+    afterwards -- when the list at this key is non-empty only detections whose
+    label matches one of those member prompts are counted
+    (``validators.count_member_label_matches``: the member's object-key
+    tokens, colour-tolerant, so a "bowl" / "white bowl" detection counts for
+    the member "red bowl"). Unset / None / empty -> every detection counts
+    (specific-object and person counts).
     """
 
     def __init__(self, name: str, bb_detection_src: str, bb_count_dst: str,
-                 fail_if_zero: bool = False):
+                 fail_if_zero: bool = False, bb_member_prompts_key: str = None,
+                 bb_unclassified_dst: str = None):
         super().__init__(name)
         self._src = bb_detection_src
         self._dst = bb_count_dst
         self._fail_if_zero = fail_if_zero
+        self._member_key = bb_member_prompts_key
+        self._unclassified_dst = bb_unclassified_dst
         self._client = None
 
     def setup(self, **kwargs):
         self._client = self.attach_blackboard_client(name=self.name)
         self._client.register_key(self._src, access=Access.READ)
         self._client.register_key(self._dst, access=Access.WRITE)
+        if self._member_key:
+            self._client.register_key(self._member_key, access=Access.READ)
+        if self._unclassified_dst:
+            self._client.register_key(self._unclassified_dst, access=Access.WRITE)
+
+    def _member_prompts(self) -> list:
+        if not self._member_key:
+            return []
+        try:
+            value = self._client.get(self._member_key)
+        except Exception:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        try:
+            return [str(v) for v in (value or []) if str(v).strip()]
+        except TypeError:
+            return []
+
+    # Two detections closer than this (3D centroid, metres) or overlapping
+    # more than DUPLICATE_IOU in the image are ONE thing seen twice. Sim
+    # battery 2026-09-27 fix4b run 002: the single spawned person came back
+    # as two 'persons pointing to the right' boxes -> "I counted 2".
+    DUPLICATE_CENTROID_M = 0.30
+    # Objects: two distinct objects cannot have centroids this close (the sim
+    # spawner keeps >= ~0.12 m centre to centre; one object's centroid jitters
+    # a few cm between masks). Sim battery 2026-10-01 fix8 run s70718-001:
+    # bowl / bleach / mustard stood 0.17-0.26 m apart on side_table and the
+    # 0.30 m person radius merged them into one.
+    DUPLICATE_CENTROID_OBJECT_M = 0.10
+    DUPLICATE_IOU = 0.5
+
+    @staticmethod
+    def _is_person(item) -> bool:
+        label = BtNode_CountDetections._raw_label(item)
+        return label is not None and "person" in str(label).lower()
+
+    @staticmethod
+    def _is_duplicate(a, b, segment_a=None, segment_b=None) -> bool:
+        ca, cb = getattr(a, "centroid", None), getattr(b, "centroid", None)
+        radius = (BtNode_CountDetections.DUPLICATE_CENTROID_M
+                  if BtNode_CountDetections._is_person(a) or BtNode_CountDetections._is_person(b)
+                  else BtNode_CountDetections.DUPLICATE_CENTROID_OBJECT_M)
+        try:
+            if ca is not None and cb is not None and any(
+                    abs(float(getattr(ca, k, 0.0))) > 1e-6 for k in ("x", "y", "z")):
+                d = math.sqrt(sum((float(getattr(ca, k, 0.0)) - float(getattr(cb, k, 0.0))) ** 2
+                                  for k in ("x", "y", "z")))
+                if d < radius:
+                    return True
+        except (TypeError, ValueError):
+            pass
+        box_a = BtNode_CountDetections._bbox(a, segment_a)
+        box_b = BtNode_CountDetections._bbox(b, segment_b)
+        if box_a is None or box_b is None:
+            return False
+        ax0, ay0, ax1, ay1 = box_a
+        bx0, by0, bx1, by1 = box_b
+        inter = max(0, min(ax1, bx1) - max(ax0, bx0)) * max(0, min(ay1, by1) - max(ay0, by0))
+        if inter <= 0:
+            return False
+        union = (ax1 - ax0) * (ay1 - ay0) + (bx1 - bx0) * (by1 - by0) - inter
+        return union > 0 and inter / union > BtNode_CountDetections.DUPLICATE_IOU
+
+    @staticmethod
+    def dedupe(objects, segments=None) -> list:
+        """Drop repeated detections using 3D centroids and aligned mask boxes."""
+        segments = list(segments or [])
+        kept = []
+        kept_segments = []
+        for index, item in enumerate(objects):
+            segment = segments[index] if index < len(segments) else None
+            if not any(BtNode_CountDetections._is_duplicate(item, prior, segment, prior_segment)
+                       for prior, prior_segment in zip(kept, kept_segments)):
+                kept.append(item)
+                kept_segments.append(segment)
+        return kept
+
+    # ------------------------------------------------------------------
+    # Sim battery 2026-09-30 fix5 filters (confidence floor, self-occlusion,
+    # unclassifiable multi-class labels).
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _raw_label(item):
+        """The detection's label as the detector wrote it (NOT normalised --
+        ``validators._item_label`` turns " . " into "_._")."""
+        for field in ("cls", "class", "name", "label"):
+            value = item.get(field) if isinstance(item, dict) else getattr(item, field, None)
+            if isinstance(value, str) and value.strip():
+                return value
+        return None
+
+    @staticmethod
+    def is_unclassified_label(label) -> bool:
+        """A label that is the whole ' . '-joined multi-class prompt (the
+        detector did not say WHICH class it matched)."""
+        return label is not None and " . " in str(label)
+
+    @staticmethod
+    def _conf(item):
+        value = item.get("conf") if isinstance(item, dict) else getattr(item, "conf", None)
+        try:
+            return None if value is None else float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def passes_conf(item) -> bool:
+        """Keep a detection unless it carries a real confidence below
+        ``COUNT_MIN_CONF``. No conf / conf <= 0 (unset msg default) keeps it;
+        VLM detections report 1.0 and always pass."""
+        conf = BtNode_CountDetections._conf(item)
+        if conf is None or conf <= 0.0:
+            return True
+        floor = COUNT_MIN_CONF if BtNode_CountDetections._is_person(item) else COUNT_MIN_CONF_OBJECT
+        return conf >= floor
+
+    @staticmethod
+    def _bbox(item, segment=None):
+        """``(xmin, ymin, xmax, ymax)`` in pixels: from the object's own box
+        fields when it has them, else from its segmentation mask (the
+        generalist response carries no boxes, only index-aligned masks)."""
+        try:
+            return tuple(int(getattr(item, k)) for k in ("xmin", "ymin", "xmax", "ymax"))
+        except (AttributeError, TypeError, ValueError):
+            pass
+        if segment is None:
+            return None
+        try:
+            import numpy as np
+            h, w = int(segment.height), int(segment.width)
+            if h <= 0 or w <= 0:
+                return None
+            step = int(getattr(segment, "step", 0) or w)
+            mask = np.frombuffer(bytes(segment.data), dtype=np.uint8).reshape(h, step)[:, :w]
+            ys, xs = np.nonzero(mask)
+            if xs.size == 0:
+                return None
+            return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+        except Exception:  # noqa: BLE001 -- a malformed mask just means "no box"
+            return None
+
+    @staticmethod
+    def is_self_occlusion(label, bbox, width, height) -> bool:
+        """A PERSON box reaching into the bottom ``SELF_OCCLUSION_BOTTOM_FRAC``
+        of the image and wider than ``SELF_OCCLUSION_WIDTH_FRAC`` of it is the
+        robot's own arm / gripper in the head camera (fix5 overlay 095858)."""
+        if bbox is None or not width or not height:
+            return False
+        text = str(label or "").lower()
+        if "person" not in text and "people" not in text:
+            return False
+        x0, y0, x1, y1 = bbox
+        return (y1 >= height * (1.0 - SELF_OCCLUSION_BOTTOM_FRAC)
+                and (x1 - x0) > width * SELF_OCCLUSION_WIDTH_FRAC)
+
+    @staticmethod
+    def _image_size(result):
+        """(width, height) of the response's frame, 0s when unknown."""
+        for img in [getattr(result, "rgb_image", None)] + list(getattr(result, "segments", None) or [])[:1]:
+            try:
+                w, h = int(getattr(img, "width")), int(getattr(img, "height"))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if w > 0 and h > 0:
+                return w, h
+        return 0, 0
+
+    @staticmethod
+    def filter_detections(objects, segments=None, width=0, height=0, *, return_segments=False):
+        """``(kept, n_low_conf, n_self)``: drop low-confidence detections and
+        person boxes that are the robot's own arm (see above)."""
+        segments = list(segments or [])
+        kept, kept_segments, low, own = [], [], 0, 0
+        for i, item in enumerate(list(objects or [])):
+            if not BtNode_CountDetections.passes_conf(item):
+                low += 1
+                continue
+            seg = segments[i] if i < len(segments) else None
+            bbox = BtNode_CountDetections._bbox(item, seg)
+            if BtNode_CountDetections.is_self_occlusion(
+                    BtNode_CountDetections._raw_label(item), bbox, width, height):
+                own += 1
+                continue
+            kept.append(item)
+            kept_segments.append(seg)
+        if return_segments:
+            return kept, low, own, kept_segments
+        return kept, low, own
+
+    @staticmethod
+    def classify_members(objects, member_prompts, segments=None) -> tuple:
+        """``(members, unclassified)`` over distinct detections.
+
+        No member filter -> every detection is a member (an unclassifiable
+        multi-class label included). With a filter, a detection whose label
+        is the whole ' . '-joined prompt cannot be matched to a member: it is
+        reported as unclassified (the count tree hands that frame to the VLM)
+        instead of silently vanishing."""
+        objects = BtNode_CountDetections.dedupe(list(objects or []), segments)
+        if not member_prompts:
+            return len(objects), 0
+        from .validators import _item_label, count_member_label_matches
+        n = unclassified = 0
+        for item in objects:
+            if BtNode_CountDetections.is_unclassified_label(BtNode_CountDetections._raw_label(item)):
+                unclassified += 1
+                continue
+            label = _item_label(item)
+            if label is None:
+                continue
+            if any(count_member_label_matches(label, m) for m in member_prompts):
+                n += 1
+        return n, unclassified
+
+    @staticmethod
+    def count_members(objects, member_prompts) -> int:
+        """Distinct detections whose label matches any member prompt (all,
+        when the member list is empty); duplicates of one thing count once."""
+        return BtNode_CountDetections.classify_members(objects, member_prompts)[0]
 
     def update(self):
         from behavior_tree.config import is_subsystem_mocked
@@ -982,12 +1694,534 @@ class BtNode_CountDetections(Behaviour):
         except Exception as exc:
             self.feedback_message = f"Missing detection result: {exc}"
             return Status.FAILURE
-        count = len(getattr(result, "objects", []) or [])
+        raw_objects = list(getattr(result, "objects", []) or [])
+        width, height = self._image_size(result)
+        objects, n_low, n_own, segments = self.filter_detections(
+            raw_objects, getattr(result, "segments", None), width, height, return_segments=True)
+        members = self._member_prompts()
+        count, unclassified = self.classify_members(objects, members, segments)
         self._client.set(self._dst, count, overwrite=True)
+        if self._unclassified_dst:
+            self._client.set(self._unclassified_dst, unclassified, overwrite=True)
+        detail = f"{count} objects"
+        if members:
+            detail = f"{count} of {len(raw_objects)} detections matching {len(members)} member prompts"
+            if unclassified:
+                detail += f", {unclassified} unclassified (multi-class label)"
+        if n_low:
+            detail += f", dropped {n_low} below conf floor"
+        if n_own:
+            detail += f", dropped {n_own} self-occlusion (own arm)"
         if self._fail_if_zero and count == 0:
-            self.feedback_message = "counted 0 objects — deferring to fallback"
+            self.feedback_message = f"counted {detail} — deferring to fallback"
             return Status.FAILURE
-        self.feedback_message = f"counted {count} objects"
+        self.feedback_message = f"counted {detail}"
+        return Status.SUCCESS
+
+
+class BtNode_CountKeepMax(Behaviour):
+    """Fold one sweep view's count into the running maximum.
+
+    Reads the view's member count at ``bb_view_key`` and the view's detection
+    response at ``bb_detection_key``; keeps ``bb_count_dst`` = max over views
+    and ``bb_best_dst`` = the response of the best view so far (highest
+    member count, ties broken by raw detections so the VLM fallback gets the
+    busiest frame even when every view counted zero). Latches
+    ``bb_done_key`` True when a view already counted >= 1, at least three
+    views have been sampled, and THIS view added nothing. The minimum sample
+    count prevents one high detector view from ending the sweep before a
+    second view can corroborate or reject it. When two views have the same
+    member count and raw detection count, retain the view with the larger
+    image footprint. This matters for person attributes: a first detection
+    can contain only a torso while a later pan/tilt view contains the raised
+    arm needed to answer a gesture question. Always SUCCESS.
+    """
+
+    def __init__(self, name: str, bb_view_key: str, bb_detection_key: str,
+                 bb_count_dst: str, bb_best_dst: str, bb_done_key: str,
+                 view_pan_deg: float = None, bb_best_pan_dst: str = None,
+                 bb_history_dst: str = None):
+        super().__init__(name)
+        # Optional: which pan this view looked at, written (radians) to
+        # bb_best_pan_dst whenever this view becomes the best -- the person
+        # attribute re-look turns back there (fix9 run s70718-002).
+        self._view_pan_deg = view_pan_deg
+        self._best_pan_dst = bb_best_pan_dst
+        self._view_key = bb_view_key
+        self._detection_key = bb_detection_key
+        self._count_dst = bb_count_dst
+        self._best_dst = bb_best_dst
+        self._done_key = bb_done_key
+        self._history_dst = bb_history_dst
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._view_key, access=Access.READ)
+        self._client.register_key(self._detection_key, access=Access.READ)
+        self._client.register_key(self._count_dst, access=Access.WRITE)
+        self._client.register_key(self._best_dst, access=Access.WRITE)
+        self._client.register_key(self._done_key, access=Access.WRITE)
+        if self._history_dst:
+            self._client.register_key(self._history_dst, access=Access.WRITE)
+        if self._best_pan_dst:
+            self._client.register_key(self._best_pan_dst, access=Access.WRITE)
+
+    def _get(self, key, default=None):
+        try:
+            value = self._client.get(key)
+        except Exception:
+            return default
+        return default if value is None else value
+
+    @staticmethod
+    def _frame_area(detection) -> int:
+        """Return the visible pixel area of detections in ``detection``.
+
+        Generalist responses expose index-aligned segmentation masks rather
+        than bounding boxes. Keep this helper deliberately tolerant of test
+        doubles and malformed ROS messages: a missing mask falls back to the
+        object's bounding-box area, and an unusable item contributes zero.
+        """
+        if detection is None:
+            return 0
+        objects = list(getattr(detection, "objects", []) or [])
+        segments = list(getattr(detection, "segments", []) or [])
+        area = 0
+        for index, item in enumerate(objects):
+            segment = segments[index] if index < len(segments) else None
+            measured = 0
+            if segment is not None:
+                try:
+                    import numpy as np
+                    height = int(getattr(segment, "height", 0) or 0)
+                    width = int(getattr(segment, "width", 0) or 0)
+                    step = int(getattr(segment, "step", 0) or width)
+                    if height > 0 and width > 0 and step >= width:
+                        mask = np.frombuffer(bytes(segment.data), dtype=np.uint8)
+                        mask = mask.reshape(height, step)[:, :width]
+                        measured = int(np.count_nonzero(mask))
+                except Exception:
+                    measured = 0
+            if measured <= 0:
+                bbox = BtNode_CountDetections._bbox(item, segment)
+                if bbox is not None:
+                    x0, y0, x1, y1 = bbox
+                    measured = max(0, x1 - x0) * max(0, y1 - y0)
+            area += measured
+        return area
+
+    def update(self):
+        try:
+            view = int(self._get(self._view_key, 0) or 0)
+        except (TypeError, ValueError):
+            view = 0
+        try:
+            prev = int(self._get(self._count_dst, 0) or 0)
+        except (TypeError, ValueError):
+            prev = 0
+        detection = self._get(self._detection_key)
+        raw = len(getattr(detection, "objects", []) or [])
+        best = self._get(self._best_dst)
+        best_raw = len(getattr(best, "objects", []) or []) if best is not None else -1
+        frame_area = self._frame_area(detection)
+        best_area = self._frame_area(best)
+        if best is None or view > prev or (
+                view == prev and (raw, frame_area) > (best_raw, best_area)):
+            self._client.set(self._best_dst, detection, overwrite=True)
+            if self._best_pan_dst and self._view_pan_deg is not None:
+                self._client.set(self._best_pan_dst, math.radians(self._view_pan_deg), overwrite=True)
+        new_max = max(prev, view)
+        self._client.set(self._count_dst, new_max, overwrite=True)
+        history = []
+        if self._history_dst:
+            history = list(self._get(self._history_dst, []) or [])
+            history.append(view)
+            self._client.set(self._history_dst, history, overwrite=True)
+        enough_views = not self._history_dst or len(history) >= 3
+        done = enough_views and prev >= 1 and view <= prev
+        self._client.set(self._done_key, done, overwrite=True)
+        self.feedback_message = (
+            f"view counted {view}, max so far {new_max}"
+            + (" — sweep saturated, stopping early" if done else "")
+        )
+        return Status.SUCCESS
+
+
+class BtNode_CheckCountPositive(Behaviour):
+    """SUCCESS iff the integer at ``key`` is >= 1; FAILURE on zero/unset so a
+    Selector parent can hand over to the next counting strategy."""
+
+    def __init__(self, name: str, key: str):
+        super().__init__(name)
+        self._key = key
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._key, access=Access.READ)
+
+    def update(self):
+        try:
+            value = int(self._client.get(self._key) or 0)
+        except Exception:
+            value = 0
+        if value >= 1:
+            self.feedback_message = f"count is {value}"
+            return Status.SUCCESS
+        self.feedback_message = "count is zero — trying the next strategy"
+        return Status.FAILURE
+
+
+class BtNode_CountWavingPersons(Behaviour):
+    """Materialise the count returned by the dedicated waving detector.
+
+    ``DetectWaving`` writes a list of ``PointStamped`` detections to
+    ``ALL_WAVING_PERSONS``.  Counting that typed result avoids asking a VLM to
+    infer a gesture from a small/cropped RGB frame.  A missing or empty list
+    returns FAILURE so the caller can fall back to the ordinary VLM path.
+    """
+
+    def __init__(self, name: str = "count waving-person detections"):
+        super().__init__(name)
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(bb_keys.ALL_WAVING_PERSONS, access=Access.READ)
+        self._client.register_key(bb_keys.COUNT_VALUE, access=Access.WRITE)
+
+    def update(self):
+        try:
+            detections = self._client.get(bb_keys.ALL_WAVING_PERSONS)
+        except Exception:
+            detections = None
+        count = len(detections or []) if isinstance(detections, (list, tuple)) else 0
+        if count <= 0:
+            self.feedback_message = "dedicated waving detector returned no people"
+            return Status.FAILURE
+        self._client.set(bb_keys.COUNT_VALUE, count, overwrite=True)
+        self.feedback_message = f"counted {count} waving person(s) from dedicated detector"
+        return Status.SUCCESS
+
+
+class BtNode_BestEffortTurnPanTilt(BtNode_TurnPanTilt):
+    """Pan/tilt command that can be omitted by standalone tree fixtures.
+
+    Runtime trees provide the ROS node required by ``BtNode_TurnPanTilt``.
+    Small-tree unit tests and offline planners intentionally build trees
+    without a ROS node; in that context a missing controller is a best-effort
+    failure and the caller should continue with its existing camera pose.
+    """
+
+    def setup(self, **kwargs):
+        self._missing_ros_node = False
+        try:
+            super().setup(**kwargs)
+        except KeyError:
+            self._missing_ros_node = True
+
+    def initialise(self):
+        if self._missing_ros_node or self.mock_mode:
+            return
+        return super().initialise()
+
+    def update(self):
+        if self._missing_ros_node:
+            self.feedback_message = "pan/tilt controller unavailable; keeping current view"
+            return Status.FAILURE
+        if self.mock_mode:
+            self.feedback_message = "MOCK: keeping current pan/tilt view"
+            return Status.SUCCESS
+        return super().update()
+
+
+class BtNode_BestEffortScanForWavingPerson(BtNode_ScanForWavingPersonNew):
+    """Dedicated waving scan that degrades cleanly without a ROS node."""
+
+    def setup(self, **kwargs):
+        self._unavailable = False
+        try:
+            super().setup(**kwargs)
+        except Exception:
+            # ActionHandler's legacy missing-node diagnostic itself raises an
+            # IndexError while formatting its KeyError; keep this optional
+            # specialist from preventing offline tree construction.
+            self._unavailable = True
+
+    def initialise(self):
+        if self._unavailable:
+            return
+        return super().initialise()
+
+    def update(self):
+        if self._unavailable:
+            self.feedback_message = "waving detector unavailable; using VLM fallback"
+            return Status.FAILURE
+        return super().update()
+
+
+class BtNode_CountKeepUnclassified(Behaviour):
+    """Fold one view's unclassified-detection count into the sweep maximum.
+
+    Reads ``bb_view_key`` (this view's unclassifiable multi-class-label
+    detections, written by ``BtNode_CountDetections``) and keeps
+    ``bb_max_dst`` = max over views plus ``bb_frame_dst`` = the response of
+    that view (the frame the VLM counts the category on). Always SUCCESS.
+    """
+
+    def __init__(self, name: str, bb_view_key: str, bb_detection_key: str,
+                 bb_max_dst: str, bb_frame_dst: str):
+        super().__init__(name)
+        self._view_key = bb_view_key
+        self._detection_key = bb_detection_key
+        self._max_dst = bb_max_dst
+        self._frame_dst = bb_frame_dst
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._view_key, access=Access.READ)
+        self._client.register_key(self._detection_key, access=Access.READ)
+        self._client.register_key(self._max_dst, access=Access.WRITE)
+        self._client.register_key(self._frame_dst, access=Access.WRITE)
+
+    def _int(self, key) -> int:
+        try:
+            return int(self._client.get(key) or 0)
+        except Exception:
+            return 0
+
+    def update(self):
+        view = self._int(self._view_key)
+        prev = self._int(self._max_dst)
+        if view > prev:
+            try:
+                frame = self._client.get(self._detection_key)
+            except Exception:
+                frame = None
+            self._client.set(self._frame_dst, frame, overwrite=True)
+            self._client.set(self._max_dst, view, overwrite=True)
+        self.feedback_message = f"view unclassified {view}, max {max(view, prev)}"
+        return Status.SUCCESS
+
+
+class BtNode_CountCombine(Behaviour):
+    """Combine the current count with a VLM result.
+
+    ``mode="min"``: a VLM attribute count may only LOWER the detector's
+    count (never report more people than the detector saw). ``mode="max"``:
+    a VLM count of unclassifiable detections may only RAISE the classified
+    member count. ``mode="attribute"`` uses the VLM only when it returns a
+    positive value, bounded by the detector count. FAILURE when the other
+    value is missing / not an int (the caller wraps it best-effort, so the
+    detector count stands).
+    """
+
+    def __init__(self, name: str, bb_count_key: str, bb_other_key: str,
+                 mode: str = "min", bb_views_key: str = None,
+                 bb_confirm_key: str = None):
+        super().__init__(name)
+        if mode not in ("min", "max", "attribute", "attribute_confirmed", "consensus"):
+            raise ValueError(
+                f"unsupported count-combine mode {mode!r}"
+            )
+        self._count_key = bb_count_key
+        self._other_key = bb_other_key
+        self._mode = mode
+        self._views_key = bb_views_key or bb_keys.COUNT_VIEW_COUNTS
+        self._confirm_key = bb_confirm_key
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._count_key, access=Access.WRITE)
+        self._client.register_key(self._other_key, access=Access.READ)
+        if self._mode == "consensus":
+            self._client.register_key(self._views_key, access=Access.READ)
+        if self._mode == "attribute_confirmed":
+            if not self._confirm_key:
+                raise ValueError("attribute_confirmed mode requires bb_confirm_key")
+            self._client.register_key(self._confirm_key, access=Access.READ)
+
+    @staticmethod
+    def combine(count, other, mode: str, view_counts=None, confirm=None) -> int:
+        count = int(count or 0)
+        if mode == "attribute_confirmed":
+            values = []
+            for value in (other, confirm):
+                try:
+                    values.append(int(value))
+                except (TypeError, ValueError):
+                    continue
+            if len(values) == 2 and values[0] == values[1] == 0:
+                return 0
+            positive = [value for value in values if value > 0]
+            return min(count, max(positive)) if positive else count
+        other = int(other)
+        if mode == "min":
+            return min(count, other)
+        if mode == "max":
+            return max(count, other)
+        if mode == "consensus":
+            positive = []
+            for value in view_counts or []:
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if value > 0:
+                    positive.append(value)
+            if positive:
+                frequencies = {value: positive.count(value) for value in set(positive)}
+                highest_frequency = max(frequencies.values())
+                if highest_frequency >= 2:
+                    modes = [value for value, frequency in frequencies.items()
+                             if frequency == highest_frequency]
+                    consensus = other if other in modes else max(modes)
+                    return max(consensus, other)
+                # With no repeated detector value, the largest view can be a
+                # one-frame false positive.  A positive VLM count that agrees
+                # with one of the independent views is stronger evidence than
+                # that isolated spike (for example views [3, 4, 2], VLM 3).
+                if other > 0 and other in positive:
+                    return other
+            return max(count, other)
+        return min(count, other) if other > 0 else count
+
+    def update(self):
+        try:
+            count = int(self._client.get(self._count_key) or 0)
+        except Exception:
+            count = 0
+        try:
+            other_value = self._client.get(self._other_key)
+            other = int(other_value)
+        except Exception:
+            if self._mode != "attribute_confirmed":
+                self.feedback_message = f"no count at {self._other_key}"
+                return Status.FAILURE
+            other = None
+        try:
+            view_counts = self._client.get(self._views_key) if self._mode == "consensus" else None
+        except Exception:
+            view_counts = None
+        try:
+            confirm = self._client.get(self._confirm_key) if self._mode == "attribute_confirmed" else None
+        except Exception:
+            confirm = None
+        final = self.combine(count, other, self._mode, view_counts, confirm)
+        self._client.set(self._count_key, final, overwrite=True)
+        detail = (f"{self._mode}(detector {count}, vlm {other}, confirm {confirm}) = {final}"
+                  if self._mode == "attribute_confirmed" else
+                  f"{self._mode}(detector {count}, vlm {other}, views {view_counts}) = {final}"
+                  if self._mode == "consensus" else
+                  f"{self._mode}(detector {count}, vlm {other}) = {final}")
+        self.feedback_message = detail
+        return Status.SUCCESS
+
+
+class BtNode_ComposeRefereeRequest(Behaviour):
+    """Write the spoken ask-the-referee request for the grasp ex_machina branch.
+
+    Sim battery 2026-09-26 (runs s70718-000/-004): the robot asked the
+    referee without ever looking at the furniture. The branch now sweeps
+    the furniture first (``_referee_look_sweep``); this node reads that
+    sweep's detection response and composes, into ``bb_dst``:
+
+    - seen:  "Dear referee, I can see the <detected label> on the
+      <furniture>. Please put the <object name> in my gripper."
+    - unseen: "Dear referee, I cannot see the <object name> on the
+      <furniture>. Please hand me the <object name> and put it in my
+      gripper."
+
+    ``<furniture>`` is ``GRASP_REFEREE_LOCATION`` (the no-grasp furniture the
+    branch drove to), falling back to ``TARGET_LOCATION``, then "furniture".
+    Always SUCCESS -- a missing detection response simply reads as unseen.
+    """
+
+    def __init__(self, name: str, bb_dst: str,
+                 bb_detection_key: str = None, bb_object_name_key: str = None,
+                 bb_furniture_keys=None):
+        super().__init__(name)
+        self._dst = bb_dst
+        self._detection_key = bb_detection_key or bb_keys.TARGET_OBJECT_DETECTION
+        self._object_key = bb_object_name_key or bb_keys.TARGET_OBJECT_NAME
+        self._furniture_keys = list(bb_furniture_keys or (
+            bb_keys.GRASP_REFEREE_LOCATION, bb_keys.TARGET_LOCATION,
+        ))
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._dst, access=Access.WRITE)
+        self._client.register_key(bb_keys.REFEREE_HANDOFF_ENTITY, access=Access.WRITE)
+        self._client.register_key(self._detection_key, access=Access.READ)
+        self._client.register_key(self._object_key, access=Access.READ)
+        for key in self._furniture_keys:
+            self._client.register_key(key, access=Access.READ)
+
+    def _get(self, key):
+        try:
+            return self._client.get(key)
+        except Exception:
+            return None
+
+    @staticmethod
+    def compose(object_name, furniture, detected_label) -> str:
+        obj = str(object_name or "object").strip().replace("_", " ") or "object"
+        furn_raw = str(furniture or "").strip()
+        furn = furn_raw.replace("_", " ") or "furniture"
+        # fix4 run 3 said "on the bedroom": a room is "in", furniture is "on".
+        where = f"in the {furn}" if furn_raw and is_room_location(furn_raw) else f"on the {furn}"
+        seen = str(detected_label or "").strip().replace("_", " ")
+        if seen:
+            return (
+                f"Dear referee, I can see the {seen} {where}. "
+                f"Please put the {obj} in my gripper."
+            )
+        return (
+            f"Dear referee, I cannot see the {obj} {where}. "
+            f"Please hand me the {obj} and put it in my gripper."
+        )
+
+    def update(self):
+        detection = self._get(self._detection_key)
+        objects = list(getattr(detection, "objects", []) or [])
+        label = ""
+        for item in objects:
+            for field in ("cls", "label", "name"):
+                value = getattr(item, field, None)
+                if isinstance(value, str) and value.strip():
+                    label = value.strip()
+                    break
+            if label:
+                break
+        furniture = ""
+        for key in self._furniture_keys:
+            value = self._get(key)
+            if value is not None and str(value).strip():
+                furniture = str(value)
+                break
+        object_name = self._get(self._object_key)
+        text = self.compose(object_name, furniture, label)
+        self._client.set(self._dst, text, overwrite=True)
+        # Sim referee hand-off target: the KNOWN OBJECT KEY behind what the
+        # look-first sweep saw, so a category target ("food") resolves to the
+        # concrete spawned entity (fix4 run 3: the sim nacked "no entity for
+        # 'food'"); falls back to the object name itself when nothing was seen.
+        from .orchestrator import category_members, object_key_for_label  # lazy: import cycle
+        entity = ""
+        if " . " not in str(label or ""):  # a whole multi-class prompt echoed back is no label
+            entity = object_key_for_label(label) or ""
+        if not entity:
+            # fix4b run 004: guessing one member ("pudding_box") of a category
+            # was nacked; send every member as '|'-separated candidates and
+            # let the sim hand over whichever actually exists on the furniture.
+            members = category_members(object_name)
+            entity = "|".join(members) if members else (object_key_for_label(object_name) or "")
+        self._client.set(bb_keys.REFEREE_HANDOFF_ENTITY, entity, overwrite=True)
+        self.feedback_message = text
         return Status.SUCCESS
 
 
@@ -1109,10 +2343,25 @@ def _tuck_arm_for_nav(label: str = "tuck arm for nav",
     ``bb_keys.ARM_ORBBEC_LOOK``, the general stow/orbbec-look pose). The
     ``goto`` tree passes ``bb_keys.ARM_NAVIGATING`` so a pure navigation always
     parks the arm in the dedicated lidar-clearing navigating pose before moving.
-    Retry-wrapped and propagates failure: if the arm cannot tuck, we do NOT
-    drive with the arm sticking out — the orchestrator self-correction handles it.
+    Retry-wrapped and normally propagates failure: if the arm cannot tuck, we do
+    not drive with the arm sticking out.  The live simulator benchmark can set
+    ``GPSR_ALLOW_NAV_WITHOUT_ARM=1`` when its TF tree does not expose the arm's
+    world transform; in that mode a failed tuck is treated as best-effort so
+    perception/navigation-only commands can still execute.  Manipulation steps
+    retain their own strict arm action and still fail when the arm is unusable.
     """
-    return py_trees.decorators.Retry(
+    # The benchmark opt-out means the arm controller/TF tree is unavailable;
+    # do not even send a goal in that mode.  FailureIsSuccess around a live
+    # action still waits for the action server's timeout (several minutes),
+    # defeating the opt-out and starving navigation.  A synthetic SUCCESS is
+    # safe here because this flag is only enabled by the live-sim benchmark;
+    # manipulation actions keep their own strict arm requirements.
+    if os.environ.get("GPSR_ALLOW_NAV_WITHOUT_ARM", "").strip() == "1":
+        return py_trees.behaviours.Success(
+            f"{label} (skipped: GPSR_ALLOW_NAV_WITHOUT_ARM=1)"
+        )
+
+    retry = py_trees.decorators.Retry(
         f"retry {label}",
         BtNode_MoveArmSingle(
             label,
@@ -1122,9 +2371,10 @@ def _tuck_arm_for_nav(label: str = "tuck arm for nav",
         ),
         num_failures=3,
     )
+    return retry
 
 
-def _arm_to_orbbec_look(label: str = "arm to orbbec look"):
+def _arm_to_orbbec_look(label: str = "arm to orbbec look", prelude=None):
     """Move the arm to ``arm_pos_orbbec_look`` so it clears the ORBBEC head
     camera's field of view before an orbbec scan (find_object / count / vlm /
     find_person / describe_person). This is NOT the arm-mounted RealSense grasp
@@ -1135,18 +2385,37 @@ def _arm_to_orbbec_look(label: str = "arm to orbbec look"):
     ``bb_keys.ARM_ORBBEC_LOOK``, seeded once at startup alongside the nav/scan
     poses; if it is unset the move simply no-ops and the scan proceeds.
     """
+    # The live simulator may intentionally run without a usable arm/TF tree.
+    # In that mode the head camera can still perform the scan, while sending a
+    # joint goal here can remain RUNNING or be rejected indefinitely and block
+    # the whole perception subtree.  Keep this opt-out consistent with the
+    # navigation tuck policy; real-arm runs retain the actual move and retries.
+    if os.environ.get("GPSR_ALLOW_NAV_WITHOUT_ARM", "").strip() == "1":
+        skipped = py_trees.behaviours.Success(
+            f"{label} (skipped: GPSR_ALLOW_NAV_WITHOUT_ARM=1)"
+        )
+        if prelude is None:
+            return skipped
+        return py_trees.composites.Sequence(
+            f"{label} prelude", memory=True, children=[prelude, skipped]
+        )
+
+    retry = py_trees.decorators.Retry(
+        f"retry {label}",
+        BtNode_MoveArmSingle(
+            label,
+            action_name=ARM_ACTION_NAME,
+            arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
+            add_octomap=False,
+        ),
+        num_failures=3,
+    )
+    child = retry if prelude is None else py_trees.composites.Sequence(
+        f"{label} prelude", memory=True, children=[prelude, retry]
+    )
     return py_trees.decorators.FailureIsSuccess(
         f"{label} (best effort)",
-        py_trees.decorators.Retry(
-            f"retry {label}",
-            BtNode_MoveArmSingle(
-                label,
-                action_name=ARM_ACTION_NAME,
-                arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
-                add_octomap=False,
-            ),
-            num_failures=3,
-        ),
+        child,
     )
 
 
@@ -1213,6 +2482,61 @@ def _one_shot(
     return py_trees.decorators.OneShot(child.name, child, policy)
 
 
+# Upper bound on the door watch. Sim battery 2026-09-27 fix4 run 004: the
+# previous run left the robot facing the bedroom side table, the door detector
+# had no door in view and answered FAILURE for the whole 1500 s run -- the
+# mission never started. A referee who has opened the door will not wait
+# forever either; after this long the robot says so and enters anyway.
+# Override with GPSR_DOOR_WAIT_MAX_S (seconds; <= 0 restores the unbounded watch).
+DOOR_WAIT_MAX_S = float(os.environ.get("GPSR_DOOR_WAIT_MAX_S", "120") or 0)
+
+
+class FailureIsRunningUntil(py_trees.decorators.Decorator):
+    """``FailureIsRunning`` with a wall-clock budget: the child's FAILURE reads
+    as RUNNING (keep sensing) until ``max_wait_s`` has elapsed since the first
+    tick of this activation, then as SUCCESS (give up waiting, proceed). A
+    non-positive budget keeps waiting forever, exactly like FailureIsRunning.
+    """
+
+    def __init__(self, name: str, child, max_wait_s: float):
+        super().__init__(name=name, child=child)
+        self._max_wait_s = float(max_wait_s)
+        self._started = None
+
+    def initialise(self):
+        self._started = None
+
+    def update(self):
+        if self._started is None:
+            self._started = time.monotonic()
+        status = self.decorated.status
+        # A service request can remain RUNNING forever when its server is
+        # present but never completes (the live battery's door detector did
+        # exactly this).  The original budget only inspected FAILURE, so that
+        # path bypassed the watchdog and held the whole 1500 s command slot.
+        # Apply the wall-clock bound to every non-terminal child state.
+        waited = time.monotonic() - self._started
+        if (
+            status == Status.RUNNING
+            and self._max_wait_s > 0
+            and waited >= self._max_wait_s
+        ):
+            self.feedback_message = (
+                f"door not confirmed open after {waited:.0f}s -- proceeding anyway"
+            )
+            return Status.SUCCESS
+        if status != Status.FAILURE:
+            self.feedback_message = self.decorated.feedback_message
+            return status
+        if self._max_wait_s > 0 and waited >= self._max_wait_s:
+            self.feedback_message = (
+                f"door not confirmed open after {waited:.0f}s -- proceeding anyway"
+            )
+            return Status.SUCCESS
+        self.feedback_message = self.decorated.feedback_message
+        return Status.RUNNING
+
+
 def create_enter_arena():
     """Enter the arena ONCE, at mission start.
 
@@ -1232,15 +2556,22 @@ def create_enter_arena():
     # Greet + request the door ONCE, before sensing. The memory Sequence runs
     # this to SUCCESS then advances to the door watch and stays there while the
     # door is closed, so the announcement plays exactly once (not every tick).
+    detect.add_child(BtNode_TurnPanTilt(
+        # The entrance head pose is useful for the door detector, but a stale
+        # pan/tilt feedback sample must not prevent the bounded door watch
+        # from running. The detector itself remains the entry gate.
+        "point head at entrance", x=0.0, y=45.0,
+    ))
     detect.add_child(BtNode_Announce(
         "announce ready for gpsr", bb_source=None,
         message="Hi, I am Tinker. I am ready for GPSR. Please open the door.",
     ))
-    detect.add_child(py_trees.decorators.FailureIsRunning(
+    detect.add_child(FailureIsRunningUntil(
         "keep sensing until door opens",
         BtNode_DoorDetection(
             "detect open door", bb_door_state_key=bb_keys.DOOR_STATUS,
         ),
+        max_wait_s=DOOR_WAIT_MAX_S,
     ))
     detect.add_child(BtNode_Announce(
         "announce entering arena", bb_source=None,
@@ -1251,7 +2582,13 @@ def create_enter_arena():
     ))
     # Run detect at most once: after the first success ARENA_ENTERED is set, so
     # the guard short-circuits the Selector on every later round.
-    once = py_trees.composites.Selector("enter arena (once)", memory=False)
+    # Keep the selector's running child between ticks.  With ``memory=False``
+    # the failed guard is re-run first on every tick and py_trees invalidates
+    # the still-running ``detect`` branch; that reset replays the greeting and
+    # door-open request continuously while the door service is pending.  A
+    # memory selector resumes the door watch until it reaches a terminal state,
+    # then the blackboard latch makes the guard succeed on later restarts.
+    once = py_trees.composites.Selector("enter arena (once)", memory=True)
     once.add_child(BtNode_CheckBBKeySet("already entered arena?", bb_keys.ARENA_ENTERED))
     once.add_child(detect)
     return once
@@ -1410,10 +2747,22 @@ def create_goto():
             ),
         ],
     ))
-    drive = py_trees.decorators.Retry(
+    drive_retry = py_trees.decorators.Retry(
         "retry goto",
-        BtNode_GotoAction("goto target", key=bb_keys.TARGET_POSE),
+        BtNode_GotoAction("goto target", key=bb_keys.NAV_GOAL_POSE),
         num_failures=5,
+    )
+    # Keep the public goto tree shape stable (the parallel remains the fourth
+    # child) while preparing the scratch goal immediately before navigation.
+    drive = py_trees.composites.Sequence(
+        "prepare + retry goto", memory=True,
+        children=[
+            # Keep semantic TARGET_POSE unchanged for at_robot()/step
+            # evidence, but move static furniture and room anchors just
+            # outside their inflated obstacle halo before Nav2 sees the goal.
+            BtNode_FurnitureStandoffPose("prepare furniture standoff"),
+            drive_retry,
+        ],
     )
     # Drive + keep-alive chatter run together; the parallel finishes EXACTLY when
     # the drive does (SuccessOnSelected targets the drive child). The announcer
@@ -1449,6 +2798,31 @@ def _object_scan_and_verify():
         "verify objects found",
         bb_detection_src=bb_keys.TARGET_OBJECT_DETECTION,
         bb_count_dst=bb_keys.COUNT_VALUE,
+        fail_if_zero=True,
+    ))
+    return seq
+
+
+def _referee_object_scan():
+    """Fresh one-view scan for the grasp ex_machina branch's look-first sweep:
+    the same generalist orbbec scan as ``_object_scan_and_verify`` (so a hit
+    lands in ``TARGET_OBJECT_DETECTION`` for ``BtNode_ComposeRefereeRequest``
+    to name), but its verify count goes to a scratch key -- this must never
+    clobber ``COUNT_VALUE``, the counted() gate's artifact."""
+    seq = py_trees.composites.Sequence("referee object scan+verify", memory=True)
+    seq.add_child(BtNode_ScanForGeneralist(
+        name="referee generalist scan",
+        bb_source=bb_keys.TARGET_OBJECT_PROMPT,
+        bb_key=bb_keys.TARGET_OBJECT_DETECTION,
+        use_orbbec=True,
+        transform_to_map=True,
+        use_vlm_sam_fallback=True,
+        sort_closest=True,
+    ))
+    seq.add_child(BtNode_CountDetections(
+        "verify object seen at furniture",
+        bb_detection_src=bb_keys.TARGET_OBJECT_DETECTION,
+        bb_count_dst=bb_keys.REFEREE_SEEN_COUNT,
         fail_if_zero=True,
     ))
     return seq
@@ -1540,6 +2914,24 @@ def create_find_object(pan_deg=None, tilt_deg=None):
         "find_object", tilts, _object_scan_and_verify, pan_deg=pan_deg,
     ))
     sweep_with_reduction.add_child(reduced_retry)
+    # 360 deg room survey (sim battery 2026-09-26): a room-wide search only
+    # ever looked +-45 deg from each search spot. LAST branch, gated by
+    # BtNode_CheckRoomSurveyDue so it fires only when the target location is
+    # a room AND (inside create_search_object) this is the last filled spot,
+    # i.e. after every search spot and the reduced-query retry have failed:
+    # turn the base 90 deg four times, full pan/tilt sweep at each heading,
+    # SUCCESS at the first detection. A direct find_object(room) surveys
+    # right after its own sweep + reduction fail. See create_survey_room.
+    survey = py_trees.composites.Sequence("find_object room survey", memory=True)
+    survey.add_child(BtNode_CheckRoomSurveyDue("room survey due?"))
+    survey.add_child(BtNode_Announce(
+        "announce room survey", bb_source=None,
+        message="I cannot see it from here. Let me turn around and look.",
+    ))
+    survey.add_child(create_survey_room(
+        _object_scan_and_verify, tilts, pan_deg=pan_deg, label="find_object survey",
+    ))
+    sweep_with_reduction.add_child(survey)
     seq.add_child(sweep_with_reduction)
     seq.add_child(BtNode_AnnounceFromBB(
         "announce found", bb_keys.TARGET_OBJECT_NAME, prefix="I can see the "
@@ -1692,7 +3084,11 @@ def create_search_object(capacity: int = MAX_SEARCH_SPOTS):
     return sweep
 
 
-def create_approach_person():
+def create_approach_person(
+    skip_operator: bool = False,
+    approach_max_distance: float = 0.0,
+    fail_on_unreachable: bool = False,
+):
     """Navigate to the person pose stored by the most recent ``find_person``.
 
     Atomic action — the LLM plans ``find_person`` then ``approach_person``
@@ -1700,20 +3096,98 @@ def create_approach_person():
     standing next to the person rather than across the room. Converts
     ``bb_keys.TARGET_PERSON_POSE`` (PointStamped from vision) into a nav goal
     and drives there.
+
+    ``skip_operator`` is used only by ``create_deliver``: the operator's
+    captured command-point pose is already the handoff target.
+
+    ``approach_max_distance`` is an optional delivery override; zero keeps the
+    action server's configured default for ordinary ``approach_person`` use.
+
+    ``fail_on_unreachable`` keeps delivery closed when both navigation
+    strategies fail. Asking the recipient to move is not evidence that they
+    did, so a later attempt must confirm the approach before releasing.
     """
     seq = py_trees.composites.Sequence("small/approach_person", memory=True)
+    # Fails (no announcement) when the person scan never stored a pose.
     seq.add_child(BtNode_PointToPoseStamped(
         "person point to nav pose",
         bb_point_key=bb_keys.TARGET_PERSON_POSE,
         bb_pose_key=bb_keys.PERSON_NAV_POSE,
     ))
     seq.add_child(_tuck_arm_for_nav("tuck arm before approach"))
-    seq.add_child(py_trees.decorators.Retry(
+    # Sim battery 2026-10-01 fix8 run s70718-000: "goto person" drove to the
+    # person's OWN position -- a goal inside their costmap footprint -- and
+    # Nav2 aborted 3/3 with the soup still in the gripper. go_to_approach
+    # picks a free, reachable pose ~0.7 m away facing the person (and
+    # recomputes against the live costmap on an abort). The raw goto stays as
+    # a fallback; if the robot still cannot get there it asks the person to
+    # come over. Delivery treats that request as incomplete until a later
+    # approach actually succeeds.
+    reach = py_trees.composites.Selector("reach person", memory=True)
+    reach.add_child(py_trees.decorators.Retry(
         "retry approach",
-        BtNode_GotoAction("goto person", key=bb_keys.PERSON_NAV_POSE),
-        num_failures=3,
+        BtNode_Approach(
+            "approach person",
+            bb_target_key=bb_keys.TARGET_PERSON_POSE,
+            max_distance=approach_max_distance,
+        ),
+        num_failures=2,
     ))
-    return seq
+    reach.add_child(BtNode_GotoAction("goto person", key=bb_keys.PERSON_NAV_POSE))
+    ask_person = BtNode_Announce(
+        "ask person to come closer", bb_source=None,
+        message="I cannot get any closer to you. Please come over to me.",
+    )
+    if fail_on_unreachable:
+        ask_then_fail = py_trees.composites.Sequence(
+            "ask person to come closer, then fail", memory=True,
+        )
+        ask_then_fail.add_child(ask_person)
+        ask_then_fail.add_child(py_trees.behaviours.Failure(
+            "recipient approach not confirmed",
+        ))
+        reach.add_child(ask_then_fail)
+    else:
+        reach.add_child(ask_person)
+    if fail_on_unreachable:
+        clear_failed_target = py_trees.composites.Sequence(
+            "clear unconfirmed delivery approach", memory=True,
+        )
+        clear_failed_target.add_child(BtNode_BlackboardSet(
+            "clear unconfirmed person nav pose", bb_keys.PERSON_NAV_POSE, None,
+        ))
+        clear_failed_target.add_child(py_trees.behaviours.Failure(
+            "recipient approach not confirmed",
+        ))
+        seq.add_child(py_trees.composites.Selector(
+            "delivery approach confirmation", memory=True,
+            children=[reach, clear_failed_target],
+        ))
+    else:
+        seq.add_child(reach)
+    if not skip_operator:
+        return seq
+
+    # ``deliver(..., recipient_location=start_position)`` already has the
+    # operator's captured pose as its navigation target.  A second person
+    # approach can select a false positive (or walk away from that pose), so
+    # bypass it only for this delivery-specific tree.  Standalone
+    # ``approach_person`` actions retain their normal pose-driven behavior.
+    direct = py_trees.composites.Sequence(
+        "operator handoff: skip approach", memory=True,
+    )
+    direct.add_child(BtNode_CheckOperatorDelivery())
+    direct.add_child(py_trees.behaviours.Success("operator already at handoff"))
+    reuse = py_trees.composites.Sequence(
+        "reuse resolved delivery person", memory=True,
+    )
+    reuse.add_child(BtNode_CheckResolvedDeliveryTarget(
+        "recipient pose already resolved?", require_nav=True,
+    ))
+    reuse.add_child(py_trees.behaviours.Success("recipient already approached"))
+    return py_trees.composites.Selector(
+        "small/approach_person", memory=True, children=[direct, reuse, seq],
+    )
 
 
 def _person_scan_strategies(extra_specialist=None):
@@ -1767,6 +3241,11 @@ def _person_scan_strategies(extra_specialist=None):
         use_orbbec=True,
         transform_to_map=True,
         sort_closest=True,
+        # Keep masks so BtNode_ExtractDetection can reject a near-camera
+        # person box caused by the robot's own arm/gripper.  The centroid-only
+        # path accepted that self detection in rerun60 and drove delivery to
+        # the robot's room waypoint instead of the living-room person.
+        return_segments=True,
     ))
     generalist_branch.add_child(BtNode_ExtractDetection(
         "pick closest person",
@@ -1827,6 +3306,9 @@ def _person_scan_strategies(extra_specialist=None):
         use_orbbec=True,
         transform_to_map=True,
         sort_closest=True,
+        # The relaxed fallback can see the same self-arm box as the strict
+        # descriptor scan, so retain masks for the shared self-occlusion filter.
+        return_segments=True,
     ))
     generic_scan_branch.add_child(BtNode_ExtractDetection(
         "pick relaxed generic person (fresh scan)",
@@ -1837,6 +3319,13 @@ def _person_scan_strategies(extra_specialist=None):
         bb_provenance_dst=bb_keys.PERSON_PROVENANCE,
     ))
     selector.add_child(generic_scan_branch)
+    # The simulator's relaxed identity mode supplies one deterministic person
+    # asset; descriptor-specific VLM prompts can instead lock onto nearby
+    # furniture (the living-room sofa in particular). Prefer the plain person
+    # scan in that explicitly enabled validation mode.
+    if os.environ.get("GPSR_SIM_IDENTITY_RELAXED") == "1":
+        selector.children.remove(generic_scan_branch)
+        selector.children.insert(0, generic_scan_branch)
     return selector
 
 
@@ -1866,6 +3355,9 @@ def _attribute_person_specialist_branch(gate: str, prompt: str = ""):
         use_orbbec=True,
         transform_to_map=True,
         sort_closest=True,
+        # Keep masks so BtNode_ExtractDetection can reject a near-camera
+        # person box caused by the robot's own arm/gripper.
+        return_segments=True,
     ))
     branch.add_child(BtNode_ExtractDetection(
         f"pick {gate} person",
@@ -1876,7 +3368,30 @@ def _attribute_person_specialist_branch(gate: str, prompt: str = ""):
     return branch
 
 
-def create_find_person(extra_specialist=None, pan_deg=None, tilt_deg=None):
+def _person_scan_and_confirm(extra_specialist=None):
+    """Fresh person detection for one pan/tilt: the scan strategies, then a
+    SECOND, independent run of the same strategies at the same pose that
+    must also find a person before the branch (and so the sweep) succeeds.
+
+    Sim battery 2026-09-26 (run s70718-004): "Found a person." was announced
+    at start_position from a single YOLO 'person' hit while the head frame
+    showed empty floor -- a one-off false positive accepted immediately.
+    Both runs are fresh node instances (a py_trees node occupies one slot);
+    the confirm run's own scans re-write ``TARGET_PERSON_DETECTION`` /
+    ``TARGET_PERSON_POSE`` before its extract, so the pose the sweep leaves
+    behind is the CONFIRMED one. A failed confirmation fails this branch
+    and the memory-Selector sweep moves on to the next (pan, tilt).
+    """
+    seq = py_trees.composites.Sequence("person scan + confirm", memory=True)
+    seq.add_child(_person_scan_strategies(extra_specialist))
+    confirm = _person_scan_strategies(extra_specialist)
+    confirm.name = "person confirm strategies"
+    seq.add_child(confirm)
+    return seq
+
+
+def create_find_person(extra_specialist=None, pan_deg=None, tilt_deg=None,
+                       skip_operator: bool = False):
     """Scan for a person matching ``bb_keys.TARGET_PERSON_PROMPT`` and store
     their pose. Locate-only — it does NOT move the robot.
 
@@ -1890,6 +3405,9 @@ def create_find_person(extra_specialist=None, pan_deg=None, tilt_deg=None):
     modification) adds a descriptor-gated attribute branch; otherwise the
     generalist scans with a prompt built from the descriptor. To stand next to
     the person, the planner emits ``approach_person`` separately.
+
+    ``skip_operator`` is delivery-only and adds a guarded fast path for the
+    captured operator pose; ordinary ``find_person`` actions always scan.
     """
     seq = py_trees.composites.Sequence("small/find_person", memory=True)
     seq.add_child(BtNode_BuildPersonPrompt(
@@ -1905,14 +3423,35 @@ def create_find_person(extra_specialist=None, pan_deg=None, tilt_deg=None):
     seq.add_child(_pantilt_sweep(
         "find_person",
         HUMAN_TILT_DEG if tilt_deg is None else [float(t) for t in tilt_deg],
-        lambda: _person_scan_strategies(extra_specialist),
-        pan_deg=pan_deg,
+        lambda: _person_scan_and_confirm(extra_specialist),
+        pan_deg=HUMAN_PAN_SWEEP_DEG if pan_deg is None else pan_deg,
     ))
     seq.add_child(BtNode_Announce(
         "announce found person", bb_source=None,
         message="Found a person.",
     ))
-    return seq
+    seq.add_child(BtNode_RecordResolvedPersonQuery())
+    if not skip_operator:
+        return seq
+
+    # The operator is represented by the captured ``START_POSE`` rather than
+    # a new visual target.  Keep this guard local to delivery; direct
+    # ``find_person`` actions must still perform their requested scan.
+    direct = py_trees.composites.Sequence(
+        "operator handoff: skip person scan", memory=True,
+    )
+    direct.add_child(BtNode_CheckOperatorDelivery())
+    direct.add_child(py_trees.behaviours.Success("operator pose already known"))
+    reuse = py_trees.composites.Sequence(
+        "reuse resolved delivery person", memory=True,
+    )
+    reuse.add_child(BtNode_CheckResolvedDeliveryTarget(
+        "recipient pose already resolved?", require_nav=False,
+    ))
+    reuse.add_child(py_trees.behaviours.Success("recipient pose already known"))
+    return py_trees.composites.Selector(
+        "small/find_person", memory=True, children=[direct, reuse, seq],
+    )
 
 
 def create_describe_person(pan_deg=None, tilt_deg=None):
@@ -2035,6 +3574,187 @@ def create_guide():
     return seq
 
 
+def _wrist_table_scan(name: str):
+    """One generalist detection on the arm RealSense (camera frame, rgb +
+    depth + segments -- everything the grasp server reads from
+    ``TARGET_OBJECT``)."""
+    return BtNode_ScanForGeneralist(
+        name=name,
+        bb_source=bb_keys.TARGET_OBJECT_PROMPT,
+        bb_key=bb_keys.TARGET_OBJECT,
+        use_orbbec=False,            # arm RealSense at ARM_SCAN
+        transform_to_map=False,      # keep camera frame for the grasp server
+        use_vlm_sam_fallback=True,   # open-vocab for coke / fanta / ...
+        sort_closest=True,
+        return_rgb_image=True,
+        return_depth_image=True,
+        return_segments=True,
+    )
+
+
+def _grasp_arm(label: str, pose_key: str, add_octomap: bool = False):
+    return BtNode_MoveArmSingle(
+        label, service_name=ARM_ACTION_NAME, arm_pose_bb_key=pose_key,
+        add_octomap=add_octomap,
+    )
+
+
+def _grasp_turn_base(label: str, goal_key: str):
+    """Best-effort rotate-in-place goto (x/y kept, heading from ``goal_key``)."""
+    return py_trees.decorators.FailureIsSuccess(
+        f"{label} (best effort)",
+        py_trees.decorators.Retry(
+            f"retry {label}", BtNode_GotoAction(label, key=goal_key), num_failures=2,
+        ),
+    )
+
+
+def _arm_back_after_grasp(label: str = "retry arm back"):
+    """Return the post-grasp arm reset used by the live benchmark.
+
+    The simulator's joint action server can leave a completed/failed grasp
+    with the arm goal in a terminal-but-unreported state for several minutes.
+    Navigation is explicitly allowed to proceed without a tuck in this mode,
+    so waiting through five more arm goals only delays the referee fallback or
+    the next target.  The normal hardware path retains the five-attempt retry.
+    """
+    if os.environ.get("GPSR_ALLOW_NAV_WITHOUT_ARM", "").strip() == "1":
+        return py_trees.behaviours.Success(
+            f"{label} (skipped: GPSR_ALLOW_NAV_WITHOUT_ARM=1)"
+        )
+    return py_trees.decorators.Retry(
+        label,
+        BtNode_MoveArmSingle(
+            "arm back to navigating",
+            service_name=ARM_ACTION_NAME,
+            arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
+        ),
+        num_failures=5,
+    )
+
+
+def _grasp_table_detection():
+    """Detect the grasp target on the table from up to five DIFFERENT views.
+
+    Sim battery 2026-09-30 fix5 (goToLoc at kitchen_table): the wrist frame
+    clearly showed soup can, sugar box, banana and a mug, yet "retry detect
+    on table" failed 5/5 with "no matches via vlm_sam" -- five identical
+    requests from the identical ARM_SCAN pose. Now each attempt is a new
+    view, first success wins:
+
+    1. wrist at ARM_SCAN (as before);
+    2. head camera: arm to the orbbec-look (nav stow) pose, head tilt
+       ``GRASP_HEAD_TILT_DEG``, orbbec scan in the MAP frame. The grasp
+       server needs the wrist rgb/depth/segments (BtNode_Grasp sends
+       vision_result.rgb_image/depth_image/segments + header), so the head
+       detection only RE-AIMS: turn the base to face it (clamped 45 deg),
+       arm back to ARM_SCAN, wrist scan again;
+    3./4. base yaw ``GRASP_RELOOK_YAW_DEG`` (+15 / -15 relative to the
+       heading the grasp started at), wrist scan.
+
+    Every base rotation happens with the arm at the orbbec-look pose (the
+    pose used for navigation), never with the arm extended over the table.
+    Detection calls <= 5 (1 + head 1 + wrist 1 + 1 + 1). If every view fails
+    the robot turns back to its starting heading (best effort) and the
+    sweep FAILS as before (-> primary retry / ex_machina).
+    """
+    settle_ticks = 6
+
+    def _make_table_views():
+        """Build a fresh view selector for each strict/reduced-query pass."""
+        views = py_trees.composites.Selector("table views", memory=True)
+
+        v1 = py_trees.composites.Sequence("table view 1: wrist at arm scan", memory=True)
+        v1.add_child(_wrist_table_scan("realsense generalist detect"))
+        views.add_child(v1)
+
+        v2 = py_trees.composites.Sequence("table view 2: head camera re-aim", memory=True)
+        v2.add_child(_grasp_arm("view 2: arm to orbbec look", bb_keys.ARM_ORBBEC_LOOK))
+        v2.add_child(BtNode_TurnPanTilt(
+            f"view 2: head tilt {GRASP_HEAD_TILT_DEG:+.0f}", x=0.0, y=GRASP_HEAD_TILT_DEG))
+        v2.add_child(BtNode_ScanForGeneralist(
+            name="orbbec generalist detect",
+            bb_source=bb_keys.TARGET_OBJECT_PROMPT,
+            bb_key=bb_keys.GRASP_HEAD_DETECTION,
+            use_orbbec=True,
+            transform_to_map=True,       # map-frame centroid to face
+            use_vlm_sam_fallback=True,
+            sort_closest=True,
+            return_segments=False,
+        ))
+        drive_up = py_trees.composites.Sequence("view 2: drive up to the object", memory=True)
+        drive_up.add_child(BtNode_ExtractDetection(
+            "view 2: object point", bb_detection_src=bb_keys.GRASP_HEAD_DETECTION,
+            bb_object_dst=bb_keys.GRASP_HEAD_OBJECT, bb_point_dst=bb_keys.GRASP_HEAD_POINT,
+        ))
+        drive_up.add_child(BtNode_Approach(
+            "view 2: approach object", bb_target_key=bb_keys.GRASP_HEAD_POINT,
+            desired_distance=GRASP_APPROACH_DISTANCE_M,
+        ))
+        # Views 3/4 and the restore turn are relative to the new, closer spot.
+        drive_up.add_child(BtNode_CaptureCurrentPose(
+            "view 2: re-capture start heading", bb_key=bb_keys.GRASP_START_POSE))
+        v2.add_child(py_trees.decorators.FailureIsSuccess("view 2: drive up (best effort)", drive_up))
+        v2.add_child(BtNode_CaptureCurrentPose("view 2: capture pose", bb_key=bb_keys.SURVEY_CAPTURE_POSE))
+        v2.add_child(BtNode_YawTowardDetection(
+            "view 2: face head detection", bb_keys.SURVEY_CAPTURE_POSE,
+            bb_keys.GRASP_HEAD_DETECTION, bb_keys.GRASP_VIEW_GOAL,
+        ))
+        v2.add_child(_grasp_turn_base("view 2: turn to detection", bb_keys.GRASP_VIEW_GOAL))
+        v2.add_child(BtNode_TurnPanTilt("view 2: head back down", x=0.0, y=20.0))
+        v2.add_child(_grasp_arm("view 2: arm to scan", bb_keys.ARM_SCAN, add_octomap=True))
+        v2.add_child(BtNode_WaitTicks("view 2: settle", settle_ticks))
+        v2.add_child(_wrist_table_scan("view 2: realsense detect"))
+        views.add_child(v2)
+
+        for i, yaw in enumerate(GRASP_RELOOK_YAW_DEG, start=3):
+            v = py_trees.composites.Sequence(f"table view {i}: base yaw {yaw:+.0f}", memory=True)
+            v.add_child(_grasp_arm(f"view {i}: arm to orbbec look", bb_keys.ARM_ORBBEC_LOOK))
+            v.add_child(BtNode_YawOffsetPose(
+                f"view {i}: yaw {yaw:+.0f}", bb_keys.GRASP_START_POSE, bb_keys.GRASP_VIEW_GOAL, yaw,
+            ))
+            v.add_child(_grasp_turn_base(f"view {i}: turn base", bb_keys.GRASP_VIEW_GOAL))
+            v.add_child(_grasp_arm(f"view {i}: arm to scan", bb_keys.ARM_SCAN, add_octomap=True))
+            v.add_child(BtNode_WaitTicks(f"view {i}: settle", settle_ticks))
+            v.add_child(_wrist_table_scan(f"view {i}: realsense detect"))
+            views.add_child(v)
+        return views
+
+    views = _make_table_views()
+
+    restore = py_trees.composites.Sequence("restore heading", memory=True)
+    restore.add_child(BtNode_CheckBBKeySet("start heading known?", bb_keys.GRASP_START_POSE))
+    restore.add_child(_grasp_arm("restore: arm to orbbec look", bb_keys.ARM_ORBBEC_LOOK))
+    restore.add_child(_grasp_turn_base("restore: turn back", bb_keys.GRASP_START_POSE))
+    give_up = py_trees.composites.Sequence("no view detected the object", memory=True)
+    give_up.add_child(py_trees.decorators.FailureIsSuccess("restore heading (best effort)", restore))
+    give_up.add_child(py_trees.behaviours.Failure("detection failed"))
+
+    # The planner may enrich a plain object name with an attribute (for
+    # example, ``bowl`` becomes ``red bowl`` from the venue vocabulary).  The
+    # wrist frame can contain the object while the open-vocabulary detector
+    # rejects that adjective, so give the same known-token reduction used by
+    # create_find_object one complete retry before falling back to the referee.
+    reduced_retry = py_trees.composites.Sequence(
+        "reduced grasp query retry", memory=True,
+        children=[
+            BtNode_ReduceObjectQuery("reduce grasp object query"),
+            _make_table_views(),
+        ],
+    )
+    sweep = py_trees.composites.Sequence("detect on table (view sweep)", memory=True)
+    sweep.add_child(BtNode_BlackboardSet("reset start heading", bb_keys.GRASP_START_POSE, None))
+    sweep.add_child(py_trees.decorators.FailureIsSuccess(
+        "capture start heading (best effort)",
+        BtNode_CaptureCurrentPose("capture start heading", bb_key=bb_keys.GRASP_START_POSE),
+    ))
+    sweep.add_child(py_trees.composites.Selector(
+        "table views, reduced query, or give up", memory=True,
+        children=[views, reduced_retry, give_up],
+    ))
+    return sweep
+
+
 def create_grasp():
     """Pick up the object referenced by the vision flow.
 
@@ -2081,22 +3801,10 @@ def create_grasp():
     # grasp server gets everything it needs, and FAILS (status!=0) when nothing
     # matches so the Retry re-looks. The full response lands in TARGET_OBJECT,
     # which the grasp node reads as vision_result.
-    find_and_grasp.add_child(py_trees.decorators.Retry(
-        "retry detect on table",
-        BtNode_ScanForGeneralist(
-            name="realsense generalist detect",
-            bb_source=bb_keys.TARGET_OBJECT_PROMPT,
-            bb_key=bb_keys.TARGET_OBJECT,
-            use_orbbec=False,            # arm RealSense at table_grasp
-            transform_to_map=False,      # keep camera frame for the grasp server
-            use_vlm_sam_fallback=True,   # open-vocab for coke / fanta / ...
-            sort_closest=True,
-            return_rgb_image=True,
-            return_depth_image=True,
-            return_segments=True,
-        ),
-        num_failures=5,
-    ))
+    # Sim battery 2026-09-30 fix5: the old Retry x5 re-sent the identical
+    # request from the identical pose (5/5 "no matches via vlm_sam" with the
+    # objects in frame) -- each attempt is now a different view.
+    find_and_grasp.add_child(_grasp_table_detection())
     par_grasp = py_trees.composites.Parallel(
         "grasp+announce",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
@@ -2112,15 +3820,7 @@ def create_grasp():
     ))
     find_and_grasp.add_child(par_grasp)
     primary.add_child(find_and_grasp)
-    primary.add_child(py_trees.decorators.Retry(
-        "retry arm back",
-        BtNode_MoveArmSingle(
-            "arm back to navigating",
-            service_name=ARM_ACTION_NAME,
-            arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
-        ),
-        num_failures=5,
-    ))
+    primary.add_child(_arm_back_after_grasp("retry arm back"))
 
     # Grasp is EXPENSIVE (full arm scan → detect → pick → arm-back cycle), so cap
     # the whole-cycle retry at a single re-attempt (num_failures=2 = one try + one
@@ -2155,15 +3855,7 @@ def create_grasp():
         "mark grasp referee fallback", bb_keys.STEP_METHOD, "referee_fallback",
     ))
     # Tuck the arm first so it does not block the lidar during the drive.
-    ex_machina.add_child(py_trees.decorators.Retry(
-        "retry arm back",
-        BtNode_MoveArmSingle(
-            "arm to navigating",
-            service_name=ARM_ACTION_NAME,
-            arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
-        ),
-        num_failures=5,
-    ))
+    ex_machina.add_child(_arm_back_after_grasp("retry arm back"))
     # Drive to the no-grasp furniture BEFORE asking the referee, so the robot is
     # standing at the shelf/cabinet/coat_rack (where the object and referee are)
     # when it presents its gripper. Guarded + best-effort: if the orchestrator
@@ -2210,13 +3902,28 @@ def create_grasp():
     ex_machina.add_child(py_trees.decorators.FailureIsSuccess(
         "open appliance if needed (best effort)", open_appliance,
     ))
+    # Sim battery 2026-09-26 (runs s70718-000/-004): the robot asked the
+    # referee blind. Look at the furniture FIRST (the same pan/tilt sweep +
+    # generalist scan create_find_object uses, best effort -- an unseen
+    # object still asks, just with different wording), then compose the
+    # request from what was actually seen: "Dear referee, I can see the
+    # <label> on the <furniture>. Please put the <object> in my gripper." /
+    # "Dear referee, I cannot see the <object> on the <furniture>. Please
+    # hand me the <object> and put it in my gripper."
+    ex_machina.add_child(py_trees.decorators.FailureIsSuccess(
+        "look for object at furniture (best effort)",
+        _pantilt_sweep("grasp/referee look", OBJECT_TILT_DEG, _referee_object_scan),
+    ))
+    ex_machina.add_child(BtNode_ComposeRefereeRequest(
+        "compose referee request", bb_dst=bb_keys.REFEREE_REQUEST_TEXT,
+    ))
     ex_machina.add_child(BtNode_GripperAction("open gripper", True))
     ex_machina.add_child(BtNode_AnnounceFromBB(
-        "ask referee", bb_keys.TARGET_OBJECT_NAME, prefix="Dear referee, please help me grasp the "
+        "ask referee", bb_keys.REFEREE_REQUEST_TEXT,
     ))
     ex_machina.add_child(BtNode_Announce(
         "announce put in gripper", bb_source=None,
-        message="Put it in my gripper please. Thank you.",
+        message="Thank you.",
     ))
     ex_machina.add_child(BtNode_WaitTicks("wait", 8))
     # P (task-P, flag-gated): make the referee handoff physically real in
@@ -2260,11 +3967,24 @@ def create_open():
 
 
 def create_place():
-    """Place the currently-held object at ``bb_keys.TARGET_POSE`` / handover.
+    """Place the currently-held object on the furniture at ``bb_keys.TARGET_POSE``.
 
-    The minimum-viable implementation: navigate to the place location, then
-    open the gripper while announcing the action. Real placement-by-vision is
-    out of scope for the small-tree layer.
+    Sim battery 2026-09-26 (run s70718-003): the old tree tucked the arm,
+    drove to the side table and opened the gripper from the TUCKED pose --
+    the banana fell on the floor and the bench still recorded placed(). Now:
+
+    announce -> tuck -> goto -> ``place/on_surface`` Selector -> arm back
+
+    ``place/on_surface`` (see :func:`_place_on_surface_or_release`) first
+    runs the real placement -- arm to the RealSense scan pose (same
+    ``ARM_SCAN`` pose the grasp scans from), wrist point cloud of the
+    surface, free-spot selection on the detected table plane, then the
+    ``place_action`` server (pick_and_place C++ executor: TCP target +
+    env cloud -> octomap-aware place + gripper release + retreat) -- and on
+    ANY failure falls back to announcing "I could not place it safely, I
+    will put it down here" and the old open-gripper release, so the executor
+    never hangs and the plan always moves on. The final arm-back is
+    best-effort: the object is already down, and the next goto re-tucks.
     """
     seq = py_trees.composites.Sequence("small/place", memory=True)
     seq.add_child(BtNode_AnnounceFromBB(
@@ -2276,13 +3996,842 @@ def create_place():
         BtNode_GotoAction("goto place pose", key=bb_keys.TARGET_POSE),
         num_failures=5,
     ))
-    seq.add_child(BtNode_Announce(
-        "announce releasing", bb_source=None, message="Releasing object now."
+    seq.add_child(_place_on_surface_or_release())
+    seq.add_child(py_trees.decorators.FailureIsSuccess(
+        "arm back after place (best effort)",
+        py_trees.decorators.Retry(
+            "retry arm back after place",
+            BtNode_MoveArmSingle(
+                "arm back to navigating",
+                action_name=ARM_ACTION_NAME,
+                arm_pose_bb_key=bb_keys.ARM_ORBBEC_LOOK,
+                add_octomap=False,
+            ),
+            num_failures=5,
+        ),
     ))
-    seq.add_child(BtNode_GripperAction("open gripper", True))
-    seq.add_child(BtNode_WaitTicks("wait", 4))
-    seq.add_child(BtNode_GripperAction("close gripper", False))
     return seq
+
+
+# ---------------------------------------------------------------------------
+# Real placement + 360 deg room survey (sim battery 2026-09-26, run
+# s70718-003). Everything from here to create_deliver is new; the only
+# pre-existing call sites are create_place (above) and create_find_object.
+# ---------------------------------------------------------------------------
+
+# place_action is served by the pick_and_place C++ executor, which BOTH the
+# hardware bringup (mobile_bringup/grasp_bringup.launch.py) and the sim's
+# live-manipulation stage (manipulation_planning_task_only.launch.py) start.
+# scan_and_place_action (arm_api/scan_and_place_server, a VLM-driven wrapper
+# around this same server) is launched by NEITHER, so the BT owns the
+# "where on the surface" step itself (BtNode_SurfacePointFromCloud).
+PLACE_ACTION_NAME = "place_action"
+# camera_server's compat bridge (vision_bringup enable_gpsr, also launched by
+# the sim's vision stage) serves the wrist/head cloud on this legacy name.
+PLACE_POINT_CLOUD_SERVICE = "get_point_cloud_service"
+# Place.action CONTRACT: target_point is the TCP (link_tcp) target and the
+# server does NOT compensate for how far the held object hangs below the
+# TCP. The grasp closes around the object's middle, so lift the TCP by
+# about half a typical GPSR object (banana / can / box ~ 8-10 cm) plus a
+# finger of drop height. Sim battery 2026-10-01 fix8 run s70718-003: at 0.05
+# (no drop margin at all) the referee-handed banana, held off-centre below
+# the fingers, was pushed into side_table_02 on the way down and ended on
+# the floor 0.18 m off the edge. 0.10 = half an object + a 5 cm drop.
+PLACE_TCP_CLEARANCE_M = 0.10
+# Clear radius around the chosen spot (no point above the plane within it);
+# scan_and_place_server's "moderate" margin band is 0.05-0.10 m.
+PLACE_FREE_RADIUS_M = 0.08
+# Workspace in base_link the spot must lie in (xArm7 reach from the robot's
+# base, with the surface in front of the robot after the goto).
+PLACE_REACH_X_M = (0.30, 0.75)
+PLACE_REACH_Y_M = 0.40
+PLACE_PREFERRED_XY_M = (0.50, 0.0)
+# Prefer spots with plane support this far out in all four directions: sim
+# battery 2026-10-01 fix8/fix9 run s70718-003 placed the banana 4 cm inside
+# side_table_02's near edge (half of the 6 cm support disc was enough) and
+# the off-centre-held banana tipped off onto the floor both times.
+PLACE_EDGE_MARGIN_M = 0.12  # probe offset; with the 2 cm probe radius >= 10 cm of table
+# Lowest z (base_link) a supporting plane may have -- rejects the floor.
+PLACE_MIN_SURFACE_Z_M = 0.20
+
+# 360 deg survey: four 90 deg base turns, full pan/tilt sweep at each.
+SURVEY_HEADINGS = 4
+SURVEY_STEP_DEG = 90.0
+
+
+def _place_on_surface_or_release():
+    """``place/on_surface``: real placement, else announce + release in place.
+
+    primary (``place/primary``):
+      arm to ``ARM_SCAN`` (octomap on, RealSense over the surface, mirrors
+      create_grasp) -> settle -> [wrist point cloud -> free surface point]
+      (retried) -> ``place_action`` (retried once) -> gripper open/close
+      (the server already released; belt and braces) -> claim
+      ``STEP_METHOD`` "autonomous".
+    fallback (``place/release_fallback``):
+      claim ``STEP_METHOD`` "release_fallback" -> "I could not place it
+      safely, I will put it down here." -> open -> wait -> close (the
+      pre-2026-09-26 behaviour). Deterministic, so the Selector never hangs.
+
+    The place server's own goal validation rejects an empty cloud and (in
+    the strict sim profile) a goal with no attached object -- e.g. after a
+    referee hand-over -- as a plain FAILURE, which lands here as the
+    fallback, never as a stuck step.
+    """
+    primary = py_trees.composites.Sequence("place/primary", memory=True)
+    par_scan = py_trees.composites.Parallel(
+        "arm to scan + announce",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
+    )
+    par_scan.add_child(BtNode_Announce(
+        "announce move arm", bb_source=None,
+        message="Moving my arm to look at the surface",
+    ))
+    par_scan.add_child(BtNode_MoveArmSingle(
+        "arm to scan",
+        action_name=ARM_ACTION_NAME,
+        arm_pose_bb_key=bb_keys.ARM_SCAN,
+        # A held object can remain in the simulator's octomap after grasping;
+        # that stale geometry makes this otherwise valid scan pose fail with
+        # MoveIt status 6.  The place action still performs its own collision
+        # checks, so the live benchmark may skip only this pre-scan octomap
+        # attachment check while the normal hardware path stays strict.
+        add_octomap=(os.environ.get("GPSR_ALLOW_NAV_WITHOUT_ARM", "").strip() != "1"),
+    ))
+    primary.add_child(par_scan)
+    # Same reason as the grasp: the first RealSense frames after the arm
+    # stops are blurred / unsynced.
+    primary.add_child(BtNode_WaitTicks("settle before surface scan", 6))
+    surface = py_trees.composites.Sequence("scan surface", memory=True)
+    surface.add_child(BtNode_GetPointCloud(
+        "realsense surface cloud",
+        bb_point_cloud_key=bb_keys.PLACE_ENV_POINTS,
+        service_name=PLACE_POINT_CLOUD_SERVICE,
+        camera_name="realsense",
+    ))
+    surface.add_child(BtNode_SurfacePointFromCloud(
+        "find free surface point",
+        bb_cloud_key=bb_keys.PLACE_ENV_POINTS,
+        bb_point_key=bb_keys.PLACE_TARGET_POINT,
+        bb_orientation_key=bb_keys.PLACE_ORIENTATION,
+    ))
+    primary.add_child(py_trees.decorators.Retry(
+        "retry scan surface", surface, num_failures=3,
+    ))
+    par_place = py_trees.composites.Parallel(
+        "place+announce",
+        policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
+    )
+    par_place.add_child(BtNode_Announce(
+        "announce place", bb_source=None, message="Placing it on the surface now.",
+    ))
+    par_place.add_child(py_trees.decorators.Retry(
+        "retry place on surface",
+        BtNode_Place(
+            "place on surface",
+            bb_key_point=bb_keys.PLACE_TARGET_POINT,
+            bb_key_pose=bb_keys.PLACE_ORIENTATION,
+            bb_key_env_points=bb_keys.PLACE_ENV_POINTS,
+            action_name=PLACE_ACTION_NAME,
+        ),
+        num_failures=2,
+    ))
+    primary.add_child(par_place)
+    primary.add_child(BtNode_GripperAction("open gripper after place", True))
+    primary.add_child(BtNode_WaitTicks("wait after place", 2))
+    primary.add_child(BtNode_GripperAction("close gripper after place", False))
+    primary.add_child(BtNode_BlackboardSet(
+        "mark place autonomous", bb_keys.STEP_METHOD, "autonomous",
+    ))
+
+    fallback = py_trees.composites.Sequence("place/release_fallback", memory=True)
+    fallback.add_child(BtNode_BlackboardSet(
+        "mark place release fallback", bb_keys.STEP_METHOD, "release_fallback",
+    ))
+    fallback.add_child(BtNode_Announce(
+        "announce release fallback", bb_source=None,
+        message="I could not place it safely, I will put it down here.",
+    ))
+    fallback.add_child(BtNode_GripperAction("open gripper", True))
+    fallback.add_child(BtNode_WaitTicks("wait", 4))
+    fallback.add_child(BtNode_GripperAction("close gripper", False))
+
+    return py_trees.composites.Selector(
+        "place/on_surface", memory=True, children=[primary, fallback],
+    )
+
+
+def _quaternion_to_matrix(x: float, y: float, z: float, w: float):
+    """3x3 rotation matrix (numpy) of a unit quaternion."""
+    import numpy as np
+    n = math.sqrt(x * x + y * y + z * z + w * w) or 1.0
+    x, y, z, w = x / n, y / n, z / n, w / n
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ], dtype=float)
+
+
+class BtNode_SurfacePointFromCloud(Behaviour):
+    """Pick a free spot on the supporting surface seen in a point cloud.
+
+    Reads the PointCloud2 at ``bb_cloud_key`` (any frame; TF'd to
+    ``base_frame`` through the node's own tf2 listener, like
+    BtNode_CaptureCurrentPose), finds the dominant horizontal plane inside
+    the arm's workspace (1 cm z-histogram peak above ``min_surface_z``), and
+    on that plane picks the grid cell nearest ``preferred_xy`` that has plane
+    support underneath and NO point above the plane within ``free_radius``.
+    Writes ``bb_point_key`` = PointStamped(base_frame) at (x, y, plane_z +
+    tcp_clearance) -- the TCP target Place.action expects -- and
+    ``bb_orientation_key`` = an all-zero Pose, which place_action treats as
+    "not supplied" (it then reuses the orientation stored at the last pick,
+    or a horizontal default).
+
+    FAILURE (with the reason in ``feedback_message``) when the cloud is
+    missing / empty / has no TF to ``base_frame`` / shows no plane / has no
+    clear spot -- the parent Retry re-scans, then create_place's Selector
+    drops to the announce + release fallback. Mock parity: when
+    BtNode_GetPointCloud is mocked its cloud carries no data, so this node
+    writes a synthetic in-reach point instead of failing (the place is
+    mocked too in that configuration).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        bb_cloud_key: str,
+        bb_point_key: str,
+        bb_orientation_key: str = None,
+        base_frame: str = "base_link",
+        tcp_clearance_m: float = PLACE_TCP_CLEARANCE_M,
+        free_radius_m: float = PLACE_FREE_RADIUS_M,
+        reach_x_m=PLACE_REACH_X_M,
+        reach_y_m: float = PLACE_REACH_Y_M,
+        preferred_xy_m=PLACE_PREFERRED_XY_M,
+        min_surface_z_m: float = PLACE_MIN_SURFACE_Z_M,
+        tf_timeout_sec: float = 1.0,
+    ):
+        super().__init__(name)
+        self.bb_cloud_key = bb_cloud_key
+        self.bb_point_key = bb_point_key
+        self.bb_orientation_key = bb_orientation_key
+        self.base_frame = base_frame
+        self.tcp_clearance_m = float(tcp_clearance_m)
+        self.free_radius_m = float(free_radius_m)
+        self.reach_x_m = (float(reach_x_m[0]), float(reach_x_m[1]))
+        self.reach_y_m = float(reach_y_m)
+        self.preferred_xy_m = (float(preferred_xy_m[0]), float(preferred_xy_m[1]))
+        self.min_surface_z_m = float(min_surface_z_m)
+        self.tf_timeout_sec = float(tf_timeout_sec)
+        self.node = None
+        self.tf_buffer = None
+        self.tf_listener = None
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self.bb_cloud_key, access=Access.READ)
+        self._client.register_key(self.bb_point_key, access=Access.WRITE)
+        if self.bb_orientation_key:
+            self._client.register_key(self.bb_orientation_key, access=Access.WRITE)
+
+    def setup(self, **kwargs):
+        self.node = kwargs.get("node")
+        if self.node is not None and self.tf_buffer is None:
+            try:
+                from tf2_ros.buffer import Buffer
+                from tf2_ros.transform_listener import TransformListener
+                self.tf_buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10))
+                self.tf_listener = TransformListener(self.tf_buffer, self.node)
+            except Exception as exc:  # noqa: BLE001 — degrade to same-frame clouds only
+                self.logger.warning(f"{self.name}: no tf2 listener ({exc})")
+                self.tf_buffer = None
+        return super().setup(**kwargs)
+
+    # -- pure helpers (unit-tested) -------------------------------------
+
+    @staticmethod
+    def cloud_to_xyz(cloud):
+        """Nx3 float array of the finite xyz points of a PointCloud2."""
+        import numpy as np
+        from sensor_msgs_py import point_cloud2 as pc2
+        xyz = pc2.read_points_numpy(cloud, field_names=("x", "y", "z"), skip_nans=True)
+        xyz = np.asarray(xyz, dtype=float).reshape(-1, 3)
+        return xyz[np.isfinite(xyz).all(axis=1)]
+
+    @staticmethod
+    def pick_surface_point(
+        xyz,
+        reach_x=PLACE_REACH_X_M,
+        reach_y=PLACE_REACH_Y_M,
+        free_radius=PLACE_FREE_RADIUS_M,
+        preferred_xy=PLACE_PREFERRED_XY_M,
+        min_surface_z=PLACE_MIN_SURFACE_Z_M,
+        bin_m: float = 0.01,
+        plane_tol_m: float = 0.015,
+        obstacle_height_m: float = 0.35,
+        grid_m: float = 0.04,
+        min_plane_points: int = 100,
+        min_support: int = 8,
+        max_points: int = 80000,
+    ):
+        """Return ``(x, y, plane_z)`` for the chosen spot, or ``None``.
+
+        ``xyz`` is an Nx3 array in the base frame (x forward, z up). Pure
+        numpy, no ROS. ``None`` carries no reason; the node adds one.
+        """
+        import numpy as np
+        pts = np.asarray(xyz, dtype=float).reshape(-1, 3)
+        if pts.shape[0] > max_points:
+            pts = pts[:: int(math.ceil(pts.shape[0] / max_points))]
+        # Workspace crop (a little wider than the reach box so plane support
+        # and obstacles just outside the box still count).
+        margin = free_radius + 0.05
+        keep = (
+            (pts[:, 0] >= reach_x[0] - margin) & (pts[:, 0] <= reach_x[1] + margin)
+            & (np.abs(pts[:, 1]) <= reach_y + margin)
+            & (pts[:, 2] >= min_surface_z) & (pts[:, 2] <= 1.6)
+        )
+        pts = pts[keep]
+        if pts.shape[0] < min_plane_points:
+            return None
+        # Dominant horizontal plane: peak of the z histogram.
+        z = pts[:, 2]
+        bins = np.floor((z - z.min()) / bin_m).astype(int)
+        counts = np.bincount(bins)
+        peak = int(np.argmax(counts))
+        near = np.abs(bins - peak) <= 1
+        if int(near.sum()) < min_plane_points:
+            return None
+        plane_z = float(np.median(z[near]))
+        on_plane = pts[np.abs(z - plane_z) <= plane_tol_m]
+        above = pts[(z > plane_z + 0.02) & (z <= plane_z + obstacle_height_m)]
+        # Candidate grid inside the reach box.
+        xs = np.arange(reach_x[0], reach_x[1] + 1e-9, grid_m)
+        ys = np.arange(-reach_y, reach_y + 1e-9, grid_m)
+        gx, gy = np.meshgrid(xs, ys, indexing="ij")
+        cand = np.column_stack([gx.ravel(), gy.ravel()])
+        # Support: plane points within 0.75 * free_radius; blocked: any point
+        # above the plane within free_radius. Chunked so a dense cloud never
+        # allocates a giant distance matrix.
+        support = np.zeros(cand.shape[0], dtype=int)
+        blocked = np.zeros(cand.shape[0], dtype=bool)
+        r_sup2 = (0.75 * free_radius) ** 2
+        r_free2 = free_radius ** 2
+        for start in range(0, cand.shape[0], 64):
+            c = cand[start:start + 64]
+            if on_plane.shape[0]:
+                d2 = ((c[:, None, 0] - on_plane[None, :, 0]) ** 2
+                      + (c[:, None, 1] - on_plane[None, :, 1]) ** 2)
+                support[start:start + 64] = (d2 <= r_sup2).sum(axis=1)
+            if above.shape[0]:
+                d2 = ((c[:, None, 0] - above[None, :, 0]) ** 2
+                      + (c[:, None, 1] - above[None, :, 1]) ** 2)
+                blocked[start:start + 64] = (d2 <= r_free2).any(axis=1)
+        ok = (support >= min_support) & ~blocked
+        if not ok.any():
+            return None
+        # Edge margin: keep candidates with plane points near each of the four
+        # offsets +-PLACE_EDGE_MARGIN_M (x and y); only when none has that,
+        # fall back to every supported candidate.
+        if on_plane.shape[0]:
+            inner = ok.copy()
+            r_probe2 = 0.02 ** 2
+            m = PLACE_EDGE_MARGIN_M
+            for dx, dy in ((m, 0.0), (-m, 0.0), (0.0, m), (0.0, -m)):
+                probe = cand[:, :2] + np.array([dx, dy])
+                has = np.zeros(cand.shape[0], dtype=bool)
+                for start in range(0, cand.shape[0], 64):
+                    c = probe[start:start + 64]
+                    d2 = ((c[:, None, 0] - on_plane[None, :, 0]) ** 2
+                          + (c[:, None, 1] - on_plane[None, :, 1]) ** 2)
+                    has[start:start + 64] = (d2 <= r_probe2).any(axis=1)
+                inner &= has
+            if inner.any():
+                ok = inner
+        pref = np.asarray(preferred_xy, dtype=float)
+        dist = ((cand[:, 0] - pref[0]) ** 2 + (cand[:, 1] - pref[1]) ** 2)
+        dist[~ok] = np.inf
+        best = int(np.argmin(dist))
+        return float(cand[best, 0]), float(cand[best, 1]), plane_z
+
+    # -- behaviour ---------------------------------------------------------
+
+    def _write_outputs(self, x: float, y: float, z: float, frame: str) -> None:
+        ps = PointStamped()
+        ps.header.frame_id = frame
+        if self.node is not None:
+            try:
+                ps.header.stamp = self.node.get_clock().now().to_msg()
+            except Exception:  # noqa: BLE001
+                pass
+        ps.point.x, ps.point.y, ps.point.z = float(x), float(y), float(z)
+        self._client.set(self.bb_point_key, ps, overwrite=True)
+        if self.bb_orientation_key:
+            # All-zero quaternion == "orientation not supplied" for
+            # place_action (validate_optional_orientation). NOT Pose(): its
+            # default is the identity (w=1), which the server would take as
+            # an explicit, sideways TCP orientation.
+            self._client.set(
+                self.bb_orientation_key,
+                Pose(orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=0.0)),
+                overwrite=True,
+            )
+
+    def _transform_to_base(self, xyz, frame_id: str):
+        """xyz (Nx3, in ``frame_id``) -> base_frame, or None when no TF."""
+        import numpy as np
+        if not frame_id or frame_id == self.base_frame:
+            return xyz
+        if self.tf_buffer is None:
+            self.feedback_message = (
+                f"cloud is in '{frame_id}' but no tf2 buffer to reach '{self.base_frame}'"
+            )
+            return None
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.base_frame, frame_id, rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=self.tf_timeout_sec),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.feedback_message = f"TF '{self.base_frame}' <- '{frame_id}' failed: {exc}"
+            return None
+        q = tf.transform.rotation
+        t = tf.transform.translation
+        rot = _quaternion_to_matrix(q.x, q.y, q.z, q.w)
+        return xyz @ rot.T + np.array([t.x, t.y, t.z], dtype=float)
+
+    def update(self) -> Status:
+        from behavior_tree.config import is_node_mocked
+        try:
+            cloud = self._client.get(self.bb_cloud_key)
+        except KeyError:
+            cloud = None
+        if cloud is None:
+            self.feedback_message = f"no point cloud at {self.bb_cloud_key}"
+            return Status.FAILURE
+        if not getattr(cloud, "data", None):
+            if is_node_mocked("BtNode_GetPointCloud"):
+                x, y = self.preferred_xy_m
+                self._write_outputs(x, y, 0.75 + self.tcp_clearance_m, self.base_frame)
+                self.feedback_message = "MOCK cloud: synthetic surface point"
+                return Status.SUCCESS
+            self.feedback_message = "point cloud is empty"
+            return Status.FAILURE
+        try:
+            xyz = self.cloud_to_xyz(cloud)
+        except Exception as exc:  # noqa: BLE001
+            self.feedback_message = f"cannot decode point cloud: {exc}"
+            return Status.FAILURE
+        xyz = self._transform_to_base(xyz, getattr(cloud.header, "frame_id", ""))
+        if xyz is None:
+            return Status.FAILURE
+        spot = self.pick_surface_point(
+            xyz,
+            reach_x=self.reach_x_m,
+            reach_y=self.reach_y_m,
+            free_radius=self.free_radius_m,
+            preferred_xy=self.preferred_xy_m,
+            min_surface_z=self.min_surface_z_m,
+        )
+        if spot is None:
+            self.feedback_message = (
+                f"no free spot on a surface within reach ({xyz.shape[0]} points)"
+            )
+            return Status.FAILURE
+        x, y, plane_z = spot
+        self._write_outputs(x, y, plane_z + self.tcp_clearance_m, self.base_frame)
+        self.feedback_message = (
+            f"surface at z={plane_z:.2f}, placing at ({x:.2f}, {y:.2f}, "
+            f"{plane_z + self.tcp_clearance_m:.2f}) {self.base_frame}"
+        )
+        return Status.SUCCESS
+
+
+# --- 360 deg room survey ------------------------------------------------------
+
+def is_room_location(name) -> bool:
+    """True when ``name`` is a room (a key of the constants' ``search_spots``
+    map, the same table ``materialise_params`` sweeps for search_object)."""
+    if not name:
+        return False
+    from .orchestrator import ROOM_SEARCH_SPOTS, _norm_loc  # lazy: avoid import cycle
+    return _norm_loc(name) in ROOM_SEARCH_SPOTS
+
+
+class BtNode_CheckRoomSurveyDue(Behaviour):
+    """Guard for create_find_object's 360 deg survey branch.
+
+    SUCCESS only when the target location is a room (``is_room_location``)
+    AND, if this find_object sits inside a ``create_search_object`` sweep
+    (an ancestor named ``search spot <i>``), no LATER spot of that sweep is
+    still filled -- i.e. every search spot has already been visited and the
+    survey is the last thing to try before the room search fails. Outside a
+    sweep (a direct find_object at a room) the room test alone decides.
+    """
+
+    _SPOT_RE = None
+
+    def __init__(self, name: str = "room survey due?"):
+        super().__init__(name)
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(bb_keys.TARGET_LOCATION, access=Access.READ)
+        return super().setup(**kwargs)
+
+    def _target_location(self):
+        try:
+            if self._client is not None:
+                return self._client.get(bb_keys.TARGET_LOCATION)
+            return Blackboard.get(bb_keys.TARGET_LOCATION)
+        except KeyError:
+            return None
+
+    @classmethod
+    def _spot_index(cls, node) -> int:
+        import re
+        if cls._SPOT_RE is None:
+            cls._SPOT_RE = re.compile(r"^search spot (\d+)$")
+        m = cls._SPOT_RE.match(str(getattr(node, "name", "")))
+        return int(m.group(1)) if m else -1
+
+    def _search_spot_context(self):
+        """``(spot_index, sweep_node)`` of the enclosing search sweep, else ``(-1, None)``."""
+        node = self.parent
+        while node is not None:
+            idx = self._spot_index(node)
+            if idx >= 0:
+                return idx, node.parent
+            node = node.parent
+        return -1, None
+
+    def update(self) -> Status:
+        location = self._target_location()
+        if not is_room_location(location):
+            self.feedback_message = f"{location!r} is not a room: no survey"
+            return Status.FAILURE
+        idx, sweep = self._search_spot_context()
+        if sweep is not None:
+            for later in sweep.children:
+                later_idx = self._spot_index(later)
+                if later_idx <= idx:
+                    continue
+                try:
+                    pending = Blackboard.get(f"gpsr/search_pose_{later_idx}") is not None
+                except KeyError:
+                    pending = False
+                if pending:
+                    self.feedback_message = (
+                        f"search spot {later_idx} still pending: survey deferred"
+                    )
+                    return Status.FAILURE
+        self.feedback_message = f"room survey due at {location!r}"
+        return Status.SUCCESS
+
+
+class BtNode_YawOffsetPose(Behaviour):
+    """Write ``dst_key`` = the PoseStamped at ``src_key`` yawed by ``delta_yaw_deg``.
+
+    Position and frame are kept; only the heading changes (wrapped to
+    (-180, 180]). Pure quaternion math, no ROS backend needed.
+    """
+
+    def __init__(self, name: str, src_key: str, dst_key: str, delta_yaw_deg: float):
+        super().__init__(name)
+        self.src_key = src_key
+        self.dst_key = dst_key
+        self.delta_yaw_deg = float(delta_yaw_deg)
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self.src_key, access=Access.READ)
+        self._client.register_key(self.dst_key, access=Access.WRITE)
+
+    @staticmethod
+    def wrap_deg(deg: float) -> float:
+        """Wrap an angle to (-180, 180]."""
+        wrapped = (float(deg) + 180.0) % 360.0 - 180.0
+        return 180.0 if wrapped == -180.0 else wrapped
+
+    @staticmethod
+    def yaw_from_quaternion(q) -> float:
+        """Yaw (deg) of a geometry_msgs Quaternion."""
+        siny = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        return math.degrees(math.atan2(siny, cosy))
+
+    @staticmethod
+    def quaternion_from_yaw(yaw_deg: float) -> Quaternion:
+        half = math.radians(yaw_deg) / 2.0
+        return Quaternion(x=0.0, y=0.0, z=math.sin(half), w=math.cos(half))
+
+    @classmethod
+    def rotate_pose(cls, pose: PoseStamped, delta_yaw_deg: float) -> PoseStamped:
+        yaw = cls.wrap_deg(cls.yaw_from_quaternion(pose.pose.orientation) + delta_yaw_deg)
+        out = PoseStamped()
+        out.header.frame_id = pose.header.frame_id
+        out.header.stamp = pose.header.stamp
+        out.pose.position.x = pose.pose.position.x
+        out.pose.position.y = pose.pose.position.y
+        out.pose.position.z = pose.pose.position.z
+        out.pose.orientation = cls.quaternion_from_yaw(yaw)
+        return out
+
+    def update(self) -> Status:
+        try:
+            pose = self._client.get(self.src_key)
+        except KeyError:
+            pose = None
+        if not isinstance(pose, PoseStamped):
+            self.feedback_message = f"no PoseStamped at {self.src_key}"
+            return Status.FAILURE
+        out = self.rotate_pose(pose, self.delta_yaw_deg)
+        self._client.set(self.dst_key, out, overwrite=True)
+        self.feedback_message = (
+            f"yaw {self.yaw_from_quaternion(pose.pose.orientation):+.0f} -> "
+            f"{self.yaw_from_quaternion(out.pose.orientation):+.0f} deg"
+        )
+        return Status.SUCCESS
+
+
+class BtNode_FurnitureStandoffPose(Behaviour):
+    """Prepare the concrete Nav2 goal for a semantic furniture waypoint.
+
+    Furniture poses are intentionally placed just outside the object/surface
+    so the arm can work from them.  Nav2 inflates those same surfaces for the
+    base footprint, however, and a direct goal can therefore be rejected or
+    settle inside the goal tolerance while still being too close for the next
+    interaction.  Room aliases use the configured room anchor, while object
+    searches retain their independent furniture sweep spots.
+
+    The semantic ``TARGET_POSE`` is never modified.  This keeps navigation
+    evidence and room/object contracts tied to the configured waypoint while
+    allowing the action to use a collision-safe scratch pose.  Unknown and
+    runtime-recorded locations are copied exactly, as are start/operator
+    aliases and ``command_point``.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        src_key: str = bb_keys.TARGET_POSE,
+        dst_key: str = bb_keys.NAV_GOAL_POSE,
+        distance_m: float = FURNITURE_STANDOFF_DISTANCE_M,
+    ):
+        super().__init__(name)
+        self._src_key = src_key
+        self._dst_key = dst_key
+        self._distance_m = max(0.0, float(distance_m))
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._src_key, access=Access.READ)
+        self._client.register_key(self._dst_key, access=Access.WRITE)
+        self._client.register_key(bb_keys.TARGET_LOCATION, access=Access.READ)
+
+    @staticmethod
+    def _normalise(value) -> str:
+        return str(value or "").strip().lower().replace(" ", "_")
+
+    @classmethod
+    def _is_static_furniture_or_room(cls, location) -> bool:
+        key = cls._normalise(location)
+        if not key or key in {
+            "command_point", "start_position", "instruction_point", "start",
+            "operator", "me", "the_user", "the_operator",
+        }:
+            return False
+        # Import lazily to avoid the orchestrator/small_trees import cycle.
+        try:
+            from .orchestrator import KNOWN_LOCATIONS, ROOM_SEARCH_SPOTS
+            if key in ROOM_SEARCH_SPOTS:
+                return True
+            # Direct furniture waypoints are calibrated for perception and
+            # grasping (for example side_table_02); shifting those goals can
+            # move the robot outside the working envelope. Room aliases use
+            # the standoff because their anchor may be embedded in furniture.
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _copy_pose(pose: PoseStamped) -> PoseStamped:
+        out = PoseStamped()
+        out.header.frame_id = pose.header.frame_id
+        out.header.stamp = pose.header.stamp
+        out.pose.position.x = pose.pose.position.x
+        out.pose.position.y = pose.pose.position.y
+        out.pose.position.z = pose.pose.position.z
+        out.pose.orientation = Quaternion(
+            x=pose.pose.orientation.x,
+            y=pose.pose.orientation.y,
+            z=pose.pose.orientation.z,
+            w=pose.pose.orientation.w,
+        )
+        return out
+
+    @classmethod
+    def _standoff_pose(cls, pose: PoseStamped, distance_m: float) -> PoseStamped:
+        out = cls._copy_pose(pose)
+        yaw = math.radians(BtNode_YawOffsetPose.yaw_from_quaternion(pose.pose.orientation))
+        # The configured heading faces the furniture.  Move opposite that
+        # heading so the footprint starts outside the inflated obstacle halo.
+        out.pose.position.x -= distance_m * math.cos(yaw)
+        out.pose.position.y -= distance_m * math.sin(yaw)
+        return out
+
+    def update(self) -> Status:
+        try:
+            pose = self._client.get(self._src_key)
+        except Exception:
+            pose = None
+        if not isinstance(pose, PoseStamped):
+            self.feedback_message = f"no PoseStamped at {self._src_key}"
+            return Status.FAILURE
+        try:
+            location = self._client.get(bb_keys.TARGET_LOCATION)
+        except Exception:
+            location = None
+        if self._is_static_furniture_or_room(location):
+            out = self._standoff_pose(pose, self._distance_m)
+            self.feedback_message = (
+                f"{location}: furniture standoff {self._distance_m:.2f} m"
+            )
+        else:
+            out = self._copy_pose(pose)
+            self.feedback_message = f"{location}: exact navigation pose"
+        self._client.set(self._dst_key, out, overwrite=True)
+        return Status.SUCCESS
+
+
+class BtNode_YawTowardDetection(Behaviour):
+    """Write ``dst_key`` = the robot pose at ``pose_key`` turned to face the
+    first object (map-frame centroid) of the detection at ``detection_key``.
+
+    Position and frame are kept. The turn is clamped to ``max_deg`` (a far-
+    off detection must not spin the robot away from the furniture). FAILURE
+    when there is no pose or no usable centroid. Pure math, no ROS backend.
+    """
+
+    def __init__(self, name: str, pose_key: str, detection_key: str, dst_key: str,
+                 max_deg: float = 45.0):
+        super().__init__(name)
+        self._pose_key = pose_key
+        self._detection_key = detection_key
+        self._dst_key = dst_key
+        self._max_deg = float(max_deg)
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._pose_key, access=Access.READ)
+        self._client.register_key(self._detection_key, access=Access.READ)
+        self._client.register_key(self._dst_key, access=Access.WRITE)
+
+    @classmethod
+    def delta_to_point(cls, pose: PoseStamped, x: float, y: float, max_deg: float) -> float:
+        """Clamped heading change (deg) that makes ``pose`` face (x, y)."""
+        px, py = pose.pose.position.x, pose.pose.position.y
+        want = math.degrees(math.atan2(float(y) - py, float(x) - px))
+        have = BtNode_YawOffsetPose.yaw_from_quaternion(pose.pose.orientation)
+        delta = BtNode_YawOffsetPose.wrap_deg(want - have)
+        return max(-max_deg, min(max_deg, delta))
+
+    def update(self):
+        try:
+            pose = self._client.get(self._pose_key)
+        except Exception:
+            pose = None
+        if not isinstance(pose, PoseStamped):
+            self.feedback_message = f"no PoseStamped at {self._pose_key}"
+            return Status.FAILURE
+        try:
+            detection = self._client.get(self._detection_key)
+        except Exception:
+            detection = None
+        objects = list(getattr(detection, "objects", None) or [])
+        if not objects:
+            self.feedback_message = "head camera saw no object to face"
+            return Status.FAILURE
+        c = getattr(objects[0], "centroid", None)
+        try:
+            cx, cy = float(c.x), float(c.y)
+        except (AttributeError, TypeError, ValueError):
+            self.feedback_message = "head detection has no centroid"
+            return Status.FAILURE
+        if abs(cx) < 1e-6 and abs(cy) < 1e-6:
+            self.feedback_message = "head detection centroid unset"
+            return Status.FAILURE
+        delta = self.delta_to_point(pose, cx, cy, self._max_deg)
+        self._client.set(self._dst_key, BtNode_YawOffsetPose.rotate_pose(pose, delta), overwrite=True)
+        self.feedback_message = f"face head detection at ({cx:.2f}, {cy:.2f}): turn {delta:+.0f} deg"
+        return Status.SUCCESS
+
+
+class BtNode_RotateInPlace(py_trees.composites.Sequence):
+    """Turn the base by ``delta_yaw_deg`` on the spot.
+
+    Sequence: capture the current map pose (BtNode_CaptureCurrentPose, the
+    node create_record_position uses) -> BtNode_YawOffsetPose -> a retried
+    BtNode_GotoAction to the same x/y with the new heading (a key-based
+    PoseStamped goal, like every other goto).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        delta_yaw_deg: float,
+        capture_key: str = bb_keys.SURVEY_CAPTURE_POSE,
+        goal_key: str = bb_keys.SURVEY_GOAL_POSE,
+        goto_retries: int = 3,
+    ):
+        super().__init__(name, memory=True)
+        self.delta_yaw_deg = float(delta_yaw_deg)
+        self.add_child(BtNode_CaptureCurrentPose(f"{name}: capture pose", bb_key=capture_key))
+        self.add_child(BtNode_YawOffsetPose(
+            f"{name}: yaw {self.delta_yaw_deg:+.0f}", capture_key, goal_key, self.delta_yaw_deg,
+        ))
+        self.add_child(py_trees.decorators.Retry(
+            f"retry {name}: goto heading",
+            BtNode_GotoAction(f"{name}: goto heading", key=goal_key),
+            num_failures=int(goto_retries),
+        ))
+
+
+def create_survey_room(
+    scan_subtree_factory,
+    tilts,
+    pan_deg=None,
+    label: str = "survey",
+    headings: int = SURVEY_HEADINGS,
+    step_deg: float = SURVEY_STEP_DEG,
+):
+    """360 deg survey: ``headings`` x [rotate ``step_deg``, pan/tilt sweep].
+
+    A memory Selector that SUCCEEDS at the first heading whose sweep
+    (``_pantilt_sweep`` over ``PAN_SWEEP_DEG`` (or ``pan_deg``) x ``tilts``,
+    with ``scan_subtree_factory`` as the per-look detector) detects the
+    target, FAILURE once every heading has been tried. The rotation is
+    best-effort (a nav hiccup still scans from the current heading). Shared
+    by find_object today; find_person / count can pass their own scan
+    factory and tilts.
+    """
+    survey = py_trees.composites.Selector(f"{label} 360 survey", memory=True)
+    for i in range(1, int(headings) + 1):
+        branch = py_trees.composites.Sequence(f"{label} heading {i}", memory=True)
+        branch.add_child(py_trees.decorators.FailureIsSuccess(
+            f"{label} rotate {i} (best effort)",
+            BtNode_RotateInPlace(f"{label} rotate {i}", delta_yaw_deg=step_deg),
+        ))
+        sweep = _pantilt_sweep(
+            f"{label} heading {i}", tilts, scan_subtree_factory, pan_deg=pan_deg,
+        )
+        # Not "... pantilt sweep": the survey looks are NOT extra
+        # find_object_sweep modification targets (the pan-tilt-sweep template
+        # rebuilds the whole find_object tree, which reaches them anyway).
+        sweep.name = f"{label} heading {i} survey sweep"
+        branch.add_child(sweep)
+        survey.add_child(branch)
+    return survey
 
 
 def create_deliver():
@@ -2290,30 +4839,374 @@ def create_deliver():
 
     Navigates to the recipient's room (``bb_keys.TARGET_POSE``, materialised
     from ``recipient_location``), then visually detects and approaches the
-    recipient before opening the gripper — handing over at a room waypoint
-    with nobody in front of the gripper is the failure mode this guards
-    against.
+    recipient before opening the gripper. When a preceding step in the same
+    target already found and approached that person and this step has no
+    ``recipient_location``, the resolved person pose is reused instead of
+    returning to the room waypoint.
     """
     seq = py_trees.composites.Sequence("small/deliver", memory=True)
     seq.add_child(BtNode_AnnounceFromBB(
         "announce delivering", bb_keys.TARGET_OBJECT_NAME, prefix="Delivering the "
     ))
     seq.add_child(_tuck_arm_for_nav("tuck arm before deliver goto"))
-    seq.add_child(py_trees.decorators.Retry(
+    goto_retry = py_trees.decorators.Retry(
         "retry deliver goto",
         BtNode_GotoAction("goto recipient room", key=bb_keys.TARGET_POSE),
         num_failures=5,
+    )
+    # Room anchors are only a staging hint: a stale/blocked anchor must not
+    # prevent delivery from making a fresh visual person scan and approach.
+    # Keep the retry budget for transient Nav2 failures, then treat exhausted
+    # navigation as best-effort so the recipient path can still run.
+    goto_best_effort = py_trees.decorators.FailureIsSuccess(
+        "deliver room navigation best effort", goto_retry,
+    )
+    # A prior find_person + approach_person in this target already left the
+    # robot beside the requested recipient. In the common split-plan form
+    # deliver has no recipient_location, so a second goto would reuse the
+    # previous room waypoint and move away from that person. Keep the node's
+    # public name for tree tooling while selecting the reuse path first.
+    reuse_goto = py_trees.composites.Sequence(
+        "reuse resolved delivery navigation", memory=True,
+    )
+    reuse_goto.add_child(BtNode_CheckResolvedDeliveryTarget(
+        # A preceding find_person is enough to avoid the stale room goto;
+        # create_deliver's own approach_person step handles the pose when the
+        # planner did not emit a separate approach_person action.
+        "recipient already resolved?", require_nav=False,
     ))
-    seq.add_child(create_find_person())       # detect the recipient
-    seq.add_child(create_approach_person())   # walk up to them
+    reuse_goto.add_child(py_trees.behaviours.Success("already at recipient"))
+    seq.add_child(py_trees.composites.Selector(
+        "retry deliver goto", memory=True,
+        children=[reuse_goto, goto_best_effort],
+    ))
+    # For the operator, ``TARGET_POSE`` is the captured command-point pose;
+    # scanning again at that pose is both redundant and able to select a
+    # false-positive person.  Other recipients keep the visual find/approach
+    # path.
+    seq.add_child(create_find_person(skip_operator=True))
+    seq.add_child(create_approach_person(
+        skip_operator=True,
+        approach_max_distance=DELIVERY_PERSON_MAX_DISTANCE_M,
+        fail_on_unreachable=True,
+    ))
     seq.add_child(BtNode_Announce(
         "announce take it", bb_source=None,
         message="Here you go, please take the object from my gripper.",
     ))
     seq.add_child(BtNode_WaitTicks("wait for take", 8))
     seq.add_child(BtNode_GripperAction("open gripper", True))
-    seq.add_child(BtNode_WaitTicks("wait", 4))
-    seq.add_child(BtNode_GripperAction("close gripper", False))
+    seq.add_child(BtNode_WaitTicks("wait", DELIVERY_RELEASE_SETTLE_TICKS))
+    # Leave the gripper open after the handoff.  Gripper goals are latched by
+    # the facade and streamed until the next goal; closing here can reacquire
+    # an object that has not fully cleared the fingers yet.
+    return seq
+
+
+def _count_view(label: str, pan: float, tilt: float):
+    """One (pan, tilt) view of the counting sweep.
+
+    Turn, scan for ``TARGET_OBJECT_PROMPT`` (a no-match scan still stores the
+    frame, so it is FailureIsSuccess-wrapped), count the member detections of
+    THIS view into ``COUNT_VIEW_VALUE`` and fold it into the running maximum
+    (``BtNode_CountKeepMax``). Skipped entirely once ``COUNT_SWEEP_DONE`` has
+    latched (a view already counted >= 1 and a further view added nothing).
+    Best-effort: a failed turn never aborts the sweep.
+    """
+    look = py_trees.composites.Sequence(
+        f"{label} pan={pan:+.0f} tilt={tilt:+.0f}", memory=True)
+    look.add_child(BtNode_TurnPanTilt(
+        f"pan {pan:+.0f} tilt {tilt:+.0f}", x=pan, y=tilt,
+    ))
+    look.add_child(py_trees.decorators.FailureIsSuccess(
+        "scan to count (no-match keeps frame)",
+        BtNode_ScanForGeneralist(
+            name="scan to count",
+            bb_source=bb_keys.TARGET_OBJECT_PROMPT,
+            bb_key=bb_keys.TARGET_OBJECT_DETECTION,
+            use_orbbec=True,
+            transform_to_map=False,
+            use_vlm_sam_fallback=True,
+            sort_closest=True,
+            # masks give each detection a pixel box (the response has no
+            # bbox field) for the dedupe and the self-occlusion filter
+            return_segments=True,
+            return_rgb_image=True,  # keep the frame for the VLM fallback
+        ),
+    ))
+    look.add_child(BtNode_CountDetections(
+        "count view detections",
+        bb_detection_src=bb_keys.TARGET_OBJECT_DETECTION,
+        bb_count_dst=bb_keys.COUNT_VIEW_VALUE,
+        bb_member_prompts_key=bb_keys.COUNT_MEMBER_PROMPTS,
+        bb_unclassified_dst=bb_keys.COUNT_VIEW_UNCLASSIFIED,
+    ))
+    look.add_child(BtNode_CountKeepMax(
+        "keep best count",
+        bb_view_key=bb_keys.COUNT_VIEW_VALUE,
+        bb_detection_key=bb_keys.TARGET_OBJECT_DETECTION,
+        bb_count_dst=bb_keys.COUNT_VALUE,
+        bb_best_dst=bb_keys.COUNT_BEST_DETECTION,
+        bb_done_key=bb_keys.COUNT_SWEEP_DONE,
+        view_pan_deg=pan, bb_best_pan_dst=bb_keys.COUNT_BEST_PAN_RAD,
+        bb_history_dst=bb_keys.COUNT_VIEW_COUNTS,
+    ))
+    look.add_child(BtNode_CountKeepUnclassified(
+        "keep unclassified frame",
+        bb_view_key=bb_keys.COUNT_VIEW_UNCLASSIFIED,
+        bb_detection_key=bb_keys.TARGET_OBJECT_DETECTION,
+        bb_max_dst=bb_keys.COUNT_UNCLASSIFIED,
+        bb_frame_dst=bb_keys.COUNT_UNCLASSIFIED_DETECTION,
+    ))
+    view = py_trees.composites.Selector(
+        f"{label} view pan={pan:+.0f} tilt={tilt:+.0f}", memory=True)
+    view.add_child(BtNode_CheckBBTrue(
+        "sweep saturated?", bb_keys.COUNT_SWEEP_DONE, quiet_on_falsy=True,
+    ))
+    view.add_child(py_trees.decorators.FailureIsSuccess(
+        f"{label} look pan={pan:+.0f} tilt={tilt:+.0f} (best effort)", look,
+    ))
+    return view
+
+
+def _count_pantilt(label: str, tilts, pans=None):
+    """Every (pan, tilt) view of a counting sweep, tilt-outer / pan-inner like
+    ``_pantilt_sweep`` -- but a memory Sequence that visits views until the
+    three-view minimum and saturation latch both allow it to stop."""
+    pans = PAN_SWEEP_DEG if pans is None else [float(p) for p in pans]
+    sweep = py_trees.composites.Sequence(f"{label} pantilt sweep", memory=True)
+    for tilt in tilts:
+        for pan in pans:
+            sweep.add_child(_count_view(label, pan, tilt))
+    return sweep
+
+
+def _count_sweep(label: str):
+    """A full counting sweep: reset the running maximum / best frame / view
+    history / early-stop latch, then sweep ``PAN_SWEEP_DEG`` x ``COUNT_TILT_DEG``
+    (20/45/60 down -- a table 0.6 m below the camera needs the steep looks) keeping the
+    MAXIMUM member count over all views. A person count (prompt mentions
+    "person") sweeps ``HUMAN_TILT_DEG`` instead -- standing people are not on
+    the floor. Always SUCCESS; the result is ``COUNT_VALUE`` (0 when nothing
+    was seen anywhere) and ``COUNT_BEST_DETECTION`` (the busiest frame)."""
+    seq = py_trees.composites.Sequence(f"{label} sweep", memory=True)
+    seq.add_child(BtNode_BlackboardSet("reset count", bb_keys.COUNT_VALUE, 0))
+    seq.add_child(BtNode_BlackboardSet(
+        "reset sweep latch", bb_keys.COUNT_SWEEP_DONE, False))
+    seq.add_child(BtNode_BlackboardSet(
+        "reset view counts", bb_keys.COUNT_VIEW_COUNTS, []))
+    seq.add_child(BtNode_BlackboardSet(
+        "reset best frame", bb_keys.COUNT_BEST_DETECTION, None))
+    seq.add_child(BtNode_BlackboardSet(
+        "reset unclassified", bb_keys.COUNT_UNCLASSIFIED, 0))
+    seq.add_child(BtNode_BlackboardSet(
+        "reset unclassified frame", bb_keys.COUNT_UNCLASSIFIED_DETECTION, None))
+    by_target = py_trees.composites.Selector(f"{label} sweep by target", memory=True)
+    persons = py_trees.composites.Sequence(f"{label} persons", memory=True)
+    persons.add_child(BtNode_CheckBBContains(
+        "counting persons?", bb_keys.TARGET_OBJECT_PROMPT, "person",
+    ))
+    persons.add_child(_count_pantilt(f"{label} persons", HUMAN_TILT_DEG, HUMAN_PAN_SWEEP_DEG))
+    by_target.add_child(persons)
+    by_target.add_child(_count_pantilt(f"{label} objects", COUNT_TILT_DEG))
+    seq.add_child(by_target)
+    seq.add_child(_count_refinements(label))
+    return seq
+
+
+def _count_refinements(label: str):
+    """Post-sweep VLM refinements of ``COUNT_VALUE`` (both best effort, so a
+    VLM hiccup leaves the detector count standing):
+
+    1. ``{label} unclassified vlm``: some view held detections labelled with
+       the whole multi-class prompt (``COUNT_UNCLASSIFIED`` >= 1) -- they
+       could not be matched to the category's members, so the VLM counts the
+       category (``COUNT_VLM_SUBJECT``) on that frame and the count becomes
+       max(member count, VLM count).
+    2. ``{label} category vlm``: category counts also ask the VLM about the
+       busiest sweep frame when the detector found at least one member. A
+       repeated detector count is the supported estimate; a higher VLM count
+       can still recover a missed member, while a one-view detector spike is
+       not allowed to override agreement across multiple views.
+    3. ``{label} attribute vlm``: a person count with a descriptor
+       (``COUNT_ATTRIBUTE_QUESTION``, e.g. "pointing to the right") and
+       N >= 1 detected persons: ask the VLM how many of the people on the
+       best frame match; the count becomes min(VLM, N) -- never more than the
+       detector saw.
+    """
+    seq = py_trees.composites.Sequence(f"{label} refinements", memory=True)
+
+    unclassified = py_trees.composites.Sequence(f"{label} unclassified vlm", memory=True)
+    unclassified.add_child(BtNode_CheckCountPositive(
+        "unclassified detections?", bb_keys.COUNT_UNCLASSIFIED))
+    unclassified.add_child(BtNode_VLMQuery(
+        "vlm unclassified count",
+        bb_detection_src=bb_keys.COUNT_UNCLASSIFIED_DETECTION,
+        bb_answer_dst=bb_keys.VLM_ANSWER,
+        question_template=(
+            "How many {value} are visible in this image? Count every one of "
+            "them. Answer with a number first."
+        ),
+        bb_fill_key=bb_keys.COUNT_VLM_SUBJECT,
+    ))
+    unclassified.add_child(BtNode_ParseCountFromAnswer(
+        "parse unclassified count",
+        bb_answer_src=bb_keys.VLM_ANSWER, bb_count_dst=bb_keys.COUNT_VLM_VALUE,
+    ))
+    unclassified.add_child(BtNode_CountCombine(
+        "count = max(members, vlm)", bb_keys.COUNT_VALUE, bb_keys.COUNT_VLM_VALUE, mode="max",
+    ))
+    seq.add_child(py_trees.decorators.FailureIsSuccess(
+        f"{label} unclassified vlm (best effort)", unclassified,
+    ))
+
+    # A category detector response can be classified correctly and still miss
+    # partly occluded members (the live side-table battery saw two mugs out of
+    # six kitchen items).  Use the busiest RGB frame for a category-specific
+    # VLM recount even when the detector count is already positive.  This is
+    # gated on COUNT_MEMBER_PROMPTS so specific-object and person counts keep
+    # their existing detector-only behavior.
+    category = py_trees.composites.Sequence(f"{label} category vlm", memory=True)
+    category.add_child(BtNode_CheckBBTrue(
+        "category count?", bb_keys.COUNT_MEMBER_PROMPTS, quiet_on_falsy=True,
+    ))
+    category.add_child(BtNode_CheckCountPositive(
+        "detector saw category members?", bb_keys.COUNT_VALUE,
+    ))
+    category.add_child(BtNode_VLMQuery(
+        "vlm category count",
+        bb_detection_src=bb_keys.COUNT_BEST_DETECTION,
+        bb_answer_dst=bb_keys.VLM_ANSWER,
+        question_template=(
+            "How many {value} are visible in this image? Count every visible "
+            "member, including partly occluded ones. Answer with a number "
+            "first."
+        ),
+        bb_fill_key=bb_keys.COUNT_VLM_SUBJECT,
+    ))
+    category.add_child(BtNode_ParseCountFromAnswer(
+        "parse category count",
+        bb_answer_src=bb_keys.VLM_ANSWER, bb_count_dst=bb_keys.COUNT_VLM_VALUE,
+    ))
+    category.add_child(BtNode_CountCombine(
+        "count = consensus(members, category vlm)",
+        bb_keys.COUNT_VALUE, bb_keys.COUNT_VLM_VALUE,
+        mode="consensus", bb_views_key=bb_keys.COUNT_VIEW_COUNTS,
+    ))
+    seq.add_child(py_trees.decorators.FailureIsSuccess(
+        f"{label} category vlm (best effort)", category,
+    ))
+
+    attribute = py_trees.composites.Sequence(f"{label} attribute vlm", memory=True)
+    attribute.add_child(BtNode_CheckBBTrue(
+        "person attribute set?", bb_keys.COUNT_ATTRIBUTE_QUESTION, quiet_on_falsy=True))
+    attribute.add_child(BtNode_CheckCountPositive(
+        "detector saw persons?", bb_keys.COUNT_VALUE))
+    attribute.add_child(BtNode_BlackboardSet(
+        "reset attribute count", bb_keys.COUNT_VLM_VALUE, None))
+    attribute.add_child(BtNode_BlackboardSet(
+        "reset whole-body attribute count", bb_keys.COUNT_ATTR_VLM_VALUE, None))
+    question = (
+        "How many people in this image match this description: {value}? "
+        "Count only people whose visible pose or appearance matches it; "
+        "exclude people who do not match. Answer with a number first."
+    )
+    attribute.add_child(BtNode_VLMQuery(
+        "vlm attribute count",
+        bb_detection_src=bb_keys.COUNT_BEST_DETECTION,
+        bb_answer_dst=bb_keys.VLM_ANSWER,
+        question_template=question,
+        bb_fill_key=bb_keys.COUNT_ATTRIBUTE_QUESTION,
+    ))
+    attribute.add_child(BtNode_ParseCountFromAnswer(
+        "parse attribute count",
+        bb_answer_src=bb_keys.VLM_ANSWER, bb_count_dst=bb_keys.COUNT_VLM_VALUE,
+    ))
+    # Sim battery 2026-10-01 fix9 run s70718-002: the best counting view was
+    # the tilt-45 look, which cut the person off at the chest -- the raised
+    # arm ("pointing to the right") was above the frame, the VLM said 0 and
+    # min(0, 1) announced 0. Re-look at the same pan with the head raised so
+    # the whole body (arms included) is in frame, ask again, keep the larger
+    # VLM answer (the detector count still caps it).
+    whole = py_trees.composites.Sequence(f"{label} whole-body re-look", memory=True)
+    whole.add_child(BtNode_BlackboardSet("reset whole-body frame", bb_keys.COUNT_ATTR_DETECTION, None))
+    whole.add_child(BtNode_BlackboardSet(
+        "reset whole-body attribute count", bb_keys.COUNT_ATTR_VLM_VALUE, None))
+    whole.add_child(BtNode_TurnPanTilt(
+        "head up at best pan", x_key=bb_keys.COUNT_BEST_PAN_RAD, y=PERSON_ATTRIBUTE_TILT_DEG))
+    whole.add_child(py_trees.decorators.FailureIsSuccess(
+        "whole-body scan (no-match keeps frame)",
+        BtNode_ScanForGeneralist(
+            name="whole-body scan",
+            bb_source=bb_keys.TARGET_OBJECT_PROMPT,
+            bb_key=bb_keys.COUNT_ATTR_DETECTION,
+            use_orbbec=True, transform_to_map=False, use_vlm_sam_fallback=True,
+            sort_closest=True, return_segments=False, return_rgb_image=True,
+        ),
+    ))
+    # A failed scan still stores its captured frame so generic fallbacks can
+    # inspect it. It is not valid attribute evidence, however: only query a
+    # re-look that actually detected at least one person/object.
+    whole.add_child(BtNode_CheckDetectionUsable(
+        "whole-body frame usable?", bb_keys.COUNT_ATTR_DETECTION,
+    ))
+    whole.add_child(BtNode_VLMQuery(
+        "vlm whole-body attribute count",
+        bb_detection_src=bb_keys.COUNT_ATTR_DETECTION,
+        bb_answer_dst=bb_keys.VLM_ANSWER,
+        question_template=question,
+        bb_fill_key=bb_keys.COUNT_ATTRIBUTE_QUESTION,
+    ))
+    whole.add_child(BtNode_ParseCountFromAnswer(
+        "parse whole-body attribute count",
+        bb_answer_src=bb_keys.VLM_ANSWER, bb_count_dst=bb_keys.COUNT_ATTR_VLM_VALUE,
+    ))
+    attribute.add_child(py_trees.decorators.FailureIsSuccess(
+        f"{label} whole-body re-look (best effort)", whole))
+    # A single VLM zero can be a crop/miss. Accept zero only when both
+    # independently captured views agree; positive answers remain bounded by
+    # the detector count and the larger view recovers a partially cropped pose.
+    attribute.add_child(BtNode_CountCombine(
+        "count = confirmed attribute(vlm, detector)", bb_keys.COUNT_VALUE,
+        bb_keys.COUNT_VLM_VALUE, mode="attribute_confirmed",
+        bb_confirm_key=bb_keys.COUNT_ATTR_VLM_VALUE,
+    ))
+    # A waving-person action detector has explicit pose evidence and is more
+    # reliable than asking a VLM to infer a raised arm from the sweep's best
+    # (sometimes cropped) RGB frame. Keep the branch narrowly gated so other
+    # person descriptors retain the generic VLM/re-look behavior. If the
+    # action server is unavailable or returns no detections, the selector falls
+    # through to the generic attribute sequence above.
+    waving = py_trees.composites.Sequence(
+        f"{label} dedicated waving detector", memory=True)
+    waving.add_child(BtNode_CheckBBContains(
+        "descriptor mentions waving?", bb_keys.COUNT_ATTRIBUTE_QUESTION, "wav"))
+    waving.add_child(BtNode_CheckCountPositive(
+        "detector saw persons for waving?", bb_keys.COUNT_VALUE))
+    waving.add_child(BtNode_BlackboardSet(
+        "reset waving detections", bb_keys.ALL_WAVING_PERSONS, []))
+    waving.add_child(py_trees.decorators.FailureIsSuccess(
+        "head up at best waving pan (best effort)",
+        BtNode_BestEffortTurnPanTilt(
+            "head up at best waving pan", x_key=bb_keys.COUNT_BEST_PAN_RAD,
+            y=PERSON_ATTRIBUTE_TILT_DEG)))
+    waving.add_child(py_trees.decorators.FailureIsSuccess(
+        "dedicated waving scan (best effort)",
+        BtNode_BestEffortScanForWavingPerson(
+            "find waving persons for count",
+            bb_keys.ALL_WAVING_PERSONS,
+            bb_keys.TARGET_PERSON_POSE,
+            WAVING_THRESHOLD_METERS,
+            target_frame="map",
+        ),
+    ))
+    waving.add_child(BtNode_CountWavingPersons())
+    attribute_selector = py_trees.composites.Selector(
+        f"{label} attribute strategies", memory=True,
+        children=[waving, attribute],
+    )
+    seq.add_child(py_trees.decorators.FailureIsSuccess(
+        f"{label} attribute vlm (best effort)", attribute_selector))
     return seq
 
 
@@ -2322,40 +5215,83 @@ def create_count():
 
     Counting is NOT a first-class capability of the vision stack — the
     detector enumerates what it happens to segment, which is unreliable for
-    category counting. Structure: try detection-based counting first (and
-    keep the RGB frame); if the detector fails or returns zero, fall back to
-    sending the captured image plus the counting question to the multimodal
-    LLM and speaking its answer.
+    category counting. Sim battery 2026-09-26 (run s70718-001, "how many
+    kitchen items on the side table"): ONE look at tilt 10 (the table was
+    0.6 m below the camera -- out of frame) asking only for the category's
+    enriched member prompts saw nothing, the VLM said "Zero", and the gate
+    passed a 0 with bleach, mustard and a bowl on the table.
+
+    Structure now:
+
+    1. ``count/by_detector``: a full pan/tilt sweep (``_count_sweep``:
+       ``PAN_SWEEP_DEG`` x ``COUNT_TILT_DEG`` 20/45/60 down) that keeps the
+       MAXIMUM member count over all views (early stop once a view counted
+       >= 1 and the next added nothing). For a category the orchestrator
+       sets ``TARGET_OBJECT_PROMPT`` to EVERY known object and
+       ``COUNT_MEMBER_PROMPTS`` to the members, so the detector looks for
+       everything and ``BtNode_CountDetections`` filters afterwards
+       (confidence floor ``COUNT_MIN_CONF``, own-arm self-occlusion). Then
+       ``_count_refinements``: unclassifiable multi-class labels -> VLM
+       category count on that frame (max); a person count with a descriptor
+       (``COUNT_ATTRIBUTE_QUESTION``; the detector looked for plain "person")
+       -> VLM "how many are <descriptor>" on the best frame (min). A
+       positive count wins.
+    2. ``count/vlm_fallback``: zero after the whole sweep -> ask the VLM to
+       count on the best frame, naming the category members
+       (``COUNT_VLM_SUBJECT``). A positive parsed count wins.
+    3. ``count/recount``: still zero -> announce "I did not see any, let me
+       look again", mark ``COUNT_RECOUNTED`` and run ONE more full sweep,
+       accepting whatever it finds (including zero). The ``counted()`` gate
+       (validators.py) rejects a zero count that did not go through this
+       recount.
+
+    Then announce + buffer ``COUNT_VALUE``.
     """
-    primary = py_trees.composites.Sequence("count/by_detector", memory=True)
-    primary.add_child(BtNode_TurnPanTilt("turn pantilt", x=0.0, y=10.0))
-    primary.add_child(_arm_to_orbbec_look())  # clear the arm from the orbbec's view
-    primary.add_child(BtNode_Announce(
+    seq = py_trees.composites.Sequence("small/count", memory=True)
+    # Room anchors are useful navigation waypoints but are not necessarily a
+    # good camera pose for a pose-qualified person.  materialise_params fills
+    # COUNT_ROOM_POSE only for those count steps; the hop is best effort so a
+    # navigation hiccup still leaves the normal detector/VLM fallback intact.
+    room_view = py_trees.composites.Selector(
+        "count room view navigation", memory=True,
+        children=[
+            py_trees.composites.Sequence(
+                "navigate to count room view", memory=True,
+                children=[
+                    BtNode_CheckBBKeySet("count room view set?", bb_keys.COUNT_ROOM_POSE),
+                    _tuck_arm_for_nav("tuck arm before count room view"),
+                    py_trees.decorators.FailureIsSuccess(
+                        "count room view goto (best effort)",
+                        py_trees.decorators.Retry(
+                            "retry count room view goto",
+                            BtNode_GotoAction(
+                                "goto count room view", key=bb_keys.COUNT_ROOM_POSE,
+                                action_timeout_sec=30.0,
+                            ),
+                            num_failures=3,
+                        ),
+                    ),
+                ],
+            ),
+            py_trees.behaviours.Success("count room view not needed"),
+        ],
+    )
+    seq.add_child(_arm_to_orbbec_look(prelude=room_view))
+    seq.add_child(BtNode_Announce(
         "announce scanning", bb_source=None, message="I am counting now."
     ))
-    primary.add_child(BtNode_ScanForGeneralist(
-        name="scan to count",
-        bb_source=bb_keys.TARGET_OBJECT_PROMPT,
-        bb_key=bb_keys.TARGET_OBJECT_DETECTION,
-        use_orbbec=True,
-        transform_to_map=False,
-        use_vlm_sam_fallback=True,
-        sort_closest=True,
-        return_segments=False,
-        return_rgb_image=True,  # keep the frame for the VLM fallback
+    seq.add_child(BtNode_BlackboardSet(
+        "mark not recounted", bb_keys.COUNT_RECOUNTED, False,
     ))
-    primary.add_child(BtNode_CountDetections(
-        "count detections",
-        bb_detection_src=bb_keys.TARGET_OBJECT_DETECTION,
-        bb_count_dst=bb_keys.COUNT_VALUE,
-        fail_if_zero=True,  # zero hits -> let the VLM double-check the frame
+
+    strategies = py_trees.composites.Selector("count strategies", memory=True)
+
+    by_detector = py_trees.composites.Sequence("count/by_detector", memory=True)
+    by_detector.add_child(_count_sweep("count"))
+    by_detector.add_child(BtNode_CheckCountPositive(
+        "detector counted any?", bb_keys.COUNT_VALUE,
     ))
-    primary.add_child(BtNode_AnnounceFromBB(
-        "announce count", bb_keys.COUNT_VALUE, prefix="I counted "
-    ))
-    primary.add_child(BtNode_SetReportInfo(
-        "buffer count", bb_keys.COUNT_VALUE, prefix="I counted ",
-    ))
+    strategies.add_child(by_detector)
 
     vlm_fallback = py_trees.composites.Sequence("count/vlm_fallback", memory=True)
     vlm_fallback.add_child(BtNode_Announce(
@@ -2364,13 +5300,14 @@ def create_count():
     ))
     vlm_fallback.add_child(BtNode_VLMQuery(
         "vlm count",
-        bb_detection_src=bb_keys.TARGET_OBJECT_DETECTION,
+        bb_detection_src=bb_keys.COUNT_BEST_DETECTION,
         bb_answer_dst=bb_keys.VLM_ANSWER,
         question_template=(
-            "How many {value} are visible in this image? Answer in one short "
-            "spoken sentence that starts with the number."
+            "How many {value} are visible in this image? Count every one of "
+            "them. Answer in one short spoken sentence that starts with the "
+            "number."
         ),
-        bb_fill_key=bb_keys.TARGET_OBJECT_PROMPT,
+        bb_fill_key=bb_keys.COUNT_VLM_SUBJECT,
     ))
     vlm_fallback.add_child(BtNode_ParseCountFromAnswer(
         # The target postcondition gate verifies counted(X) against the
@@ -2381,17 +5318,30 @@ def create_count():
         bb_answer_src=bb_keys.VLM_ANSWER,
         bb_count_dst=bb_keys.COUNT_VALUE,
     ))
-    vlm_fallback.add_child(BtNode_AnnounceFromBB(
-        "announce vlm count", bb_keys.VLM_ANSWER, prefix=""
+    vlm_fallback.add_child(BtNode_CheckCountPositive(
+        "vlm counted any?", bb_keys.COUNT_VALUE,
     ))
-    vlm_fallback.add_child(BtNode_SetReportInfo(
-        "buffer vlm count", bb_keys.VLM_ANSWER, prefix="",
-    ))
+    strategies.add_child(vlm_fallback)
 
-    return py_trees.composites.Selector(
-        "small/count", memory=True,
-        children=[primary, vlm_fallback],
-    )
+    recount = py_trees.composites.Sequence("count/recount", memory=True)
+    recount.add_child(BtNode_Announce(
+        "announce recount", bb_source=None,
+        message="I did not see any, let me look again.",
+    ))
+    recount.add_child(BtNode_BlackboardSet(
+        "mark recounted", bb_keys.COUNT_RECOUNTED, True,
+    ))
+    recount.add_child(_count_sweep("recount"))
+    strategies.add_child(recount)
+
+    seq.add_child(strategies)
+    seq.add_child(BtNode_AnnounceFromBB(
+        "announce count", bb_keys.COUNT_VALUE, prefix="I counted "
+    ))
+    seq.add_child(BtNode_SetReportInfo(
+        "buffer count", bb_keys.COUNT_VALUE, prefix="I counted ",
+    ))
+    return seq
 
 
 def create_answer_question():
@@ -2504,9 +5454,11 @@ def create_llm_fallback():
     Generic escape hatch for general-knowledge / contextual questions the robot
     has no dedicated action for — "what is the date / day / time", simple facts
     or maths. The question (written to ``bb_keys.LLM_QUESTION`` by the
-    orchestrator) goes to gpt-4.1 with the current date/time injected; the
-    spoken answer is announced. Questions needing live data the model cannot
-    have (e.g. current weather) get an honest "I cannot access that" reply.
+    orchestrator) goes to gpt-4.1 with the current date/time injected. The
+    result is buffered in ``REPORT_INFO`` and must be spoken by a following
+    explicit ``announce`` plan step. Questions needing live data the model
+    cannot have (e.g. current weather) get an honest "I cannot access that"
+    reply.
     """
     seq = py_trees.composites.Sequence("small/llm_fallback", memory=True)
     seq.add_child(BtNode_LLMQuery(
@@ -2514,7 +5466,9 @@ def create_llm_fallback():
         bb_question_key=bb_keys.LLM_QUESTION,
         bb_answer_dst=bb_keys.LLM_ANSWER,
     ))
-    seq.add_child(BtNode_AnnounceFromBB("announce llm answer", bb_keys.LLM_ANSWER))
+    seq.add_child(BtNode_SetReportInfo(
+        "buffer llm answer", bb_keys.LLM_ANSWER, prefix="Here is the answer. ",
+    ))
     return seq
 
 
@@ -2574,7 +5528,10 @@ def _classify_node_roles(action: str, node: dict) -> list[str]:
         roles.append("search_object_sweep")
     if node_type == "BtNode_VLMQuery":
         roles.append("vlm_query")
-    if action == "count" and node_type == "BtNode_VLMQuery":
+    # Only the count VLM FALLBACK ("vlm count") -- the sweep's refinement
+    # queries (unclassified / person attribute) keep their fixed templates,
+    # so the vlm-template modification still targets exactly one node.
+    if action == "count" and node_type == "BtNode_VLMQuery" and name == "vlm count":
         roles.append("count_vlm_branch")
     if node_type == "BtNode_Announce":
         # Only a literal-message announce (given_msg set at build) is a valid

@@ -19,6 +19,9 @@ setup(
     ],
     install_requires=["setuptools"],
     extras_require={"web": ["fastapi>=0.100", "uvicorn>=0.30"]},
-    entry_points={"console_scripts": ["gpsr-debug-server = gpsr_debug_server.main:main"]},
+    entry_points={"console_scripts": [
+        "gpsr-debug-server = gpsr_debug_server.main:main",
+        "gpsr-console = gpsr_debug_server.console:main",
+    ]},
     zip_safe=False,
 )

@@ -379,6 +379,12 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self.goal_handle = None
         self.send_goal_future = None
         self.get_result_future = None
+        # A timeout can fire before the goal-response callback has delivered a
+        # handle. Remember the request and apply it when the handle arrives;
+        # otherwise a timed-out tree node leaves the ROS action running while
+        # its parent starts a fallback branch.
+        self._cancel_pending = False
+        self._cancel_sent = False
 
         self.result_message = None
         self.result_status = None
@@ -521,8 +527,8 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         if self.action_timeout_ticks != 0:
             self.counter += 1
             if self.counter > self.action_timeout_ticks:
-                # TODO: abort the action here
-                self.feedback_message = "action timeout"
+                self.feedback_message = "action timeout; cancelling goal"
+                self.send_cancel_request()
                 return py_trees.common.Status.FAILURE
 
         # processing errors
@@ -655,6 +661,10 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             self.node.get_logger().debug("... {}".format(self.feedback_message))
             self.node.get_logger().debug("  {!s}".format(future.result()))
 
+        if getattr(self, "_cancel_pending", False):
+            self._cancel_pending = False
+            self.send_cancel_request()
+
         self.get_result_future = self.goal_handle.get_result_async()
         self.get_result_future.add_done_callback(self.get_result_callback)
 
@@ -665,12 +675,30 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         :attr:`~py_trees.common.Status.INVALID` (typically a result of a priority
         interrupt).
         """
+        # A few lightweight callers construct an ActionHandler with
+        # ``__new__`` for timeout tests, so keep cancellation tolerant of
+        # pre-initialisation objects as well as normal BT lifecycle objects.
+        if getattr(self, "_cancel_sent", False):
+            return
         self.feedback_message = "cancelling goal ... [{}]".format(self.qualified_name)
         self.node.get_logger().debug(self.feedback_message)
 
         if self.goal_handle is not None:
-            future = self.goal_handle.cancel_goal_async()
-            future.add_done_callback(self.cancel_response_callback)
+            self._cancel_sent = True
+            try:
+                future = self.goal_handle.cancel_goal_async()
+                future.add_done_callback(self.cancel_response_callback)
+            except Exception as exc:
+                # A terminal handle may reject a late cancel. The action result
+                # still owns the final status; keep the tree node on its
+                # timeout/failure path instead of raising from a tree tick.
+                self.node.get_logger().debug(
+                    "cancel request failed [{}]: {!r}".format(
+                        self.qualified_name, exc
+                    )
+                )
+        else:
+            self._cancel_pending = True
 
     def cancel_response_callback(self, future: rclpy.task.Future):
         """

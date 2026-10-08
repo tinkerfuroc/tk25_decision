@@ -152,16 +152,14 @@ def test_action_verdict_textless_announce_after_count_is_valid():
     assert result.confidence == 0.5
 
 
-def test_verify_answered_accepts_bare_count_value_artifact():
-    # H1: validators._verify's answered branch now mirrors the `counted`
-    # branch and accepts a bare count_value artifact as sufficient runtime
-    # evidence for answered(...), same as qa_answer/llm_answer/vlm_answer.
+def test_verify_answered_rejects_bare_count_value_artifact_without_announce():
+    # A count artifact is gathered evidence, not delivery evidence.  The
+    # runtime postcondition gate must reject it when no announce completed.
     fact, _ = parse_fact("answered(how_many_drinks)")
     ctx = VerificationContext(phase="postcondition", completed_steps=())
     result = _verify(fact, {"count_value": 3}, ctx)
-    assert result.verdict is Verdict.VALID
-    assert "count_value" not in result.evidence  # generic identity-unavailable wording
-    assert "nonempty answer" in result.evidence
+    assert result.verdict is Verdict.INVALID
+    assert "explicit announce" in result.evidence
 
 
 def test_action_verdict_unrelated_action_yields_no_verdict():
@@ -312,9 +310,9 @@ def test_artifact_branch_still_wins_when_present():
 
 
 def test_action_verdict_widening_covers_ask_person_and_answer_question():
-    # Deliberate widening: ANY action whose contract establishes answered()
-    # qualifies the same way, not just announce -- proves the check is
-    # generic (contract-driven), not a hardcoded "announce" string compare.
+    # The answer-producing action remains contract-driven, but it must be
+    # paired with a completed explicit announce before it can satisfy the
+    # answered postcondition.
     # L1 (round-2 fix): a REALISTIC step shape -- ask_person/answer_question
     # carry `question`, never `text` (orchestrator.materialise_params reads
     # `question` for ask_person, see orchestrator.py ~1208-1211). Per M1 the
@@ -325,7 +323,10 @@ def test_action_verdict_widening_covers_ask_person_and_answer_question():
         fact, _ = parse_fact("answered(what_day_is_today)")
         ctx = VerificationContext(
             phase="postcondition",
-            completed_steps=({"action": action, "params": {"question": "What day is today?"}},),
+            completed_steps=(
+                {"action": action, "params": {"question": "What day is today?"}},
+                {"action": "announce", "params": {"text": "Today is Saturday."}},
+            ),
         )
         result = _action_verdict(fact, ctx)
         assert result is not None and result.verdict is Verdict.VALID, action

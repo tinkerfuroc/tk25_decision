@@ -71,6 +71,7 @@
           "BtNode_ConvertGraspPose": "IMMEDIATE",
           "BtNode_GoToLuggage": "IMMEDIATE",
           "BtNode_GotoAction": "IMMEDIATE",
+          "BtNode_Approach": "IMMEDIATE",
           "BtNode_FollowAction": "IMMEDIATE",
           "BtNode_FindApproachPose": "IMMEDIATE",
           "BtNode_ProjectPose": "IMMEDIATE",

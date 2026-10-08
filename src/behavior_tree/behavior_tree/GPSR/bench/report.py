@@ -9,8 +9,67 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-VERDICTS = ("PASS", "FAIL", "TIMEOUT", "ERROR")
+VERDICTS = ("PASS", "FAIL", "REFEREE", "TIMEOUT", "ERROR")
+PHYSICAL_VERDICTS = ("PASS", "FAIL", "REFEREE", "UNKNOWN")
 CLASSES = ("A", "B", "C")
+
+
+def _clean_pass(result: BenchResult) -> bool:
+    """Whether one result proves both planner and physical success.
+
+    Tier-2 results carry both verdict fields.  A legacy tier-0/tier-1 result has no
+    physical field and is therefore counted by its ordinary planner verdict only;
+    this keeps the report useful for those tiers while making a physical-truth
+    streak impossible to claim from an old, planner-only tier-2 report.
+    """
+    if result.verdict != "PASS":
+        return False
+    # Tier 2 is the physical-truth tier.  A pre-truth report can contain a
+    # plain planner PASS but has no evidence for the second half of the claim.
+    if result.tier == 2:
+        return result.planner_verdict == "PASS" and result.physical_verdict == "PASS"
+    if result.planner_verdict is None and result.physical_verdict is None:
+        return True
+    return result.planner_verdict == "PASS" and result.physical_verdict == "PASS"
+
+
+def pass_streak(results: Iterable[BenchResult], required: int | None = None) -> dict[str, Any]:
+    """Return auditable consecutive clean-pass counts in result order.
+
+    ``required`` is optional so generic tier reports can expose the measured streak
+    without imposing a gate.  When provided, ``met`` records whether that exact
+    requirement was reached.  A REFEREE result, planner failure, physical failure,
+    timeout, or missing physical verdict breaks the streak.
+    """
+    ordered = list(results)
+    longest = trailing = current = 0
+    first_failure: int | None = None
+    clean_count = 0
+    for index, result in enumerate(ordered):
+        if _clean_pass(result):
+            clean_count += 1
+            current += 1
+            longest = max(longest, current)
+        else:
+            if first_failure is None:
+                first_failure = index
+            current = 0
+    for result in reversed(ordered):
+        if _clean_pass(result):
+            trailing += 1
+        else:
+            break
+    return {
+        "required": required,
+        "total": len(ordered),
+        "clean_passes": clean_count,
+        "longest": longest,
+        "trailing": trailing,
+        "first_failure_index": first_failure,
+        "first_failure_entry_id": (ordered[first_failure].entry_id
+                                    if first_failure is not None else None),
+        "met": (longest >= required) if required is not None else None,
+    }
 
 
 @dataclass
@@ -28,6 +87,22 @@ class BenchResult:
     # "referee_fallback" -- surfaces a referee-assisted grasp/step in the
     # per-run record instead of it hiding behind an indistinguishable PASS.
     referee_assisted: bool = False
+    # Physical-truth verdict (bench/truth.py, tier2 only). ``planner_verdict`` is the
+    # executor/planner-gate verdict that ``verdict`` used to be; ``physical_verdict`` is
+    # PASS/FAIL/REFEREE/UNKNOWN from sim physics truth (``run_truth.json``);
+    # ``physical_checks`` the per-postcondition evidence; ``physical_detail`` the
+    # human-readable why. ``verdict`` is their combination (``truth.combine_verdicts``).
+    # All default to "absent" so report.json files written before this field existed
+    # (and tier0/tier1 results) still load and render as planner-only.
+    planner_verdict: str | None = None
+    physical_verdict: str | None = None
+    physical_checks: list[dict] = field(default_factory=list)
+    physical_detail: str = ""
+    # Human-readable planner/executor-gate evidence.  Tier-2 ``detail`` may also
+    # contain physical-truth evidence for backwards compatibility; keep this
+    # field separate so reports and the viewer never show physical failures as
+    # planner failures.
+    planner_detail: str = ""
 
 
 def matrix(results: Iterable[BenchResult]) -> dict[tuple[str, str], dict[int, tuple[int, int]]]:
@@ -93,15 +168,35 @@ def runs_section(results: Iterable[BenchResult]) -> str:
             bullet += f" — [sheet]({sheet})"
         if r.referee_assisted:
             bullet += " _(referee-assisted)_"
+        if r.planner_verdict is not None or r.physical_verdict is not None:
+            bullet += f" (planner {r.planner_verdict or '-'} / physical {r.physical_verdict or '-'})"
         lines.append(bullet)
     return "\n".join(lines) + "\n"
 
 
+def physical_section(results: Iterable[BenchResult]) -> str:
+    """Render the per-run planner-vs-physical table for SUMMARY.md (empty string when no
+    result carries a physical-truth verdict -- tier0/tier1 and pre-truth tier2 reports)."""
+    results = [r for r in results if r.planner_verdict is not None or r.physical_verdict is not None]
+    if not results:
+        return ""
+    lines = ["## Physical truth", "",
+             "| run | verdict | planner | physical | physical detail |",
+             "|---|---|---|---|---|"]
+    for r in results:
+        detail = (r.physical_detail or "").replace("|", "\\|").replace("\n", " ")
+        lines.append(f"| {r.entry_id} | **{r.verdict}** | {r.planner_verdict or '-'} | "
+                     f"{r.physical_verdict or '-'} | {detail} |")
+    return "\n".join(lines) + "\n"
+
+
 def write_report(results: Iterable[BenchResult], out_dir: Path, *, corpus_path: Path | None = None,
-                 meta: dict[str, Any] | None = None) -> Path:
+                 meta: dict[str, Any] | None = None,
+                 required_streak: int | None = None) -> Path:
     results = list(results)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    streak = pass_streak(results, required=required_streak)
     tiers = sorted({r.tier for r in results})
     totals = {str(t): dict(Counter(r.verdict for r in results if r.tier == t)) for t in tiers}
     report_meta = dict(meta) if meta else {}
@@ -112,6 +207,7 @@ def write_report(results: Iterable[BenchResult], out_dir: Path, *, corpus_path: 
         "corpus": str(corpus_path) if corpus_path else None,
         "meta": report_meta,
         "totals": totals,
+        "streak": streak,
         "results": [asdict(r) for r in results],
     }, indent=2) + "\n", encoding="utf-8")
 
@@ -132,6 +228,14 @@ def write_report(results: Iterable[BenchResult], out_dir: Path, *, corpus_path: 
     lines += ["", "## Totals", ""]
     for t in tiers:
         lines.append(f"- T{t}: " + ", ".join(f"{v} {totals[str(t)].get(v, 0)}" for v in VERDICTS))
+        tier_results = [r for r in results if r.tier == t]
+        planner = Counter(r.planner_verdict for r in tier_results if r.planner_verdict is not None)
+        physical = Counter(r.physical_verdict for r in tier_results if r.physical_verdict is not None)
+        if planner:
+            lines.append(f"- T{t} planner: " + ", ".join(f"{v} {planner.get(v, 0)}" for v in VERDICTS))
+        if physical:
+            lines.append(f"- T{t} physical: " + ", ".join(
+                f"{v} {physical.get(v, 0)}" for v in PHYSICAL_VERDICTS))
     lines += ["", "## Totals by class", ""]
     for t in tiers:
         classes = by_class.get(t, {})
@@ -145,6 +249,21 @@ def write_report(results: Iterable[BenchResult], out_dir: Path, *, corpus_path: 
     for r in results:
         if r.verdict != "PASS":
             lines.append(f"- T{r.tier} `{r.entry_id}` **{r.verdict}** — {r.detail}")
+    lines += ["", "## Consecutive clean passes", "",
+              "A clean pass requires planner `PASS` and physical-truth `PASS` when those "
+              "fields are present; `REFEREE` breaks the streak.",
+              f"- Clean passes: {streak['clean_passes']}/{streak['total']}",
+              f"- Longest streak: {streak['longest']}",
+              f"- Trailing streak: {streak['trailing']}"]
+    if streak["first_failure_entry_id"] is not None:
+        lines.append(f"- First failure: {streak['first_failure_entry_id']} "
+                     f"(index {streak['first_failure_index']})")
+    if required_streak is not None:
+        status = "PASS" if streak["met"] else "INCOMPLETE"
+        lines.append(f"- Required streak: {required_streak} ({status})")
+    physical_table = physical_section(results)
+    if physical_table:
+        lines += ["", physical_table.rstrip("\n")]
     lines += ["", runs_section(results).rstrip("\n")]
     summary = out_dir / "SUMMARY.md"
     summary.write_text("\n".join(lines) + "\n", encoding="utf-8")

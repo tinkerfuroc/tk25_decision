@@ -202,6 +202,20 @@ class BtNode_TTSCN(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 
+def announce_timeout_s(text) -> float:
+    """Wall-clock budget for one TTS call: speech at ~0.12 s/char with a 20 s
+    floor plus 15 s slack; ``GPSR_ANNOUNCE_TIMEOUT_S`` pins it (<= 0 = never)."""
+    import os
+    env = os.environ.get("GPSR_ANNOUNCE_TIMEOUT_S")
+    if env:
+        try:
+            value = float(env)
+            return float("inf") if value <= 0 else value
+        except ValueError:
+            pass
+    return max(20.0, 0.12 * len(str(text or ""))) + 15.0
+
+
 class BtNode_Announce(ServiceHandler):
     """
     Node for making an audio announcement, returns SUCCESS once announcement finished
@@ -240,6 +254,17 @@ class BtNode_Announce(ServiceHandler):
                     "/", self.bb_source
                 ),
             )
+        # Keep speech as a first-class runtime event.  The benchmark used to
+        # reconstruct announcements from the visualizer's repeated
+        # ``feedback_message`` snapshots, which made one utterance look like
+        # thousands.  Reading the task id here is deliberately optional and
+        # uses the literal key to avoid importing GPSR small_trees (which
+        # imports this module).
+        try:
+            self._telemetry_blackboard = self.blackboard if self.bb_source is not None else self.attach_blackboard_client(name=f"{self.name}/telemetry")
+            self._telemetry_blackboard.register_key("gpsr/task_id", access=pytree.common.Access.READ)
+        except Exception:
+            self._telemetry_blackboard = None
 
     def setup(self, **kwargs):
         print(self.service_type)
@@ -256,6 +281,8 @@ class BtNode_Announce(ServiceHandler):
 
     def initialise(self):
         super().initialise()
+
+        self._speech_event_emitted = False
 
         self.announce_msg = self.given_msg
 
@@ -294,14 +321,52 @@ class BtNode_Announce(ServiceHandler):
 
         # send request to service and store the returned Future object
         self.response = self.call_service_async(request)
+        self._announce_started = time.monotonic()
+        self._announce_timeout_s = announce_timeout_s(self.announce_msg)
 
         # update feedback message
         self.feedback_message = f"Initialized Announce for message {self.announce_msg}"
 
+    def _emit_speech_event(self, outcome: str, *, timed_out: bool = False) -> None:
+        """Emit one structured speech completion event per node activation."""
+        if getattr(self, "_speech_event_emitted", False):
+            return
+        self._speech_event_emitted = True
+        try:
+            from behavior_tree.GPSR.telemetry import get_default_telemetry
+            telemetry = get_default_telemetry()
+            if telemetry is None:
+                return
+            task_id = None
+            try:
+                if self._telemetry_blackboard is not None:
+                    task_id = self._telemetry_blackboard.get("gpsr/task_id")
+            except Exception:
+                pass
+            telemetry.emit(
+                "speech.finished",
+                {
+                    "text": str(getattr(self, "announce_msg", "") or ""),
+                    "node_name": self.name,
+                    "outcome": outcome,
+                    "timed_out": bool(timed_out),
+                },
+                task_id=task_id,
+                phase="execution",
+            )
+        except Exception:
+            # Instrumentation must never change the behaviour tree outcome.
+            return
+
     def update(self) -> Status:
         # Handle mock mode
         if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
+            status = self.wait_for_keypress_in_mock()
+            if status == pytree.common.Status.SUCCESS:
+                self._emit_speech_event("succeeded")
+            elif status == pytree.common.Status.FAILURE:
+                self._emit_speech_event("failed")
+            return status
 
         # Check if response exists (should always exist in non-mock mode)
         if self.response is None:
@@ -314,11 +379,25 @@ class BtNode_Announce(ServiceHandler):
             # if status is 0, all is well, return success
             if self.response.result().status == 0:
                 self.feedback_message = f"Finished announcing {self.announce_msg}"
+                self._emit_speech_event("succeeded")
                 return pytree.common.Status.SUCCESS
             # else, update feedback message to reflect the error message and return failure
             else:
                 self.feedback_message = f"Announce for {self.announce_msg} failed with error code {self.response.result().status}"
+                self._emit_speech_event("failed")
                 return pytree.common.Status.FAILURE
+        # A TTS call that never returns must not stall the whole mission (GPSR
+        # sim battery 2026-09-30 fix6 run 0: "announce plan 1 (speak) -- Still
+        # announcing..." for 25 min until the 1500 s bench timeout). After a
+        # generous, length-scaled budget the speech is treated as done.
+        waited = time.monotonic() - getattr(self, "_announce_started", time.monotonic())
+        if waited >= getattr(self, "_announce_timeout_s", float("inf")):
+            self.feedback_message = (
+                f"Announce timed out after {waited:.0f}s (TTS service did not answer); "
+                f"continuing: {self.announce_msg}"
+            )
+            self._emit_speech_event("succeeded", timed_out=True)
+            return pytree.common.Status.SUCCESS
         # if service is not done, simply return running
         else:
             self.feedback_message = "Still announcing..."

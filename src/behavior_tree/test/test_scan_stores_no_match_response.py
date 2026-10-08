@@ -48,6 +48,18 @@ class _DoneFuture:
         return self._result
 
 
+class _NeverDoneFuture:
+    def __init__(self):
+        self.cancel_calls = 0
+
+    def done(self):
+        return False
+
+    def cancel(self):
+        self.cancel_calls += 1
+        return True
+
+
 def _make_scan_node(result):
     from behavior_tree.TemplateNodes.Vision import BtNode_ScanForGeneralist
 
@@ -88,6 +100,40 @@ def test_success_stores_response_and_succeeds():
     node.bb_write_client.set.assert_called_once_with(
         "gpsr/target_object_detection", result, overwrite=True
     )
+
+
+def test_in_flight_scan_timeout_cancels_future(monkeypatch):
+    import py_trees as pytree
+    from behavior_tree.TemplateNodes import Vision
+    from behavior_tree.TemplateNodes.Vision import BtNode_ScanForGeneralist
+
+    future = _NeverDoneFuture()
+    node = BtNode_ScanForGeneralist.__new__(BtNode_ScanForGeneralist)
+    node.mock_mode = False
+    node.response = future
+    node.use_orbbec = True
+    node.object = "person pointing to the left"
+    node._scan_started_at = 100.0
+    node._scan_timeout_s = 5.0
+    node.feedback_message = ""
+    monkeypatch.setattr(Vision.time, "monotonic", lambda: 105.1)
+
+    assert node.update() == pytree.common.Status.FAILURE
+    assert future.cancel_calls == 1
+    assert "timeout after 5.0s" in node.feedback_message
+
+
+def test_vision_scan_timeout_budget_reads_env(monkeypatch):
+    from behavior_tree.TemplateNodes.Vision import vision_scan_timeout_s
+
+    monkeypatch.delenv("GPSR_VISION_SCAN_TIMEOUT_S", raising=False)
+    assert vision_scan_timeout_s() == 90.0
+    monkeypatch.setenv("GPSR_VISION_SCAN_TIMEOUT_S", "12.5")
+    assert vision_scan_timeout_s() == 12.5
+    monkeypatch.setenv("GPSR_VISION_SCAN_TIMEOUT_S", "0")
+    assert vision_scan_timeout_s() == float("inf")
+    monkeypatch.setenv("GPSR_VISION_SCAN_TIMEOUT_S", "not-a-number")
+    assert vision_scan_timeout_s() == 90.0
 
 
 class _FakeObject:

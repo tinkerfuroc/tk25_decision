@@ -97,7 +97,7 @@ def test_validate_rejects_template_on_wrong_role():
 
 def test_validate_rejects_bad_param_schema():
     tree = small_trees.create_count()
-    vlm_id = _find_node_id(tree, "small/count", node_type="BtNode_VLMQuery")
+    vlm_id = _find_node_id(tree, "small/count", node_type="BtNode_VLMQuery", name_fragment="vlm count")
     ok, reason = _validate(tree, "count", [{
         "template": "vlm-template",
         "target_node_id": vlm_id,
@@ -241,7 +241,7 @@ def test_apply_returns_audit_tuple_for_specialist():
 
 def test_apply_targets_single_vlm_node_and_diff_is_focused():
     tree = small_trees.create_count()
-    vlm_id = _find_node_id(tree, "small/count", node_type="BtNode_VLMQuery")
+    vlm_id = _find_node_id(tree, "small/count", node_type="BtNode_VLMQuery", name_fragment="vlm count")
     mods = [{
         "template": "vlm-template",
         "target_node_id": vlm_id,

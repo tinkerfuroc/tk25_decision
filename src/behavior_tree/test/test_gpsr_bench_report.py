@@ -1,6 +1,6 @@
 import json
 
-from behavior_tree.GPSR.bench.report import BenchResult, class_totals, matrix, write_report
+from behavior_tree.GPSR.bench.report import BenchResult, class_totals, matrix, pass_streak, write_report
 
 
 def _r(eid, template, tier, verdict, feas="A"):
@@ -72,3 +72,24 @@ def test_write_report_stores_run_metadata(tmp_path):
     assert data["meta"]["corpus"] == "corpus-42.jsonl"
     text = summary.read_text()
     assert "Run:" in text and "seed=42" in text
+
+
+def test_pass_streak_requires_planner_and_physical_truth_and_breaks_on_referee():
+    clean = lambda eid: BenchResult(eid, "goToLoc", "A", 2, "PASS",
+                                    planner_verdict="PASS", physical_verdict="PASS")
+    referee = BenchResult("ref", "goToLoc", "A", 2, "REFEREE",
+                          planner_verdict="PASS", physical_verdict="REFEREE")
+    physical_fail = BenchResult("bad", "goToLoc", "A", 2, "FAIL",
+                                planner_verdict="PASS", physical_verdict="FAIL")
+    streak = pass_streak([clean("a"), physical_fail, clean("b"), referee, clean("c")],
+                         required=2)
+    assert streak["clean_passes"] == 3
+    assert streak["longest"] == 1
+    assert streak["trailing"] == 1
+    assert streak["first_failure_index"] == 1
+    assert streak["met"] is False
+
+
+def test_pass_streak_does_not_upgrade_legacy_planner_only_tier2_pass():
+    legacy = BenchResult("legacy", "goToLoc", "A", 2, "PASS")
+    assert pass_streak([legacy], required=1)["met"] is False

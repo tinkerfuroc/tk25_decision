@@ -89,6 +89,8 @@ class BtNode_GotoAction(ActionHandler):
 
     Attributes:
         key: Blackboard key containing the navigation goal.
+        action_timeout_sec: Maximum wall-clock duration for one Nav2 goal;
+            non-positive values disable this navigation-specific deadline.
     """
 
     def __init__(
@@ -98,6 +100,7 @@ class BtNode_GotoAction(ActionHandler):
         action_name: str = "navigate_to_pose",
         wait_for_server_timeout_sec: float = -3,
         action_timeout_ticks=0,
+        action_timeout_sec: float = 120.0,
     ):
         super().__init__(
             name,
@@ -111,11 +114,63 @@ class BtNode_GotoAction(ActionHandler):
         # to remap the "goal" read) — keep it so a successful goto can report
         # what it actually reached (see _target_label / process_result).
         self._key = key
+        # Nav2 can accept a goal and then stop publishing feedback/results (for
+        # example while a controller or TF dependency is unavailable).  The
+        # generic ActionHandler timeout is tick based and disabled by default,
+        # so keep a wall-clock deadline for navigation specifically.
+        self.action_timeout_sec = float(action_timeout_sec)
+        self._action_started_at = None
+        self._timeout_cancel_requested = False
 
     def initialise(self):
         # self.tf_buffer = Buffer()
         # self.tf_listener = TransformListener(self.tf_buffer, self.node)
+        self._action_started_at = time.monotonic()
+        self._timeout_cancel_requested = False
         return super().initialise()
+
+    def update(self):
+        """Fail and cancel navigation that has remained active too long.
+
+        ``ActionHandler.update`` only has a disabled-by-default tick timeout,
+        while Nav2 goals can be accepted without ever reaching a terminal
+        result.  Returning FAILURE after cancelling lets the surrounding
+        ``Retry``/replan decorators make progress instead of waiting forever.
+        """
+        timeout = self.action_timeout_sec
+        started_at = self._action_started_at
+        # A result callback may race the deadline on the same executor tick;
+        # let the terminal action result be processed before declaring a
+        # successful arrival a timeout.
+        if (
+            timeout > 0.0
+            and started_at is not None
+            and getattr(self, "result_status", None) is None
+        ):
+            elapsed = time.monotonic() - started_at
+            if elapsed >= timeout:
+                timeout_message = f"navigation action timeout after {timeout:.1f}s"
+                if not self._timeout_cancel_requested:
+                    self._timeout_cancel_requested = True
+                    # A goal handle is normally available by this point.  The
+                    # base helper is safe when a response was rejected or has
+                    # already completed.
+                    self.send_cancel_request()
+                self.feedback_message = timeout_message
+                return py_trees.common.Status.FAILURE
+        return super().update()
+
+    def goal_response_callback(self, future):
+        """Ignore a goal response belonging to a previous retry attempt."""
+        if future is not getattr(self, "send_goal_future", None):
+            return
+        return super().goal_response_callback(future)
+
+    def get_result_callback(self, future):
+        """Ignore a result callback belonging to a previous retry attempt."""
+        if future is not getattr(self, "get_result_future", None):
+            return
+        return super().get_result_callback(future)
 
     def setup(self, **kwargs):
         self.tf_buffer = None
@@ -226,8 +281,13 @@ class BtNode_GotoAction(ActionHandler):
 
     def process_result(self):
         # for navigation only, where the action can return all sorts of results while it's at it
-        if self.result_status == action_msgs.GoalStatus.STATUS_ABORTED:  # noqa
-            self.feedback_message = "action aborted"
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:  # noqa
+            if self.result_status == action_msgs.GoalStatus.STATUS_ABORTED:
+                self.feedback_message = "action aborted"
+            elif self.result_status == action_msgs.GoalStatus.STATUS_CANCELED:
+                self.feedback_message = "action canceled"
+            else:
+                self.feedback_message = f"action ended with status {self.result_status}"
             return py_trees.common.Status.FAILURE
         else:
             self.feedback_message = f"reached '{self._target_label()}'"
@@ -616,6 +676,8 @@ class BtNode_Approach(ActionHandler):
 
     Distance / angle kwargs default to 0 so the server applies its own
     defaults (desired=0.7 m, min=0.45 m, max=1.2 m, num_angles=16, timeout=60 s).
+    The client also enforces a wall-clock deadline because a live action
+    server can publish feedback indefinitely without returning a result.
 
     Mock mode: skip navigation entirely. ``send_goal`` short-circuits with a
     fake done future so the BT advances without contacting any action server.
@@ -636,6 +698,7 @@ class BtNode_Approach(ActionHandler):
         action_name: str = "go_to_approach",
         wait_for_server_timeout_sec: float = -3.0,
         action_timeout_ticks: int = 0,
+        action_deadline_sec: float = 90.0,
     ):
         super().__init__(
             name,
@@ -653,6 +716,51 @@ class BtNode_Approach(ActionHandler):
         self.facing_yaw_offset_rad = float(facing_yaw_offset_rad)
         self.timeout_sec = float(timeout_sec)
         self.debug = bool(debug)
+        self.action_deadline_sec = float(action_deadline_sec)
+        self._action_started_at = None
+        self._timeout_cancel_requested = False
+
+    def initialise(self):
+        self._action_started_at = time.monotonic()
+        self._timeout_cancel_requested = False
+        return super().initialise()
+
+    def update(self):
+        """Bound a stalled approach goal and cancel it before retrying.
+
+        ``ActionHandler``'s feedback timeout is deliberately relaxed for this
+        action because the approach server emits sparse progress feedback.
+        That leaves an accepted goal able to hold the delivery subtree
+        forever when Nav2 never produces a terminal result.  A wall-clock
+        deadline keeps the surrounding retry/fallback selector live.
+        """
+        deadline = self.action_deadline_sec
+        started_at = self._action_started_at
+        if (
+            deadline > 0.0
+            and started_at is not None
+            and getattr(self, "result_status", None) is None
+            and time.monotonic() - started_at >= deadline
+        ):
+            if not self._timeout_cancel_requested:
+                self._timeout_cancel_requested = True
+                self.send_cancel_request()
+            self.feedback_message = f"approach action timeout after {deadline:.1f}s"
+            return py_trees.common.Status.FAILURE
+        return super().update()
+
+    def goal_response_callback(self, future):
+        # A timed-out retry can still deliver its goal response later. Do not
+        # let that stale callback replace the current attempt's handle.
+        if future is not getattr(self, "send_goal_future", None):
+            return
+        return super().goal_response_callback(future)
+
+    def get_result_callback(self, future):
+        # Ignore a result from a canceled attempt after the retry re-enters.
+        if future is not getattr(self, "get_result_future", None):
+            return
+        return super().get_result_callback(future)
 
     def send_goal(self):
         # Mock policy: skip the navigation process entirely.
@@ -1568,4 +1676,3 @@ class BtNode_GetOrientationAngle(ServiceHandler):
 #         else:
 #             self.feedback_message = f"Still calculating grasping pose {self.target} from {self.bb_source} (read set to {self.read})"
 #             return py_trees.common.Status.RUNNING
-
