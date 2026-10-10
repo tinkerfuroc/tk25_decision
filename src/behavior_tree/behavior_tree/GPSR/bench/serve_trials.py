@@ -632,6 +632,18 @@ def create_handler(bench_dir: Path, html_path: Path):
                 (item for item in campaign_summaries if item.get("five_commands")),
                 None,
             )
+            # The one-off five-task campaign has no manifest, so its batch is
+            # not covered by the normal campaign lookup above. Treat it as
+            # the latest campaign when its newest batch is also the newest
+            # batch overall; this keeps the main latest card classified as a
+            # five-task experiment instead of historical context.
+            if (
+                latest_batch_name
+                and latest_campaign is None
+                and five_campaign
+                and latest_batch_name in five_campaign.get("batches", [])
+            ):
+                latest_campaign = five_campaign
             latest_trials = [trial for trial in trials if trial.get("batch") == latest_batch_name]
             latest_passes = [
                 trial for trial in latest_trials
