@@ -695,6 +695,7 @@ class BtNode_Approach(ActionHandler):
         facing_yaw_offset_rad: float = 0.0,
         timeout_sec: float = 0.0,
         debug: bool = False,
+        target_is_person: bool = False,
         action_name: str = "go_to_approach",
         wait_for_server_timeout_sec: float = -3.0,
         action_timeout_ticks: int = 0,
@@ -716,6 +717,10 @@ class BtNode_Approach(ActionHandler):
         self.facing_yaw_offset_rad = float(facing_yaw_offset_rad)
         self.timeout_sec = float(timeout_sec)
         self.debug = bool(debug)
+        self.bb_target_key = bb_target_key
+        # Issue-2 2d: a person target must say so -- the approach planner's
+        # barrier check otherwise picks object rules from a body centroid's z.
+        self.target_is_person = bool(target_is_person)
         self.action_deadline_sec = float(action_deadline_sec)
         self._action_started_at = None
         self._timeout_cancel_requested = False
@@ -794,6 +799,16 @@ class BtNode_Approach(ActionHandler):
             self.node.get_logger().warn(self.feedback_message)
             return
 
+        goal = self._build_goal(target)
+
+        self.send_goal_request(goal)
+        self.goal = goal
+        self.feedback_message = (
+            f"sent GoToApproach target=({target.point.x:.2f}, "
+            f"{target.point.y:.2f}) frame='{target.header.frame_id}'"
+        )
+
+    def _build_goal(self, target: PointStamped):
         goal = GoToApproach.Goal()
         goal.target = target
         goal.desired_distance = self.desired_distance
@@ -804,13 +819,8 @@ class BtNode_Approach(ActionHandler):
         goal.facing_yaw_offset_rad = self.facing_yaw_offset_rad
         goal.timeout_sec = self.timeout_sec
         goal.debug = self.debug
-
-        self.send_goal_request(goal)
-        self.goal = goal
-        self.feedback_message = (
-            f"sent GoToApproach target=({target.point.x:.2f}, "
-            f"{target.point.y:.2f}) frame='{target.header.frame_id}'"
-        )
+        goal.target_is_person = self.target_is_person
+        return goal
 
     def process_result(self):
         # GoToApproach reports semantic failures (UNREACHABLE, NAV_FAILED, ...)
