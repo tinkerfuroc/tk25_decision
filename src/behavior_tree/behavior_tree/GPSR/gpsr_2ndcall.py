@@ -2,7 +2,7 @@ import py_trees
 
 from behavior_tree.TemplateNodes.WaitKeyPress import BtNode_WaitKeyboardPress
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmation, BtNode_Listen
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_GetConfirmationAction, BtNode_ListenAction
 from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
 from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle, BtNode_GripperAction
 # from behavior_tree.StoringGroceries.customNodes import BtNode_FindObjTable, BtNode_GraspWithPose
@@ -68,7 +68,7 @@ KEY_POSE_BATHROOM = "bathroom"
 KEY_POSE_QA_POINT = "QA_point"
 KEY_POSE_COMMAND = "pose_command"
 
-arm_service_name = "arm_joint_service"
+arm_action_name = "joint_move_action"
 grasp_service_name = "start_grasp"
 point_target_frame = "base_link"
 
@@ -87,7 +87,7 @@ def createConstantWriter():
 def createEnterArena():
     root = py_trees.composites.Sequence("Enter Arena", True)
     root.add_child(BtNode_Announce(name="announce entering arena", bb_source=None, message="Starting GPSR. Entering the arena now."))
-    root.add_child(BtNode_MoveArmSingle(name="move arm to navigating position", service_name=arm_service_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
+    root.add_child(BtNode_MoveArmSingle(name="move arm to navigating position", action_name=arm_action_name, arm_pose_bb_key=KEY_ARM_NAVIGATING, add_octomap=False))
     root.add_child(BtNode_GripperAction(name="open gripper before navigation", open_gripper=True))
     root.add_child(BtNode_TurnPanTilt(name="turn pan tilt up", y=45.0))
     root.add_child(BtNode_WaitKeyboardPress(name="wait for start key", key="s"))
@@ -105,21 +105,21 @@ def createGPSR():
     
     # ask for the three instructions
     root.add_child(BtNode_Announce(name="Prompt for instruction", bb_source=None, message="Dear person, please give me your first command after the beep sound."))
-    root.add_child(BtNode_Listen("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
+    root.add_child(BtNode_ListenAction("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
     root.add_child(BtNode_Announce(name=f"ask to confirm instruction", bb_source=None, message=f"Am I correct, your first command is {command1}"))
-    root.add_child(BtNode_GetConfirmation("confirm instruction1"))
+    root.add_child(BtNode_GetConfirmationAction("confirm instruction1"))
     root.add_child(BtNode_Announce("say thank you", bb_source=None, message="Thank you, I will remember that."))
 
     root.add_child(BtNode_Announce(name="Prompt for instruction", bb_source=None, message="Please give me your second command after the beep sound."))
-    root.add_child(BtNode_Listen("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
+    root.add_child(BtNode_ListenAction("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
     root.add_child(BtNode_Announce(name=f"ask to confirm instruction", bb_source=None, message=f"Am I correct, your second command is {command2}"))
-    root.add_child(BtNode_GetConfirmation("confirm instruction2"))
+    root.add_child(BtNode_GetConfirmationAction("confirm instruction2"))
     root.add_child(BtNode_Announce("say thank you", bb_source=None, message="Thank you, I will remember that."))
 
     root.add_child(BtNode_Announce(name="Prompt for instruction", bb_source=None, message="Please give me your third command after the beep sound."))
-    root.add_child(BtNode_Listen("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
+    root.add_child(BtNode_ListenAction("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
     root.add_child(BtNode_Announce(name=f"ask to confirm instruction", bb_source=None, message=f"Am I correct, your third command is {command3}"))
-    root.add_child(BtNode_GetConfirmation("confirm instruction3"))
+    root.add_child(BtNode_GetConfirmationAction("confirm instruction3"))
     root.add_child(BtNode_Announce("say thank you", bb_source=None, message="Thank you, I will remember that."))
 
     # execution
@@ -167,7 +167,7 @@ def createGPSR():
     execution3.add_child(BtNode_Announce(name="announce found raising person", bb_source=None, message="Found person raising their right arm, approaching."))
     execution3.add_child(BtNode_WaitKeyboardPress(name="wait for start key", key="s"))
     execution3.add_child(BtNode_Announce(name="announce question", bb_source=None, message="Please ask your question after the beep sound."))
-    execution3.add_child(BtNode_Listen("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
+    execution3.add_child(BtNode_ListenAction("listen for command", bb_dest_key=KEY_INSTRUCTION, timeout=5.0))
     # the question is "what is 17+25"
     execution3.add_child(BtNode_Announce(name="announce received question", bb_source=None, message="I heard your question. Let me think about it."))
     execution3.add_child(BtNode_Announce(name="announce answer", bb_source=None, message="The answer to your question is 42."))

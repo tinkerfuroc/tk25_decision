@@ -10,56 +10,78 @@
   },
   "mock_mode": {
     "enabled": true,
-    "auto_detect": true,
+    "auto_detect": false,
     "subsystems": {
       "vision": {
-        "enabled": true,
-        "announce_movement": true,
+        "enabled": false,
+        "announce_movement": false,
         "description": "Per-node mock mode for vision nodes. Allowed values: NO_MOCK, KEYPRESS, TELEOP, IMMEDIATE",
         "nodes": {
           "BtNode_ScanFor": "KEYPRESS",
+          "BtNode_ScanForGeneralist": "KEYPRESS",
+          "BtNode_VLMQuery": "IMMEDIATE",
+          "BtNode_LLMQuery": "IMMEDIATE",
           "BtNode_TrackPerson": "KEYPRESS",
+          "BtNode_TrackPersonAction": "KEYPRESS",
           "BtNode_FindObj": "KEYPRESS",
           "BtNode_FeatureExtraction": "KEYPRESS",
+          "BtNode_LoadPersonReference": "NO_MOCK",
           "BtNode_SeatRecommend": "KEYPRESS",
+          "BtNode_SeatRecommendBbox": "KEYPRESS",
           "BtNode_FeatureMatching": "KEYPRESS",
           "BtNode_GetPointCloud": "KEYPRESS",
           "BtNode_DoorDetection": "KEYPRESS",
           "BtNode_TurnPanTilt": "KEYPRESS",
+          "BtNode_TurnTo": "KEYPRESS",
           "BtNode_ScanForWavingPerson": "KEYPRESS",
+          "BtNode_ScanForWavingPersonNew": "IMMEDIATE",
+          "BtNode_QA": "IMMEDIATE",
           "BtNode_MaintainEyeContact": "KEYPRESS",
-          "BtNode_ShowImage": "KEYPRESS"
+          "BtNode_ShowImage": "KEYPRESS",
+          "BtNode_FindObjTable": "KEYPRESS",
+          "BtNode_CategorizeGrocery": "KEYPRESS",
+          "BtNode_FoldClothing": "KEYPRESS",
+          "BtNode_GetImage": "KEYPRESS"
         }
       },
       "manipulation": {
-        "enabled": true,
-        "announce_movement": true,
+        "enabled": false,
+        "announce_movement": false,
         "description": "Per-node mock mode for manipulation nodes. Set TELEOP for interactive arm control.",
         "nodes": {
-          "BtNode_Grasp": "TELEOP",
-          "BtNode_Place": "TELEOP",
-          "BtNode_Drop": "TELEOP",
-          "BtNode_MoveArmJoint": "TELEOP",
-          "BtNode_MoveArmSingle": "TELEOP",
-          "BtNode_GripperAction": "TELEOP",
-          "BtNode_PointTo": "TELEOP"
+          "BtNode_Grasp": "KEYPRESS",
+          "BtNode_GraspWithPose": "KEYPRESS",
+          "BtNode_Place": "KEYPRESS",
+          "BtNode_Drop": "KEYPRESS",
+          "BtNode_JointMoveAction": "KEYPRESS",
+          "BtNode_MoveArmSingle": "KEYPRESS",
+          "BtNode_GripperAction": "KEYPRESS",
+          "BtNode_PointTo": "KEYPRESS",
+          "BtNode_ScanAndPlace": "IMMEDIATE",
+          "BtNode_FoldClothingAction": "KEYPRESS",
+          "BtNode_FoldClothingDn": "KEYPRESS"
         }
       },
       "navigation": {
         "enabled": true,
-        "announce_movement": true,
+        "announce_movement": false,
         "description": "Per-node mock mode for navigation nodes",
         "nodes": {
           "BtNode_GoTo": "KEYPRESS",
-          "BtNode_FollowPerson": "KEYPRESS",
           "BtNode_ConvertGraspPose": "KEYPRESS",
           "BtNode_GoToLuggage": "KEYPRESS",
-          "BtNode_GotoAction": "KEYPRESS"
+          "BtNode_GotoAction": "KEYPRESS",
+          "BtNode_Approach": "KEYPRESS",
+          "BtNode_FollowAction": "KEYPRESS",
+          "BtNode_FindApproachPose": "IMMEDIATE",
+          "BtNode_ProjectPose": "IMMEDIATE",
+          "BtNode_CaptureCurrentPose": "IMMEDIATE",
+          "BtNode_GetOrientationAngle": "IMMEDIATE"
         }
       },
       "audio_input": {
-        "enabled": true,
-        "announce_movement": true,
+        "enabled": false,
+        "announce_movement": false,
         "description": "Per-node mock mode for audio input nodes (not announcement)",
         "nodes": {
           "BtNode_WaitForStart": "KEYPRESS",
@@ -70,16 +92,22 @@
           "BtNode_Listen": "KEYPRESS",
           "BtNode_CompareInterest": "KEYPRESS",
           "BtNode_GetConfirmationAction": "KEYPRESS",
-          "BtNode_ListenAction": "KEYPRESS"
+          "BtNode_ListenAction": "KEYPRESS",
+          "BtNode_PhraseExtractionAction": "KEYPRESS",
+          "BtNode_NameDrinkExtractionAction": "KEYPRESS",
+          "BtNode_OrderExtractionAction": "KEYPRESS",
+          "BtNode_DoorbellDetection": "KEYPRESS"
         }
       },
       "announcement": {
-        "enabled": true,
-        "announce_movement": true,
+        "enabled": false,
+        "announce_movement": false,
         "description": "Per-node mock mode for TTS nodes",
         "nodes": {
           "BtNode_Announce": "KEYPRESS",
-          "BtNode_TTSCN": "KEYPRESS"
+          "BtNode_TTSCN": "KEYPRESS",
+          "BtNode_Introduce": "KEYPRESS",
+          "BtNode_Confirm": "KEYPRESS"
         }
       },
       "mock_controls": {
@@ -93,7 +121,7 @@
     }
   },
   "keyboard_control": {
-    "enabled": true,
+    "enabled": false,
     "description": "When false, KEYPRESS mode degrades to IMMEDIATE"
   },
   "mock_keyboard": {

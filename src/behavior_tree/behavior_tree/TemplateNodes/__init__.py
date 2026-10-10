@@ -31,6 +31,7 @@ Key Modules
 - Manipulation: Arm control nodes (Grasp, Place, MoveArm, etc.)
 - Vision: Vision nodes (ScanFor, TrackPerson, FeatureExtraction, etc.)
 - Audio: Audio nodes (Announce, Listen, PhraseExtraction, etc.)
+- TrackPersonAction: Continuous person tracking action node
 - TeleopNodes: Keyboard-based arm teleoperation for mock mode
 - MockInputController: Shared keyboard input router for mock mode
 - WaitKeyPress: Simple keyboard wait utility

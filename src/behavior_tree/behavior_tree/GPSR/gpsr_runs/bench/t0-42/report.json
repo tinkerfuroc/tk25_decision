@@ -1,0 +1,1059 @@
+{
+  "corpus": "src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl",
+  "meta": {
+    "tier": 0,
+    "timeout_s": 180.0,
+    "only_class": null,
+    "seed": 42,
+    "timestamp": "2026-08-23T15:55:50.270704+00:00",
+    "commit": "f1fac8a15992521a75a6812b9a3c82a4aeec7446",
+    "corpus": "src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl"
+  },
+  "totals": {
+    "0": {
+      "PASS": 50,
+      "TIMEOUT": 23
+    }
+  },
+  "results": [
+    {
+      "entry_id": "c000-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 10.182158879004419,
+      "plan": [
+        "goto",
+        "grasp",
+        "deliver",
+        "deliver"
+      ]
+    },
+    {
+      "entry_id": "c001-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 10.968675264157355,
+      "plan": [
+        "goto",
+        "grasp",
+        "deliver",
+        "deliver"
+      ]
+    },
+    {
+      "entry_id": "c002-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 10.275445480830967,
+      "plan": [
+        "goto",
+        "grasp",
+        "deliver",
+        "deliver"
+      ]
+    },
+    {
+      "entry_id": "c003-countClothPrsInRoom",
+      "template": "countClothPrsInRoom",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 16.024758226936683,
+      "plan": [
+        "record_position",
+        "goto",
+        "count",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c004-countClothPrsInRoom",
+      "template": "countClothPrsInRoom",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.05057525006123,
+      "plan": []
+    },
+    {
+      "entry_id": "c005-countClothPrsInRoom",
+      "template": "countClothPrsInRoom",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.0498763739597,
+      "plan": []
+    },
+    {
+      "entry_id": "c006-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 10.7201978280209,
+      "plan": [
+        "goto",
+        "count",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c007-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 11.01099780621007,
+      "plan": [
+        "goto",
+        "count",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c008-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 7.812975686043501,
+      "plan": [
+        "goto",
+        "count",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c009-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 16.223062835866585,
+      "plan": [
+        "record_position",
+        "goto",
+        "count",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c010-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 11.491646718932316,
+      "plan": [
+        "record_position",
+        "goto",
+        "count",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c011-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 28.468045843066648,
+      "plan": [
+        "record_position",
+        "goto",
+        "count",
+        "goto",
+        "announce",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c012-findObjInRoom-takeObj-putObjInTrash",
+      "template": "findObjInRoom",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 17.75977224414237,
+      "plan": [
+        "record_position",
+        "goto",
+        "find_object",
+        "grasp",
+        "record_position",
+        "place"
+      ]
+    },
+    {
+      "entry_id": "c013-findObjInRoom-takeObj-deliverObjToMe",
+      "template": "findObjInRoom",
+      "feasibility": "B",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 15.251911234110594,
+      "plan": [
+        "record_position",
+        "goto",
+        "find_object",
+        "grasp",
+        "deliver"
+      ]
+    },
+    {
+      "entry_id": "c014-findObjInRoom-takeObj-deliverObjToPrsInRoom",
+      "template": "findObjInRoom",
+      "feasibility": "B",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.0046906650532,
+      "plan": []
+    },
+    {
+      "entry_id": "c015-findPrsInRoom-followPrsToRoom",
+      "template": "findPrsInRoom",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.0038569390308,
+      "plan": []
+    },
+    {
+      "entry_id": "c016-findPrsInRoom-followPrsToRoom",
+      "template": "findPrsInRoom",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.02731149294414,
+      "plan": []
+    },
+    {
+      "entry_id": "c017-findPrsInRoom-talkInfo",
+      "template": "findPrsInRoom",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.03023629402742,
+      "plan": []
+    },
+    {
+      "entry_id": "c018-followNameFromBeacToRoom",
+      "template": "followNameFromBeacToRoom",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 17.022776698926464,
+      "plan": [
+        "goto",
+        "find_person",
+        "approach_person",
+        "follow",
+        "record_position",
+        "goto"
+      ]
+    },
+    {
+      "entry_id": "c019-followNameFromBeacToRoom",
+      "template": "followNameFromBeacToRoom",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 20.544060891028494,
+      "plan": [
+        "goto",
+        "find_person",
+        "approach_person",
+        "follow",
+        "record_position",
+        "goto"
+      ]
+    },
+    {
+      "entry_id": "c020-followNameFromBeacToRoom",
+      "template": "followNameFromBeacToRoom",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 13.332431874936447,
+      "plan": [
+        "goto",
+        "find_person",
+        "approach_person",
+        "follow",
+        "record_position",
+        "goto"
+      ]
+    },
+    {
+      "entry_id": "c021-followPrsAtLoc",
+      "template": "followPrsAtLoc",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.04538321495056,
+      "plan": []
+    },
+    {
+      "entry_id": "c022-followPrsAtLoc",
+      "template": "followPrsAtLoc",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.029183489969,
+      "plan": []
+    },
+    {
+      "entry_id": "c023-followPrsAtLoc",
+      "template": "followPrsAtLoc",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.02665750309825,
+      "plan": []
+    },
+    {
+      "entry_id": "c024-goToLoc-findPrs-guidePrsToBeacon",
+      "template": "goToLoc",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.02889349102043,
+      "plan": []
+    },
+    {
+      "entry_id": "c025-goToLoc-meetName-guidePrsToBeacon",
+      "template": "goToLoc",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 57.91221632505767,
+      "plan": [
+        "record_position",
+        "goto",
+        "find_person",
+        "approach_person",
+        "record_position",
+        "guide"
+      ]
+    },
+    {
+      "entry_id": "c026-goToLoc-findPrs-talkInfo",
+      "template": "goToLoc",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.0487934409175,
+      "plan": []
+    },
+    {
+      "entry_id": "c027-greetClothDscInRm-guidePrsToBeacon",
+      "template": "greetClothDscInRm",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.04020007909276,
+      "plan": []
+    },
+    {
+      "entry_id": "c028-greetClothDscInRm-talkInfo",
+      "template": "greetClothDscInRm",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.03811375587247,
+      "plan": []
+    },
+    {
+      "entry_id": "c029-greetClothDscInRm-talkInfo",
+      "template": "greetClothDscInRm",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.01106217177585,
+      "plan": []
+    },
+    {
+      "entry_id": "c030-greetNameInRm-followPrs",
+      "template": "greetNameInRm",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 14.689615779789165,
+      "plan": [
+        "record_position",
+        "goto",
+        "find_person",
+        "approach_person",
+        "announce",
+        "follow"
+      ]
+    },
+    {
+      "entry_id": "c031-greetNameInRm-guidePrsToBeacon",
+      "template": "greetNameInRm",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 48.41539830295369,
+      "plan": [
+        "record_position",
+        "goto",
+        "find_person",
+        "approach_person",
+        "announce",
+        "record_position",
+        "guide"
+      ]
+    },
+    {
+      "entry_id": "c032-greetNameInRm-followPrs",
+      "template": "greetNameInRm",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 13.95207796804607,
+      "plan": [
+        "record_position",
+        "goto",
+        "find_person",
+        "approach_person",
+        "announce",
+        "follow"
+      ]
+    },
+    {
+      "entry_id": "c033-guideClothPrsFromBeacToBeac",
+      "template": "guideClothPrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.04277341882698,
+      "plan": []
+    },
+    {
+      "entry_id": "c034-guideClothPrsFromBeacToBeac",
+      "template": "guideClothPrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.02002689405344,
+      "plan": []
+    },
+    {
+      "entry_id": "c035-guideClothPrsFromBeacToBeac",
+      "template": "guideClothPrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.05192853300832,
+      "plan": []
+    },
+    {
+      "entry_id": "c036-guideNameFromBeacToBeac",
+      "template": "guideNameFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 16.174235346959904,
+      "plan": [
+        "goto",
+        "find_person",
+        "find_person",
+        "approach_person",
+        "guide"
+      ]
+    },
+    {
+      "entry_id": "c037-guideNameFromBeacToBeac",
+      "template": "guideNameFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 16.28983194893226,
+      "plan": [
+        "goto",
+        "find_person",
+        "approach_person",
+        "guide"
+      ]
+    },
+    {
+      "entry_id": "c038-guideNameFromBeacToBeac",
+      "template": "guideNameFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 43.953816107008606,
+      "plan": [
+        "goto",
+        "find_person",
+        "record_position",
+        "approach_person",
+        "guide"
+      ]
+    },
+    {
+      "entry_id": "c039-guidePrsFromBeacToBeac",
+      "template": "guidePrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.0182396459859,
+      "plan": []
+    },
+    {
+      "entry_id": "c040-guidePrsFromBeacToBeac",
+      "template": "guidePrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.0122221331112,
+      "plan": []
+    },
+    {
+      "entry_id": "c041-guidePrsFromBeacToBeac",
+      "template": "guidePrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.03433980909176,
+      "plan": []
+    },
+    {
+      "entry_id": "c042-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 21.141435123980045,
+      "plan": [
+        "goto",
+        "find_person",
+        "approach_person",
+        "record_position",
+        "goto",
+        "find_person"
+      ]
+    },
+    {
+      "entry_id": "c043-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 20.812943094875664,
+      "plan": [
+        "goto",
+        "find_person",
+        "approach_person",
+        "record_position",
+        "goto"
+      ]
+    },
+    {
+      "entry_id": "c044-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 26.876471702940762,
+      "plan": [
+        "goto",
+        "find_person",
+        "approach_person",
+        "record_position",
+        "goto",
+        "find_person"
+      ]
+    },
+    {
+      "entry_id": "c045-meetPrsAtBeac-talkInfo",
+      "template": "meetPrsAtBeac",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 13.387549984967336,
+      "plan": [
+        "record_position",
+        "goto",
+        "find_person",
+        "approach_person",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c046-meetPrsAtBeac-followPrsToRoom",
+      "template": "meetPrsAtBeac",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 12.652759927790612,
+      "plan": [
+        "record_position",
+        "goto",
+        "find_person",
+        "approach_person",
+        "follow",
+        "record_position",
+        "goto"
+      ]
+    },
+    {
+      "entry_id": "c047-meetPrsAtBeac-talkInfo",
+      "template": "meetPrsAtBeac",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 9.887980315135792,
+      "plan": [
+        "record_position",
+        "goto",
+        "find_person",
+        "approach_person",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c048-takeObjFromPlcmt-deliverObjToMe",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 12.61802676715888,
+      "plan": [
+        "goto",
+        "grasp",
+        "deliver"
+      ]
+    },
+    {
+      "entry_id": "c049-takeObjFromPlcmt-putObjInTrash",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 23.743402500869706,
+      "plan": [
+        "goto",
+        "grasp",
+        "record_position",
+        "place",
+        "record_position",
+        "place"
+      ]
+    },
+    {
+      "entry_id": "c050-takeObjFromPlcmt-placeObjOnPlcmt",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 10.691292219096795,
+      "plan": [
+        "goto",
+        "grasp",
+        "place",
+        "place"
+      ]
+    },
+    {
+      "entry_id": "c051-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.00543052796274,
+      "plan": []
+    },
+    {
+      "entry_id": "c052-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.03377197589725,
+      "plan": []
+    },
+    {
+      "entry_id": "c053-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "TIMEOUT",
+      "detail": "planner not ready after 180s",
+      "seconds": 180.01122292596847,
+      "plan": []
+    },
+    {
+      "entry_id": "c054-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 9.658871519146487,
+      "plan": [
+        "goto",
+        "vlm_fallback",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c055-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 8.692347031086683,
+      "plan": [
+        "goto",
+        "vlm_fallback",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c056-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 8.34518474387005,
+      "plan": [
+        "goto",
+        "vlm_fallback",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c057-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 8.281455151969567,
+      "plan": [
+        "goto",
+        "vlm_fallback",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c058-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 7.773113681934774,
+      "plan": [
+        "goto",
+        "vlm_fallback",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c059-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 9.403146241093054,
+      "plan": [
+        "goto",
+        "vlm_fallback",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c060-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 72.55554339080118,
+      "plan": [
+        "goto",
+        "find_person",
+        "goto",
+        "find_person",
+        "find_person",
+        "approach_person",
+        "ask_person",
+        "find_person",
+        "approach_person",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c061-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 41.25071931886487,
+      "plan": [
+        "goto",
+        "find_person",
+        "goto",
+        "find_person",
+        "goto",
+        "describe_person",
+        "goto",
+        "approach_person",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c062-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 14.52428869297728,
+      "plan": [
+        "goto",
+        "find_person",
+        "approach_person",
+        "describe_person",
+        "goto",
+        "find_person",
+        "approach_person",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c063-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 8.754006667993963,
+      "plan": [
+        "goto",
+        "find_person",
+        "approach_person",
+        "ask_person",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c064-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 10.094052426982671,
+      "plan": [
+        "goto",
+        "find_person",
+        "approach_person",
+        "describe_person",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "c065-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 15.82813211902976,
+      "plan": [
+        "goto",
+        "find_person",
+        "approach_person",
+        "describe_person",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "e00",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 8.666656224988401,
+      "plan": [
+        "goto",
+        "find_person"
+      ]
+    },
+    {
+      "entry_id": "e01",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 10.592121090041474,
+      "plan": [
+        "goto",
+        "vlm_fallback",
+        "goto",
+        "announce"
+      ]
+    },
+    {
+      "entry_id": "e02",
+      "template": "edge",
+      "feasibility": "B",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 17.814793067984283,
+      "plan": [
+        "goto",
+        "grasp",
+        "deliver",
+        "find_person",
+        "deliver"
+      ]
+    },
+    {
+      "entry_id": "e03",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 22.81856599007733,
+      "plan": [
+        "record_position",
+        "goto",
+        "find_object"
+      ]
+    },
+    {
+      "entry_id": "e04",
+      "template": "edge",
+      "feasibility": "C",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 46.64591257018037,
+      "plan": [
+        "record_position",
+        "goto",
+        "find_person",
+        "record_position",
+        "find_person",
+        "approach_person",
+        "guide",
+        "guide"
+      ]
+    },
+    {
+      "entry_id": "e05",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 8.421064577065408,
+      "plan": [
+        "goto",
+        "count",
+        "goto",
+        "count"
+      ]
+    },
+    {
+      "entry_id": "e06",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 0,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 11.252430026885122,
+      "plan": [
+        "goto",
+        "goto",
+        "count"
+      ]
+    }
+  ]
+}

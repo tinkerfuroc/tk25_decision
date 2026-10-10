@@ -1,7 +1,10 @@
-def createPickAndPlaceTask():
-    from .pick_and_place import createPickAndPlaceTask as _create_pick_and_place_task
-
-    return _create_pick_and_place_task()
+"""Pick-and-place public API without import-time ROS message side effects."""
 
 
-__all__ = ["createPickAndPlaceTask"]
+def pickAndPlaceShortened(*args, **kwargs):
+    """Build the legacy tree, importing its heavy ROS dependencies on demand."""
+    from .pick_and_place import pickAndPlaceShortened as build_tree
+
+    return build_tree(*args, **kwargs)
+
+__all__ = ["pickAndPlaceShortened"]

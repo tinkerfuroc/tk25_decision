@@ -84,6 +84,15 @@ Implementation priorities:
    - optional-goal branches
    - timeout cutover behavior.
 
+## Status (2026-06-27)
+
+Implemented the rulebook tree per `docs/superpowers/specs/2026-06-27-pick-and-place-rulebook-integration-design.md`:
+- `arm_api.scan_and_place_server` extended with FREE_SPACE / NEAR_SIMILAR / FIXED_POINT modes, scan-pose control, and `dry_run`.
+- New `BtNode_ScanAndPlace`; inventory/queue/guard/deadline nodes; data-driven `pickAndPlaceRulebook()`.
+- `--place-policy {hardcoded,vlm}` (default `vlm`); whole-tree mock.
+- Main goals only: table cleanup (wash-staging / trash / cabinet-grouped), breakfast (fixed points), extra-surface.
+- Out of scope: dishwasher door/rack, tablet-in-slot, pour, milk-open. Forgone: floor trash (no floor pick), dishwasher destination credit (wash-staging substitute).
+
 ## Confidence and Provenance
 
 - High confidence: requirements derived directly from section 5.2 in the current file.

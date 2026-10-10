@@ -1,11 +1,11 @@
 {
     "arm_pos_navigating": [
-        -86.0, 
-        -52.0, 
-        18.0, 
-        2.0, 
-        34.0, 
-        -73.0, 
+        -86.0,
+        -52.0,
+        18.0,
+        2.0,
+        34.0,
+        -73.0,
         -9.0
     ],
     "arm_pos_scan": [
@@ -17,169 +17,37 @@
         47.0,
         -1.0
     ],
-    "egpsr_rooms":{
-        "living_room" : {
-            "point":{
-                "x": -3.768895888670675,
-                "y": 3.1982971433178053,
-                "z": 0.0
-            },
-            "orientation": {
-                "x": 0.0,
-                "y": 0.0,
-                "z": -0.40678724102777986,
-                "w": 0.9135229283039408
-            }
-        },
-        "office" : {
-            "point": {
-            "x": -0.3470491829129409,
-            "y": 0.003852113546840608,
-            "z": 0.0
-            },
-            "orientation": {
-                "x": 0.0,
-                "y": 0.0,
-                "z": -0.923731881965021,
-                "w": 0.38303969799664445
-            }
-        },
-        "kitchen" : {
-            "point":{
-                "x": 1.5708344128740712,
-                "y": 1.7963399939001017,
-                "z": 0.0
-            },
-            "orientation": {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.41309520728941856,
-                "w": 0.9106878442773421
-            }
-        },
-        "bedroom" : {
-            "point":{
-                "x": 1.3411657222910005,
-                "y": -0.19893913381642803,
-                "z": 0.0
-            },
-            "orientation": {
-                "x": 0.0,
-                "y": 0.0,
-                "z": -0.343239016173165,
-                "w": 0.9392480917076583
-            }
-        }
-    },
-    "pose_command" : {
+    "pose_command": {
         "point": {
-            "x": -3.768895888670675,
-            "y": 3.1982971433178053,
+            "x": -0.24807862139018652,
+            "y": -0.269211982630145,
             "z": 0.0
-            },
+        },
         "orientation": {
             "x": 0.0,
             "y": 0.0,
-            "z": -0.40678724102777986,
-            "w": 0.9135229283039408
+            "z": -0.6415478463057801,
+            "w": 0.7670830208656787
         }
     },
-    "possible_poses":{
-        "living_room" : {
+    "possible_poses": {
+        "command_point": {
             "point": {
-            "x": 3.5102954824679844,
-            "y": 1.927354988172565,
-            "z": 0.0
-            },
-            "orientation": {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.947499072239037,
-                "w": 0.3197585152989115
-            }
-        },
-        "kitchen" : {
-            "point":{
-                "x": 3.5102954824679844,
-                "y": 1.927354988172565,
+                "x": 7.143,
+                "y": 4.305,
                 "z": 0.0
             },
             "orientation": {
                 "x": 0.0,
                 "y": 0.0,
-                "z": 0.947499072239037,
-                "w": 0.3197585152989115
+                "z": -0.8401035790778548,
+                "w": 0.5424260100885452
             }
         },
-        "office" : {
-            "point":{
-                "x": 3.5102954824679844,
-                "y": 1.927354988172565,
-                "z": 0.0
-            },
-            "orientation": {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.947499072239037,
-                "w": 0.3197585152989115
-            }
-        },
-        "bedroom" : {
-            "point":{
-                "x": 3.5102954824679844,
-                "y": 1.927354988172565,
-                "z": 0.0
-            },
-            "orientation": {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.947499072239037,
-                "w": 0.3197585152989115
-            }
-        },
-        "shelf": {
+        "living_room": {
             "point": {
-                "x": -2.9846384525299072,
-                "y": 1.2839581966400146,
-                "z": 0.0
-            },
-            "orientation": {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.40036980220162,
-                "w": 0.9163536552472717
-            }
-        },
-        "desk_lamp": {
-            "point": {
-                "x": 0.21399368345737457,
-                "y": 0.27030667662620544,
-                "z": 0.0
-            },
-            "orientation": {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.40301491871962025,
-                "w": 0.9151934086789622
-            }
-        },
-        "bathroom": {
-            "point": {
-                "x": -1.6556295156478882,
-                "y": -1.2389070987701416,
-                "z": 0.0
-            },
-            "orientation": {
-                "x": 0.0,
-                "y": 0.0,
-                "z": -0.8993946938623091,
-                "w": 0.4371374894153136
-            }
-        },
-        "QA_point": {
-            "point": {
-                "x": 0.0,
-                "y": 0.0,
+                "x": 4.0,
+                "y": -0.6,
                 "z": 0.0
             },
             "orientation": {
@@ -188,30 +56,386 @@
                 "z": 0.0,
                 "w": 1.0
             }
+        },
+        "kitchen": {
+            "point": {
+                "x": 7.0,
+                "y": -1.2,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0
+            }
+        },
+        "office": {
+            "point": {
+                "x": 2.0,
+                "y": 2.6,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0
+            }
+        },
+        "bedroom": {
+            "point": {
+                "x": 5.0,
+                "y": 4.0,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0
+            }
+        },
+        "laundry_table": {
+            "point": {
+                "x": 2.224,
+                "y": 5.141,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.6843304655216016,
+                "w": 0.7291720057428069
+            }
+        },
+        "washing_machine": {
+            "point": {
+                "x": 3.763,
+                "y": 4.833,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.6880704080902564,
+                "w": 0.7256439302512686
+            }
+        },
+        "shelf": {
+            "point": {
+                "x": 1.175,
+                "y": 3.17,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.8138635733414554,
+                "w": 0.5810560076170603
+            }
+        },
+        "laundry_trashbin": {
+            "point": {
+                "x": 2.06,
+                "y": 3.011,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.7446139137220402,
+                "w": 0.6674954078430398
+            }
+        },
+        "tv_stand": {
+            "point": {
+                "x": 1.749,
+                "y": 0.918,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.6835992895944878,
+                "w": 0.7298575280600397
+            }
+        },
+        "sofa": {
+            "point": {
+                "x": 2.827,
+                "y": -1.306,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.73537796020521,
+                "w": 0.6776571815043537
+            }
+        },
+        "coffee_table": {
+            "point": {
+                "x": 4.456,
+                "y": -1.953,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.5584123750419648,
+                "w": 0.8295635113720902
+            }
+        },
+        "cabinet": {
+            "point": {
+                "x": 5.928,
+                "y": 0.973,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.9968891627559957,
+                "w": 0.07881622408901601
+            }
+        },
+        "refrigerator": {
+            "point": {
+                "x": 8.463,
+                "y": 1.255,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0
+            }
+        },
+        "counter": {
+            "point": {
+                "x": 5.793,
+                "y": -2.415,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.7019574339330652,
+                "w": 0.7122188995990674
+            }
+        },
+        "sink": {
+            "point": {
+                "x": 6.479,
+                "y": -2.322,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.7221417281645618,
+                "w": 0.6917451296854212
+            }
+        },
+        "cooking_table": {
+            "point": {
+                "x": 7.198,
+                "y": -2.366,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.8528493066771909,
+                "w": 0.522157122043006
+            }
+        },
+        "dishwasher": {
+            "point": {
+                "x": 8.666,
+                "y": -2.11,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.7097927344707511,
+                "w": 0.7044105863007268
+            }
+        },
+        "kitchen_trash_bin": {
+            "point": {
+                "x": 8.86,
+                "y": 0.389,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.12469267880148689,
+                "w": 0.9921954121307502
+            }
+        },
+        "dinner_table": {
+            "point": {
+                "x": 7.068,
+                "y": -0.347,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.2961318578067258,
+                "w": 0.9551470686715932
+            }
+        },
+        "bed": {
+            "point": {
+                "x": 7.143,
+                "y": 4.305,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.8401035790778548,
+                "w": 0.5424260100885452
+            }
+        },
+        "bedside_table": {
+            "point": {
+                "x": 6.18,
+                "y": 3.465,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": -0.9992711451887951,
+                "w": 0.038173006078561306
+            }
+        },
+        "coat_rack": {
+            "point": {
+                "x": 8.814,
+                "y": 4.657,
+                "z": 0.0
+            },
+            "orientation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.46736401003011235,
+                "w": 0.8840649761915541
+            }
         }
     },
-    "possible_objects":{
-        "kuat": "green cola can",
-        "fanta": "orange fanta can",
-        "milk": "blue and white milk box",
-        "orange juice": "orange juice bottle",
-        "coke": "red cola can",
-        "coffee": "brown and black box",
-        "lime": "lime fruit",
-        "tangerine": "tangerine fruit",
-        "pear": "pear fruit",
-        "lemon": "lemon fruit",
-        "apple": "apple fruit",
-        "snack bag": "snack bag",
-        "pringles": "chips can",
-        "chocolate": "chocolate bar",
-        "ketchup": "red bottle with yellow cap",
-        "oats": "whte cereal box",
-        "mayo": "white bottle with black cap",
-        "tuna": "blue tuna can"
+    "possible_objects": {
+        "white shirt": "white shirt",
+        "grey shirt": "grey shirt",
+        "blue shirt": "blue shirt",
+        "black shirt": "black shirt",
+        "hand towel": "folded hand towel",
+        "rubiks cube": "rubiks cube, a colorful 3x3 puzzle cube",
+        "pringles": "pringles chips can",
+        "seaweed": "pack of dried seaweed snack",
+        "apple": "red apple",
+        "peach": "peach fruit",
+        "mangostane": "mangosteen, a round dark-purple fruit",
+        "lemon": "yellow lemon",
+        "yellow bellpepper": "yellow bell pepper",
+        "red bellpepper": "red bell pepper",
+        "instant noodles": "cup of instant noodles",
+        "cornflakes": "box of cornflakes cereal",
+        "coke": "red coca-cola can",
+        "red bull": "red bull energy drink can",
+        "milk": "carton of milk",
+        "soju": "green soju bottle",
+        "pepsi": "blue pepsi can",
+        "dishwasher tab": "dishwasher detergent tablet",
+        "sponge": "cleaning sponge",
+        "toothpaste": "tube of toothpaste",
+        "cup": "drinking cup",
+        "spoon": "spoon",
+        "plate": "dinner plate",
+        "knife": "table knife",
+        "fork": "fork",
+        "bowl": "bowl"
+    },
+    "default_locations": {
+        "_comment": "Where each object USUALLY starts, per the RoboCup@Home Incheon 2026 official map (objects/objects.md category list + maps/LocationsObjects.png category placements). Used ONLY when a fetch/find command names no location. Each value is a key in possible_poses. NOTE: 'shelf' and 'cabinet' are no_grasp_locations, so an un-located fetch of a snack (shelf) or drink (cabinet) routes to the ask-referee bypass rather than a real grasp.",
+        "white shirt": "laundry_table",
+        "grey shirt": "laundry_table",
+        "blue shirt": "laundry_table",
+        "black shirt": "laundry_table",
+        "hand towel": "laundry_table",
+        "rubiks cube": "bed",
+        "pringles": "shelf",
+        "seaweed": "shelf",
+        "apple": "dinner_table",
+        "peach": "dinner_table",
+        "mangostane": "dinner_table",
+        "lemon": "dinner_table",
+        "yellow bellpepper": "dinner_table",
+        "red bellpepper": "dinner_table",
+        "instant noodles": "coffee_table",
+        "cornflakes": "coffee_table",
+        "coke": "cabinet",
+        "red bull": "cabinet",
+        "milk": "cabinet",
+        "soju": "cabinet",
+        "pepsi": "cabinet",
+        "dishwasher tab": "cooking_table",
+        "sponge": "cooking_table",
+        "toothpaste": "cooking_table",
+        "cup": "dishwasher",
+        "spoon": "dishwasher",
+        "plate": "dishwasher",
+        "knife": "dishwasher",
+        "fork": "dishwasher",
+        "bowl": "dishwasher"
+    },
+    "search_spots": {
+        "_comment": "Per-room sweep order for search_object when the in-room spot is unknown (override case). Each entry is an ORDERED list of pose names; every name must be a key in possible_poses / egpsr_rooms. To make the robot sweep several spots in a room, add poses like living_room_2/living_room_3 to possible_poses and list them here. Max spots per room = MAX_SEARCH_SPOTS (small_trees.py).",
+        "living_room": [
+            "living_room"
+        ],
+        "kitchen": [
+            "kitchen"
+        ],
+        "office": [
+            "office"
+        ],
+        "shelf": [
+            "shelf"
+        ],
+        "bedroom": [
+            "bedroom"
+        ]
+    },
+    "arm_pos_orbbec_look": [
+        -86.0,
+        -52.0,
+        18.0,
+        2.0,
+        34.0,
+        -73.0,
+        -9.0
+    ],
+    "arm_pos_scan_original": [
+        0.0,
+        -54.0,
+        -1.0,
+        35.0,
+        0.0,
+        47.0,
+        -1.0
+    ],
+    "team_info": {
+        "team_name": "Tinker",
+        "robot_name": "Tinker",
+        "affiliation": "X University",
+        "country": "Y Country"
     }
 }
-
-
-
- 

@@ -1,0 +1,40 @@
+{
+  "corpus": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/t2-2026/corpus.jsonl",
+  "meta": {
+    "tier": "T2",
+    "timeout_s": 1500.0,
+    "settle_s": 10.0,
+    "only_class": null,
+    "live_llm": true,
+    "llm_check": true,
+    "seed": 2026,
+    "source_path": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/__init__.py",
+    "timestamp": "2026-09-08T10:41:07.660833+00:00",
+    "commit": "afe04570c1acd4c8e45b87a88ca64980bb9f3a9c",
+    "corpus": "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/t2-2026/corpus.jsonl"
+  },
+  "totals": {
+    "2": {
+      "PASS": 1
+    }
+  },
+  "results": [
+    {
+      "entry_id": "s2026-019-takeObjFromPlcmt",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 2,
+      "verdict": "PASS",
+      "detail": "sheet=runs/s2026-019-takeObjFromPlcmt/sheet.jpg",
+      "seconds": 681.1710684299469,
+      "plan": [
+        "goto",
+        "grasp",
+        "goto",
+        "find_person",
+        "deliver"
+      ],
+      "referee_assisted": false
+    }
+  ]
+}

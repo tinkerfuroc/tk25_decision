@@ -29,6 +29,15 @@ NODE_MOCK_MODE_MAP = {
     "IMMEDIATE": "immediate",
 }
 
+MOCK_SUBSYSTEMS = (
+    "vision",
+    "manipulation",
+    "navigation",
+    "audio_input",
+    "announcement",
+    "mock_controls",
+)
+
 
 class BehaviorTreeConfig:
     """Configuration manager for behavior tree mock mode."""
@@ -54,7 +63,7 @@ class BehaviorTreeConfig:
         # List of required packages
         # Note: Only check modules that actually exist for each package
         self.required_packages = {
-            'tinker_vision_msgs': ['tinker_vision_msgs.srv', 'tinker_vision_msgs.msg', 'tinker_vision_msgs.action'],
+            'tinker_vision_msgs_26': ['tinker_vision_msgs_26.srv', 'tinker_vision_msgs_26.msg', 'tinker_vision_msgs_26.action'],
             'tinker_arm_msgs': ['tinker_arm_msgs.srv', 'tinker_arm_msgs.action'],
             'tinker_audio_msgs': ['tinker_audio_msgs.srv'],  # Only has services, no messages
             'tinker_nav_msgs': ['tinker_nav_msgs.srv'],  # Only has services
@@ -64,6 +73,7 @@ class BehaviorTreeConfig:
         }
 
         self.missing_packages = set()
+        self._auto_mocked_unlisted = set()  # nodes auto-mocked because unlisted
 
         # Load mock configuration
         self._load_mock_config()
@@ -293,7 +303,23 @@ class BehaviorTreeConfig:
                     return True
         
         return False
-    
+
+    def is_full_mock_mode(self) -> bool:
+        """Return whether every known subsystem is configured for mocking.
+
+        This is deliberately stricter than :meth:`is_mock_mode`: bench
+        configurations mock only selected subsystems and must continue to use
+        real planner/network behaviour.
+        """
+        if not self.is_mock_mode():
+            return False
+        subsystems = self._mock_config.get("mock_mode", {}).get("subsystems", {})
+        return all(
+            isinstance(subsystems.get(name, {}), dict)
+            and subsystems.get(name, {}).get("enabled", True)
+            for name in MOCK_SUBSYSTEMS
+        )
+
     def is_subsystem_mocked(self, subsystem: str) -> bool:
         """
         Check if a specific subsystem should be mocked.
@@ -332,8 +358,16 @@ class BehaviorTreeConfig:
         
         _, subsystem_config, raw_mode = self._find_node_subsystem_entry(node_class_name)
         if subsystem_config is None:
-            # Explicit listing is required in the new format
-            return False
+            # Under GLOBAL mock, a node nobody listed defaults to MOCKED rather
+            # than real. An unlisted ServiceHandler/ActionHandler would otherwise
+            # block tree.setup() forever waiting for a server that isn't running
+            # ("mock everything" must mean everything). To force a specific node
+            # REAL under global mock, list it NO_MOCK or disable its subsystem.
+            if node_class_name not in self._auto_mocked_unlisted:
+                self._auto_mocked_unlisted.add(node_class_name)
+                print(f"🔄 Mock: '{node_class_name}' not in mock_config — "
+                      f"defaulting to MOCKED (global mock on; list it NO_MOCK to force real)")
+            return True
 
         if not subsystem_config.get("enabled", True):
             # Subsystem disabled means ignore node mode values
@@ -390,7 +424,8 @@ class BehaviorTreeConfig:
 
         _, subsystem_config, raw_mode = self._find_node_subsystem_entry(node_class_name)
         if subsystem_config is None:
-            return "no_mock"
+            # Unlisted under global mock -> auto-complete (see is_node_mocked).
+            return "immediate"
         if not subsystem_config.get("enabled", True):
             return "no_mock"
 
@@ -550,6 +585,11 @@ def is_mock_mode() -> bool:
     return _config.is_mock_mode()
 
 
+def is_full_mock_mode() -> bool:
+    """Quick check for an all-subsystem offline mock configuration."""
+    return _config.is_full_mock_mode()
+
+
 def is_subsystem_mocked(subsystem: str) -> bool:
     """Check if a specific subsystem is mocked."""
     return _config.is_subsystem_mocked(subsystem)
@@ -676,8 +716,8 @@ def is_mock_tts_active() -> bool:
 
 # Legacy compatibility functions
 def has_tinker_vision() -> bool:
-    """Check if tinker_vision_msgs is available."""
-    return _config.has_dependency('tinker_vision_msgs')
+    """Check if tinker_vision_msgs_26 is available."""
+    return _config.has_dependency('tinker_vision_msgs_26')
 
 
 def has_tinker_arm() -> bool:

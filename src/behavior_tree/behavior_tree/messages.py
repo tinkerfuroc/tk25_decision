@@ -8,45 +8,90 @@ from behavior_tree.config import get_config
 _config = get_config()
 
 # Import based on availability
-if _config.has_dependency('tinker_vision_msgs'):
-    from tinker_vision_msgs.srv import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead
-    from tinker_vision_msgs.msg import Object, PanTiltCtrl
-    from tinker_vision_msgs.action import Categorize, FollowHeadAction, HumanFollowing
-else:
-    from behavior_tree.mock_messages import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead
-    from behavior_tree.mock_messages import Object, PanTiltCtrl
-    from behavior_tree.mock_messages import Categorize, FollowHeadAction, HumanFollowing
-
 if _config.has_dependency('tinker_vision_msgs_26'):
-    from tinker_vision_msgs_26.srv import DetectWaving
+    from tinker_vision_msgs_26.srv import ObjectDetection, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead
+    from tinker_vision_msgs_26.srv import ObjectDetectionGeneralist, SeatRecommendBbox, PlacingLocation, GetImage, ReseedTarget
+    from tinker_vision_msgs_26.msg import Object, PanTiltCtrl, PanTiltCommand, PanTiltState, BoundingBox
+    # FeatureExtraction and DetectWaving are served by tk26_vision only as
+    # ActionServers (feature_extraction_service, detect_waving_persons); the
+    # .srv variants have no server left, so these two are imported from
+    # .action, not .srv.
+    from tinker_vision_msgs_26.action import Categorize, FollowHeadAction, HumanFollowing, TrackPerson, FeatureExtraction, DetectWaving
 else:
-    from behavior_tree.mock_messages import DetectWaving
+    from behavior_tree.mock_messages import ObjectDetection, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, FollowHead, DetectWaving
+    from behavior_tree.mock_messages import ObjectDetectionGeneralist, SeatRecommendBbox, PlacingLocation, GetImage, ReseedTarget
+    from behavior_tree.mock_messages import Object, PanTiltCtrl, PanTiltCommand, PanTiltState, BoundingBox
+    from behavior_tree.mock_messages import Categorize, FollowHeadAction, HumanFollowing, TrackPerson
 
 if _config.has_dependency('tinker_arm_msgs'):
     from tinker_arm_msgs.srv import Drop, ArmJointService, PointTo
-    from tinker_arm_msgs.action import Place, Grasp, JointMove, CartesianMove
+    from tinker_arm_msgs.action import Place, Grasp, JointMove, CartesianMove, ScanAndPlace
+    try:
+        from tinker_arm_msgs.action import Fold
+    except ImportError:
+        from behavior_tree.mock_messages import Fold
 else:
     from behavior_tree.mock_messages import Drop, ArmJointService, PointTo
-    from behavior_tree.mock_messages import Place, Grasp, JointMove, CartesianMove
+    from behavior_tree.mock_messages import Place, Grasp, JointMove, CartesianMove, ScanAndPlace
+    from behavior_tree.mock_messages import Fold
 
 if _config.has_dependency('tinker_audio_msgs'):
-    from tinker_audio_msgs.srv import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
-    from tinker_audio_msgs.action import GetConfirmation as GetConfirmationAction
-    from tinker_audio_msgs.action import Listen as ListenAction
+    try:
+        from tinker_audio_msgs.srv import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
+    except ImportError:
+        # tinker_audio_msgs present but missing a symbol (TTSCnRequest hazard) ->
+        # fall back to the mock srvs. Does NOT reproduce on this host; harmless.
+        from behavior_tree.mock_messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
+    from tinker_audio_msgs.action import GetConfirmation as GetConfirmationAction, Listen as ListenAction
+    from tinker_audio_msgs.action import PhraseExtraction as PhraseExtractionAction
+    from tinker_audio_msgs.action import NameDrinkExtraction as NameDrinkExtractionAction
+    from tinker_audio_msgs.action import Doorbell
+    from tinker_audio_msgs.action import NameDrinkExtraction as NameDrinkExtractionAction
+    try:
+        from tinker_audio_msgs.action import OrderExtraction as OrderExtractionAction
+    except ImportError:
+        # tinker_audio_msgs present but does not export the OrderExtraction
+        # action (older build on this host) -> use the mock stub so importing
+        # behavior_tree still succeeds. Only Restaurant/order flows use it.
+        from behavior_tree.mock_messages import OrderExtractionAction
 else:
     from behavior_tree.mock_messages import TTSCnRequest, TextToSpeech, WaitForStart, PhraseExtraction, GetConfirmation, Listen, CompareInterest, QuestionAnswer, GraspRequest
-    from behavior_tree.mock_messages import GetConfirmation as GetConfirmationAction
-    from behavior_tree.mock_messages import Listen as ListenAction
+    from behavior_tree.mock_messages import GetConfirmationAction, ListenAction
+    from behavior_tree.mock_messages import PhraseExtractionAction
+    from behavior_tree.mock_messages import NameDrinkExtractionAction
+    from behavior_tree.mock_messages import Doorbell
+    from behavior_tree.mock_messages import NameDrinkExtractionAction
+    from behavior_tree.mock_messages import OrderExtractionAction
 
 if _config.has_dependency('tinker_nav_msgs'):
-    from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp
+    from tinker_nav_msgs.srv import SetLuggagePose, ComputeGrasp, OrientationAngle
+    # FindApproachPose grew a `projection_mode` field (P3); fall back to the
+    # mock stub if an older tinker_nav_msgs without the srv is sourced.
+    try:
+        from tinker_nav_msgs.srv import FindApproachPose
+    except (ImportError, ModuleNotFoundError):
+        from behavior_tree.mock_messages import FindApproachPose
+    try:
+        from tinker_nav_msgs.action import GoToApproach
+    except (ImportError, ModuleNotFoundError):
+        from behavior_tree.mock_messages import GoToApproach
 else:
-    from behavior_tree.mock_messages import SetLuggagePose, ComputeGrasp
+    from behavior_tree.mock_messages import SetLuggagePose, ComputeGrasp, FindApproachPose, OrientationAngle, GoToApproach
+
+# `Follow` lives only in tk26_ws's tinker_nav_msgs; the tk25_ws package of the
+# same name ships srv-only. Import defensively so BT builds even when only
+# tk25 is sourced — the mock stub still exercises the tree shape.
+try:
+    from tinker_nav_msgs.action import Follow
+except (ImportError, ModuleNotFoundError):
+    from behavior_tree.mock_messages import Follow
 
 if _config.has_dependency('nav2_msgs'):
     from nav2_msgs.action import NavigateToPose
+    print("Using real nav2_msgs NavigateToPose")
 else:
     from behavior_tree.mock_messages import NavigateToPose
+    print("WARNING: nav2_msgs not found, using mock NavigateToPose !!!")
 
 if _config.has_dependency('control_msgs'):
     from control_msgs.action import GripperCommand

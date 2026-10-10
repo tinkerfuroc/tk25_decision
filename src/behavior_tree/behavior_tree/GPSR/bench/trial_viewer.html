@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPSR launch ledger</title>
+  <style>
+    :root { color-scheme: dark; --bg:#101418; --panel:#171d22; --panel2:#20282f; --line:#2e3942; --muted:#9eabb4; --text:#e9eef1; --good:#66d19e; --bad:#f18f83; --warn:#e5bd70; --accent:#7bb6ff; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif; }
+    header { border-bottom:1px solid var(--line); padding:22px clamp(18px,4vw,52px) 18px; display:flex; align-items:flex-end; justify-content:space-between; gap:20px; }
+    h1,h2,h3,p { margin:0; } h1 { font-size:24px; letter-spacing:.2px; } h2 { font-size:17px; } h3 { font-size:14px; }
+    .subtle { color:var(--muted); } .eyebrow { text-transform:uppercase; letter-spacing:1.3px; color:var(--muted); font-size:11px; font-weight:700; }
+    .wrap { max-width:1500px; margin:0 auto; padding:22px clamp(18px,4vw,52px) 50px; }
+    .stats { display:grid; grid-template-columns:repeat(4,minmax(130px,1fr)); gap:10px; margin-bottom:22px; }
+    .stat,.panel { background:var(--panel); border:1px solid var(--line); border-radius:7px; }
+    .stat { padding:15px 17px; } .stat strong { display:block; font-size:25px; margin-top:4px; }
+    .controls { display:flex; gap:10px; margin-bottom:12px; align-items:center; flex-wrap:wrap; }
+    input,select,button { color:var(--text); background:var(--panel2); border:1px solid var(--line); border-radius:5px; padding:9px 11px; font:inherit; }
+    input { min-width:230px; } button { cursor:pointer; } button:hover { border-color:var(--accent); }
+    .table { overflow:auto; } table { width:100%; border-collapse:collapse; min-width:750px; } th,td { border-bottom:1px solid var(--line); text-align:left; vertical-align:top; padding:11px 12px; } th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.8px; } tr { cursor:pointer; } tbody tr:hover { background:#1d252b; }
+    .pill { display:inline-block; padding:3px 8px; border-radius:20px; font-size:12px; font-weight:700; border:1px solid currentColor; } .pass { color:var(--good); } .fail { color:var(--bad); } .unknown { color:var(--warn); }
+    .command { max-width:540px; white-space:normal; } .planner-plan,.planner-detail { display:block; margin-top:5px; font-size:12px; line-height:1.35; } .planner-plan { color:var(--text); } .planner-detail { color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px; } code { color:#d4e4f5; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .detail { margin-top:20px; padding:18px; } .detail-head { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:start; } .detail-head h2 { margin-bottom:5px; }
+    .grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(280px,420px); gap:18px; margin-top:18px; } .section { border-top:1px solid var(--line); padding-top:14px; margin-top:14px; }
+    .checks { display:grid; gap:8px; } .check { padding:9px 10px; background:var(--panel2); border-radius:5px; } .check b { margin-right:7px; }
+    .links { display:flex; flex-wrap:wrap; gap:7px; margin-top:8px; } a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+    .sheet { width:100%; max-height:420px; object-fit:contain; background:#0b0e10; border-radius:5px; border:1px solid var(--line); }
+    .reel { position:relative; } .reel img { width:100%; aspect-ratio:4/3; object-fit:contain; background:#0b0e10; border-radius:5px; border:1px solid var(--line); } .reel-nav { display:flex; gap:7px; align-items:center; margin-top:8px; } .reel-nav input { flex:1; min-width:100px; padding:0; } .reel-nav button { padding:7px 10px; }
+    .timeline-current { padding:10px 11px; margin-top:8px; background:var(--panel2); border-left:3px solid var(--accent); border-radius:4px; min-height:46px; }
+    .timeline-current strong { display:block; } .timeline-list { display:grid; gap:4px; max-height:250px; overflow:auto; margin-top:8px; }
+    .timeline-item { display:grid; grid-template-columns:62px minmax(0,1fr); gap:8px; padding:5px 7px; border-radius:4px; color:var(--muted); }
+    .timeline-item.active { color:var(--text); background:#263541; outline:1px solid var(--accent); }
+    .timeline-time { font:11px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--accent); }
+    .timeline-detail { display:block; font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .campaigns { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:8px; }
+    .campaign-card { padding:10px 12px; background:var(--panel2); border-radius:5px; border-left:3px solid var(--line); }
+    .campaign-card.active { border-left-color:var(--accent); }
+    .campaign-card.historical { opacity:.8; }
+    .campaign-card strong { display:block; margin-top:2px; }
+    .campaign-label { font-size:11px; letter-spacing:.7px; text-transform:uppercase; font-weight:700; color:var(--accent); }
+    .campaign-label.historical { color:var(--muted); }
+    .latest-panel { border-color:var(--accent); }
+    .five-panel { border-color:var(--good); }
+    .latest-card { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px; align-items:center; }
+    .history-panel { margin-bottom:14px; }
+    .history-panel summary { cursor:pointer; padding:15px 16px; color:var(--text); font-weight:700; }
+    .history-panel summary::marker { color:var(--muted); }
+    .history-body { border-top:1px solid var(--line); padding:10px 15px 12px; }
+    .history-body .campaigns { grid-template-columns:1fr; gap:5px; }
+    .history-body .campaign-card { padding:7px 9px; border-left-width:2px; }
+    .history-body .campaign-card strong { display:inline; margin:0 7px 0 0; }
+    .history-body .campaign-card .subtle { font-size:12px; }
+    .section-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:9px; }
+    .row-campaign { display:inline-block; margin-top:4px; padding:2px 5px; border:1px solid currentColor; border-radius:3px; font-size:10px; letter-spacing:.5px; font-weight:700; }
+    .row-campaign.diverse { color:var(--accent); }
+    .row-campaign.five { color:var(--good); }
+    .row-campaign.distinct { color:#9bd3a9; }
+    .row-campaign.pending { color:var(--warn); }
+    .row-campaign.historical { color:var(--muted); }
+    .empty { color:var(--muted); padding:28px 12px; text-align:center; } .right { text-align:right; }
+    @media (max-width:850px) { header { align-items:start; flex-direction:column; } .stats { grid-template-columns:repeat(2,1fr); } .grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <header><div><div class="eyebrow">GPSR experiment ledger</div><h1>Diverse-command qualification</h1><p class="subtle">15 command families · planner and physical execution are reported separately</p></div><button id="refresh">Refresh data</button></header>
+  <main class="wrap">
+    <section class="stats" aria-label="Experiment totals">
+      <div class="stat"><div class="eyebrow">Campaign launches</div><strong id="successes">0 / 20</strong><span id="launch-note" class="subtle">successful simulator launches</span></div>
+      <div class="stat"><div class="eyebrow">Clean verdicts</div><strong id="clean">0</strong><span class="subtle">planner + physical PASS</span></div>
+      <div class="stat"><div class="eyebrow">Recorded trials</div><strong id="observed">0</strong><span class="subtle">commands with artifacts</span></div>
+      <div class="stat"><div class="eyebrow">Latest state</div><strong id="latest">-</strong><span id="updated" class="subtle">-</span></div>
+    </section>
+    <section class="panel latest-panel" id="latest-panel" style="padding:15px 16px; margin-bottom:14px">
+      <div class="eyebrow">Latest experiment</div>
+      <div id="latest-experiment" class="latest-card" style="margin-top:8px"><div class="empty">Loading latest experiment...</div></div>
+      <div class="section-actions"><button id="show-latest" type="button">Show latest trials</button></div>
+    </section>
+    <section class="panel five-panel" id="five-panel" hidden style="padding:15px 16px; margin-bottom:14px">
+      <div class="eyebrow">5-task experiment</div>
+      <div id="five-experiment" class="latest-card" style="margin-top:8px"></div>
+      <div class="section-actions"><button id="show-five" type="button">Show 5-task trials</button></div>
+    </section>
+    <details class="panel history-panel" id="history-panel">
+      <summary>Older experiments <span id="history-note" class="subtle"></span></summary>
+      <div class="history-body"><div id="campaign-cards" class="campaigns"></div></div>
+    </details>
+    <section class="panel" style="padding:15px 16px">
+      <div class="controls"><input id="filter" type="search" placeholder="Filter command, template, or batch"><select id="campaign-filter" aria-label="Campaign"><option value="latest">Latest experiment</option><option value="five">5-task experiment</option><option value="diverse">Diverse-15 qualification</option><option value="pending">Pending attempts</option><option value="distinct">Old count-heavy 15</option><option value="historical">Historical-20 launches</option><option value="all">All campaigns</option></select><select id="verdict"><option value="all">All verdicts</option><option value="PASS">PASS</option><option value="FAIL">FAIL</option><option value="TIMEOUT">TIMEOUT</option><option value="ERROR">ERROR</option><option value="running">Running / unknown</option></select><span id="row-count" class="subtle"></span></div>
+      <div id="table" class="table"><div class="empty">Loading trials...</div></div>
+    </section>
+    <section id="detail" class="panel detail" hidden></section>
+  </main>
+<script>
+  const state = { data:{batches:[],trials:[]}, detail:null };
+  const $ = id => document.getElementById(id);
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const verdictClass = v => v === 'PASS' ? 'pass' : (['FAIL','TIMEOUT','ERROR'].includes(v) ? 'fail' : 'unknown');
+  function updateStats() {
+    const items = state.data.trials;
+    const campaign = state.data.campaign || {};
+    const campaigns = Array.isArray(state.data.campaigns) && state.data.campaigns.length ? state.data.campaigns : [campaign];
+    const active = state.data.latest_experiment || state.data.latest_campaign || campaigns.find(item => item.latest) || campaigns.find(item => item.five_commands) || campaign;
+    const target = Number(active.target || 15);
+    $('successes').textContent = `${Number(active.clean_passes || 0)} / ${target}`;
+    $('launch-note').textContent = active.met ? 'latest experiment target reached' : `${Number(active.remaining || target)} strict passes remaining`;
+    $('clean').textContent = Number(active.clean_passes || 0);
+    const latestName = state.data.latest_batch?.name;
+    $('observed').textContent = latestName ? items.filter(item => item.batch === latestName).length : items.length;
+    const latest = state.data.latest_batch || state.data.batches[state.data.batches.length - 1];
+    $('latest').textContent = latest?.status || '-';
+    $('updated').textContent = latest?.updated ? new Date(latest.updated).toLocaleString() : 'No timestamp';
+    const card = item => {
+      const latestClass = item.latest || item.five_commands;
+      const label = item.five_commands ? '5-task experiment' : (item.diverse_commands ? 'Diverse-15 qualification' : (item.distinct_commands ? 'Previous qualification' : 'Historical context'));
+      const families = Object.entries(item.template_stats || {}).map(([name, stats]) => `${name}: ${Number(stats.execution_passes || 0)}/${Number(stats.total || 0)}`).join(' · ');
+      return `<div class="campaign-card ${latestClass ? 'active' : 'historical'}"><span class="campaign-label ${latestClass ? '' : 'historical'}">${label}</span><span class="subtle">${esc(item.name || item.file || 'campaign')}</span><strong class="${item.met ? 'pass' : 'unknown'}">${Number(item.clean_passes || 0)} / ${Number(item.target || 0)} strict dual passes</strong><span class="subtle">${Number(item.recorded_commands || 0)} commands recorded · ${Number(item.execution_passes || 0)} execution PASS · ${Number(item.planner_passes || 0)} planner PASS · ${Number(item.remaining || 0)} strict remaining</span>${families ? `<span class="subtle" style="display:block;margin-top:4px">By family: ${esc(families)}</span>` : ''}</div>`;
+    };
+    const latestSummary = state.data.latest_experiment || state.data.latest_campaign || active;
+    $('latest-experiment').innerHTML = latestSummary ? card(latestSummary) : '<div class="empty">No experiment recorded.</div>';
+    const fiveSummary = state.data.five_campaign || campaigns.find(item => item.five_commands);
+    $('five-panel').hidden = !fiveSummary;
+    $('five-experiment').innerHTML = fiveSummary ? card(fiveSummary) : '';
+    const older = campaigns.filter(item => item !== latestSummary && item !== fiveSummary && !item.latest && !item.five_commands);
+    $('history-note').textContent = older.length ? `(${older.length} campaigns, collapsed)` : '(none)';
+    $('campaign-cards').innerHTML = older.length ? older.map(card).join('') : '<div class="empty">No older campaigns.</div>';
+  }
+  function campaignKind(item) {
+    const memberships = Array.isArray(item.campaigns) ? item.campaigns : [];
+    if (memberships.some(c => c.five_commands)) return 'five';
+    if (memberships.some(c => c.manifested === false)) return 'pending';
+    if (memberships.some(c => c.diverse_commands)) return 'diverse';
+    if (memberships.some(c => c.distinct_commands)) return 'distinct';
+    return 'historical';
+  }
+  function filtered() {
+    const text = $('filter').value.trim().toLowerCase(); const verdict = $('verdict').value; const selectedCampaign = $('campaign-filter').value;
+    const latestBatch = state.data.latest_batch?.name;
+    return state.data.trials.filter(t => {
+      const hay = [t.batch,t.entry_id,t.template,t.text,t.verdict,t.planner_verdict,t.physical_verdict].join(' ').toLowerCase();
+      const verdictMatch = verdict === 'all' || (verdict === 'running' ? !['PASS','FAIL','TIMEOUT','ERROR'].includes(t.verdict) : t.verdict === verdict);
+      const kind = campaignKind(t);
+      const campaignMatch = selectedCampaign === 'all' || (selectedCampaign === 'latest' ? t.batch === latestBatch : kind === selectedCampaign);
+      return (!text || hay.includes(text)) && verdictMatch && campaignMatch;
+    });
+  }
+  function plannerSummary(t) {
+    const plan = Array.isArray(t.planner_plan) ? t.planner_plan.filter(Boolean) : [];
+    const detail = String(t.planner_detail || '').trim();
+    const planHtml = plan.length ? `<span class="planner-plan">Plan: ${plan.map(esc).join(' → ')}</span>` : '';
+    const detailHtml = detail ? `<span class="planner-detail" title="${esc(detail)}">${esc(detail)}</span>` : '';
+    return `${planHtml}${detailHtml}`;
+  }
+  function renderTable() {
+    const rows = filtered(); $('row-count').textContent = `${rows.length} shown`;
+    if (!rows.length) { $('table').innerHTML = '<div class="empty">No trials match this filter.</div>'; return; }
+    $('table').innerHTML = `<table><thead><tr><th>Campaign / batch</th><th>Command</th><th>Planner result</th><th>Physical result</th><th>Duration</th><th>Evidence</th></tr></thead><tbody>${rows.map((t,i) => { const kind = campaignKind(t); const label = kind === 'five' ? 'LATEST · 5 TASKS' : (kind === 'diverse' ? 'DIVERSE-15' : (kind === 'distinct' ? 'OLD-COUNT-15' : (kind === 'pending' ? 'PENDING · NOT COUNTED' : 'HISTORICAL-20'))); const planner = t.planner_verdict || (t.has_run_dir ? 'RUNNING' : 'PENDING'); const physical = t.physical_verdict || (t.has_run_dir ? 'UNKNOWN' : 'PENDING'); return `<tr data-index="${i}"><td><span class="row-campaign ${kind}">${label}</span><br><code>${esc(t.batch)}</code><br><span class="subtle">${esc(t.entry_id)}</span></td><td class="command">${esc(t.text || 'Command text unavailable')}<br><span class="subtle">${esc(t.template || '')}</span></td><td><span class="pill ${verdictClass(planner)}">${esc(planner)}</span>${plannerSummary(t)}</td><td><span class="pill ${verdictClass(physical)}">${esc(physical)}</span></td><td>${t.seconds ? `${Number(t.seconds).toFixed(1)} s` : '-'}</td><td>${t.has_run_dir ? '<span class="subtle">recorded</span>' : '<span class="subtle">metadata only</span>'}</td></tr>`; }).join('')}</tbody></table>`;
+    [...$('table').querySelectorAll('tbody tr')].forEach((row,i) => row.addEventListener('click', () => showDetail(rows[i])));
+  }
+  async function showDetail(item) {
+    $('detail').hidden = false; $('detail').innerHTML = '<div class="empty">Loading trial evidence...</div>'; $('detail').scrollIntoView({behavior:'smooth',block:'start'});
+    const response = await fetch(`/api/trial?batch=${encodeURIComponent(item.batch)}&entry=${encodeURIComponent(item.entry_id)}`); const data = await response.json();
+    if (!response.ok) { $('detail').innerHTML = '<div class="empty">Trial details are not available yet.</div>'; return; }
+    state.detail = data; const t = data.trial; const frameData = data.camera_frames || {}; const cameraNames = Object.keys(Object.keys(frameData).length ? frameData : (data.cameras || {})); const firstCamera = cameraNames[0];
+    const framesFor = name => (frameData[name] || (data.cameras || {})[name] || []).map(frame => typeof frame === 'string' ? {url: frame, time_s: null} : frame);
+    const recording = data.recording || {}; const timeline = Array.isArray(recording.timeline) ? recording.timeline : [];
+    const checks = Array.isArray(t.physical_checks) ? t.physical_checks : [];
+    const checkHtml = checks.length ? checks.map(c => `<div class="check"><b class="${verdictClass(c.verdict)}">${esc(c.verdict)}</b><code>${esc(c.fact || '')}</code><br><span class="subtle">${esc(c.reason || '')}</span></div>`).join('') : '<div class="subtle">No physical checks recorded.</div>';
+    const link = (url,label,download=false) => `<a href="${url}" ${download?'download':''} target="_blank" rel="noopener">${esc(label)}</a>`;
+    const links = []; for (const [name,url] of Object.entries(data.files || {})) { if (Array.isArray(url)) url.forEach(x => links.push(link(x.url,x.name,true))); else links.push(link(url,name,name.endsWith('.db3') || name.endsWith('.zstd'))); }
+    const cameraOptions = cameraNames.map(name => `<option value="${esc(name)}">${esc(name)} (${framesFor(name).length} frames)</option>`).join('');
+    const timelineHtml = timeline.length ? `<div class="timeline-list" id="timeline-list">${timeline.map((marker,index) => `<div class="timeline-item" data-timeline-index="${index}"><span class="timeline-time">${Number(marker.time_s || 0).toFixed(1)}s</span><span><b>${esc(marker.label || marker.kind || 'event')}</b>${marker.status ? ` <span class="subtle">[${esc(marker.status)}]</span>` : ''}${marker.detail ? `<span class="timeline-detail">${esc(marker.detail)}</span>` : ''}</span></div>`).join('')}</div>` : '<div class="subtle" style="margin-top:7px">No structured execution events recorded.</div>';
+    const detailKind = campaignKind(t); const detailLabel = detailKind === 'five' ? 'LATEST · 5-TASK EXPERIMENT' : (detailKind === 'diverse' ? 'DIVERSE-15 qualification' : (detailKind === 'distinct' ? 'OLD-COUNT-15 context' : (detailKind === 'pending' ? 'PENDING · NOT COUNTED' : 'HISTORICAL-20 context')));
+    const planner = t.planner_verdict || (t.has_run_dir ? 'RUNNING' : 'PENDING');
+    const physical = t.physical_verdict || (t.has_run_dir ? 'UNKNOWN' : 'PENDING');
+    const plan = Array.isArray(t.planner_plan) ? t.planner_plan : (Array.isArray(t.plan) ? t.plan : []);
+    const plannerPlan = plan.length ? `<div class="subtle" style="margin-top:7px">Plan: ${plan.map(esc).join(' → ')}</div>` : '';
+    $('detail').innerHTML = `<div class="detail-head"><div><div class="eyebrow"><span class="row-campaign ${detailKind}">${detailLabel}</span> · ${esc(t.batch)} / ${esc(t.entry_id)}</div><h2>${esc(t.text || 'Command text unavailable')}</h2><p class="subtle">Template ${esc(t.template || '-')} · ${esc(t.feasibility || '-')} · ${t.seconds ? `${Number(t.seconds).toFixed(1)} seconds` : 'duration unavailable'}</p></div><div class="right"><span class="pill ${verdictClass(t.verdict)}">${esc(t.verdict || 'RUNNING')}</span><p class="subtle" style="margin-top:5px">planner ${esc(planner)} · physical ${esc(physical)}</p></div></div><div class="grid"><div><div class="eyebrow">Planner result</div><div class="check" style="margin-top:8px"><b class="${verdictClass(planner)}">${esc(planner)}</b><span class="subtle">${esc(t.planner_detail || 'Planner result is not available until the run finishes.')}</span>${plannerPlan}</div><div class="section"><div class="eyebrow">Physical result</div><div class="check" style="margin-top:8px"><b class="${verdictClass(physical)}">${esc(physical)}</b><span class="subtle">${esc(t.physical_detail || 'Physical result is not available yet.')}</span></div><div class="checks" style="margin-top:8px">${checkHtml}</div></div><div class="section"><div class="eyebrow">Artifacts</div><div class="links">${links.length ? links.join('') : '<span class="subtle">No files recorded.</span>'}</div></div><div class="section"><div class="eyebrow">Execution timeline</div><div id="timeline-current" class="timeline-current"><span class="subtle">Drag the recording progress bar to inspect the active step.</span></div>${timelineHtml}</div></div><div>${data.files?.['sheet.jpg'] ? `<img class="sheet" src="${data.files['sheet.jpg']}" alt="Contact sheet for ${esc(t.entry_id)}">` : '<div class="empty">No contact sheet</div>'}${firstCamera ? `<div class="section"><div class="eyebrow">Frame recording</div><div style="margin-top:8px"><select id="camera-select" aria-label="Recording camera">${cameraOptions}</select></div><div class="reel" style="margin-top:8px"><img id="reel-image" alt="Recorded frame"><div class="reel-nav"><button id="prev-frame" type="button">Previous</button><input id="frame-range" type="range" min="0" max="${Math.max(0,framesFor(firstCamera).length-1)}" value="0"><button id="next-frame" type="button">Next</button><span id="frame-label" class="subtle"></span></div></div></div>` : ''}</div></div>`;
+    if (firstCamera) {
+      let camera = firstCamera; const image = $('reel-image'); const range = $('frame-range'); const label = $('frame-label');
+      const timelineMarker = time => {
+        if (!timeline.length) return null;
+        let candidate = null; timeline.forEach((marker, index) => { if (Number(marker.time_s || 0) <= time + 0.001) candidate = {marker, index}; });
+        // Prefer the latest planned/finished action so behavior-tree bookkeeping
+        // does not hide the human-readable command currently being executed.
+        let actionCandidate = null; timeline.forEach((marker, index) => { if (['planned','step'].includes(marker.kind) && Number(marker.time_s || 0) <= time + 0.001) actionCandidate = {marker, index}; });
+        return actionCandidate || candidate || {marker: timeline[0], index: 0};
+      };
+      const drawTimeline = time => {
+        const selected = timelineMarker(time); const current = $('timeline-current');
+        [...document.querySelectorAll('.timeline-item')].forEach(item => item.classList.toggle('active', selected && Number(item.dataset.timelineIndex) === selected.index));
+        if (!current) return;
+        if (!selected) { current.innerHTML = '<span class="subtle">No structured execution event at this point.</span>'; return; }
+        const marker = selected.marker; current.innerHTML = `<strong>${esc(marker.label || marker.kind || 'Execution event')}</strong><span class="subtle">${Number(marker.time_s || 0).toFixed(1)}s · ${esc(marker.kind || 'event')}${marker.detail ? ` · ${esc(marker.detail)}` : ''}</span>`;
+      };
+      const draw = () => { const frames = framesFor(camera); const i = Math.min(Number(range.value), Math.max(0, frames.length - 1)); range.max = Math.max(0, frames.length - 1); range.value = i; const frame = frames[i] || {}; image.src = frame.url || ''; const time = frame.time_s == null ? ((Number(range.max) ? i / Number(range.max) : 0) * Number(recording.duration_s || 0)) : Number(frame.time_s); label.textContent = `${i+1} / ${frames.length}${recording.duration_s != null ? ` · ${time.toFixed(1)}s / ${Number(recording.duration_s).toFixed(1)}s` : ''}`; drawTimeline(time); };
+      const select = $('camera-select'); select.onchange = () => { camera = select.value; range.value = 0; draw(); }; $('prev-frame').onclick = () => { range.value = Math.max(0,Number(range.value)-1); draw(); }; $('next-frame').onclick = () => { range.value = Math.min(Number(range.max),Number(range.value)+1); draw(); }; range.oninput = draw; draw();
+    }
+  }
+  async function load() { try { const response = await fetch('/api/trials',{cache:'no-store'}); state.data = await response.json(); updateStats(); renderTable(); } catch (error) { $('table').innerHTML = `<div class="empty">Could not load trial data: ${esc(error.message)}</div>`; } }
+  function selectCampaign(value) { $('campaign-filter').value = value; renderTable(); $('table').scrollIntoView({behavior:'smooth',block:'start'}); }
+  $('refresh').onclick = load; $('show-latest').onclick = () => selectCampaign('latest'); $('show-five').onclick = () => selectCampaign('five'); $('filter').oninput = renderTable; $('verdict').onchange = renderTable; $('campaign-filter').onchange = renderTable; load();
+</script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+{"_skipped": {"countClothPrsInRoom": 1}, "_seed": 2026, "_mode": "sim-feasible"}
+{"id": "s2026-000-bringMeObjFromPlcmt", "seed": 2026, "template": "bringMeObjFromPlcmt", "followups": [], "category": "objects", "text": "bring me a spam from the laundry_desk", "feasibility": "B"}
+{"id": "s2026-001-countObjOnPlcmt", "seed": 2026, "template": "countObjOnPlcmt", "followups": [], "category": "objects", "text": "tell me how many kitchen items there are on the kitchen_table", "feasibility": "A"}

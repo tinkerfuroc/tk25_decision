@@ -74,7 +74,11 @@ from behavior_tree.config import (
     get_node_subsystem_name,
     get_mock_keyboard_config,
 )
+import rclpy
 import rclpy.action
+from rclpy.impl.implementation_singleton import (
+    rclpy_implementation as _rclpy_impl,
+)
 import time
 import sys
 import tty
@@ -84,6 +88,11 @@ from py_trees_ros import exceptions
 import sys
 import tty
 import termios
+
+# rcl error raised by rclpy when a node's context is invalidated mid-call
+# (e.g. wait_for_server racing a shutdown signal). Aliased after the import
+# block so it stays importable without splitting the imports.
+RCLError = _rclpy_impl.RCLError
 
 
 class ActionHandler(py_trees.behaviour.Behaviour):
@@ -125,7 +134,7 @@ class ActionHandler(py_trees.behaviour.Behaviour):
                  name: str,
                  action_type: Any,
                  action_name: str,
-                 key: str,
+                 key: str | None,
                  wait_for_server_timeout_sec: float=-3.0,
                  action_timeout_ticks:int = 0
                  ):
@@ -224,13 +233,24 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         )
         result = None
         if self.wait_for_server_timeout_sec > 0.0:
-            result = self.action_client.wait_for_server(timeout_sec=self.wait_for_server_timeout_sec)
+            result = self._wait_for_server_once(self.wait_for_server_timeout_sec)
         else:
             iterations = 0
             period_sec = -1.0*self.wait_for_server_timeout_sec
             while not result:
+                # rclpy's wait_for_server loops `while node.context.ok() and ...`
+                # then calls server_is_ready() once more, unconditionally. If a
+                # shutdown signal invalidates the context mid-wait, that final
+                # call raises `RCLError: rcl node's context is invalid`. Bail out
+                # cleanly here instead of walking into that sharp edge.
+                if not self._context_ok():
+                    self.feedback_message = (
+                        "context shut down while waiting for the server "
+                        "[{}]".format(self.action_name)
+                    )
+                    raise exceptions.TimedOutError(self.feedback_message)
                 iterations += 1
-                result = self.action_client.wait_for_server(timeout_sec=period_sec)
+                result = self._wait_for_server_once(period_sec)
                 if not result:
                     self.node.get_logger().warning(
                         "waiting for action server ... [{}s][{}][{}]".format(
@@ -246,7 +266,43 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         else:
             self.feedback_message = "... connected to action server [{}]".format(self.action_name)
             self.node.get_logger().info("{}[{}]".format(self.feedback_message, self.qualified_name))
-    
+
+    def _context_ok(self) -> bool:
+        """Return True while the node's rclpy context is still valid.
+
+        Used by setup() to break out of the wait-for-server retry loop the
+        instant a shutdown signal invalidates the context, rather than calling
+        wait_for_server again (which would raise a raw RCLError).
+        """
+        node = self.node
+        context = getattr(node, "context", None)
+        if context is not None and hasattr(context, "ok"):
+            return bool(context.ok())
+        # Fall back to the global context if the node doesn't expose one.
+        return bool(rclpy.ok())
+
+    def _wait_for_server_once(self, timeout_sec: float):
+        """Call wait_for_server, treating a context-shutdown RCLError as a clean timeout.
+
+        rclpy's ActionClient.wait_for_server makes a final, unconditional
+        server_is_ready() call after its `while context.ok()` loop. If the
+        context dies during the wait, that call raises
+        ``RCLError: rcl node's context is invalid``. Translate that specific
+        shutdown race into the documented setup failure (TimedOutError) so the
+        raw RCLError never escapes setup().
+        """
+        try:
+            return self.action_client.wait_for_server(timeout_sec=timeout_sec)
+        except RCLError as exc:
+            if not self._context_ok():
+                self.feedback_message = (
+                    "context shut down while waiting for the server "
+                    "[{}]".format(self.action_name)
+                )
+                raise exceptions.TimedOutError(self.feedback_message) from exc
+            # Context still ok -> a genuine rcl error, surface it unchanged.
+            raise
+
     def send_goal(self):
         """
         child classes should override this funciton to how they wish to process the blackboard variable and send the goal
@@ -323,6 +379,12 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self.goal_handle = None
         self.send_goal_future = None
         self.get_result_future = None
+        # A timeout can fire before the goal-response callback has delivered a
+        # handle. Remember the request and apply it when the handle arrives;
+        # otherwise a timed-out tree node leaves the ROS action running while
+        # its parent starts a fallback branch.
+        self._cancel_pending = False
+        self._cancel_sent = False
 
         self.result_message = None
         self.result_status = None
@@ -465,8 +527,8 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         if self.action_timeout_ticks != 0:
             self.counter += 1
             if self.counter > self.action_timeout_ticks:
-                # TODO: abort the action here
-                self.feedback_message = "action timeout"
+                self.feedback_message = "action timeout; cancelling goal"
+                self.send_cancel_request()
                 return py_trees.common.Status.FAILURE
 
         # processing errors
@@ -599,6 +661,10 @@ class ActionHandler(py_trees.behaviour.Behaviour):
             self.node.get_logger().debug("... {}".format(self.feedback_message))
             self.node.get_logger().debug("  {!s}".format(future.result()))
 
+        if getattr(self, "_cancel_pending", False):
+            self._cancel_pending = False
+            self.send_cancel_request()
+
         self.get_result_future = self.goal_handle.get_result_async()
         self.get_result_future.add_done_callback(self.get_result_callback)
 
@@ -609,12 +675,30 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         :attr:`~py_trees.common.Status.INVALID` (typically a result of a priority
         interrupt).
         """
+        # A few lightweight callers construct an ActionHandler with
+        # ``__new__`` for timeout tests, so keep cancellation tolerant of
+        # pre-initialisation objects as well as normal BT lifecycle objects.
+        if getattr(self, "_cancel_sent", False):
+            return
         self.feedback_message = "cancelling goal ... [{}]".format(self.qualified_name)
         self.node.get_logger().debug(self.feedback_message)
 
         if self.goal_handle is not None:
-            future = self.goal_handle.cancel_goal_async()
-            future.add_done_callback(self.cancel_response_callback)
+            self._cancel_sent = True
+            try:
+                future = self.goal_handle.cancel_goal_async()
+                future.add_done_callback(self.cancel_response_callback)
+            except Exception as exc:
+                # A terminal handle may reject a late cancel. The action result
+                # still owns the final status; keep the tree node on its
+                # timeout/failure path instead of raising from a tree tick.
+                self.node.get_logger().debug(
+                    "cancel request failed [{}]: {!r}".format(
+                        self.qualified_name, exc
+                    )
+                )
+        else:
+            self._cancel_pending = True
 
     def cancel_response_callback(self, future: rclpy.task.Future):
         """

@@ -27,3 +27,18 @@ string error_msg
 ```
 
 **Action server应在接受到请求后三秒内发出第一次feedback**
+
+## GPSR command bench
+
+Generates a seeded corpus of official-grammar GPSR commands for the rcw2026 sim vocabulary and
+scores it per template at increasing realism. Tier 0 = planner only (LLM, no ROS); tier 1 = the real
+`gpsr-orchestrator` process with every ROS boundary mocked (`mock_config.bench.json`). Tiers 2/3
+(simulation) live in tinker-sim.
+
+    gpsr-bench gen   --seed 42 --per-template 3 --edge --out corpus-42.jsonl
+    gpsr-bench tier0 --corpus corpus-42.jsonl --out gpsr_runs/bench/t0-42
+    gpsr-bench tier1 --corpus corpus-42.jsonl --out gpsr_runs/bench/t1-42   # after colcon build
+
+Read `SUMMARY.md`: rows are templates (class A/B/C = sim feasibility, see the spec), cells are
+passed/total per tier. A template that passes T0 but fails T1 is an executor/BT problem; one that
+fails T0 is a planner-prompt problem. Committed baselines: `GPSR/gpsr_runs/bench/`.

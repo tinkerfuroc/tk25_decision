@@ -29,8 +29,14 @@
 #     Finds objects for grasping with distance validation.
 # BtNode_FeatureExtraction
 #     Extracts visual features for person recognition.
+# BtNode_LoadPersonReference
+#     Loads a pre-recorded person photo + .txt description from disk and writes
+#     them to the same blackboard keys BtNode_FeatureExtraction would write,
+#     so downstream matching consumes pre-registered data with no changes.
 # BtNode_SeatRecommend
 #     Recommends a seat based on current scene.
+# BtNode_SeatRecommendBbox
+#     Seat recommendation that also returns bbox + 3D centroid of the seat.
 # BtNode_FeatureMatching
 #     Matches extracted features to known persons.
 # BtNode_GetPointCloud
@@ -48,6 +54,11 @@
 # In mock mode, they return simulated detection results or wait for
 # keyboard input.
 #
+# Exception: BtNode_LoadPersonReference is pure local file I/O with no
+# hardware dependency, so it performs the same real load whether or not
+# the vision subsystem is mocked. It is registered in mock_config.json
+# only for naming-convention completeness.
+#
 
 import asyncio
 import os
@@ -56,20 +67,53 @@ import time
 import math
 from typing import Any, Optional
 
-import action_msgs.msg as action_msgs
-
 # from tinker_decision_msgs.srv import ObjectDetection
 # from tinker_vision_msgs.srv import ObjectDetection
 
-from behavior_tree.messages import ObjectDetection, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, DetectWaving, FollowHeadAction
-from std_msgs.msg import Header
+from behavior_tree.messages import ObjectDetection, ObjectDetectionGeneralist, Object, FeatureExtraction, SeatRecommendation, FeatureMatching, GetPointCloud, DoorDetection, PanTiltCtrl, BoundingBox, PanTiltCommand, PanTiltState, FollowHeadAction, SeatRecommendBbox, DetectWaving, PlacingLocation
 from behavior_tree.config import is_node_mocked
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import Point, PointStamped
+from std_msgs.msg import Header
 from py_trees.common import Status
+import action_msgs.msg as action_msgs
 
 from .BaseBehaviors import ServiceHandler
 from .ActionBase import ActionHandler
 from .structs import Person
+
+
+def vision_scan_timeout_s() -> float:
+    """Return the wall-clock budget for one generalist vision request.
+
+    A hung service future must not hold a GPSR pan/tilt sweep until the
+    command-level timeout.  ``0`` disables the local budget for deployments
+    that intentionally allow unbounded inference.
+    """
+    raw = os.environ.get("GPSR_VISION_SCAN_TIMEOUT_S")
+    if raw is None:
+        return 90.0
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 90.0
+    return float("inf") if value <= 0.0 else value
+
+
+def vision_scan_grace_s() -> float:
+    """Allow a just-finished request to win the timeout race.
+
+    The live generalist service can finish while the behavior-tree tick is
+    crossing its wall-clock deadline.  Cancelling at that exact boundary
+    discarded valid detections, so keep the future alive for a small,
+    configurable grace period before declaring the scan failed.
+    """
+    raw = os.environ.get("GPSR_VISION_SCAN_GRACE_S")
+    if raw is None:
+        return 0.0
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 class BtNode_ScanFor(ServiceHandler):
@@ -197,6 +241,171 @@ class BtNode_ScanFor(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 
+
+
+
+class BtNode_ScanForGeneralist(ServiceHandler):
+    """
+    Scans for objects via the generalist detection service.
+
+    Uses tk26 `tinker_vision_msgs_26/srv/ObjectDetectionGeneralist` (boolean
+    flag schema) on `/object_detection_generalist`. Open-vocabulary prompts
+    are supported through the YOLO-World / Gemini + FastSAM fallback when
+    `use_vlm_sam_fallback=True`.
+    """
+
+    def __init__(self,
+                 name: str,
+                 bb_source: Optional[str],
+                 bb_key: str,
+                 service_name: str = "object_detection_generalist",
+                 object: Optional[str] = None,
+                 use_orbbec: bool = True,
+                 transform_to_map: bool = False,
+                 use_vlm_sam_fallback: bool = True,
+                 force_vlm_sam: bool = False,
+                 sort_closest: bool = True,
+                 sort_highest: bool = False,
+                 return_rgb_image: bool = False,
+                 return_depth_image: bool = False,
+                 return_segments: bool = True,
+                 ):
+        super(BtNode_ScanForGeneralist, self).__init__(name, service_name, ObjectDetectionGeneralist)
+        self.bb_key = bb_key
+        self.bb_source = bb_source
+        self.object = object
+        self.use_orbbec = use_orbbec
+        self.transform_to_map = transform_to_map
+        self.use_vlm_sam_fallback = use_vlm_sam_fallback
+        self.force_vlm_sam = force_vlm_sam
+        self.sort_closest = sort_closest
+        self.sort_highest = sort_highest
+        self.return_rgb_image = return_rgb_image
+        self.return_depth_image = return_depth_image
+        self.return_segments = return_segments
+        self.read = self.object is None
+        self._scan_started_at = None
+        self._scan_timeout_s = vision_scan_timeout_s()
+        self._scan_grace_s = vision_scan_grace_s()
+
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+        self.bb_write_client = self.attach_blackboard_client(name="ScanForGeneralist")
+        self.bb_write_client.register_key(self.bb_key, access=pytree.common.Access.WRITE)
+
+        if self.read:
+            if self.bb_source is None:
+                self.read = False
+                self.object = "object"
+                self.logger.warning("no object or valid bb_souce given, using 'object'")
+            self.bb_read_client = self.attach_blackboard_client(name="ScanForGeneralist Read")
+            self.bb_read_client.register_key(self.bb_source, access=pytree.common.Access.READ)
+            self.logger.debug(f"Setup ScanForGeneralist, reading from {self.bb_source}")
+        else:
+            self.logger.debug(f"Setup ScanForGeneralist, for {self.object}")
+
+    def initialise(self) -> None:
+        super().initialise()
+        self._scan_started_at = time.monotonic()
+
+        if self.mock_mode:
+            if self.read:
+                try:
+                    self.object = self.bb_read_client.get(self.bb_source)
+                    assert isinstance(self.object, str)
+                except Exception as e:
+                    self.feedback_message = "ScanForGeneralist reading object name failed"
+                    raise e
+            print(f"🔍 MOCK: Scanning (generalist) for {self.object}")
+            from behavior_tree.mock_messages import MockMessage
+            mock_result = MockMessage()
+            mock_result.status = 0
+            mock_result.objects = []
+            self.bb_write_client.set(self.bb_key, mock_result, overwrite=True)
+            self.feedback_message = f"MOCK: ScanForGeneralist for {self.object}"
+            return
+
+        if self.read:
+            try:
+                self.object = self.bb_read_client.get(self.bb_source)
+                assert isinstance(self.object, str)
+            except Exception as e:
+                self.feedback_message = "ScanForGeneralist reading object name failed"
+                raise e
+
+        request = ObjectDetectionGeneralist.Request()
+        request.prompt = self.object
+        request.camera = "orbbec" if self.use_orbbec else "realsense"
+        request.target_frame = "map" if self.transform_to_map else ""
+        request.sort_closest = self.sort_closest
+        request.sort_highest = self.sort_highest
+        request.return_rgb_image = self.return_rgb_image
+        request.return_depth_image = self.return_depth_image
+        request.return_segments = self.return_segments
+        request.force_vlm_sam = self.force_vlm_sam
+        request.use_vlm_sam_fallback = self.use_vlm_sam_fallback
+
+
+        self.response = self.call_service_async(request)
+        self.feedback_message = f"Initialized ScanForGeneralist for {self.object}"
+
+    def update(self):
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+
+        if self.response.done():
+            result = self.response.result()
+            cam = "orbbec" if self.use_orbbec else "realsense"
+            n_obj = len(getattr(result, "objects", []) or [])
+            if result.status == 0:
+                self.bb_write_client.set(self.bb_key, result, overwrite=True)
+                classes = [getattr(o, "cls", "?") for o in (result.objects or [])]
+                print(f"[VISION/{cam}/generalist] DETECTED {n_obj} object(s) for "
+                      f"'{self.object}': {classes} (source={result.detection_source})",
+                      flush=True)
+                shown = ", ".join(str(c) for c in classes[:5])
+                summary = f"found {n_obj}"
+                if shown:
+                    summary += f": {shown}"
+                self.feedback_message = f"{summary} (source={result.detection_source})"
+                return pytree.common.Status.SUCCESS
+            print(f"[VISION/{cam}/generalist] NO DETECTION for '{self.object}' "
+                  f"(status={result.status}, objects={n_obj}, err={result.error_msg!r})",
+                  flush=True)
+            # A no-match response still carries the captured frame when the
+            # request asked for it (the service attaches rgb_image regardless
+            # of status). Store the response anyway so image-consuming
+            # fallbacks (e.g. count's BtNode_VLMQuery) can look at the same
+            # frame the detector saw; without this the fallback dies with
+            # "no usable rgb_image" and the whole count subtree fails.
+            self.bb_write_client.set(self.bb_key, result, overwrite=True)
+            self.feedback_message = (
+                f"ScanForGeneralist for {self.object} failed status={result.status}: {result.error_msg}"
+            )
+            return pytree.common.Status.FAILURE
+        started_at = getattr(self, "_scan_started_at", None)
+        timeout_s = getattr(self, "_scan_timeout_s", vision_scan_timeout_s())
+        elapsed = time.monotonic() - started_at if started_at is not None else 0.0
+        grace_s = getattr(self, "_scan_grace_s", vision_scan_grace_s())
+        if started_at is not None and elapsed >= timeout_s + grace_s:
+            cancel = getattr(self.response, "cancel", None)
+            if callable(cancel):
+                try:
+                    cancel()
+                except Exception as exc:  # best effort; failure still unblocks BT
+                    self.logger.warning("generalist scan cancellation failed: %s", exc)
+            self.feedback_message = (
+                f"generalist scan timeout after {timeout_s:.1f}s (+{grace_s:.1f}s grace) for {self.object}"
+            )
+            return pytree.common.Status.FAILURE
+        self.feedback_message = "Still scanning (generalist)..."
+        return pytree.common.Status.RUNNING
+
+
 class BtNode_TrackPerson(ServiceHandler):
     """
     Tracks a specific person across frames using person ID.
@@ -209,18 +418,21 @@ class BtNode_TrackPerson(ServiceHandler):
     throughout a behavior tree execution.
     """
 
-    def __init__(self, 
+    def __init__(self,
                  name: str,
                  bb_namespace: str,
                  bb_key:str,
-                 service_name : str = "object_detection",
+                 service_name : str = "object_detection_generalist",
                  use_orbbec = True,
                  transform_to_map = True,
                  ):
         """
         executed when creating tree diagram, therefor very minimal
         """
-        super(BtNode_TrackPerson, self).__init__(name, service_name, ObjectDetection)
+        # NOTE: tk26 generalist does not implement person-ID registration
+        # (returns person_id=0). Downstream by-id matching below is a legacy
+        # tk23 codepath — see Wave 2.1 follow-up note.
+        super(BtNode_TrackPerson, self).__init__(name, service_name, ObjectDetectionGeneralist)
         self.bb_namespace = bb_namespace
         self.bb_key = bb_key
         self.use_orbbec = use_orbbec
@@ -245,7 +457,7 @@ class BtNode_TrackPerson(ServiceHandler):
         if self.mock_mode:
             return
             
-        request = ObjectDetection.Request()
+        request = ObjectDetectionGeneralist.Request()
         request.prompt = "person"
         if self.use_orbbec:
             request.camera = "orbbec"
@@ -254,9 +466,9 @@ class BtNode_TrackPerson(ServiceHandler):
         if self.transform_to_map:
             request.target_frame = "map"
 
-        if self.person_id is None:
-            request.flags = "register_person"
-        
+        # tk23's flags="register_person" had no effect on tk26 detection nodes
+        # (no-op flag string); dropped on migration to the generalist srv.
+
         self.response = self.call_service_async(request)
 
     def initialise(self) -> None:
@@ -354,12 +566,12 @@ class BtNode_FindObj(ServiceHandler):
     robot arm before returning success.
     """
 
-    def __init__(self, 
+    def __init__(self,
                  name: str,
                  bb_source,
                  bb_namespace: str,
                  bb_key:str,
-                 service_name:str = "object_detection",
+                 service_name:str = "object_detection_yolo",
                  object:str = None,
                  target_object_cls:str = None
                  ):
@@ -457,7 +669,7 @@ class BtNode_FindObj(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 
-class BtNode_FeatureExtraction(ServiceHandler):
+class BtNode_FeatureExtraction(ActionHandler):
     """
     Extracts visual features for person recognition.
 
@@ -465,14 +677,19 @@ class BtNode_FeatureExtraction(ServiceHandler):
     vectors that can be used for person identification or matching. The features
     are stored on the blackboard for use by matching nodes.
     """
-    def __init__(self, 
+    def __init__(self,
                  name: str,
                  bb_dest_key: str,
-                 service_name : str = "feature_extraction_service",
-                 use_orbbec = True,
+                 bb_image_key: str,
+                 service_name: str = "feature_extraction_service",
+                 use_orbbec=True,
                  ):
-        super(BtNode_FeatureExtraction, self).__init__(name, service_name, FeatureExtraction)
-
+        # key=None: this node builds its own goal in send_goal(), it does not
+        # read a goal off the blackboard.
+        super(BtNode_FeatureExtraction, self).__init__(
+            name, FeatureExtraction, service_name, None,
+            wait_for_server_timeout_sec=-3,
+        )
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.key = bb_dest_key
         self.blackboard.register_key(
@@ -480,53 +697,133 @@ class BtNode_FeatureExtraction(ServiceHandler):
             access=pytree.common.Access.WRITE,
             remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_dest_key)
         )
-        if use_orbbec:
-            self.camera = "orbbec"
-        else:
-            self.camera = "realsense"
+        self.blackboard.register_key(
+            key="comparison_image",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_image_key)
+        )
+        self.camera = "orbbec" if use_orbbec else "realsense"
 
-        self.node = None
-
-    def initialise(self):
-        super().initialise()
-
-        # Handle mock mode
+    def send_goal(self):
         if self.mock_mode:
-            print(f"👁️  MOCK: Feature extraction from {self.camera}")
-            self.feedback_message = f"MOCK: Feature extraction completed"
-            # Store mock features to blackboard
-            self.blackboard.features = [0.1, 0.2, 0.3, 0.4, 0.5]  # Mock feature vector
+            from sensor_msgs.msg import Image
+            self.feedback_message = "MOCK: Feature extraction completed"
+            self.blackboard.features = "[mock features]"
+            self.blackboard.comparison_image = Image()
+
+            class MockFuture:
+                def done(self):
+                    return True
+
+            self.send_goal_future = MockFuture()
             return
-            
-        request = FeatureExtraction.Request()
-        request.camera = self.camera
-        self.response = self.call_service_async(request)
+        goal = FeatureExtraction.Goal()
+        goal.camera = self.camera
+        self.send_goal_request(goal)
+        self.feedback_message = "Sent feature extraction goal"
 
-        self.feedback_message = f"Initialized Feature Extraction"
-    
-    def update(self) -> Status:
-        # Handle mock mode
-        if self.mock_mode:
-            return self.wait_for_keypress_in_mock()
-        
-        # Check if response exists
-        if self.response is None:
-            self.feedback_message = "No response object"
+    def process_result(self):
+        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = f"Feature extraction aborted: {self.result_status_string}"
             return pytree.common.Status.FAILURE
-            
-        self.logger.debug(f"Updated FeatureExtraction")
-        if self.response.done():
-            result : FeatureExtraction.Response = self.response.result()
-            if result.status == 0:
-                self.blackboard.features = result.feature
-                self.feedback_message = f"Features: {result.feature}"
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"Feature extration failed with error code {result.status}: {result.error_msg}"
-                return pytree.common.Status.FAILURE
-        else:
-            self.feedback_message = "Still extracting feature..."
-            return pytree.common.Status.RUNNING
+        result = self.result_message.result
+        if result.status != 0:
+            self.feedback_message = (
+                f"Feature extraction failed with error code {result.status}: {result.error_msg}"
+            )
+            return pytree.common.Status.FAILURE
+        self.blackboard.features = result.feature
+        self.blackboard.comparison_image = result.comparison_image
+        img = result.comparison_image
+        self.feedback_message = f"Features: {result.feature} | image: {img.width}x{img.height}"
+        return pytree.common.Status.SUCCESS
+
+
+class BtNode_LoadPersonReference(pytree.behaviour.Behaviour):
+    """
+    Load a pre-recorded person photo + text description from disk and write
+    them to the blackboard in the same format ``BtNode_FeatureExtraction``
+    emits, so ``BtNode_CombinePerson`` and ``BtNode_FeatureMatching`` (and
+    therefore ``/feature_matching_service``) consume them transparently.
+
+    Use case: pre-register the host before the Receptionist task starts,
+    avoiding a live camera + LLM scan at task entry.
+
+    Mock mode: this node has no hardware/service dependency, so it performs
+    the same real local I/O regardless of ``mock_config.json``. The mock
+    flag is consulted only for log-prefix consistency.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        image_path: str,
+        description_path: str,
+        bb_features_key: str,
+        bb_image_key: str,
+    ):
+        super().__init__(name)
+        self.image_path = os.path.expanduser(image_path)
+        self.description_path = os.path.expanduser(description_path)
+        self.mock_mode = is_node_mocked(self.__class__.__name__)
+
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="features",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_features_key),
+        )
+        self.blackboard.register_key(
+            key="comparison_image",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_image_key),
+        )
+
+        self._cached_image = None
+        self._cached_text = None
+
+    def _load_once(self) -> Optional[str]:
+        """Return None on success, error string on failure."""
+        if self._cached_image is not None and self._cached_text is not None:
+            return None
+
+        import cv2
+        from cv_bridge import CvBridge
+        from sensor_msgs.msg import Image  # noqa: F401  (returned via cv_bridge)
+
+        if not os.path.exists(self.image_path):
+            return f"image file not found: {self.image_path}"
+        if not os.path.exists(self.description_path):
+            return f"description file not found: {self.description_path}"
+
+        bgr = cv2.imread(self.image_path, cv2.IMREAD_COLOR)
+        if bgr is None:
+            return f"cv2.imread returned None for {self.image_path} (corrupt or unsupported format)"
+
+        self._cached_image = CvBridge().cv2_to_imgmsg(bgr, encoding="bgr8")
+
+        with open(self.description_path, "r", encoding="utf-8") as f:
+            self._cached_text = f.read().strip()
+
+        return None
+
+    def update(self) -> Status:
+        err = self._load_once()
+        if err is not None:
+            self.feedback_message = f"LoadPersonReference: {err}"
+            return pytree.common.Status.FAILURE
+
+        self.blackboard.features = self._cached_text
+        self.blackboard.comparison_image = self._cached_image
+
+        prefix = "MOCK" if self.mock_mode else "LOAD"
+        snippet = self._cached_text[:60] + ("…" if len(self._cached_text) > 60 else "")
+        self.feedback_message = (
+            f"{prefix}: {self._cached_image.width}x{self._cached_image.height} | "
+            f"desc: '{snippet}'"
+        )
+        return pytree.common.Status.SUCCESS
+
 
 class BtNode_SeatRecommend(ServiceHandler):
     """
@@ -614,6 +911,111 @@ class BtNode_SeatRecommend(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 
+class BtNode_SeatRecommendBbox(ServiceHandler):
+    """
+    Seat recommendation that also returns the bbox and 3D centroid of the seat.
+
+    Wraps `seat_recommend_bbox_service` (kimi_api/seat_recommend_bbox.py).
+    Writes three blackboard keys on success:
+      - recommendation : str   (prefixed with "Dear guest, ")
+      - bbox           : tinker_vision_msgs_26/BoundingBox
+      - point          : geometry_msgs/PointStamped (in `target_frame`)
+    """
+    def __init__(self,
+                 name: str,
+                 bb_recommendation_key: str,
+                 bb_bbox_key: str,
+                 bb_point_key: str,
+                 bb_source_key: str,
+                 service_name: str = "seat_recommend_bbox_service",
+                 use_orbbec: bool = True,
+                 target_frame: str = "base_link",
+                 known_seats: list[str] | None = None,
+                 ):
+        super(BtNode_SeatRecommendBbox, self).__init__(name, service_name, SeatRecommendBbox)
+
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.blackboard.register_key(
+            key="recommendation",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_recommendation_key)
+        )
+        self.blackboard.register_key(
+            key="bbox",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_bbox_key)
+        )
+        self.blackboard.register_key(
+            key="point",
+            access=pytree.common.Access.WRITE,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_point_key)
+        )
+        self.blackboard.register_key(
+            key="persons",
+            access=pytree.common.Access.READ,
+            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_source_key)
+        )
+
+        self.camera = "orbbec" if use_orbbec else "realsense"
+        self.target_frame = target_frame
+        self.known_seats = list(known_seats) if known_seats else []
+
+    def initialise(self):
+        super().initialise()
+
+        if self.mock_mode:
+            print(f"💺 MOCK: Seat recommendation (bbox) from {self.camera}")
+            self.blackboard.recommendation = "Dear guest, I recommend the seat on the left side of the table."
+            self.blackboard.bbox = BoundingBox(xmin=300, ymin=200, xmax=380, ymax=280)
+            mock_point = PointStamped()
+            mock_point.header.frame_id = self.target_frame
+            mock_point.point.x = 1.0
+            mock_point.point.y = 0.5
+            mock_point.point.z = 0.6
+            self.blackboard.point = mock_point
+            self.feedback_message = "MOCK: Seat-bbox recommendation completed"
+            return
+
+        request = SeatRecommendBbox.Request()
+        request.camera = self.camera
+        request.names = []
+        request.features = []
+        request.target_frame = self.target_frame
+        request.known_seats = list(self.known_seats)
+        if self.blackboard.persons is not None:
+            # minus one because the newest registered person is not yet seated
+            for i in range(len(self.blackboard.persons) - 1):
+                request.names.append(self.blackboard.persons[i].name)
+                request.features.append(self.blackboard.persons[i].features)
+        self.response = self.call_service_async(request)
+        self.feedback_message = "Initialized seat-bbox recommendation"
+
+    def update(self) -> Status:
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+
+        self.logger.debug("Updated SeatRecommendBbox")
+
+        if self.response is None:
+            self.feedback_message = "No response object"
+            return pytree.common.Status.FAILURE
+
+        if self.response.done():
+            result: SeatRecommendBbox.Response = self.response.result()
+            if result.status == 0:
+                self.blackboard.recommendation = "Dear guest, " + result.recommendation
+                self.blackboard.bbox = result.bbox
+                self.blackboard.point = result.centroid
+                self.feedback_message = f"Recommendation: {result.recommendation}"
+                return pytree.common.Status.SUCCESS
+            else:
+                self.feedback_message = f"Seat-bbox recommendation failed with error code {result.status}: {result.error_msg}"
+                return pytree.common.Status.FAILURE
+        else:
+            self.feedback_message = "Still getting seat-bbox recommendation..."
+            return pytree.common.Status.RUNNING
+
+
 class BtNode_FeatureMatching(ServiceHandler):
     """
     Matches extracted features to known persons.
@@ -628,9 +1030,28 @@ class BtNode_FeatureMatching(ServiceHandler):
                  bb_persons_key: str,
                  service_name: str = "feature_matching_service",
                  use_orbbec: bool = True,
-                 max_distance: float = 2.0,
-                 target_frame: str = "base_link"
+                 max_distance: float = 6.0,
+                 target_frame: str = "base_link",
+                 trim_last_person: bool = True,
+                 trim_first_person: bool = False,
                  ):
+        """
+        Args:
+            ...
+            trim_last_person: when True (default, matches Receptionist's
+                flow where the newest registered guest has not sat down yet),
+                drop the last feature vector before sending. Set to False
+                in HRI-style intros where **all** registered persons are
+                already seated and their centroids are needed.
+            trim_first_person: when True, drop the FIRST registered person
+                (HRI's host at KEY_PERSONS[0] — features unknown, never
+                recognized) from the request, and re-pad the returned
+                centroid list with None at index 0 so it stays
+                index-aligned with the persons list. Downstream consumers
+                (TurnTo/PointTo target_id=1/2) need no re-indexing; nothing
+                reads index 0, and a future reader fails loudly on None
+                rather than aiming at a bogus point.
+        """
         super().__init__(name, service_name, FeatureMatching)
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.key = bb_dest_key
@@ -651,34 +1072,83 @@ class BtNode_FeatureMatching(ServiceHandler):
             self.camera = "realsense"
         self.max_distance = max_distance
         self.target_frame = target_frame
+        self.trim_last_person = trim_last_person
+        self.trim_first_person = trim_first_person
 
         self.node = None
-    
+
+    @staticmethod
+    def _apply_trims(features, images, trim_first, trim_last):
+        """Trim request lists; first = HRI host slot, last = Receptionist's
+        not-yet-seated newest guest. Independent and composable."""
+        if trim_last and features:
+            features = features[:-1]
+            images = images[:-1]
+        if trim_first and features:
+            features = features[1:]
+            images = images[1:]
+        return list(features), list(images)
+
+    @staticmethod
+    def _pad_centroids(centroids, trim_first):
+        """Restore persons↔centroids index alignment after a first-trim.
+        None (not a zeroed point) so an unexpected reader fails loudly."""
+        out = list(centroids)
+        return ([None] + out) if trim_first else out
+
     def initialise(self):
         super().initialise()
 
         # Handle mock mode
         if self.mock_mode:
             print(f"🔍 MOCK: Feature matching from {self.camera}")
-            # Create mock centroid data
             from geometry_msgs.msg import PointStamped
-            mock_centroid = PointStamped()
-            mock_centroid.point.x = 1.5
-            mock_centroid.point.y = 0.0
-            mock_centroid.point.z = 1.3
-            mock_centroid.header.frame_id = self.target_frame
-            self.blackboard.centroids = [mock_centroid]
-            self.feedback_message = f"MOCK: Feature matching completed"
+            persons = self.blackboard.persons or []
+            n = len(persons)
+            if self.trim_last_person and n > 0:
+                n -= 1
+            if self.trim_first_person and n > 0:
+                n -= 1
+            n = max(n, 1)  # keep a single centroid even if persons is empty
+            centroids = []
+            for i in range(n):
+                mc = PointStamped()
+                mc.point.x = 1.5
+                mc.point.y = -0.5 + i * 1.0   # spread mock guests laterally
+                mc.point.z = 1.3
+                mc.header.frame_id = self.target_frame
+                centroids.append(mc)
+            self.blackboard.centroids = self._pad_centroids(
+                centroids, self.trim_first_person
+            )
+            self.feedback_message = f"MOCK: Feature matching → {n} centroid(s)"
             return
-            
+
+        from sensor_msgs.msg import Image
         request = FeatureMatching.Request()
         request.camera = self.camera
-        request.features = [person.features for person in self.blackboard.persons]
-        request.features = request.features[:-1] # remove last person as that is the new guest who is not seated yet
+        persons = self.blackboard.persons
+        request.features = [p.features for p in persons]
+        request.comparison_images = [
+            p.comparison_image if p.comparison_image is not None else Image()
+            for p in persons
+        ]
+        # trim_last: Receptionist flow — the newest registered guest has not
+        # sat down yet and won't match anything at the sofa scan.
+        # trim_first: HRI flow — the host at index 0 has no known features
+        # and is never recognized; centroids are re-padded in update().
+        request.features, request.comparison_images = self._apply_trims(
+            request.features, request.comparison_images,
+            self.trim_first_person, self.trim_last_person,
+        )
         request.max_distance = self.max_distance
         request.target_frame = self.target_frame
         self.response = self.call_service_async(request)
-        self.feedback_message = f"Initializec feature matching"
+        self.feedback_message = (
+            f"Initialized feature matching (|features|={len(request.features)}, "
+            f"|images|={len(request.comparison_images)}, "
+            f"trim_last={self.trim_last_person}, trim_first={self.trim_first_person})"
+        )
 
     def update(self) -> Status:
         # Handle mock mode
@@ -690,12 +1160,15 @@ class BtNode_FeatureMatching(ServiceHandler):
         # Check if response exists
         if self.response is None:
             self.feedback_message = "No response object"
+            self.blackboard.centroids = []  # Clear centroids on failure
             return pytree.common.Status.FAILURE
             
         if self.response.done():
             result : FeatureMatching.Response = self.response.result()
             if result.status == 0:
-                self.blackboard.centroids = result.centroids
+                self.blackboard.centroids = self._pad_centroids(
+                    result.centroids, self.trim_first_person
+                )
                 # for p in self.blackboard.centroids:
                 #     # p.point.z = 1.30
                 #     fac = p.point.x / 0.6
@@ -706,6 +1179,7 @@ class BtNode_FeatureMatching(ServiceHandler):
                 return pytree.common.Status.SUCCESS
             else:
                 self.feedback_message = f"Feature Matching failed with error code {result.status}: {result.error_msg}"
+                self.blackboard.centroids = []  # Clear centroids on failure
                 return pytree.common.Status.FAILURE
         else:
             self.feedback_message = "Still matching features..."
@@ -783,6 +1257,106 @@ class BtNode_GetPointCloud(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 
+class BtNode_FindPlacingLocation(ServiceHandler):
+    """
+    Calls /placing_location (VLM-only) to find an empty spot on a desktop.
+
+    Reads either a literal item description or a string from a blackboard key
+    and writes the best-ranked PointStamped to ``bb_key_point``. If the VLM
+    finds nothing usable, the node fails so a parent Retry/Selector can react.
+    """
+
+    def __init__(self,
+                 name: str,
+                 bb_key_point: str,
+                 bb_source_item: Optional[str] = None,
+                 item_description: Optional[str] = None,
+                 service_name: str = "placing_location",
+                 use_orbbec: bool = True,
+                 target_frame: str = "map",
+                 max_candidates: int = 3,
+                 ):
+        super().__init__(name, service_name, PlacingLocation)
+        self.bb_key_point = bb_key_point
+        self.bb_source_item = bb_source_item
+        self.item_description = item_description
+        self.target_frame = target_frame
+        self.max_candidates = int(max_candidates)
+        self.camera = "orbbec" if use_orbbec else "realsense"
+        if bb_source_item is None and not item_description:
+            raise ValueError(
+                "BtNode_FindPlacingLocation requires bb_source_item or item_description"
+            )
+
+    def setup(self, **kwargs):
+        ServiceHandler.setup(self, **kwargs)
+        self.bb_write = self.attach_blackboard_client(name="FindPlacingLocation Write")
+        self.bb_write.register_key(self.bb_key_point, access=pytree.common.Access.WRITE)
+        if self.bb_source_item is not None:
+            self.bb_read = self.attach_blackboard_client(name="FindPlacingLocation Read")
+            self.bb_read.register_key(self.bb_source_item, access=pytree.common.Access.READ)
+
+    def initialise(self) -> None:
+        super().initialise()
+
+        item = self.item_description
+        if self.bb_source_item is not None:
+            try:
+                item = self.bb_read.get(self.bb_source_item)
+            except Exception:
+                item = self.item_description
+        if not isinstance(item, str) or not item.strip():
+            self.feedback_message = "FindPlacingLocation: empty item_description"
+            self.response = None
+            self._invalid = True
+            return
+        self._invalid = False
+
+        if self.mock_mode:
+            mock_point = PointStamped()
+            mock_point.header = Header(frame_id=self.target_frame)
+            mock_point.point.x = 0.5
+            mock_point.point.y = 0.0
+            mock_point.point.z = 0.7
+            self.bb_write.set(self.bb_key_point, mock_point, overwrite=True)
+            self.feedback_message = f"MOCK: placing point for '{item}'"
+            self.response = None
+            return
+
+        request = PlacingLocation.Request()
+        request.camera = self.camera
+        request.item_description = item
+        request.target_frame = self.target_frame
+        request.max_candidates = self.max_candidates
+        request.return_rgb_image = False
+        request.return_debug_overlay = False
+        self.response = self.call_service_async(request)
+        self.feedback_message = f"Initialized FindPlacingLocation for '{item}'"
+
+    def update(self):
+        if getattr(self, "_invalid", False):
+            return pytree.common.Status.FAILURE
+        if self.mock_mode:
+            return self.wait_for_keypress_in_mock()
+        if self.response is None:
+            return pytree.common.Status.FAILURE
+        if not self.response.done():
+            self.feedback_message = "Waiting for placing-location service..."
+            return pytree.common.Status.RUNNING
+        result = self.response.result()
+        if result.status != 0 or not result.candidate_points:
+            self.feedback_message = (
+                f"PlacingLocation failed (status={result.status}): "
+                f"{getattr(result, 'error_msg', '')}"
+            )
+            return pytree.common.Status.FAILURE
+        self.bb_write.set(self.bb_key_point, result.candidate_points[0], overwrite=True)
+        self.feedback_message = (
+            f"Placing point set ({len(result.candidate_points)} candidate(s))"
+        )
+        return pytree.common.Status.SUCCESS
+
+
 class BtNode_DoorDetection(ServiceHandler):
     """
     Detects if a door is open or closed.
@@ -853,97 +1427,194 @@ class BtNode_DoorDetection(ServiceHandler):
 
 class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
     """
-    Controls the pan-tilt unit for camera orientation.
+    Publish an absolute pan-tilt target to the tk26 servo controller.
 
-    This node publishes pan-tilt control commands to orient the camera.
-    Unlike other vision nodes, this inherits directly from Behaviour since
-    it uses topic publishing rather than service calls.
+    Publishes `tinker_vision_msgs_26/PanTiltCommand` (mode=ABSOLUTE) to the
+    runtime command topic (`/pan_tilt_controller/cmd`). The legacy
+    `/pan_tilt_ctrl` topic + `PanTiltCtrl` message are no-ops against the
+    current `pan_tilt_controller` and have been retired.
 
-    Attributes:
-        x: Pan angle in degrees.
-        y: Tilt angle in degrees.
-        speed: Movement speed.
+    `x`, `y` are pan/tilt angles in degrees. `speed` is the servo
+    speed_raw value (0 lets the controller pick its default).
+
+    `update()` holds RUNNING until `/pan_tilt_controller/state` reports
+    `feedback_ok` and `|state - cmd| < SETTLE_EPS_DEG` for
+    `SETTLE_SAMPLES_REQUIRED` consecutive samples, or until
+    `SETTLE_TIMEOUT_SEC` elapses. Best-effort callers proceed on timeout;
+    callers that require the view can set `require_settled=True`.
     """
-    def __init__(self, name: str, x: float = 0.0, y: float = 0.0, speed: float = 0.0):
+
+    PAN_TILT_COMMAND_TOPIC  = "/pan_tilt_controller/cmd"
+    PAN_TILT_STATE_TOPIC    = "/pan_tilt_controller/state"
+    SETTLE_EPS_DEG          = 1.5
+    SETTLE_SAMPLES_REQUIRED = 1
+    SETTLE_TIMEOUT_SEC      = 2.0
+    RETRY_INTERVAL_SEC      = 0.25
+
+    def __init__(self, 
+                 name: str, 
+                 x: float = 0.0, 
+                 y: float = 0.0, 
+                 speed: float = 0.0,
+                 x_key: Optional[str] = None,
+                 y_key: Optional[str] = None,
+                 speed_key: Optional[str] = None,
+                 require_settled: bool = False,
+                 ):
+        """
+        x_key and y_key takes in RADIANS. x and y are in DEGREES.
+        """
         super().__init__(name)
         self.x = x
         self.y = y
         self.speed = speed
-        self.client = None
+        self.publisher = None
+        self.state_sub = None
+        self._latest_state = None
+        self._cmd_pan_deg = x
+        self._cmd_tilt_deg = y
+        self._settle_count = 0
+        self._settle_deadline = None
+        self._skip_settle = False
+        self._last_publish_time = None
+        self.require_settled = bool(require_settled)
+        self.x_key = x_key
+        self.y_key = y_key
+        self.speed_key = speed_key
         self.mock_mode = is_node_mocked(self.__class__.__name__)
-    
+
     def setup(self, **kwargs) -> None:
-        # node should be passed down the tree from the root node
         try:
             self.node = kwargs['node']
         except KeyError as e:
             error_message = "didn't find 'node' in setup's kwargs [{}][{}]".format(self.name, self.__class__.__name__)
-            raise KeyError(error_message) from e  # 'direct cause' traceability
-        
-        # Skip creating publisher in mock mode
-        if self.mock_mode:
-            print(f"MOCK MODE: Skipping pan/tilt publisher creation")
-            return
-        
-        # create publisher to a topic
-        self.publisher = self.node.create_publisher(PanTiltCtrl, "/pan_tilt_ctrl", 10)
+            raise KeyError(error_message) from e
 
+        if self.mock_mode:
+            print("MOCK MODE: Skipping pan/tilt publisher creation")
+            return
+    
+        self.bb_read_client = self.attach_blackboard_client(name=self.name + " Blackboard Read")
+        if self.x_key:
+            self.bb_read_client.register_key(
+                key="x",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.x_key) if self.x_key else None
+            )
+        if self.y_key:
+            self.bb_read_client.register_key(
+                key="y",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.y_key) if self.y_key else None
+            )
+        if self.speed_key:
+            self.bb_read_client.register_key(
+                key="speed",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.speed_key) if self.speed_key else None
+            )
+
+        self.publisher = self.node.create_publisher(
+            PanTiltCommand, self.PAN_TILT_COMMAND_TOPIC, 1
+        )
+        self.state_sub = self.node.create_subscription(
+            PanTiltState, self.PAN_TILT_STATE_TOPIC, self._state_cb, 10
+        )
+
+    def _state_cb(self, msg: "PanTiltState") -> None:
+        self._latest_state = msg
+
+    def _build_command_msg(self, pan_deg: float, tilt_deg: float) -> "PanTiltCommand":
+        msg = PanTiltCommand()
+        msg.header = Header()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.mode = PanTiltCommand.ABSOLUTE
+        msg.pan_rad = float(pan_deg) * math.pi / 180.0
+        msg.tilt_rad = float(tilt_deg) * math.pi / 180.0
+        msg.speed_raw = int(self.speed)
+        msg.accel_raw = 0
+        return msg
+
+    def _arm_settle(self, pan_deg: float, tilt_deg: float) -> None:
+        """Record the commanded target and reset the settle predicate."""
+        self._cmd_pan_deg = pan_deg
+        self._cmd_tilt_deg = tilt_deg
+        self._settle_count = 0
+        self._settle_deadline = time.monotonic() + self.SETTLE_TIMEOUT_SEC
+        self._skip_settle = False
+
+    def _publish_target(self) -> None:
+        self.publisher.publish(self._build_command_msg(self.x, self.y))
+        self._last_publish_time = time.monotonic()
 
     def initialise(self) -> None:
-        # Initialize counter regardless of mode
-        self.cnt = 0
-        
-        # Skip ROS operations in mock mode
+        if self.x_key:
+            self.x = self.bb_read_client.get("x") / math.pi * 180.0
+        if self.y_key:
+            self.y = self.bb_read_client.get("y") / math.pi * 180.0
+        if self.speed_key:
+            self.speed = self.bb_read_client.get("speed")
+
         if self.mock_mode:
+            self._skip_settle = True
             return
-            
-        # publish message
-        msg = PanTiltCtrl()
-        msg.x = self.x
-        msg.y = self.y
-        msg.speed = self.speed * 1.0  # convert to float, as the message expects a float
-
-        self.publisher.publish(msg)
-        self.logger.info(f"Publishing PanTiltCtrl with x: {self.x}, y: {self.y}, speed: {self.speed}")
-
-        # call wait_seconds to start the timer in a separate thread
-        # self.timer_future = asyncio.ensure_future(self.wait_seconds(2.0))
+        
+        self._arm_settle(self.x, self.y)
+        self._publish_target()
+        self.logger.info(
+            f"Publishing PanTiltCommand ABSOLUTE pan={self.x:+.2f}° "
+            f"tilt={self.y:+.2f}° speed_raw={int(self.speed)}"
+        )
 
     def update(self) -> Status:
-        # In mock mode, return success immediately
-        if self.mock_mode:
-            self.logger.info("MOCK: PanTiltCtrl completed immediately")
+        if self.mock_mode or self._skip_settle:
             return pytree.common.Status.SUCCESS
-            
-        # TODO: count 8 loops then return
-        # if self.timer_future.done():
-        if self.cnt > 3:
-            # if the timer is done, cancel the future and return success
-            # self.timer_future.cancel()
-            self.cnt = 0
-            self.logger.info("2 seconds passed, PanTiltCtrl finished")
-            return pytree.common.Status.SUCCESS
+
+        state = self._latest_state
+        now = time.monotonic()
+        feedback_ok = state is not None and getattr(state, "feedback_ok", False)
+        pan_err = tilt_err = None
+        if feedback_ok:
+            pan_err = abs(math.degrees(state.pan_rad) - self._cmd_pan_deg)
+            tilt_err = abs(math.degrees(state.tilt_rad) - self._cmd_tilt_deg)
+        if feedback_ok and pan_err < self.SETTLE_EPS_DEG and tilt_err < self.SETTLE_EPS_DEG:
+            self._settle_count += 1
+            if self._settle_count >= self.SETTLE_SAMPLES_REQUIRED:
+                self.feedback_message = "Pan/tilt target reached"
+                return pytree.common.Status.SUCCESS
         else:
-            self.cnt += 1
-            # if the timer is not done, return running
-            self.logger.info("PanTiltCtrl still running")
-            return pytree.common.Status.RUNNING
-    
+            self._settle_count = 0
+
+        if now >= self._settle_deadline:
+            if feedback_ok:
+                detail = f"Pan/tilt did not settle (pan_err={pan_err:.2f}°, tilt_err={tilt_err:.2f}°)"
+            else:
+                detail = "Pan/tilt feedback unavailable"
+            self.feedback_message = detail
+            if self.require_settled:
+                return pytree.common.Status.FAILURE
+            print(f"{detail}; proceeding")
+            return pytree.common.Status.SUCCESS
+
+        if now - self._last_publish_time >= self.RETRY_INTERVAL_SEC:
+            self._publish_target()
+        return pytree.common.Status.RUNNING
+
     async def wait_seconds(self, seconds):
         await asyncio.sleep(seconds)
         return True
-    
+
 
 class BtNode_TurnTo(BtNode_TurnPanTilt):
     """
-    Turn to a specific point relevant to 'base_link'
+    Turn to a specific point relevant to 'base_link'.
     """
     def __init__(self, name: str,
                  bb_key_persons: str,
                  bb_key_points: str,
                  target_id: int = 0,
                  ):
-        super().__init__(name, x=0, y=0, speed = 0.0)
+        super().__init__(name, x=0, y=0, speed=0.0)
         self.bb_key_persons = bb_key_persons
         self.bb_key_points = bb_key_points
         self.target_id = target_id
@@ -958,25 +1629,57 @@ class BtNode_TurnTo(BtNode_TurnPanTilt):
             access=pytree.common.Access.READ,
             remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_points)
         )
-    
+
     def initialise(self) -> None:
-        if len(self.blackboard.persons) <= self.target_id:
-            self.feedback_message = f"Failed to initialize point_to"
+        try:
+            persons = self.blackboard.persons
+        except KeyError:
+            persons = None
+        try:
+            points = self.blackboard.points
+        except KeyError:
+            points = None
+
+        if (persons is None or len(persons) <= self.target_id
+                or points is None or len(points) <= self.target_id):
+            # Best-effort gaze: feature matching produced no PointStamped for
+            # this target. Skip publish; fast-success so the wrapping
+            # FailureIsSuccess sees a clean SUCCESS instead of a Python
+            # exception aborting the parent Sequence.
+            self.feedback_message = (
+                f"TurnTo skipped: persons={'None' if persons is None else len(persons)}, "
+                f"points={'None' if points is None else len(points)}, target_id={self.target_id}"
+            )
+            self.logger.info(self.feedback_message)
             self.response = None
-        else:
-            point = self.blackboard.points[self.target_id]
-            self.logger.info(f"Turning to point {point.point} with id {self.target_id} from blackboard {self.bb_key_points}")
-            x = math.atan2(-point.point.y, max(point.point.x-0.25, 0.01)) 
-            # x = math.atan2(self.blackboard.point.point.y, self.blackboard.point.point.x)
-            y = 20.0
-            msg = PanTiltCtrl()
-            msg.x = x / math.pi * 180.0  # convert to degrees
-            msg.y = y
-            msg.speed = self.speed
-            self.publisher.publish(msg)
-            self.logger.info(f"Publishing PanTiltCtrl with x: {x}, y: {y}, speed: {self.speed}")
-            self.feedback_message = f"Initialized TurnTo for point {point.point} with id {self.target_id} and pan tilt angle: x: {msg.x}, y: {msg.y}, speed: {self.speed}"
-        self.cnt = 0
+            self._skip_settle = True
+            return
+
+        if self.mock_mode:
+            self._skip_settle = True
+            self.feedback_message = (
+                f"MOCK TurnTo for point {points[self.target_id].point} target_id={self.target_id}"
+            )
+            return
+
+        point = points[self.target_id]
+        self.logger.info(
+            f"Turning to point {point.point} id={self.target_id} from blackboard {self.bb_key_points}"
+        )
+        pan_rad = math.atan2(-point.point.y, max(point.point.x - 0.25, 0.01))
+        pan_deg = pan_rad / math.pi * 180.0
+        tilt_deg = 20.0
+        msg = self._build_command_msg(pan_deg, tilt_deg)
+        self.publisher.publish(msg)
+        self.logger.info(
+            f"Publishing PanTiltCommand ABSOLUTE pan={pan_deg:+.2f}° "
+            f"tilt={tilt_deg:+.2f}° speed_raw={int(self.speed)}"
+        )
+        self.feedback_message = (
+            f"Initialized TurnTo for point {point.point} id={self.target_id} "
+            f"pan={pan_deg:+.2f}° tilt={tilt_deg:+.2f}°"
+        )
+        self._arm_settle(pan_deg, tilt_deg)
 
 
 class BtNode_ScanForWavingPerson(ServiceHandler):
@@ -990,6 +1693,18 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
       - `bb_key_pictures` (opt) ← list[str] filesystem paths of per-person RGB crops
 
     Succeeds when at least one waving person is detected within `threshold_meters`.
+
+    SUPERSEDED: `detect_waving_persons` is served by tk26_vision only as an
+    ActionServer now (no `.srv` server survives). This class is srv-era and
+    still built on `ServiceHandler`/`DetectWaving.Request`; since
+    `behavior_tree.messages.DetectWaving` now resolves to the `.action` type
+    (see `messages.py`), constructing this node will fail at
+    `DetectWaving.Request()`. Use `BtNode_ScanForWavingPersonNew` in
+    `behavior_tree.GPSR.custom_nodes` instead, which is the ActionHandler
+    conversion of this same call. Left in place rather than deleted/converted
+    — deleting another team's code is outside this task's scope, but failing
+    loudly at construction beats silently calling a service that no longer
+    exists.
     """
 
     def __init__(self,
@@ -1132,25 +1847,147 @@ class BtNode_ScanForWavingPerson(ServiceHandler):
 
 class BtNode_MaintainEyeContact(ActionHandler):
     """
-    Wrap the HRI `follow_head_action` (tinker_vision_msgs.action.FollowHeadAction) to maintain
-    eye-contact with the closest face. Server returns success after a single gaze lock.
+    Wrap the HRI `follow_head_action` (tinker_vision_msgs_26.action.FollowHeadAction) to
+    maintain eye-contact with a designated guest. Server returns success after a single
+    gaze lock.
 
-    Feedback schema is `{pan, tilt}` — not the BT canonical `{stage, stage_name, status, delay_limit}`.
-    We override `feedback_callback` to stamp `last_feedback_time`, force `action_status=0`, and
-    keep a generous `feedback_timeout`.
+    Three fresh-lock modes, in priority order:
+
+    * **Seeded** — pass `target_id` + `bb_key_persons` + `bb_key_points`. The
+      centroid at `KEY_PERSON_CENTROIDS[target_id]` (in base_link, populated by
+      `BtNode_FeatureMatching`) is shipped as `target_seed_xyz`. The server
+      locks onto the candidate within `seed_radius_m` of the seed.
+    * **Centermost** — pass `track_centermost=True`. The server locks onto
+      whoever is most image-centered. Use after a `BtNode_TurnPanTilt` that
+      centered the designated person but no centroid is on the blackboard.
+    * **Closest** (default, no args) — server locks onto the closest person
+      (smallest XY distance to the robot in pan-tilt-root). Original upstream
+      behavior.
+
+    Sticky logic on the server is purely spatial reassoc within
+    `reassoc_dist_m` of the previous lock — no track IDs, no appearance.
+
+    Feedback schema is `{pan, tilt, person_visible, current_pan/tilt, target_pan/tilt,
+    error_deg}` — not the BT canonical `{stage, stage_name, status, delay_limit}`.
+    We override `feedback_callback` to stamp `last_feedback_time`, force `action_status=0`,
+    and keep a generous `feedback_timeout`.
     """
     def __init__(self,
                  name: str,
+                 *,
+                 target_id: Optional[int] = None,
+                 bb_key_persons: Optional[str] = None,
+                 bb_key_points: Optional[str] = None,
+                 seed_radius_m: float = 0.5,
+                 track_centermost: bool = False,
                  action_name: str = "follow_head_action",
                  feedback_timeout_secs: float = 30.0,
                  wait_for_server_timeout_sec: float = -3.0,
+                 follow_timeout: float = 30.0,
                  ):
         super().__init__(name, FollowHeadAction, action_name, None, wait_for_server_timeout_sec)
         self._feedback_timeout_secs = feedback_timeout_secs
+        self._follow_timeout = follow_timeout
+        self.start_time = None
+        self._target_id = target_id
+        self._bb_key_persons = bb_key_persons
+        self._bb_key_points = bb_key_points
+        self._seed_radius_m = float(seed_radius_m)
+        self._track_centermost = bool(track_centermost)
+
+        # Targeted-lock requires both keys + a target_id; partial config is
+        # almost always a wiring mistake, so refuse rather than silently
+        # dropping into seedless mode.
+        if target_id is not None and (
+            bb_key_persons is None or bb_key_points is None
+        ):
+            raise ValueError(
+                "BtNode_MaintainEyeContact: target_id requires both "
+                "bb_key_persons and bb_key_points."
+            )
+        # Seed and centermost are mutually exclusive on the server (seed
+        # wins). Surfacing this at construction prevents ambiguous tree
+        # code reading like the centermost mode is active when it isn't.
+        if target_id is not None and track_centermost:
+            raise ValueError(
+                "BtNode_MaintainEyeContact: target_id and track_centermost "
+                "are mutually exclusive (seed wins on the server)."
+            )
+
+        self._blackboard_targeted = None
+        if target_id is not None:
+            self._blackboard_targeted = self.attach_blackboard_client(
+                name=f"{self.name}_targeted",
+            )
+            self._blackboard_targeted.register_key(
+                key="persons",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", bb_key_persons,
+                ),
+            )
+            self._blackboard_targeted.register_key(
+                key="points",
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name(
+                    "/", bb_key_points,
+                ),
+            )
+
+    def _resolve_seed_point(self) -> Point:
+        """Read the targeted guest's centroid from the blackboard.
+
+        Returns a `Point()` with all-zero fields on any miss (key absent,
+        index out of range, sentinel zero centroid). The action server
+        treats (0,0,0) as "no seed" and uses the head-direction fallback.
+        """
+        if self._target_id is None or self._blackboard_targeted is None:
+            return Point()
+        try:
+            persons = self._blackboard_targeted.persons
+        except KeyError:
+            persons = None
+        try:
+            points = self._blackboard_targeted.points
+        except KeyError:
+            points = None
+        if (
+            points is None
+            or len(points) <= self._target_id
+            or persons is None
+            or len(persons) <= self._target_id
+        ):
+            self.feedback_message = (
+                f"MaintainEyeContact: targeted seed unavailable "
+                f"(persons={'None' if persons is None else len(persons)}, "
+                f"points={'None' if points is None else len(points)}, "
+                f"target_id={self._target_id}); falling back to "
+                f"head-direction lock."
+            )
+            self.logger.warning(self.feedback_message)
+            return Point()
+        ps = points[self._target_id]
+        seed = Point()
+        seed.x = float(ps.point.x)
+        seed.y = float(ps.point.y)
+        seed.z = float(ps.point.z)
+        # Sentinel guard: a literal (0,0,0) centroid is indistinguishable
+        # from "no seed" on the wire; treat as missing.
+        if seed.x == 0.0 and seed.y == 0.0 and seed.z == 0.0:
+            self.logger.warning(
+                f"MaintainEyeContact: target_id={self._target_id} centroid "
+                "is exactly (0,0,0); treating as no seed.",
+            )
+        return seed
 
     def send_goal(self):
+        self._cancel_pending = False
         if self.mock_mode:
             self.feedback_message = "MOCK: eye-contact goal sent"
+            # The real path sets start_time at the end of send_goal(); set it here
+            # too so update()'s `time.time() - self.start_time` follow-timeout check
+            # doesn't hit `None` (start_time is None until a goal is sent).
+            self.start_time = time.time()
             class MockFuture:
                 def done(self):
                     return True
@@ -1158,8 +1995,35 @@ class BtNode_MaintainEyeContact(ActionHandler):
             return
         goal = FollowHeadAction.Goal()
         goal.start_following = True
+        seed = self._resolve_seed_point()
+        goal.target_seed_xyz = seed
+        seed_set = (seed.x != 0.0 or seed.y != 0.0 or seed.z != 0.0)
+        
+        if self._track_centermost:
+            goal.seed_radius_m = 0.0 
+            goal.track_centermost = True # centermost wins over seed point
+            self.feedback_message = "Eye-contact goal sent (mode=centermost)"
+        elif seed_set:
+            goal.seed_radius_m = self._seed_radius_m
+            goal.track_centermost = False
+            self.feedback_message = (
+                f"Eye-contact goal sent (mode=seed, "
+                f"xyz=({seed.x:.2f},{seed.y:.2f},{seed.z:.2f}), "
+                f"radius={self._seed_radius_m:.2f} m, "
+                f"target_id={self._target_id})"
+            )
+        else:
+            goal.seed_radius_m = 0.0
+            goal.track_centermost = False
+            self.feedback_message = "Eye-contact goal sent (mode=closest)"
         self.send_goal_request(goal)
-        self.feedback_message = "Eye-contact goal sent"
+        self.start_time = time.time()
+
+    def update(self) -> Status:
+        if time.time() - self.start_time > self._follow_timeout:
+            self.feedback_message = "Eye-contact follow timeout reached"
+            return pytree.common.Status.SUCCESS
+        return super().update()
 
     def feedback_callback(self, msg: Any):
         feedback = msg.feedback
@@ -1169,6 +2033,17 @@ class BtNode_MaintainEyeContact(ActionHandler):
         pan = getattr(feedback, "pan", None)
         tilt = getattr(feedback, "tilt", None)
         self.feedback_message = f"eye-contact: pan={pan}, tilt={tilt}"
+
+    def goal_response_callback(self, future):
+        super().goal_response_callback(future)
+        # Pre-acceptance terminate window: if the parallel cancelled this
+        # node before the server accepted the goal, the base-class cancel
+        # in terminate() was a no-op (goal_handle was still None). Now that
+        # we finally have a handle, cancel so the server doesn't keep
+        # gazing after this node is INVALID.
+        if self._cancel_pending and self.goal_handle is not None:
+            self.send_cancel_request()
+            self._cancel_pending = False
 
     def process_result(self):
         if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
@@ -1182,7 +2057,24 @@ class BtNode_MaintainEyeContact(ActionHandler):
         return pytree.common.Status.FAILURE
 
     def terminate(self, new_status: pytree.common.Status):
-        if not self.mock_mode and self.goal_handle is not None:
+        # FollowHeadAction is a continuous action: a terminal BT status does
+        # not necessarily mean the server goal has ended. Cancel whenever this
+        # behaviour exits RUNNING with a live goal, including the local
+        # follow_timeout path that returns SUCCESS.
+        should_cancel = (
+            not self.mock_mode
+            and self.status == pytree.common.Status.RUNNING
+            and new_status != pytree.common.Status.RUNNING
+            and self.result_status is None
+            and self.send_goal_future is not None
+        )
+        if should_cancel and self.goal_handle is None:
+            # Goal acceptance is still in flight; cancel once the handle
+            # arrives in goal_response_callback().
+            self._cancel_pending = True
+        elif should_cancel and new_status != pytree.common.Status.INVALID:
+            # ActionHandler only cancels RUNNING→INVALID. Cover SUCCESS /
+            # FAILURE exits caused locally by this wrapper.
             self.send_cancel_request()
         super().terminate(new_status)
 
@@ -1226,4 +2118,3 @@ class BtNode_ShowImage(pytree.behaviour.Behaviour):
             self.feedback_message = f"{prefix}: image path {path} not on disk (displaying anyway)"
             print(f"🖼️  {prefix} SHOW IMAGE (missing file): {path}")
         return pytree.common.Status.SUCCESS
-

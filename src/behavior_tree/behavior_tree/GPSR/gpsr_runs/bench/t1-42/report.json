@@ -1,0 +1,754 @@
+{
+  "corpus": "src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl",
+  "meta": {
+    "tier": 1,
+    "group_size": 3,
+    "timeout_s": 300.0,
+    "live_llm": true,
+    "only_class": null,
+    "seed": 42,
+    "timestamp": "2026-08-23T16:19:20.193623+00:00",
+    "commit": "f1fac8a15992521a75a6812b9a3c82a4aeec7446",
+    "corpus": "src/behavior_tree/behavior_tree/GPSR/gpsr_runs/bench/corpus-42.jsonl"
+  },
+  "totals": {
+    "1": {
+      "PASS": 58,
+      "FAIL": 6,
+      "TIMEOUT": 5,
+      "ERROR": 4
+    }
+  },
+  "results": [
+    {
+      "entry_id": "c000-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 805.9696862697601,
+      "plan": []
+    },
+    {
+      "entry_id": "c001-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 805.9697000980377,
+      "plan": []
+    },
+    {
+      "entry_id": "c002-bringMeObjFromPlcmt",
+      "template": "bringMeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "FAIL",
+      "detail": "postcondition unmet: person_found(user) (UNKNOWN)",
+      "seconds": 805.9697041511536,
+      "plan": []
+    },
+    {
+      "entry_id": "c003-countClothPrsInRoom",
+      "template": "countClothPrsInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "FAIL",
+      "detail": "precondition unmet: at_robot(laundry_room) (INVALID)",
+      "seconds": 901.5299501419067,
+      "plan": []
+    },
+    {
+      "entry_id": "c004-countClothPrsInRoom",
+      "template": "countClothPrsInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "slot 1 timed out after 300s",
+      "seconds": 901.5299842357635,
+      "plan": []
+    },
+    {
+      "entry_id": "c005-countClothPrsInRoom",
+      "template": "countClothPrsInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "ERROR",
+      "detail": "not reached: slot 1 timed out",
+      "seconds": 901.5300047397614,
+      "plan": []
+    },
+    {
+      "entry_id": "c006-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 901.1737418174744,
+      "plan": []
+    },
+    {
+      "entry_id": "c007-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "FAIL",
+      "detail": "postcondition unmet: answered(how many drinks there are on the kitchen_table) (UNKNOWN)",
+      "seconds": 901.1737742424011,
+      "plan": []
+    },
+    {
+      "entry_id": "c008-countObjOnPlcmt",
+      "template": "countObjOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "slot 2 timed out after 300s",
+      "seconds": 901.1737821102142,
+      "plan": []
+    },
+    {
+      "entry_id": "c009-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "FAIL",
+      "detail": "precondition unmet: at_robot(bedroom) (INVALID)",
+      "seconds": 901.6140706539154,
+      "plan": []
+    },
+    {
+      "entry_id": "c010-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "slot 1 timed out after 300s",
+      "seconds": 901.6140820980072,
+      "plan": []
+    },
+    {
+      "entry_id": "c011-countPrsInRoom",
+      "template": "countPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "ERROR",
+      "detail": "not reached: slot 1 timed out",
+      "seconds": 901.6140949726105,
+      "plan": []
+    },
+    {
+      "entry_id": "c012-findObjInRoom-takeObj-putObjInTrash",
+      "template": "findObjInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "FAIL",
+      "detail": "postcondition unmet: object_seen(kitchen item) (UNKNOWN)",
+      "seconds": 901.1256017684937,
+      "plan": []
+    },
+    {
+      "entry_id": "c013-findObjInRoom-takeObj-deliverObjToMe",
+      "template": "findObjInRoom",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "slot 1 timed out after 300s",
+      "seconds": 901.1256477832794,
+      "plan": []
+    },
+    {
+      "entry_id": "c014-findObjInRoom-takeObj-deliverObjToPrsInRoom",
+      "template": "findObjInRoom",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "ERROR",
+      "detail": "not reached: slot 1 timed out",
+      "seconds": 901.1256642341614,
+      "plan": []
+    },
+    {
+      "entry_id": "c015-findPrsInRoom-followPrsToRoom",
+      "template": "findPrsInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "FAIL",
+      "detail": "postcondition unmet: person_found(sitting person) (UNKNOWN)",
+      "seconds": 901.1062476634979,
+      "plan": []
+    },
+    {
+      "entry_id": "c016-findPrsInRoom-followPrsToRoom",
+      "template": "findPrsInRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "TIMEOUT",
+      "detail": "slot 1 timed out after 300s",
+      "seconds": 901.1062605381012,
+      "plan": []
+    },
+    {
+      "entry_id": "c017-findPrsInRoom-talkInfo",
+      "template": "findPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "ERROR",
+      "detail": "not reached: slot 1 timed out",
+      "seconds": 901.1062836647034,
+      "plan": []
+    },
+    {
+      "entry_id": "c018-followNameFromBeacToRoom",
+      "template": "followNameFromBeacToRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 480.40851974487305,
+      "plan": []
+    },
+    {
+      "entry_id": "c019-followNameFromBeacToRoom",
+      "template": "followNameFromBeacToRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 480.40853118896484,
+      "plan": []
+    },
+    {
+      "entry_id": "c020-followNameFromBeacToRoom",
+      "template": "followNameFromBeacToRoom",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 480.4085340499878,
+      "plan": []
+    },
+    {
+      "entry_id": "c021-followPrsAtLoc",
+      "template": "followPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.061893939971924,
+      "plan": []
+    },
+    {
+      "entry_id": "c022-followPrsAtLoc",
+      "template": "followPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.061917781829834,
+      "plan": []
+    },
+    {
+      "entry_id": "c023-followPrsAtLoc",
+      "template": "followPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.0619261264801,
+      "plan": []
+    },
+    {
+      "entry_id": "c024-goToLoc-findPrs-guidePrsToBeacon",
+      "template": "goToLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.054861545562744,
+      "plan": []
+    },
+    {
+      "entry_id": "c025-goToLoc-meetName-guidePrsToBeacon",
+      "template": "goToLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.05487585067749,
+      "plan": []
+    },
+    {
+      "entry_id": "c026-goToLoc-findPrs-talkInfo",
+      "template": "goToLoc",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.05488085746765,
+      "plan": []
+    },
+    {
+      "entry_id": "c027-greetClothDscInRm-guidePrsToBeacon",
+      "template": "greetClothDscInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.031447887420654,
+      "plan": []
+    },
+    {
+      "entry_id": "c028-greetClothDscInRm-talkInfo",
+      "template": "greetClothDscInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.03146171569824,
+      "plan": []
+    },
+    {
+      "entry_id": "c029-greetClothDscInRm-talkInfo",
+      "template": "greetClothDscInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.0314667224884,
+      "plan": []
+    },
+    {
+      "entry_id": "c030-greetNameInRm-followPrs",
+      "template": "greetNameInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.103392124176025,
+      "plan": []
+    },
+    {
+      "entry_id": "c031-greetNameInRm-guidePrsToBeacon",
+      "template": "greetNameInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.10340452194214,
+      "plan": []
+    },
+    {
+      "entry_id": "c032-greetNameInRm-followPrs",
+      "template": "greetNameInRm",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.10340857505798,
+      "plan": []
+    },
+    {
+      "entry_id": "c033-guideClothPrsFromBeacToBeac",
+      "template": "guideClothPrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.03001594543457,
+      "plan": []
+    },
+    {
+      "entry_id": "c034-guideClothPrsFromBeacToBeac",
+      "template": "guideClothPrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.03002572059631,
+      "plan": []
+    },
+    {
+      "entry_id": "c035-guideClothPrsFromBeacToBeac",
+      "template": "guideClothPrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.03002858161926,
+      "plan": []
+    },
+    {
+      "entry_id": "c036-guideNameFromBeacToBeac",
+      "template": "guideNameFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.11779975891113,
+      "plan": []
+    },
+    {
+      "entry_id": "c037-guideNameFromBeacToBeac",
+      "template": "guideNameFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.117810010910034,
+      "plan": []
+    },
+    {
+      "entry_id": "c038-guideNameFromBeacToBeac",
+      "template": "guideNameFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.11781287193298,
+      "plan": []
+    },
+    {
+      "entry_id": "c039-guidePrsFromBeacToBeac",
+      "template": "guidePrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.09110999107361,
+      "plan": []
+    },
+    {
+      "entry_id": "c040-guidePrsFromBeacToBeac",
+      "template": "guidePrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.09112524986267,
+      "plan": []
+    },
+    {
+      "entry_id": "c041-guidePrsFromBeacToBeac",
+      "template": "guidePrsFromBeacToBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.091129779815674,
+      "plan": []
+    },
+    {
+      "entry_id": "c042-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.00164031982422,
+      "plan": []
+    },
+    {
+      "entry_id": "c043-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.0016713142395,
+      "plan": []
+    },
+    {
+      "entry_id": "c044-meetNameAtLocThenFindInRm",
+      "template": "meetNameAtLocThenFindInRm",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.001675844192505,
+      "plan": []
+    },
+    {
+      "entry_id": "c045-meetPrsAtBeac-talkInfo",
+      "template": "meetPrsAtBeac",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.079888343811035,
+      "plan": []
+    },
+    {
+      "entry_id": "c046-meetPrsAtBeac-followPrsToRoom",
+      "template": "meetPrsAtBeac",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.07991552352905,
+      "plan": []
+    },
+    {
+      "entry_id": "c047-meetPrsAtBeac-talkInfo",
+      "template": "meetPrsAtBeac",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.07991886138916,
+      "plan": []
+    },
+    {
+      "entry_id": "c048-takeObjFromPlcmt-deliverObjToMe",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.03306722640991,
+      "plan": []
+    },
+    {
+      "entry_id": "c049-takeObjFromPlcmt-putObjInTrash",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.033087968826294,
+      "plan": []
+    },
+    {
+      "entry_id": "c050-takeObjFromPlcmt-placeObjOnPlcmt",
+      "template": "takeObjFromPlcmt",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.033095598220825,
+      "plan": []
+    },
+    {
+      "entry_id": "c051-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.04945230484009,
+      "plan": []
+    },
+    {
+      "entry_id": "c052-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.049474239349365,
+      "plan": []
+    },
+    {
+      "entry_id": "c053-talkInfoToGestPrsInRoom",
+      "template": "talkInfoToGestPrsInRoom",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.04948163032532,
+      "plan": []
+    },
+    {
+      "entry_id": "c054-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.11462950706482,
+      "plan": []
+    },
+    {
+      "entry_id": "c055-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.1146445274353,
+      "plan": []
+    },
+    {
+      "entry_id": "c056-tellCatPropOnPlcmt",
+      "template": "tellCatPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.114649534225464,
+      "plan": []
+    },
+    {
+      "entry_id": "c057-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.04365253448486,
+      "plan": []
+    },
+    {
+      "entry_id": "c058-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.04366397857666,
+      "plan": []
+    },
+    {
+      "entry_id": "c059-tellObjPropOnPlcmt",
+      "template": "tellObjPropOnPlcmt",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.04366707801819,
+      "plan": []
+    },
+    {
+      "entry_id": "c060-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.04930233955383,
+      "plan": []
+    },
+    {
+      "entry_id": "c061-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.04935050010681,
+      "plan": []
+    },
+    {
+      "entry_id": "c062-tellPrsInfoAtLocToPrsAtLoc",
+      "template": "tellPrsInfoAtLocToPrsAtLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 37.04935956001282,
+      "plan": []
+    },
+    {
+      "entry_id": "c063-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.99164295196533,
+      "plan": []
+    },
+    {
+      "entry_id": "c064-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.991652965545654,
+      "plan": []
+    },
+    {
+      "entry_id": "c065-tellPrsInfoInLoc",
+      "template": "tellPrsInfoInLoc",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.991655588150024,
+      "plan": []
+    },
+    {
+      "entry_id": "e00",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.0135760307312,
+      "plan": []
+    },
+    {
+      "entry_id": "e01",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.01359176635742,
+      "plan": []
+    },
+    {
+      "entry_id": "e02",
+      "template": "edge",
+      "feasibility": "B",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.013596296310425,
+      "plan": []
+    },
+    {
+      "entry_id": "e03",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.11463141441345,
+      "plan": []
+    },
+    {
+      "entry_id": "e04",
+      "template": "edge",
+      "feasibility": "C",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.11464524269104,
+      "plan": []
+    },
+    {
+      "entry_id": "e05",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 36.114649295806885,
+      "plan": []
+    },
+    {
+      "entry_id": "e06",
+      "template": "edge",
+      "feasibility": "A",
+      "tier": 1,
+      "verdict": "PASS",
+      "detail": "",
+      "seconds": 19.65259289741516,
+      "plan": []
+    }
+  ]
+}

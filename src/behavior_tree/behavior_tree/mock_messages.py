@@ -92,8 +92,36 @@ class ObjectDetection(MockService):
             self.image_height = 0
 
 
-class FeatureExtraction(MockService):
-    """Mock FeatureExtraction service."""
+class ObjectDetectionGeneralist(MockService):
+    """Mock for tk26 generalist ObjectDetection — boolean flags, detection_source tag."""
+    class Request(MockService.Request):
+        def __init__(self):
+            super().__init__()
+            self.camera = ""
+            self.prompt = ""
+            self.target_frame = ""
+            self.sort_closest = False
+            self.sort_highest = False
+            self.return_rgb_image = False
+            self.return_depth_image = False
+            self.return_segments = False
+            self.force_vlm_sam = False
+            self.use_vlm_sam_fallback = False
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.person_id = 0
+            self.objects = []
+            self.detection_source = "none"
+
+
+class FeatureExtraction(MockService, MockAction):
+    """Mock FeatureExtraction service/action endpoint.
+
+    Migrated from service to action in tk26_vision; mock carries both shapes
+    for backward compatibility with service-era callers and new action nodes.
+    """
     class Response(MockService.Response):
         def __init__(self):
             super().__init__()
@@ -103,6 +131,34 @@ class FeatureExtraction(MockService):
 class SeatRecommendation(MockService):
     """Mock SeatRecommendation service."""
     pass
+
+
+class SeatRecommendBbox(MockService):
+    """Mock SeatRecommendBbox service (recommendation + bbox + 3D centroid)."""
+    class Request(MockService.Request):
+        def __init__(self):
+            super().__init__()
+            self.camera = ""
+            self.names = []
+            self.features = []
+            self.target_frame = ""
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.recommendation = ""
+            self.bbox = BoundingBox()
+            self.centroid = None
+
+
+class BoundingBox(MockMessage):
+    """Mock BoundingBox message — xmin/ymin/xmax/ymax pixel ints."""
+    def __init__(self, xmin: int = 0, ymin: int = 0, xmax: int = 0, ymax: int = 0):
+        super().__init__()
+        self.xmin = xmin
+        self.ymin = ymin
+        self.xmax = xmax
+        self.ymax = ymax
 
 
 class FeatureMatching(MockService):
@@ -135,9 +191,48 @@ class FollowHead(MockService):
     pass
 
 
-class DetectWaving(MockService):
-    """Mock DetectWaving service."""
+class DetectWaving(MockService, MockAction):
+    """Mock DetectWaving service/action endpoint.
+
+    Migrated from service to action in tk26_vision; mock carries both shapes
+    for backward compatibility with service-era callers and new action nodes.
+    """
     pass
+
+
+class ReseedTarget(MockService):
+    """Mock ReseedTarget service (re-lock the tracker on a raise-hand operator)."""
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.success = False
+            self.target_track_id = -1
+            self.message = ""
+
+
+class PlacingLocation(MockService):
+    """Mock PlacingLocation service."""
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.candidate_points = []
+            self.candidate_bboxes = []
+
+
+class GetImage(MockService):
+    """Mock camera image service used by GPSR visual state capture."""
+
+    class Request(MockService.Request):
+        def __init__(self):
+            super().__init__()
+            self.camera = ""
+            self.depth = False
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.rgb_image = MockMessage()
+            self.depth_image = MockMessage()
 
 
 # Mock Arm Services
@@ -178,7 +273,13 @@ class Grasp(MockAction):
 
 
 class JointMove(MockAction):
-    """Mock JointMove action."""
+    """Mock JointMove action.
+
+    Mirrors tinker_arm_msgs/action/JointMove: Goal has joint0..joint6 +
+    add_octomap, Result has only `success`, Feedback is empty. The legacy
+    `env_points` field was dropped to match the real action (it was only ever
+    set by the now-deleted BtNode_MoveArmJointPC).
+    """
     class Goal(MockAction.Goal):
         def __init__(self):
             super().__init__()
@@ -189,7 +290,24 @@ class JointMove(MockAction):
             self.joint4 = 0.0
             self.joint5 = 0.0
             self.joint6 = 0.0
+            self.add_octomap = False
+
+
+class Fold(MockAction):
+    """Mock Fold action (matches tinker_arm_msgs/action/Fold.action)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.target_point = None
+            self.object_label = ""
+            self.fold_cycles = 0
             self.env_points = []
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.success = False
+            self.error_msg = ""
 
 
 class CartesianMove(MockAction):
@@ -199,6 +317,43 @@ class CartesianMove(MockAction):
             super().__init__()
             self.env_points = []
             self.target_pose = None
+
+
+class ScanAndPlace(MockAction):
+    """Mock ScanAndPlace action (arm_api scan_and_place_server).
+
+    Mirrors tinker_arm_msgs/action/ScanAndPlace after the rulebook append-only
+    extension: placement_mode 0 FREE_SPACE / 1 NEAR_SIMILAR / 2 FIXED_POINT,
+    plus reference_label / fixed_target / scan_pose_deg / skip_scan_move /
+    dry_run, and Result.placement_mode_used. Lets the BT assemble + tick the
+    goal on a host where tinker_arm_msgs is absent.
+    """
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.item_description = ""
+            self.margin_m = 0.0
+            self.orientation = None
+            self.max_candidates = 0
+            self.placement_mode = 0
+            self.reference_label = ""
+            self.fixed_target = None
+            self.scan_pose_deg = []
+            self.skip_scan_move = False
+            self.dry_run = False
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.placed_at = None
+            self.error_msg = ""
+            self.placement_mode_used = 0
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.stage = ""
 
 
 # Mock Audio Services
@@ -230,11 +385,79 @@ class PhraseExtraction(MockService):
             super().__init__()
             self.wordlist = []
             self.timeout = 0.0
-    
+
     class Response(MockService.Response):
         def __init__(self):
             super().__init__()
             self.result = ""
+
+
+class PhraseExtractionAction(MockAction):
+    """Mock PhraseExtraction action (tk_24_audio `phrase_extraction_action`)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.timeout = 0.0
+            self.wordlist = []
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.error_message = ""
+            self.phrase = ""
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.progress = 0.0
+            self.status_message = ""
+            self.partial_transcription = ""
+
+
+class NameDrinkExtractionAction(MockAction):
+    """Mock NameDrinkExtraction action (tk_24_audio `name_drink_extraction_action`)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.timeout = 0.0
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.error_message = ""
+            self.name = ""
+            self.drink = ""
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.progress = 0.0
+            self.status_message = ""
+            self.partial_transcription = ""
+
+
+class OrderExtractionAction(MockAction):
+    """Mock OrderExtraction action (tk_24_audio `order_extraction_action`)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.timeout = 0.0
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.error_message = ""
+            self.items = []
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.progress = 0.0
+            self.status_message = ""
+            self.partial_transcription = ""
 
 
 class GetConfirmation(MockService):
@@ -281,6 +504,109 @@ class ComputeGrasp(MockService):
     pass
 
 
+class OrientationAngle(MockService):
+    """Mock OrientationAngle service."""
+    class Request(MockService.Request):
+        def __init__(self):
+            super().__init__()
+            self.max_try = 0
+            self.timeout = 0.0
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.angle = 0.0
+
+
+class FindApproachPose(MockService):
+    """Mock FindApproachPose service."""
+    # Projection-mode constants (P3) mirror tinker_nav_msgs/srv/FindApproachPose.
+    PROJECTION_LEGACY = 0
+    PROJECTION_STANDOFF_FACE = 1
+    PROJECTION_STANDOFF_BEHIND = 2
+    PROJECTION_ANCHOR_NEAREST_FREE = 3
+
+    class Request(MockService.Request):
+        PROJECTION_LEGACY = 0
+        PROJECTION_STANDOFF_FACE = 1
+        PROJECTION_STANDOFF_BEHIND = 2
+        PROJECTION_ANCHOR_NEAREST_FREE = 3
+
+        def __init__(self):
+            super().__init__()
+            self.target = None
+            self.desired_distance = 0.0
+            self.min_distance = 0.0
+            self.max_distance = 0.0
+            self.num_angles = 0
+            self.check_reachability = False
+            self.preferred_yaw_rad = float('nan')
+            self.facing_yaw_offset_rad = 0.0
+            self.timeout_sec = 0.0
+            self.robot_pose_override = None
+            self.projection_mode = 0
+
+    class Response(MockService.Response):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.errormsg = ""
+            self.pose = None
+            self.chosen_distance = 0.0
+            self.score = 0.0
+            self.reachable = False
+            self.alternates = []
+            self.angle_to_target_rad = 0.0
+
+
+class GoToApproach(MockAction):
+    """Mock GoToApproach action (tk26 tinker_nav_msgs).
+
+    Mock policy for navigation: skip the navigation process — i.e. the BT
+    short-circuits send_goal in mock mode and never instantiates this Goal.
+    Class kept for type-import parity with the live action.
+    """
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.target = None
+            self.desired_distance = 0.0
+            self.min_distance = 0.0
+            self.max_distance = 0.0
+            self.num_angles = 0
+            self.preferred_yaw_rad = float('nan')
+            self.facing_yaw_offset_rad = 0.0
+            self.timeout_sec = 0.0
+            self.robot_pose_override = None
+            self.debug = False
+            self.target_is_person = False
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.errormsg = ""
+            self.pose = None
+            self.chosen_distance = 0.0
+            self.score = 0.0
+            self.reachable = False
+            self.alternates = []
+            self.angle_to_target_rad = 0.0
+            self.phase_at_exit = ""
+            self.nav_attempts = 0
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.phase = ""
+            self.distance_remaining = 0.0
+            self.estimated_time_remaining = 0.0
+            self.current_goal = None
+            self.candidates_total = 0
+            self.candidates_checked = 0
+            self.probes = []
+
+
 # Mock Vision Messages
 class Object(MockMessage):
     """Mock Object message."""
@@ -300,6 +626,29 @@ class PanTiltCtrl(MockMessage):
         self.speed = 0.0
 
 
+class PanTiltCommand(MockMessage):
+    """Mock PanTiltCommand message."""
+    ABSOLUTE = 0
+    RELATIVE = 1
+    def __init__(self):
+        super().__init__()
+        self.mode = 0
+        self.pan_rad = 0.0
+        self.tilt_rad = 0.0
+        self.speed_raw = 0
+        self.accel_raw = 0
+
+
+class PanTiltState(MockMessage):
+    """Mock PanTiltState message."""
+    def __init__(self):
+        super().__init__()
+        self.pan_rad = 0.0
+        self.tilt_rad = 0.0
+        self.connected = False
+        self.feedback_ok = False
+
+
 # Mock Vision Actions
 class Categorize(MockAction):
     """Mock Categorize action."""
@@ -314,6 +663,76 @@ class FollowHeadAction(MockAction):
 class HumanFollowing(MockAction):
     """Mock HumanFollowing action."""
     pass
+
+
+class GetConfirmationAction(MockAction):
+    """Mock GetConfirmation action from tinker_audio_msgs."""
+    pass
+
+
+class ListenAction(MockAction):
+    """Mock Listen action from tinker_audio_msgs."""
+    pass
+
+
+class Doorbell(MockAction):
+    """Mock Doorbell action from tinker_audio_msgs."""
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.status = 0
+            self.error_message = ""
+            self.transcription = ""
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.elapsed = 0.0
+            self.partial_transcription = ""
+
+
+class TrackPerson(MockAction):
+    """Mock TrackPerson action (tk26_vision)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.target_frame = ""
+            self.target_point_topic = ""
+            self.return_rgb_img = False
+            self.return_depth_img = False
+            self.return_segment = False
+            self.debug = False
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.target_lost = False
+            self.target_track_id = -1
+            self.is_transformation_successful = False
+            self.target_position = None
+
+
+class Follow(MockAction):
+    """Mock Follow action (tk26 tinker_nav_msgs)."""
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.timeout = 2.0
+
+    class Result(MockAction.Result):
+        def __init__(self):
+            super().__init__()
+            self.result = 1
+
+    class Feedback(MockAction.Feedback):
+        def __init__(self):
+            super().__init__()
+            self.state = 0
+            self.distance_to_person = -1.0
+            self.reacq_state = 255
+            self.breadcrumbs_pending = 0
+            self.goal_held = False
 
 
 # Mock Navigation Actions (from nav2)

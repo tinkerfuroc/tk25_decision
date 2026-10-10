@@ -11,7 +11,7 @@ from custom_nodes import (  # 假设你已实现这些自定义节点
 from pytree.trees import BehaviourTree
 
 # Import additional nodes from TemplateNodes
-from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtraction, BtNode_GetConfirmation
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_PhraseExtractionAction, BtNode_GetConfirmationAction
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_SeatRecommend, BtNode_FeatureMatching, BtNode_TrackPerson
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_Goto, BtNode_GotoGrasp, BtNode_CalcGraspPose
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp
@@ -93,7 +93,7 @@ def create_decision_tree():
     # ------ 子分支 8: FeatureExtraction ------
     feature_seq = Sequence("feature_branch")
     feature_guard = BtNode_CheckIfMyTurn("check_feature", "feature", "bb/next_action")
-    feature_action = BtNode_FeatureExtraction("extract_features", bb_dest_key="bb/features")
+    feature_action = BtNode_FeatureExtraction("extract_features", bb_dest_key="bb/features", bb_image_key="bb/comparison_image")
     feature_update = BtNode_UpdateState("update_after_feature", completed_action="feature(...)",
                                        bb_state_key="bb/state")
     feature_seq.add_children([feature_guard, feature_action, feature_update])
@@ -119,7 +119,7 @@ def create_decision_tree():
     # ------ 子分支 11: PhraseExtraction ------
     phrase_seq = Sequence("phrase_branch")
     phrase_guard = BtNode_CheckIfMyTurn("check_phrase", "phrase", "bb/next_action")
-    phrase_action = BtNode_PhraseExtraction("extract_phrase", wordlist=[], bb_dest_key="bb/phrase")
+    phrase_action = BtNode_PhraseExtractionAction("extract_phrase", wordlist=[], bb_dest_key="bb/phrase")
     phrase_update = BtNode_UpdateState("update_after_phrase", completed_action="phrase(...)",
                                       bb_state_key="bb/state")
     phrase_seq.add_children([phrase_guard, phrase_action, phrase_update])
@@ -127,7 +127,7 @@ def create_decision_tree():
     # ------ 子分支 12: GetConfirmation ------
     confirm_seq = Sequence("confirm_branch")
     confirm_guard = BtNode_CheckIfMyTurn("check_confirm", "confirm", "bb/next_action")
-    confirm_action = BtNode_GetConfirmation("get_confirmation")
+    confirm_action = BtNode_GetConfirmationAction("get_confirmation")
     confirm_update = BtNode_UpdateState("update_after_confirm", completed_action="confirm(...)",
                                        bb_state_key="bb/state")
     confirm_seq.add_children([confirm_guard, confirm_action, confirm_update])

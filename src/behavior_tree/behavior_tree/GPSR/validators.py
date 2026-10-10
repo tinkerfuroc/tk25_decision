@@ -1,0 +1,1159 @@
+"""Pure fact parsing and deterministic verification for GPSR runtime gates."""
+
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Callable, Mapping, Optional
+
+
+class Verdict(str, Enum):
+    VALID = "VALID"
+    INVALID = "INVALID"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class Fact:
+    predicate: str
+    args: tuple[str, ...]
+    raw: str
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    verdict: Verdict
+    confidence: float = 1.0
+    evidence: str = ""
+
+
+@dataclass(frozen=True)
+class VerificationContext:
+    phase: str
+    established_facts: frozenset[str] = frozenset()
+    completed_steps: tuple[Mapping[str, Any], ...] = ()
+    target_object: str = ""
+    target_location: str = ""
+    # J2 (round-3 adversarial review, M3): canonical facts the CURRENT
+    # target itself declares as postconditions. In the postcondition phase
+    # only, the established-fact ledger shortcut below must not apply to
+    # these -- a target's own postcondition must be verified from evidence/
+    # action-verdict produced DURING this target, never from a fact an
+    # earlier (or even this same) target already wrote to the ledger.
+    own_postconditions: frozenset[str] = frozenset()
+
+
+Tier2Hook = Callable[[Fact, Mapping[str, Any], VerificationContext], Optional[VerificationResult]]
+
+_VOCABULARY = {
+    "at_robot": 1,
+    "object_seen": 1,
+    "person_found": 1,
+    "held": 1,
+    "placed": 2,
+    "delivered": 2,
+    "counted": 1,
+    "answered": 1,
+}
+_TIER2_HOOKS: dict[str, Tier2Hook] = {}
+_FACT_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)$", re.DOTALL)
+
+# I-3 (round-2 review): matches an LLM-authored refusal/apology announce
+# ("I could not count the drinks", "Sorry, I couldn't find the object") so
+# _action_verdict's answered() fallback (below) never counts it as a real
+# answer -- test-pinned, keep the alternation and wording in sync with
+# test_gpsr_answered_gate.py::test_refusal_regex_matches_every_pinned_apology_phrasing.
+_REFUSAL_RE = re.compile(
+    r"^\s*(sorry[,.]?\s*)?i\s+(could\s*not|couldn't|cannot|can't|was\s+unable|"
+    r"am\s+unable|did\s+not|didn't|failed)\b",
+    re.IGNORECASE,
+)
+
+# I1 (round-3 adversarial review, H1): the top layer writes an answered()
+# fact from the COMMAND's own wording ("day of the month") while the lower
+# layer's ask_person/llm_fallback/vlm question is phrased in its own words
+# ("What is the day of the month today? Say that it is 29."). Exact-string
+# provenance rejected every correct answer. Provenance is now a SOFT signal:
+# bag-of-content-words overlap between the fact argument and the recorded
+# question, ignoring a fixed stopword list and punctuation.
+_PROVENANCE_STOPWORDS = {
+    "what", "is", "the", "a", "an", "of", "to", "me", "you", "your", "please",
+    "say", "tell", "today", "it", "that", "this", "in", "on", "at",
+}
+
+# M-2 (round-3 fix review): the top layer's split-prompt advertises the
+# predicate as literally `answered(question)` (planner.py), and plans like
+# `answered(question of the person)`/`answered(information)` are plausible,
+# generic paraphrases of "the question was answered" — not a claim about a
+# SPECIFIC different question. Words here carry no discriminating content on
+# their own: a fact whose content words (after _PROVENANCE_STOPWORDS) are
+# ENTIRELY made of these must never INVALID on zero overlap (there is
+# nothing specific to disagree about), only fall through to the weak
+# partial-VALID branch below.
+_NON_DISCRIMINATING_FACT_WORDS = {
+    "question", "answer", "information", "person", "people", "it", "thing", "things",
+}
+
+
+def _content_words(text: str) -> set[str]:
+    cleaned = re.sub(r"[^a-zA-Z0-9_\s]", " ", str(text))
+    tokens = re.split(r"[_\s]+", cleaned.lower())
+    return {token for token in tokens if token and token not in _PROVENANCE_STOPWORDS}
+
+
+def _normalize(value: str) -> str:
+    return re.sub(r"\s+", "_", value.strip().lower())
+
+
+def parse_fact(text: str) -> tuple[Optional[Fact], Optional[str]]:
+    """Parse one closed-vocabulary fact, returning a useful error on rejection."""
+    raw = str(text)
+    match = _FACT_RE.fullmatch(raw.strip())
+    if match is None:
+        return None, "fact must match predicate(arg,...) with no trailing text"
+
+    predicate = _normalize(match.group(1))
+    if predicate not in _VOCABULARY:
+        return None, f"unknown predicate: {predicate}"
+
+    body = match.group(2).strip()
+    if not body:
+        return None, "fact argument list cannot be empty"
+    if "(" in body or ")" in body:
+        return None, "nested predicates are not supported"
+
+    raw_args = body.split(",")
+    if any(not arg.strip() for arg in raw_args):
+        return None, "fact arguments cannot be empty"
+    args = tuple(_normalize(arg) for arg in raw_args)
+    expected = _VOCABULARY[predicate]
+    if len(args) != expected:
+        return None, f"{predicate} expects {expected} argument(s), got {len(args)}"
+    return Fact(predicate, args, raw), None
+
+
+def canonical_fact(fact: Fact) -> str:
+    return f"{_normalize(fact.predicate)}({','.join(_normalize(arg) for arg in fact.args)})"
+
+
+def _fact_parts(value: Any) -> tuple[Optional[str], Optional[Fact]]:
+    text = str(value).strip()
+    fact, _ = parse_fact(text)
+    if fact is None:
+        return (text or None), None
+    return canonical_fact(fact), fact
+
+
+def apply_fact_transitions(existing: Any, additions: Any) -> list[str]:
+    """Apply validated facts to the append-only ledger's current-state view.
+
+    Valid facts are canonicalized and deduplicated. Malformed legacy strings are
+    retained once, unchanged apart from surrounding whitespace. The returned
+    order keeps unaffected existing facts first and appends newly effective facts
+    in batch order.
+    """
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in existing or []:
+        normalized, fact = _fact_parts(value)
+        if normalized is not None and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+
+    for value in additions or []:
+        normalized, fact = _fact_parts(value)
+        if normalized is None:
+            continue
+        if fact is not None and fact.predicate == "at_robot":
+            result = [item for item in result
+                      if (parsed := parse_fact(item)[0]) is None or parsed.predicate != "at_robot"]
+            seen = set(result)
+        elif fact is not None and fact.predicate in {"placed", "delivered"}:
+            obj = fact.args[0]
+            kept = []
+            for item in result:
+                parsed, _ = parse_fact(item)
+                if parsed is not None and parsed.predicate == "held" and parsed.args[0] == obj:
+                    seen.discard(item)
+                    continue
+                kept.append(item)
+            result = kept
+        elif fact is not None and fact.predicate == "held":
+            obj = fact.args[0]
+            kept = []
+            for item in result:
+                parsed, _ = parse_fact(item)
+                if parsed is not None and parsed.predicate in {"placed", "delivered"} and parsed.args[0] == obj:
+                    seen.discard(item)
+                    continue
+                kept.append(item)
+            result = kept
+        if normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
+
+def register_tier2_hook(predicate: str, hook: Optional[Tier2Hook]) -> None:
+    """Install or remove the optional stronger verifier for a predicate."""
+    name = _normalize(predicate)
+    if hook is None:
+        _TIER2_HOOKS.pop(name, None)
+    else:
+        _TIER2_HOOKS[name] = hook
+
+
+def _result(verdict: Verdict, evidence: str, confidence: float = 1.0) -> VerificationResult:
+    return VerificationResult(verdict, confidence, evidence)
+
+
+def _objects_from_detection(response: Any) -> Optional[Any]:
+    if response is None:
+        return None
+    if isinstance(response, Mapping):
+        return response.get("objects")
+    if hasattr(response, "objects"):
+        return getattr(response, "objects")
+    return response
+
+
+def _nonempty_detection(response: Any) -> bool:
+    objects = _objects_from_detection(response)
+    if objects is None:
+        return False
+    try:
+        return len(objects) > 0
+    except TypeError:
+        return bool(objects)
+
+
+_LABEL_FIELDS = ("cls", "class", "name", "label", "descriptor", "person")
+
+
+def _detection_items(response: Any) -> list[Any]:
+    objects = _objects_from_detection(response)
+    if objects is None:
+        return []
+    if isinstance(objects, (str, bytes)):
+        return [objects]
+    if isinstance(objects, Mapping):
+        return [objects]
+    try:
+        return list(objects)
+    except TypeError:
+        return [objects]
+
+
+def _item_label(item: Any) -> Optional[str]:
+    if isinstance(item, str):
+        text = item.strip()
+        return _normalize(text) if text else None
+    if isinstance(item, Mapping):
+        for field in _LABEL_FIELDS:
+            value = item.get(field)
+            if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+                text = str(value).strip()
+                if text:
+                    return _normalize(text)
+        return None
+    for field in _LABEL_FIELDS:
+        value = getattr(item, field, None)
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            text = str(value).strip()
+            if text:
+                return _normalize(text)
+    return None
+
+
+def _detection_labels(response: Any) -> tuple[set[str], bool]:
+    """Return normalized recognizable labels and whether the artifact is nonempty."""
+    items = _detection_items(response)
+    labels = {label for item in items if (label := _item_label(item))}
+    return labels, bool(items)
+
+
+def _norm_match(left: Any, right: str) -> bool:
+    return _normalize(str(left)) == right
+
+
+# I5 (round-3 adversarial review, M2): "me"/"the operator"/"command point"/
+# ... are all the SAME destination as the canonical "start_position" the
+# lower layer actually navigates to (see planner_validators.is_start_alias,
+# the single source of truth shared with uncovered_postcondition_reason).
+# Lazy-imported below (validators.py cannot import planner_validators at
+# module level -- planner_validators already imports validators).
+def _at_robot_match(nav_location: Any, requested: str) -> bool:
+    if _norm_match(nav_location, requested):
+        return True
+    from .planner_validators import is_start_alias  # lazy: avoid import cycle
+    return is_start_alias(nav_location) and is_start_alias(requested)
+
+
+def _recipient_match(actual: Any, requested: str) -> bool:
+    """Match equivalent human-readable recipient phrases.
+
+    The split layer canonicalises ``person pointing to the left`` as
+    ``person_pointing_left`` while the materialised deliver step retains the
+    natural-language phrase.  Connective words do not change the recipient.
+    """
+    if _norm_match(actual, requested):
+        return True
+    stopwords = {"a", "an", "the", "to"}
+    actual_words = {
+        word for word in _normalize(str(actual)).split("_") if word not in stopwords
+    }
+    requested_words = {
+        word for word in _normalize(str(requested)).split("_") if word not in stopwords
+    }
+    return bool(actual_words) and actual_words == requested_words
+
+
+def _delivery_recipient_match(params: Mapping[str, Any], requested: str) -> bool:
+    """Match a deliver step against a room-qualified recipient fact.
+
+    The split layer may qualify a person descriptor with the delivery room
+    (for example ``person_pointing_left_in_living_room``), while the lower
+    action keeps the descriptor and room in separate parameters. Compare the
+    bare descriptor first, then remove only the explicit location suffix.
+    """
+    actual = params.get("recipient", "")
+    if _recipient_match(actual, requested):
+        return True
+
+    location = params.get("recipient_location") or params.get("location")
+    if not str(location or "").strip():
+        return False
+    requested_norm = _normalize(str(requested))
+    location_norm = _normalize(str(location))
+    for marker in (f"_in_{location_norm}", f"_at_{location_norm}"):
+        if requested_norm.endswith(marker):
+            bare = requested_norm[:-len(marker)].rstrip("_")
+            return bool(bare) and _recipient_match(actual, bare)
+    return False
+
+
+def _label_tokens(label: str) -> list[str]:
+    return re.split(r"[_.]", label)
+
+
+def _known_object_names() -> frozenset[str]:
+    """Normalised arena object names, loaded via the SAME knowledge loader
+    the orchestrator uses (``constants.json``'s ``possible_objects``, see
+    ``orchestrator.load_knowledge_from_constants`` /
+    ``orchestrator.KNOWN_OBJECT_NAMES``).
+
+    Lazy import (validators.py must not hard-depend on orchestrator.py for
+    its own network-free unit tests): when orchestrator hasn't been
+    imported/loaded yet, or nothing was loaded (offline/unit tests), this is
+    empty -- callers keep today's permissive behaviour in that case.
+    """
+    try:
+        from .orchestrator import KNOWN_OBJECT_NAMES  # lazy: orchestrator imports this module
+    except Exception:  # noqa: BLE001 -- never let a knowledge lookup crash the gate
+        return frozenset()
+    return frozenset(KNOWN_OBJECT_NAMES)
+
+
+def _category_member_label(label: str, requested: str) -> bool:
+    """A category scan (``object_prompt_for``, orchestrator.py) asks the
+    detector for every member's description, so a detection for
+    ``object_seen(food)`` comes back labelled with the MEMBER it matched
+    (``"yellow banana"``), never with the category word. Accept a label that
+    is a configured member of ``requested``: its normalised name, its full
+    description, or a label whose tokens contain the whole description /
+    multi-token name (the same containment rule ``_category_instance_known``
+    applies to class-prefix labels)."""
+    try:
+        from .orchestrator import KNOWN_OBJECT_PROMPTS, category_members  # lazy: import cycle
+    except Exception:  # noqa: BLE001 -- never let a knowledge lookup crash the gate
+        return False
+    members = category_members(requested)
+    if not members:
+        return False
+    label_norm = _normalize(str(label))
+    label_token_set = set(_label_tokens(label_norm))
+    for member in members:
+        member_norm = _normalize(str(member))
+        prompt_norm = _normalize(str(KNOWN_OBJECT_PROMPTS.get(member, member)))
+        if label_norm in (member_norm, prompt_norm):
+            return True
+        for candidate in (member_norm, prompt_norm):
+            tokens = _label_tokens(candidate)
+            if len(tokens) > 1 and set(tokens) <= label_token_set:
+                return True
+        if "_" not in member_norm and member_norm in label_token_set:
+            return True
+    return False
+
+
+def _vision_prompt_label_matches(label: str, prompt: str) -> bool:
+    """Match a detector label to one human-readable vision prompt."""
+    prompt_norm = _normalize(str(prompt))
+    label_norm = _normalize(str(label))
+    if not prompt_norm or " . " in prompt_norm:
+        return False
+    candidates = [label_norm]
+    _class, sep, instance = label_norm.partition(".")
+    if sep:
+        candidates.append(instance)
+    prompt_tokens = set(_label_tokens(prompt_norm))
+    return any(
+        candidate == prompt_norm
+        or (prompt_tokens and prompt_tokens <= set(_label_tokens(candidate)))
+        for candidate in candidates
+    )
+
+
+def _known_object_prompt_label(label: str, requested: str) -> bool:
+    """Match an exact object request against its configured detector prompt.
+
+    The planner uses the stable object key (for example ``cheez_it``), while
+    the open-vocabulary detector reports the human-readable prompt from
+    ``possible_objects`` (``red cracker box``).  Exact-object postconditions
+    must accept that prompt, including a detector class prefix, without
+    weakening the normal label matching rules for unrelated objects.
+    """
+    try:
+        from .orchestrator import KNOWN_OBJECT_PROMPTS  # lazy: import cycle
+    except Exception:  # noqa: BLE001 -- knowledge is optional in unit tests
+        return False
+    requested_norm = _normalize(str(requested))
+    prompt = next(
+        (value for key, value in KNOWN_OBJECT_PROMPTS.items()
+         if _normalize(str(key)) == requested_norm),
+        None,
+    )
+    if prompt is None:
+        return False
+    return _vision_prompt_label_matches(label, str(prompt))
+
+
+def count_member_label_matches(label: Any, member_prompt: Any) -> bool:
+    """Does a detector ``label`` count as the category member whose vision
+    prompt is ``member_prompt``?
+
+    Sim battery 2026-09-26 (run s70718-001): a category count asks the
+    detector for EVERY known object and filters afterwards
+    (``small_trees.BtNode_CountDetections``), so the filter must be tolerant
+    of the venue colour enrichment: a detection labelled "bowl" or "white
+    bowl" (or a class-prefixed "kitchen item.white bowl") must count for the
+    member "red bowl". Matching is on the member's OBJECT KEY tokens
+    (``KNOWN_OBJECT_PROMPTS`` value -> key), never on a lone colour word:
+    whole-label / class-instance equality via ``_label_matches``; a
+    single-token key as one (plural-tolerant) token of the label; every
+    token of a multi-token key (``sugar_box``) or of the full prompt present
+    in the label. Unloaded knowledge (unit tests) falls back to the prompt
+    text itself as the key.
+    """
+    label_norm = _normalize(str(label or ""))
+    prompt_norm = _normalize(str(member_prompt or ""))
+    if not label_norm or not prompt_norm:
+        return False
+    key_norm = prompt_norm
+    try:
+        from .orchestrator import KNOWN_OBJECT_PROMPTS  # lazy: import cycle
+    except Exception:  # noqa: BLE001 -- never let a knowledge lookup crash a count
+        KNOWN_OBJECT_PROMPTS = {}
+    for key, value in KNOWN_OBJECT_PROMPTS.items():
+        if _normalize(str(value)) == prompt_norm or _normalize(str(key)) == prompt_norm:
+            key_norm = _normalize(str(key))
+            break
+    if _label_matches(label_norm, key_norm) or _label_matches(label_norm, prompt_norm):
+        return True
+    label_tokens = _label_tokens(label_norm)
+    label_token_set = set(label_tokens)
+    key_tokens = _label_tokens(key_norm)
+    if len(key_tokens) == 1:
+        from .planner_validators import _same_object  # lazy: planner_validators imports this module
+        if any(_same_object(tok, key_tokens[0]) for tok in label_tokens):
+            return True
+    elif set(key_tokens) <= label_token_set:
+        return True
+    prompt_tokens = set(_label_tokens(prompt_norm))
+    if len(prompt_tokens) > 1 and prompt_tokens <= label_token_set:
+        return True
+    return False
+
+
+def _count_is_zero(value: Any) -> bool:
+    try:
+        return int(value) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _known_object_prompt_token_sets() -> dict[str, frozenset[str]]:
+    """Map each normalised known object name to the token set of its
+    free-text VLM description (``orchestrator.KNOWN_OBJECT_PROMPTS`` --
+    the SAME ``possible_objects`` source as ``_known_object_names``, but its
+    VALUES, e.g. ``"mug" -> "red ceramic mug"`` -> ``{"red","ceramic","mug"}``).
+    """
+    try:
+        from .orchestrator import KNOWN_OBJECT_PROMPTS  # lazy: orchestrator imports this module
+    except Exception:  # noqa: BLE001 -- never let a knowledge lookup crash the gate
+        return {}
+    return {
+        _normalize(str(key)): frozenset(_label_tokens(_normalize(str(value))))
+        for key, value in KNOWN_OBJECT_PROMPTS.items()
+    }
+
+
+def _category_instance_known(instance: str, requested: str) -> bool:
+    """J5 (round-3 adversarial review, testing session 3a): is a class-prefix
+    match's INSTANCE segment (``kitchen_item.refrigerator`` -> ``refrigerator``)
+    a real arena object?
+
+    True when: no ``possible_objects`` are loaded at all (unit tests /
+    offline -- keep today's permissive behaviour); OR ``requested`` is
+    ITSELF a known object name (an exact-object request, e.g. "bowl", not a
+    category one -- the class-prefix rule wasn't the reason it matched);
+    OR a single-token known object's name matches ONE of ``instance``'s
+    tokens (plural/underscore tolerant, same as grasp/place object
+    identity); OR EVERY token of a multi-token known object's own name
+    (``sugar_box``, ``cheez_it``, ``pudding_box``) is present among
+    ``instance``'s tokens; OR EVERY token of a known object's VLM prompt
+    description is present among ``instance``'s tokens.
+
+    H-4 (round-3 fix review): the real detector's class-prefix labels are
+    ``"<category>.<free-text VLM description>"`` (e.g.
+    ``"kitchen item.red ceramic mug"``, not ``"kitchen item.mug"``) --
+    exact-or-plural ``_same_object`` on the WHOLE instance segment never
+    matched a ``possible_objects`` key, so every real detection failed this
+    gate. Token containment fixes it. Every containment check here requires
+    the FULL name (or the full prompt) as a token SUBSET of the instance,
+    never a single shared word in isolation -- a lone descriptive word (a
+    color like "white", a fragment like "it" of "cheez_it") appears across
+    many unrelated objects and is not, by itself, strong evidence.
+    """
+    known = _known_object_names()
+    if not known:
+        return True
+    if requested in known:
+        return True
+    from .planner_validators import _same_object  # lazy: planner_validators imports this module
+    instance_tokens = _label_tokens(instance)
+    instance_token_set = set(instance_tokens)
+    single_token_names = {name for name in known if len(_label_tokens(name)) == 1}
+    if any(_same_object(tok, name) for tok in instance_tokens for name in single_token_names):
+        return True
+    prompt_token_sets = _known_object_prompt_token_sets()
+    for name in known:
+        name_tokens = _label_tokens(name)
+        if len(name_tokens) > 1 and set(name_tokens) <= instance_token_set:
+            return True
+        prompt_tokens = prompt_token_sets.get(name)
+        if prompt_tokens and prompt_tokens <= instance_token_set:
+            return True
+    return False
+
+
+def _label_matches(label: str, requested: str) -> bool:
+    """label/requested already normalised.
+
+    Detector labels follow two grammars: `<class>.<instance>` (category-prompted
+    object detection, e.g. "kitchen_item.round_white_table") and `<class> <name>`
+    (person specialist, e.g. "person_liam" after normalization). The two
+    grammars are matched differently (M1/M3, round-2 review):
+
+    - `.`-label (category-prompted object detection): whole-label equality,
+      whole-CLASS-segment equality ("drink" == "drink.coke"'s class), or
+      (M1) whole-INSTANCE-segment equality ("pudding_box" ==
+      "food.pudding_box"'s instance) -- and nothing else. Neither segment is
+      ever split into sub-tokens (M3): "kitchen" must not match
+      "kitchen_item.trash_can" (a class-segment fragment) and "table" must
+      not match "kitchen_item.round_white_table" (an instance-segment
+      fragment) -- gate false positives are the expensive direction here (a
+      wrong object_seen lets a grasp run on the wrong thing).
+    - `.`-less label (person specialist grammar, e.g. "person_liam" /
+      "red_jacket"): whole-label equality, or `requested` as one whole
+      '_'-separated token of the label ("liam" in "person_liam"). The token
+      rule is deliberately conservative: `requested` must be a WHOLE token
+      -- never a substring -- so "red" matches "red_jacket" but not
+      "bred_jacket". A multi-word `requested` (itself containing '_') only
+      matches by equality; its own tokens are never split against the
+      label's tokens.
+
+    J5 (round-3 adversarial review, testing session 3a): whole-CLASS-segment
+    equality (the category-membership rule) is VALID only when the
+    INSTANCE segment is itself a known arena object -- see
+    ``_category_instance_known``. Without this, ANY class-prefix match
+    ("kitchen_item.refrigerator" for a requested category "kitchen_item")
+    passed even when the arena doesn't model that instance as a graspable
+    object at all.
+    """
+    if label == requested:
+        return True
+    class_prefix, sep, instance = label.partition(".")
+    if sep:
+        if instance == requested:
+            return True
+        return class_prefix == requested and _category_instance_known(instance, requested)
+    if "_" not in requested and requested in _label_tokens(label):
+        return True
+    return False
+
+
+# VLM person scans often return a natural-language description instead of the
+# canonical descriptor used by the split layer.  Keep this matcher separate
+# from ``_label_matches``: object/category labels use a deliberately stricter
+# grammar, while a person descriptor can be represented as a phrase such as
+# ``detect a person pointing to their left with one arm extended``.
+_PERSON_CLASS_TOKENS = frozenset({"person", "persons", "people", "human", "humans"})
+_PERSON_SCAN_WRAPPER_TOKENS = frozenset({
+    "detect", "detected", "find", "found", "look", "looking", "for",
+    "candidate", "candidates", "target", "someone", "somebody", "one",
+    "a", "an", "the", "to", "of", "in", "on", "at", "that", "who",
+    "which", "is", "are", "their", "his", "her", "with",
+})
+
+
+def _descriptor_words(value: Any) -> list[str]:
+    """Tokenize a human-readable descriptor while dropping punctuation."""
+    return re.findall(r"[a-z0-9]+", str(value or "").lower())
+
+
+def _person_descriptor_label_matches(label: str, requested: str) -> bool:
+    """Match a canonical person descriptor against a VLM phrase.
+
+    The requested fact must explicitly describe a person.  Every requested
+    content token must then occur in the detector phrase, with the existing
+    object plural rules applied token-by-token.  This accepts harmless wording
+    around a descriptor (``detect a``, ``with one arm``) without allowing an
+    unrelated person label to satisfy the postcondition.
+    """
+    requested_words = _descriptor_words(requested)
+    label_words = _descriptor_words(label)
+    if not requested_words or not label_words:
+        return False
+    if not any(word in _PERSON_CLASS_TOKENS for word in requested_words):
+        return False
+    if not any(word in _PERSON_CLASS_TOKENS for word in label_words):
+        return False
+
+    requested_content = [
+        word for word in requested_words
+        if word not in _PERSON_SCAN_WRAPPER_TOKENS
+    ]
+    label_content = [
+        word for word in label_words
+        if word not in _PERSON_SCAN_WRAPPER_TOKENS
+    ]
+    label_set = set(label_content)
+    from .planner_validators import _same_object  # lazy: avoid import cycle
+    return all(
+        word in label_set or any(_same_object(word, candidate) for candidate in label_content)
+        for word in requested_content
+    )
+
+
+# I2 (round-3 adversarial review, H2): `count_target` is the count step's
+# literal `object` param (the LOWER layer's own wording); the counted() fact
+# argument comes from the TOP layer's split (the command's wording). Exact
+# `_norm_match` rejected "drinks"/"drink", "persons"/"person" and "kitchen
+# items"/"kitchen item" -- all correct counts. Reuse the same plural
+# tolerance `planner_validators._same_object` already applies to grasp/place
+# object identity, plus `_label_matches`' class/instance rule, and only then
+# fall back to a per-token plural-tolerant comparison for multi-word
+# descriptors ("persons pointing to the left" / "person pointing to the
+# left") whose plural lives on the head noun, not the last token.
+def _count_provenance_matches(requested: str, provenance: Any) -> bool:
+    from .planner_validators import _same_object  # lazy: planner_validators imports this module
+
+    requested_norm = _normalize(requested)
+    provenance_norm = _normalize(str(provenance))
+    if requested_norm == provenance_norm:
+        return True
+    if _same_object(requested_norm, provenance_norm):
+        return True
+    if _label_matches(provenance_norm, requested_norm) or _label_matches(requested_norm, provenance_norm):
+        return True
+    # Sim battery 2026-09-25 (run s70718-002): the split named the fact
+    # ``counted(persons_pointing_right)`` while the count artifact kept the
+    # command phrase "persons pointing to the right" -- content-identical,
+    # differing only in stop-words and the head noun's plural. Compare the
+    # content tokens; the head noun (first content token) is
+    # plural-tolerant, the descriptor tail must match exactly.
+    req_tokens = _content_tokens(requested_norm)
+    prov_tokens = _content_tokens(provenance_norm)
+    if len(req_tokens) == len(prov_tokens) and len(req_tokens) > 1 and req_tokens[1:] == prov_tokens[1:]:
+        if _same_object(req_tokens[0], prov_tokens[0]):
+            return True
+    return False
+
+
+# Function words the split layer and the LLM planner drop or keep
+# inconsistently when canonicalising a descriptor into a fact argument
+# ("persons pointing to the right" -> "persons_pointing_right"). Never a
+# head noun or a descriptor word on their own.
+_DESCRIPTOR_STOP_WORDS = frozenset({
+    "to", "the", "a", "an", "of", "in", "on", "at", "that", "who", "which",
+    "is", "are", "their", "his", "her", "with",
+})
+
+
+def _content_tokens(normalized: str) -> list[str]:
+    return [t for t in normalized.split("_") if t and t not in _DESCRIPTOR_STOP_WORDS]
+
+
+def _step_action(step: Mapping[str, Any]) -> str:
+    action = step.get("action", step.get("name", step.get("type", "")))
+    return _normalize(str(action))
+
+
+def _step_params(step: Mapping[str, Any]) -> Mapping[str, Any]:
+    params = step.get("params", step.get("parameters", {}))
+    return params if isinstance(params, Mapping) else {}
+
+
+def _step_succeeded(step: Mapping[str, Any]) -> bool:
+    status = step.get("status", step.get("verdict", step.get("result", None)))
+    if status is None:
+        return True
+    if isinstance(status, bool):
+        return status
+    return _normalize(str(status)) in {"success", "succeeded", "successful", "completed", "ok", "valid"}
+
+
+def _successful_answer_announce(context: VerificationContext) -> bool:
+    """Return whether this target actually completed an answer announcement.
+
+    Answer-producing actions write buffers (``count_value``, ``llm_answer``,
+    ``report_info``), but those buffers are not delivery evidence.  A target's
+    ``answered(...)`` postcondition is valid only after a successful explicit
+    ``announce`` step.  Acknowledgement/refusal announcements are planning or
+    recovery messages and cannot satisfy the requested answer.
+    """
+    for step in context.completed_steps:
+        if not isinstance(step, Mapping) or not _step_succeeded(step):
+            continue
+        if _step_action(step) != "announce":
+            continue
+        params = _step_params(step)
+        if params.get("acknowledgement"):
+            continue
+        text = params.get("text") or params.get("message")
+        if text and _REFUSAL_RE.match(str(text)):
+            continue
+        return True
+    return False
+
+
+# --- sim-mode identity relaxation (GPSR_SIM_IDENTITY_RELAXED=1) ----------
+#
+# Sim persons carry no name identity: the detector always labels them
+# "person" regardless of who the scenario says is standing there. Without
+# this flag, person_found(<Name>) rejects a correct sim run purely because
+# the requested name is never among the detection labels. See _verify's
+# person_found branch below for where this is consulted -- it only
+# replaces the final INVALID return of the labelled-mismatch path, never
+# the earlier established-fact / waving-specialist / unset-evidence paths.
+#
+# L3 (round-4 battery fix, run 019): earlier revisions carved the SPECIALIST
+# waving descriptor (``_SIM_PERSON_DESCRIPTORS``) out of this degrade
+# entirely via ``_is_person_name_arg`` ("must never fall through to the
+# generic degrade") on the theory that only the provenance-gated
+# waving_specialist branch above may confirm person_found(waving_person).
+# Ruling: under the flag, waving is exactly as unmodelled in sim as any
+# other gesture/pose descriptor already covered here (static sim actors
+# cannot wave) -- the carve-out is REMOVED, but only inside this flag-on
+# path: with the flag off, this whole branch is unreachable (see
+# ``_sim_identity_relaxed_enabled()`` below) so the strict
+# "waving_specialist provenance required" behaviour is completely
+# untouched. The waving specialist branch still runs FIRST in
+# ``small_trees._person_scan_strategies`` and wins whenever it CAN detect
+# waving; this generic degrade is only reached once BOTH that specialist
+# and the strict descriptor-specific match have failed.
+_SIM_PERSON_CLASS_LABELS = {"person", "persons", "people", "human"}
+_SIM_PERSON_DESCRIPTORS = {"waving_person", "waving_persons"}
+
+
+def _sim_identity_relaxed_enabled() -> bool:
+    # Read fresh every call (not cached at import time) so tests can
+    # monkeypatch os.environ per-test without reloading the module.
+    return os.environ.get("GPSR_SIM_IDENTITY_RELAXED") == "1"
+
+
+def _relaxed_person_pose_materialized(evidence: Mapping[str, Any]) -> bool:
+    """True when the scan behind this evidence actually materialized a pose
+    the executor can act on.
+
+    L2b (round-4 battery fix, runs 008/011): a leftover
+    ``BtNode_ScanForGeneralist`` detection response (stored even on a
+    no-match FAILURE — see that node's docstring) used to be enough on its
+    own for the relaxed branch below to VALIDATE person_found(), but nothing
+    had actually written ``TARGET_PERSON_POSE`` — the next
+    ``approach_person`` step then crashed with "Unsupported type for
+    gpsr/target_person_pose: NoneType" (the 008/011 regression this guards).
+    Require ALSO that a pose was materialized: either ``TARGET_PERSON_POSE``
+    is set (``evidence["target_person_pose"]``), or the relaxed extract's
+    own provenance marker is present (``person_provenance ==
+    "relaxed_generic"``, written by ``BtNode_ExtractDetection``'s relaxed
+    mode alongside the very pose it writes — see small_trees.py).
+    """
+    return (
+        evidence.get("target_person_pose") is not None
+        or evidence.get("person_provenance") == "relaxed_generic"
+    )
+
+
+def _action_verdict(fact: Fact, context: VerificationContext) -> Optional[VerificationResult]:
+    if context.phase != "postcondition":
+        return None
+    target = fact.args
+    for step in context.completed_steps:
+        if not isinstance(step, Mapping) or not _step_succeeded(step):
+            continue
+        action = _step_action(step)
+        params = _step_params(step)
+        if fact.predicate == "held" and action == "grasp" and _norm_match(params.get("object", ""), target[0]):
+            return _result(Verdict.VALID, "action-verdict fallback: stronger verifier not installed; successful grasp action", 0.5)
+        if fact.predicate == "placed" and action == "place":
+            explicit_object = params.get("object", "")
+            object_matches = (
+                _norm_match(explicit_object, target[0])
+                if str(explicit_object).strip()
+                else _norm_match(context.target_object, target[0])
+            )
+            if _norm_match(params.get("location", ""), target[1]) and object_matches:
+                return _result(Verdict.VALID, "action-verdict fallback: stronger verifier not installed; successful place action", 0.5)
+        if fact.predicate == "delivered" and action == "deliver":
+            # Sim battery 2026-09-25 (run s70718-004): the split canonicalises
+            # "bring it to me" as ``delivered(x,operator)`` while the deliver
+            # step keeps ``recipient="me"`` -- the same START_LOCATION_WORDS
+            # alias set ``_at_robot_match`` already honours for at_robot, so a
+            # genuinely completed handover no longer verdicts UNKNOWN.
+            if (_norm_match(params.get("object", ""), target[0]) and
+                    (_at_robot_match(params.get("recipient", ""), target[1]) or
+                     _delivery_recipient_match(params, target[1]))):
+                return _result(Verdict.VALID, "action-verdict fallback: stronger verifier not installed; successful deliver action", 0.5)
+        if fact.predicate == "at_robot":
+            from .action_contracts import ACTION_CONTRACTS  # lazy: action_contracts imports this module
+            contract = ACTION_CONTRACTS.get(str(action))
+            nav_param = contract.self_establishes.get("at_robot") if contract else None
+            if nav_param and _norm_match(params.get(nav_param, ""), target[0]):
+                return _result(
+                    Verdict.VALID,
+                    f"action-verdict fallback: stronger verifier not installed; successful {action} action",
+                    0.5,
+                )
+        if (fact.predicate == "answered" and not params.get("acknowledgement")
+                and not _successful_answer_announce(context)):
+            # A result-gathering action alone cannot deliver the requested
+            # answer.  Keep this guard in the action fallback as well as the
+            # artifact branch so callers that invoke _action_verdict directly
+            # receive the same verdict as the full verifier.
+            continue
+        if fact.predicate == "answered" and not params.get("acknowledgement"):
+            from .action_contracts import ACTION_CONTRACTS  # lazy: action_contracts imports this module
+            contract = ACTION_CONTRACTS.get(action)
+            establishes_answered = contract is not None and any(
+                t.split("(", 1)[0] == "answered" for t in contract.establishes
+            )
+            # M1: no longer requires a non-empty params["text"] -- a
+            # text-less announce() reporting a prior count/describe_person/
+            # ask_person/vlm_fallback result (the prompt's canonical "tell
+            # ME" pattern) has nothing IN ITS OWN params to check; the
+            # earlier successful step already qualifies via ITS OWN contract
+            # (count/ask_person/... establish "answered" too, see H1), so
+            # the plan is covered even before this text-less announce is
+            # reached. Any step whose contract establishes "answered",
+            # succeeded, and is not flagged acknowledgement qualifies.
+            # I-3 (round-2 review): an LLM-authored refusal/apology announce
+            # is never flagged acknowledgement (only orchestrator._fallback_plan
+            # and planner.replace_target_plan tag that -- a plan the LOWER
+            # LAYER LLM produced on its own has no such tag), so without this
+            # check a replan that gave up ("I could not count the drinks")
+            # would read back as a postcondition PASS the same as a real
+            # answer. Belt-and-braces alongside the "acknowledgement": true
+            # instruction in LOWER_LAYER_SYSTEM_PROMPT (planner.py) that asks
+            # the model to tag its own refusals.
+            if (action == "announce"
+                    and _REFUSAL_RE.match(str(params.get("text") or ""))):
+                establishes_answered = False
+            if establishes_answered:
+                reason = (
+                    "action-verdict fallback: spoken announce stands as the answer; "
+                    "question identity unavailable"
+                    if action == "announce" else
+                    f"action-verdict fallback: successful {action} action establishes "
+                    "answered(); question identity unavailable"
+                )
+                return _result(Verdict.VALID, reason, 0.5)
+    return None
+
+
+def _completed_step_records(context: VerificationContext, evidence_name: str) -> bool:
+    """True when a succeeded step in ``context.completed_steps`` has a
+    contract whose ``records`` includes ``evidence_name``.
+
+    X2-H1 (round-3 fix2 review): used as the staleness guard for a bare
+    ``report_info`` artifact in the ``answered`` branch below -- see its
+    call site.
+    """
+    from .action_contracts import ACTION_CONTRACTS  # lazy: action_contracts imports this module
+    for step in context.completed_steps:
+        if not isinstance(step, Mapping) or not _step_succeeded(step):
+            continue
+        contract = ACTION_CONTRACTS.get(_step_action(step))
+        if contract is not None and evidence_name in contract.records:
+            return True
+    return False
+
+
+def _verify(fact: Fact, evidence: Mapping[str, Any], context: VerificationContext) -> VerificationResult:
+    hook = _TIER2_HOOKS.get(fact.predicate)
+    if hook is not None:
+        hooked = hook(fact, evidence, context)
+        if hooked is not None:
+            return hooked
+
+    canonical = canonical_fact(fact)
+    established = {_normalize_established(item) for item in context.established_facts}
+    # J2: the ledger shortcut is only for facts OTHER targets established --
+    # never for a fact this target itself is being asked to newly verify.
+    is_own_postcondition = context.phase == "postcondition" and canonical in context.own_postconditions
+    if fact.predicate == "at_robot":
+        if "last_nav_location" in evidence and evidence["last_nav_location"] is not None:
+            if not _at_robot_match(evidence["last_nav_location"], fact.args[0]):
+                return _result(Verdict.INVALID, "navigation location mismatch")
+        if canonical in established and not is_own_postcondition:
+            return _result(Verdict.VALID, f"established fact: {canonical}")
+
+    if canonical in established and not is_own_postcondition:
+        return _result(Verdict.VALID, f"established fact: {canonical}")
+
+    if fact.predicate in {"object_seen", "person_found"}:
+        detection_key = "object_detection" if fact.predicate == "object_seen" else "person_detection"
+        response = evidence.get(detection_key)
+        if response is None and fact.predicate == "person_found":
+            response = evidence.get("waving_persons")
+        labels, nonempty = _detection_labels(response)
+        # Specialist waving output is a typed descriptor, not a person's name.
+        if (
+            fact.predicate == "person_found"
+            and _normalize(fact.args[0]) in {"waving_person", "waving_persons"}
+            and evidence.get("person_provenance") == "waving_specialist"
+            and nonempty
+        ):
+            return _result(Verdict.VALID, "waving-specialist person artifact matches descriptor provenance")
+        if labels:
+            requested_label = _normalize(fact.args[0])
+            if any(_label_matches(label, requested_label) for label in labels):
+                return _result(Verdict.VALID, f"{detection_key} label matches requested target")
+            if (
+                fact.predicate == "person_found"
+                and any(_person_descriptor_label_matches(label, requested_label) for label in labels)
+            ):
+                return _result(
+                    Verdict.VALID,
+                    f"{detection_key} phrase matches requested person descriptor",
+                )
+            if fact.predicate == "object_seen" and any(
+                _known_object_prompt_label(label, requested_label) for label in labels
+            ):
+                return _result(
+                    Verdict.VALID,
+                    f"{detection_key} label matches configured prompt for {requested_label}",
+                )
+            # The target-scoped prompt is copied from the same blackboard
+            # entry that drove the detector.  Keep it as a fallback when a
+            # standalone validator is running with a knowledge map that was
+            # not loaded in this process (the live bridge still reports the
+            # prompt text, e.g. ``red cracker box``).
+            if (
+                fact.predicate == "object_seen"
+                and any(
+                    _vision_prompt_label_matches(label, evidence.get("target_object_prompt"))
+                    for label in labels
+                )
+            ):
+                return _result(
+                    Verdict.VALID,
+                    f"{detection_key} label matches target vision prompt",
+                )
+            if fact.predicate == "object_seen" and any(
+                _category_member_label(label, requested_label) for label in labels
+            ):
+                return _result(
+                    Verdict.VALID,
+                    f"{detection_key} label is a configured member of category {requested_label}",
+                )
+            if (
+                fact.predicate == "person_found"
+                and _sim_identity_relaxed_enabled()
+                and any(
+                    token in _SIM_PERSON_CLASS_LABELS
+                    for label in labels
+                    for token in _label_tokens(label)
+                )
+                and _relaxed_person_pose_materialized(evidence)
+            ):
+                # J13/L3: unified reason for any relaxed argument -- name,
+                # gesture/pose descriptor, or (L3, round-4 battery fix) the
+                # waving descriptor too -- the sim models identity/gesture no
+                # better for one than another. L2b (same fix round) also
+                # requires _relaxed_person_pose_materialized: a VALID
+                # verdict here always means a pose was actually written, so
+                # approach_person has something to act on.
+                return _result(
+                    Verdict.VALID,
+                    f"sim mode: descriptor {fact.args[0]} not modelled",
+                    0.6,
+                )
+            # J5: give the specific reason when a label's class prefix
+            # matched the requested category but its instance is not a
+            # known arena object (rejected by _label_matches/
+            # _category_instance_known) -- more actionable than the generic
+            # "labels do not match" for a category request.
+            for label in labels:
+                class_prefix, sep, instance = label.partition(".")
+                if (
+                    sep and class_prefix == requested_label
+                    and not _category_instance_known(instance, requested_label)
+                ):
+                    return _result(
+                        Verdict.INVALID,
+                        f"detected {label} is not a known arena object for "
+                        f"category {requested_label}",
+                    )
+            return _result(Verdict.INVALID, f"{detection_key} labels do not match requested target")
+        if nonempty:
+            if fact.predicate == "person_found" and evidence.get("person_provenance") == "waving_specialist":
+                if _normalize(fact.args[0]) in {"waving_person", "waving_persons"}:
+                    return _result(Verdict.VALID, "waving-specialist person artifact has identity unavailable")
+                return _result(Verdict.UNKNOWN, "waving-specialist artifact has no named-person identity")
+            return _result(Verdict.VALID, f"{detection_key} identity unavailable; nonempty target-scoped artifact")
+    elif fact.predicate == "counted":
+        if "count_value" in evidence:
+            # Sim battery 2026-09-26 (run s70718-001): a zero was accepted
+            # from one out-of-frame look while three items sat on the
+            # table. Zero is suspicious -- it only counts once the count
+            # tree's full recount sweep (small_trees.create_count,
+            # ``count_recounted`` / bb_keys.COUNT_RECOUNTED) has run;
+            # otherwise INVALID so the executor replans and re-runs count.
+            # Postcondition phase only: that is the gate committing the count
+            # step's OWN result; a precondition check reads an artifact that
+            # was already gated (and recounted) when it was produced.
+            if (
+                context.phase == "postcondition"
+                and _count_is_zero(evidence["count_value"])
+                and not evidence.get("count_recounted")
+            ):
+                return _result(Verdict.INVALID, "count is zero — recount")
+            provenance = evidence.get("count_target") or evidence.get("count_query")
+            if provenance is not None and str(provenance).strip():
+                if not _count_provenance_matches(fact.args[0], provenance):
+                    return _result(Verdict.INVALID, "count artifact target provenance mismatch")
+                return _result(Verdict.VALID, "count artifact target provenance matches")
+            return _result(Verdict.VALID, "count artifact contains count_value; target identity unavailable")
+    elif fact.predicate == "answered":
+        # Buffers written by count/ask/fallback/description are gathering
+        # evidence only.  Require a completed explicit announce before any
+        # answer artifact can satisfy this postcondition; otherwise a failed
+        # or skipped speech step would be reported as a physical PASS.
+        if context.phase == "postcondition" and not _successful_answer_announce(context):
+            return _result(
+                Verdict.INVALID,
+                "answered postcondition requires a successful explicit announce step",
+            )
+        # X2 (round-3 fix review): describe_person's ONLY answer artifact is
+        # REPORT_INFO (it speaks + buffers a description, never writing
+        # qa_answer/llm_answer/...) -- without this key, coverage accepting
+        # describe_person as an answered() establisher (action_contracts.py)
+        # still had no runtime artifact to VALID against.
+        answer_keys = ("qa_answer", "person_answer", "llm_answer", "vlm_answer", "report_info")
+        # count also establishes answered(question) now (H1: "how many ..."
+        # is a spoken-answer target too) -- mirror the `counted` branch above
+        # and accept a bare count_value artifact, same as any other answer key.
+        #
+        # M-7 (round-2 review): `evidence` (the Blackboard FACTS mirror) is
+        # cleared only on target ADVANCE (orchestrator.py ~2095-2099), not
+        # per-step -- so a target that counted, then asked an unrelated
+        # question whose ask_person failed, then replanned to a bare
+        # announce, could still see this old count_value here and verdict
+        # VALID via a stale artifact instead of the failed ask. Negligible in
+        # practice (a target rarely mixes count + ask_person for two
+        # DIFFERENT `answered(...)` facts), not fixed here.
+        has_answer_artifact = (
+            any(isinstance(evidence.get(key), str) and evidence[key].strip() for key in answer_keys)
+            or "count_value" in evidence
+        )
+        if has_answer_artifact:
+            provenance = next((evidence.get(key) for key in
+                               ("qa_question", "ask_question", "question_provenance", "vlm_question", "llm_question")
+                               if isinstance(evidence.get(key), str) and evidence[key].strip()), None)
+            if provenance is not None:
+                fact_words = _content_words(fact.args[0])
+                provenance_words = _content_words(provenance)
+                if not fact_words or fact_words.issubset(provenance_words):
+                    return _result(Verdict.VALID, "answer artifact question provenance matches")
+                # M-2 (round-3 fix review): only a DISCRIMINATING fact word
+                # (one that says something specific, not just "question" /
+                # "person" / ...) can justify rejecting on zero overlap.
+                discriminating = fact_words - _NON_DISCRIMINATING_FACT_WORDS
+                if (
+                    discriminating
+                    and not (fact_words & provenance_words)
+                    and len(provenance_words) >= 2
+                ):
+                    return _result(Verdict.INVALID, "answer artifact question provenance mismatch")
+                return _result(
+                    Verdict.VALID, "answer artifact question provenance partially matches", 0.6
+                )
+            # X2-H1 (round-3 fix2 review): report_info is exempt from
+            # `_swap_in`'s cross-target clear (orchestrator.py) -- it is a
+            # deliberately cross-target buffer so a LATER target's announce
+            # can report an EARLIER target's gathered result. But that means
+            # a BARE report_info artifact (no question provenance, reached
+            # here) can also be STALE for an UNRELATED later target with its
+            # own answered() postcondition. Accept it here only when THIS
+            # target itself recorded report_info (a describe_person step in
+            # context.completed_steps); otherwise fall through past this
+            # elif chain to `_action_verdict` below -- the GENUINE
+            # cross-target report target (J8's synthetic [goto, announce]
+            # target) still VALIDs there, via its own completed announce
+            # step establishing answered().
+            other_answer_present = any(
+                isinstance(evidence.get(key), str) and evidence[key].strip()
+                for key in ("qa_answer", "person_answer", "llm_answer", "vlm_answer")
+            ) or "count_value" in evidence
+            if other_answer_present or _completed_step_records(context, "report_info"):
+                return _result(
+                    Verdict.VALID,
+                    "answer artifact contains a nonempty answer; question identity unavailable",
+                )
+    elif fact.predicate == "at_robot":
+        if "last_nav_location" in evidence and evidence["last_nav_location"] is not None:
+            if not _at_robot_match(evidence["last_nav_location"], fact.args[0]):
+                return _result(Verdict.INVALID, "navigation location mismatch")
+            if context.phase == "postcondition":
+                return _result(Verdict.VALID, "intent/action evidence: matching last navigation location", 0.5)
+
+    action_result = _action_verdict(fact, context)
+    if action_result is not None:
+        return action_result
+    return _result(Verdict.UNKNOWN, "UNKNOWN: stronger verifier not installed and no sufficient artifact")
+
+
+def _normalize_established(value: Any) -> str:
+    text = str(value).strip()
+    fact, error = parse_fact(text)
+    return canonical_fact(fact) if fact is not None else _normalize(text)
+
+
+def check_all(
+    fact_texts: list[str], evidence: Mapping[str, Any], context: VerificationContext
+) -> tuple[list[VerificationResult], list[Fact]]:
+    """Check every supplied fact; malformed facts yield INVALID results."""
+    results: list[VerificationResult] = []
+    facts: list[Fact] = []
+    for text in fact_texts:
+        fact, error = parse_fact(text)
+        if fact is None:
+            results.append(_result(Verdict.INVALID, f"invalid fact: {error}"))
+            continue
+        facts.append(fact)
+        results.append(_verify(fact, evidence, context))
+    return results, facts

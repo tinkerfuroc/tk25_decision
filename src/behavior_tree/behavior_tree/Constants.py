@@ -9,7 +9,7 @@ SRV_GRASP = "start_grasp"
 SRV_OBJ_DETECTION = "object_detection"
 # SRV_REL_TO_ABS = "rel_to_abs"
 SRV_WAIT_FOR_START = "wait_for_start"
-SRV_MOVE_ARM = "arm_joint_service"
+ACTION_MOVE_ARM = "joint_move_action"
 
 PRINT_BLACKBOARD = False
 PRINT_DEBUG = True
