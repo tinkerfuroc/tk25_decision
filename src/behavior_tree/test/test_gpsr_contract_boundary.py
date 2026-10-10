@@ -593,12 +593,9 @@ def test_plan_target_initial_plan_drops_ancestors_grasp_step(monkeypatch, capsys
     # plan (no failure_reason) re-does t0's whole [goto, grasp, deliver] --
     # the ancestor's held(spam) is guaranteed by the DAG + precondition
     # gate, so `plan_target` drops the duplicated grasp on this path
-    # (include_ancestors=True only when failure_reason is None), leaving
-    # [goto, deliver]. UN-STUBBED validate_plan (I-4) then always rejects
-    # [goto, deliver] outright (goto immediately before a self-navigating
-    # deliver is redundant) -- so plan_target's dangling-goto cleanup must
-    # ALSO drop that now-pointless goto, leaving a plan a real
-    # validate_plan actually accepts: ["deliver"].
+    # (include_ancestors=True only when failure_reason is None). The
+    # operator-delivery contract then inserts the explicit return leg:
+    # [goto(task), goto(start_position), deliver].
     p = GPSRPlanner(max_attempts=2)
     monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
     monkeypatch.setattr(p, "build_target_subtree", lambda *a, **k: py_trees.behaviours.Success("stub"))
@@ -620,10 +617,10 @@ def test_plan_target_initial_plan_drops_ancestors_grasp_step(monkeypatch, capsys
         target_obj="spam", target_loc="", target=T1, all_targets=[T0, T1],
     )
 
-    assert [s["action"] for s in p.get_action_plan(0, 1)] == ["deliver"]
+    assert [s["action"] for s in p.get_action_plan(0, 1)] == ["goto", "goto", "deliver"]
     out = capsys.readouterr().out
     assert "contract:grasp->held(spam)" in out
-    assert "contract:goto->dangling" in out
+    assert "contract:goto->dangling" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -678,9 +675,10 @@ def test_plan_target_modification_step_index_remapped_through_contract_guard(mon
     # index 2 (find_person). The contract guard then drops `grasp` (t0's
     # ancestor already guarantees held(spam), same shape as
     # test_plan_target_initial_plan_drops_ancestors_grasp_step above),
-    # leaving [goto, find_person, deliver]. The mod must land on
-    # find_person's NEW index (1), not be rejected as "could not be
-    # matched" or silently misapplied to a different step.
+    # leaving [goto, find_person, deliver]. The explicit operator return leg
+    # is then inserted before deliver, so the final plan is
+    # [goto, find_person, goto(start_position), deliver]. The mod must land
+    # on find_person's NEW index (1), not be rejected or misapplied.
     p = GPSRPlanner(max_attempts=2)
     monkeypatch.setattr(p, "_new_client", lambda: _StubClient())
     captured: dict = {}
@@ -717,7 +715,7 @@ def test_plan_target_modification_step_index_remapped_through_contract_guard(mon
         target_obj="spam", target_loc="", target=T1, all_targets=[T0, T1],
     )
 
-    assert [s["action"] for s in captured["plan"]] == ["goto", "find_person", "deliver"]
+    assert [s["action"] for s in captured["plan"]] == ["goto", "find_person", "goto", "deliver"]
     assert captured["modifications"] == [{**mod, "step_index": 1}]
     out = capsys.readouterr().out
     assert "contract:grasp->held(spam)" in out
@@ -762,7 +760,7 @@ def test_plan_target_modification_dropped_when_its_own_step_is_removed(monkeypat
         target_obj="spam", target_loc="", target=T1, all_targets=[T0, T1],
     )
 
-    assert [s["action"] for s in captured["plan"]] == ["goto", "find_person", "deliver"]
+    assert [s["action"] for s in captured["plan"]] == ["goto", "find_person", "goto", "deliver"]
     assert captured["modifications"] == []
     out = capsys.readouterr().out
     assert "mod:grasp-wider-gate@1" in out
@@ -891,7 +889,7 @@ def test_plan_target_replan_keeps_ancestors_grasp_step(monkeypatch, capsys):
         failure_reason="precondition unmet: held(spam) (invalid)",
     )
 
-    assert [s["action"] for s in p.get_action_plan(0, 1)] == ["goto", "grasp", "deliver"]
+    assert [s["action"] for s in p.get_action_plan(0, 1)] == ["goto", "grasp", "goto", "deliver"]
 
 
 def test_replace_target_plan_keeps_ancestors_grasp_step(monkeypatch, capsys):
@@ -913,7 +911,7 @@ def test_replace_target_plan_keeps_ancestors_grasp_step(monkeypatch, capsys):
 
     p.replace_target_plan(0, 1, plan, reason="supervisor global replan")
 
-    assert [s["action"] for s in p.get_action_plan(0, 1)] == ["goto", "grasp", "deliver"]
+    assert [s["action"] for s in p.get_action_plan(0, 1)] == ["goto", "grasp", "goto", "deliver"]
 
 
 def test_plan_target_initial_plan_attempt_two_still_lists_ancestors_as_owned(monkeypatch):

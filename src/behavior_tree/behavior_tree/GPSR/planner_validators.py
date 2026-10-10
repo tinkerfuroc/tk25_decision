@@ -102,6 +102,24 @@ _PERSON_SPEECH_RE = re.compile(
     r"\b(?:say|tell|speak|talk|announce|answer|inform|report)\b",
     re.IGNORECASE,
 )
+# A person noun in a count target describes what the robot should observe; it
+# does not make the final report person-directed.  Keep this separate from
+# ``_PERSON_WORDS_RE`` because the latter is intentionally broad and is also
+# used for descriptors ("the person waving").  Clauses are split at common
+# GPSR separators so a later clause such as "then tell the person ..." still
+# remains a person-directed request.
+_COUNT_PERSON_TARGET_RE = re.compile(
+    r"\b(?:count(?:ing)?|how\s+many|number\s+of)\b"
+    r"[^,;.!?]*\b(?:person|people|persons|human|humans|someone|somebody|"
+    r"guest|man|woman|boy|girl|child|lady|gentleman)\b",
+    re.IGNORECASE,
+)
+_PERSON_ADDRESSEE_RE = re.compile(
+    r"\b(?:say|tell|speak|talk|ask|announce|answer|inform|report)\b"
+    r"[^,;.!?]*\b(?:person|people|persons|human|humans|someone|somebody|"
+    r"guest|man|woman|boy|girl|child|lady|gentleman)\b",
+    re.IGNORECASE,
+)
 
 
 def _norm_loc(name: str) -> str:
@@ -114,11 +132,55 @@ def _norm_loc(name: str) -> str:
     """
     return str(name).lower().replace(" ", "_").strip()
 
+
+def _is_counting_person_target(command: str) -> bool:
+    """Return whether *command* counts people as the observed target.
+
+    ``_PERSON_WORDS_RE`` cannot be used on its own for this distinction: a
+    normal command such as ``count how many people are in the laundry room``
+    contains a person noun but does not address anyone.  Split at clause
+    conjunctions before applying the count pattern so a later person-directed
+    clause is not swallowed by the count clause.
+    """
+    text = str(command or "")
+    clauses = re.split(r"[,;.!?]|\bthen\b|\band\b", text, flags=re.IGNORECASE)
+    return any(_COUNT_PERSON_TARGET_RE.search(clause) for clause in clauses)
+
 # Command clauses that address a result back to the operator ("tell me",
 # "bring me", "deliver it to me", ...).
 OPERATOR_REPORT_RE = re.compile(
     r"\b(tell|show|give|bring|hand|say to|report to)\s+me\b|\bto me\b"
 )
+
+_OPERATOR_RECIPIENT_WORDS = frozenset({
+    "me", "us", "myself", "operator", "the_operator", "the_user",
+})
+
+
+def _explicit_operator_return_delivery(
+    goto_step: Dict[str, Any], deliver_step: Dict[str, Any], command: str,
+) -> bool:
+    """Whether ``goto -> deliver`` is the explicit operator return leg.
+
+    ``deliver`` is self-navigating for ordinary recipients, so the general
+    validator still rejects an adjacent ``goto``.  The one intentional
+    exception is a return to the command operator: the planner exposes
+    ``goto(start_position)`` for auditability and the runtime reuses that
+    successful navigation instead of driving to the same pose twice.
+    """
+    goto_params = goto_step.get("params") or {}
+    deliver_params = deliver_step.get("params") or {}
+    goto_location = goto_params.get("location")
+    recipient_location = deliver_params.get("recipient_location")
+    if not isinstance(goto_location, str) or not isinstance(recipient_location, str):
+        return False
+    if not is_start_alias(goto_location) or not is_start_alias(recipient_location):
+        return False
+    recipient = _norm_loc(deliver_params.get("recipient") or "")
+    if recipient and recipient not in _OPERATOR_RECIPIENT_WORDS:
+        return False
+    return bool(recipient in _OPERATOR_RECIPIENT_WORDS
+                or OPERATOR_REPORT_RE.search(str(command or "").lower()))
 
 # Default set of category words the GPSR command generator may emit. Keep this
 # in sync with ``object_categories_singular`` / ``object_categories_plural``
@@ -546,11 +608,29 @@ def _person_directed_answer_requires_approach(
     ):
         return False
     has_person_context = bool(_PERSON_WORDS_RE.search(text))
-    ancestors = list(prior_plan or [])
-    has_person_context = has_person_context or any(
-        isinstance(step, dict) and step.get("action") == "find_person"
-        for step in ancestors
+    counting_person_observation = (
+        _is_counting_person_target(text)
+        and not _PERSON_ADDRESSEE_RE.search(text)
     )
+    # "people/persons" are often the object being counted (for example,
+    # ``count how many people are in the laundry_room``).  That observation
+    # target must not turn the result announcement into speech addressed to a
+    # person.  Preserve the guard when the command explicitly addresses a
+    # person in a speech clause ("tell the person ...").
+    if (
+        has_person_context
+        and counting_person_observation
+    ):
+        has_person_context = False
+    ancestors = list(prior_plan or [])
+    # A counting target remains observational even when an earlier target in
+    # the same command searched for a person.  Bare answer targets still use
+    # this ancestor handoff below.
+    if not counting_person_observation:
+        has_person_context = has_person_context or any(
+            isinstance(step, dict) and step.get("action") == "find_person"
+            for step in ancestors
+        )
     if not has_person_context:
         return False
     # A person-directed answer requires an actual speech-bearing action.  The
@@ -942,12 +1022,13 @@ def validate_plan(
                 )
 
     # Rule: no goto immediately before a self-navigating action. ``deliver``
-    # and ``place`` always drive to their own destination, so ANY goto right
-    # before them double-navigates — even when the LLM tries to dodge by
-    # moving the location out of the action into a preceding goto (deliver
-    # then re-navigates to the stale pose that goto just set). The destination
-    # must live on the action itself: deliver -> recipient_location,
-    # place -> location. No goto before them.
+    # and ``place`` drive to their own destination. The one deliberate
+    # exception is the explicit operator return leg
+    # ``goto(start_position) -> deliver(..., recipient_location=start_position)``:
+    # the runtime skips deliver's duplicate internal navigation when the
+    # successful LAST_NAV_LOCATION already matches. Ordinary recipient
+    # deliveries, mismatched destinations, and every other self-navigator
+    # remain invalid.
     _SELF_NAV_DEST = self_navigating_destinations()
     for i in range(len(plan) - 1):
         if plan[i].get("action") != "goto":
@@ -957,6 +1038,10 @@ def validate_plan(
         if dest_key is None:
             continue
         goto_loc = (plan[i].get("params") or {}).get("location")
+        if nxt.get("action") == "deliver" and _explicit_operator_return_delivery(
+            plan[i], nxt, command,
+        ):
+            continue
         return False, (
             f"step {i}: goto(location={goto_loc!r}) right before "
             f"{nxt.get('action')} is redundant — {nxt.get('action')} "

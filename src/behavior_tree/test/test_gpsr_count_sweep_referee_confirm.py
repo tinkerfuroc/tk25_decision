@@ -713,10 +713,35 @@ def test_deliver_uses_the_confirming_find_person():
     assert isinstance(goto, py_trees.composites.Selector)
     assert goto.name == "retry deliver goto"
     assert goto.children[0].name == "reuse resolved delivery navigation"
-    assert isinstance(goto.children[1], py_trees.decorators.FailureIsSuccess)
-    assert goto.children[1].name == "deliver room navigation best effort"
+    assert goto.children[1].name == "reuse successful target navigation"
+    assert isinstance(goto.children[2], py_trees.decorators.FailureIsSuccess)
+    assert goto.children[2].name == "deliver room navigation best effort"
     find_person = next(c for c in tree.children if c.name == "small/find_person")
     assert "person confirm strategies" in _names(find_person)
+
+
+def test_deliver_reuses_only_successful_matching_return_navigation():
+    """An explicit goto(start_position) must not be repeated by deliver.
+
+    The navigation evidence is success-gated by the orchestrator.  A matching
+    ``LAST_NAV_LOCATION`` therefore permits the delivery tree to reuse the
+    already reached pose, while a stale/mismatched location falls through to
+    its normal room-navigation retry.
+    """
+    bb = _writer(bb_keys.LAST_NAV_LOCATION, bb_keys.TARGET_LOCATION)
+    bb.set(bb_keys.LAST_NAV_LOCATION, "start_position", overwrite=True)
+    bb.set(bb_keys.TARGET_LOCATION, "start position", overwrite=True)
+
+    matched = small_trees.BtNode_CheckLastNavMatchesTarget()
+    matched.setup()
+    matched.tick_once()
+    assert matched.status is Status.SUCCESS
+
+    bb.set(bb_keys.LAST_NAV_LOCATION, "shelf", overwrite=True)
+    mismatched = small_trees.BtNode_CheckLastNavMatchesTarget()
+    mismatched.setup()
+    mismatched.tick_once()
+    assert mismatched.status is Status.FAILURE
 
 
 def test_delivery_reuses_resolved_person_when_deliver_has_no_location():
