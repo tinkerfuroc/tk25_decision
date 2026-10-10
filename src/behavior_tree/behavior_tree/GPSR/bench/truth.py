@@ -498,10 +498,13 @@ def execution_integrity_audit(run_dir: Path, *, task_slot: int = 1) -> dict:
     # generated from every tree snapshot, which produced the exact failure
     # this audit is meant to catch: a run could actually replay the startup
     # speech hundreds of times while the transition parser saw one SUCCESS
-    # activation.  Treat repeated speech as evidence even when a structured
-    # tree trace exists.  Current runs extract one line per speech activation;
-    # stale snapshots therefore remain harmless because they never enter this
-    # artifact.
+    # activation.  Treat repeated startup speech as evidence even when a
+    # structured tree trace exists.  The generic ``I am planning`` phrase is
+    # also emitted by navigation retries, however, so it is only a planning
+    # activation signal when no structured/snapshot tree evidence is available.
+    # With tree evidence, the transition counters below are authoritative for
+    # root planning and prevent successful navigation retries from downgrading
+    # an otherwise valid run.
     ann_counts = {key: 0 for key in _STARTUP_REPEAT_PATTERNS}
     for line in lines:
         text = line.strip()
@@ -509,6 +512,7 @@ def execution_integrity_audit(run_dir: Path, *, task_slot: int = 1) -> dict:
             if pattern.search(text):
                 ann_counts[key] += 1
     counts = ann_counts
+    has_structured_evidence = has_tree_deltas or any(snapshot_counts.values())
     # One occurrence is expected.  A second arena-entry or command-point announcement
     # cannot be explained by a normal task plan and is enough to invalidate execution.
     for key in ("ready", "entering", "command_point"):
@@ -527,7 +531,14 @@ def execution_integrity_audit(run_dir: Path, *, task_slot: int = 1) -> dict:
                            "sources": sources, "announcement_count": counts[key],
                            "orchestrator_count": log_counts[key],
                            "raw_orchestrator_count": raw_log_counts[key]})
-    observed_plan = max(counts["plan"], log_counts["plan"])
+    # A planning announcement is ambiguous without a tree trace: on older
+    # hardware-era captures it is the only evidence available, so retain the
+    # legacy speech-based check.  Once structured events or transition-based
+    # snapshots exist, only their planning-node transitions can establish a
+    # root replan; action-level navigation retries may repeat the same phrase
+    # without materializing a new plan.
+    observed_plan = (max(log_counts["plan"], snapshot_counts["plan"])
+                     if has_structured_evidence else max(counts["plan"], log_counts["plan"]))
     if observed_plan > 1:
         sources = []
         if counts["plan"] > 1:

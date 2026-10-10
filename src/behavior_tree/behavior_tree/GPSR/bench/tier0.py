@@ -93,6 +93,17 @@ def judge(entry: CorpusEntry, targets, plans, planner, slot: int, *, known_actio
                 tier=0, seconds=seconds, plan=actions)
     if not targets:
         return BenchResult(verdict="FAIL", detail="split produced no targets", **base)
+    # The all-mock planner returns a validator-clean acknowledgement explicitly
+    # stating that no planning request was made.  It is useful for offline
+    # integration tests, but it is not evidence that the planner handled the
+    # command.  Keep this provenance check in the tier-0 judge so a mock run
+    # cannot be reported as a planner PASS by accident.
+    if bool(getattr(planner, "_offline_mock", False)):
+        return BenchResult(
+            verdict="FAIL",
+            detail="offline mock planner bypassed the planning request",
+            **base,
+        )
     for i, plan in enumerate(plans):
         if not plan:
             return BenchResult(verdict="FAIL", detail=f"empty plan for target {i}", **base)
