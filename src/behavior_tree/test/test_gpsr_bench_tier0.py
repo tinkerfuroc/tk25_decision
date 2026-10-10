@@ -136,6 +136,23 @@ def test_tier0_scores_a_fallback_plan_as_fail():
     assert "planner exhausted attempts" in results[0].detail
 
 
+def test_tier0_rejects_offline_mock_acknowledgement_as_planner_pass():
+    """Offline acknowledgement plans do not exercise the planner contract."""
+    command = "count waving persons in the laundry"
+    plans = {command: [[{"action": "announce", "params": {
+        "text": "Mock mode: planner bypassed; no network request was made."
+    }}]]}
+
+    class OfflinePlanner(FakePlanner):
+        _offline_mock = True
+
+    results = run_tier0([_entry(0, command)], OfflinePlanner(plans),
+                        known_actions=KNOWN_ACTIONS,
+                        known_locations=KNOWN_LOCATIONS, timeout_s=0.2)
+    assert results[0].verdict == "FAIL"
+    assert "offline mock planner" in results[0].detail
+
+
 class HangingSplitPlanner:
     """A planner whose split_command never returns, like a stuck network call."""
 

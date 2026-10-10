@@ -250,6 +250,35 @@ def test_execution_integrity_catches_repeated_real_speech_with_stale_snapshot(
     assert all(issue["orchestrator_count"] == 1 for issue in repeats)
 
 
+def test_execution_integrity_ignores_navigation_retry_planning_speech_with_tree_evidence(
+    tmp_path: Path,
+) -> None:
+    """Navigation retries may repeat planning speech without replaying the root plan."""
+    (tmp_path / "announcements.txt").write_text(
+        "I am planning, please wait.\n"
+        "I am planning, please wait for a while.\n"
+        "I am planning, please wait for a while.\n",
+        encoding="utf-8",
+    )
+    events = [
+        {"event_type": "tree.generated", "payload": {"nodes": [
+            {"id": "plan", "name": "announce planning task 1"},
+        ]}},
+        {"event_type": "tree.node_states_changed", "sequence": 1,
+         "payload": {"nodes": [{"id": "plan", "name": "announce planning task 1",
+                                  "status": "SUCCESS"}]}},
+    ]
+    (tmp_path / "debug" / "trace").mkdir(parents=True)
+    (tmp_path / "debug" / "trace" / "events.jsonl").write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
+
+    audit = execution_integrity_audit(tmp_path)
+
+    assert audit["verdict"] == "PASS"
+    assert audit["counts"]["plan"] == 3
+    assert audit["structured_counts"]["plan"] == 1
+
+
 def test_execution_integrity_detects_state_transition_replay_without_telemetry(
     tmp_path: Path,
 ) -> None:
