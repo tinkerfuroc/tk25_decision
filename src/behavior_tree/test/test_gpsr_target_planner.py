@@ -8,10 +8,8 @@ from behavior_tree.GPSR import planner as planner_module
 from behavior_tree.GPSR.planner import (
     GPSRPlanner,
     TOP_LAYER_SYSTEM_PROMPT,
-    _adjust_report_waypoint_for_benchmark,
     _append_report_target_if_needed,
     _drop_person_answer_navigation,
-    _is_benchmark_local_report_target,
     _build_lower_layer_user_prompt,
     _ensure_person_approach,
     _log_split_acceptance,
@@ -511,9 +509,8 @@ def test_j8_answered_with_no_speech_verb_or_addressee_gets_a_report_target():
 def test_j8_default_report_returns_to_operator(monkeypatch):
     """The normal planner contract keeps the report at start_position.
 
-    The live-battery shortcut is opt-in via GPSR_REPORT_AT_CURRENT=1.  Keep
-    this regression beside the shortcut tests so a benchmark environment
-    cannot silently change the planner-only action sequence.
+    A benchmark environment cannot silently change the planner-only action
+    sequence.
     """
     monkeypatch.delenv("GPSR_REPORT_AT_CURRENT", raising=False)
     targets = [{
@@ -530,23 +527,15 @@ def test_j8_default_report_returns_to_operator(monkeypatch):
     ]
 
 
-def test_benchmark_retargets_blank_llm_report_to_latest_task_location(monkeypatch):
-    monkeypatch.setenv("GPSR_REPORT_AT_CURRENT", "1")
-    targets = [
-        {"id": "t0", "desc": "count how many items are on the side table",
-         "object": "items", "location": "side_table", "depends_on": [],
-         "preconditions": [], "postconditions": ["counted(items)"]},
-        {"id": "t1", "desc": "report the result to the operator",
-         "object": "", "location": "", "depends_on": ["t0"],
-         "preconditions": ["counted(items)"], "postconditions": ["answered(the count)"]},
-    ]
-    result = _adjust_report_waypoint_for_benchmark(targets)
-    assert result[1]["location"] == "side_table"
-    assert result[0]["postconditions"] == ["counted(items)", "at_robot(side_table)"]
-    assert result[1]["postconditions"] == ["answered(the count)"]
+def test_benchmark_flag_keeps_production_report_target(monkeypatch):
+    """The benchmark flag must not hide the return-to-operator contract.
 
-
-def test_benchmark_synthetic_report_moves_existing_waypoint_fact_to_count_target(monkeypatch):
+    Older battery runs set ``GPSR_REPORT_AT_CURRENT=1`` and then short
+    circuited the lower-layer report target to a bare ``announce``.  That
+    made the recorded plan look complete while omitting the required return
+    to the command position.  The flag is now ignored by report target
+    construction, so the planner-only contract remains ``start_position``.
+    """
     monkeypatch.setenv("GPSR_REPORT_AT_CURRENT", "1")
     targets = [{
         "id": "t0", "desc": "count how many items are on the side table",
@@ -554,57 +543,13 @@ def test_benchmark_synthetic_report_moves_existing_waypoint_fact_to_count_target
         "preconditions": [], "postconditions": ["counted(items)"],
     }]
 
-    result = _adjust_report_waypoint_for_benchmark(
-        _append_report_target_if_needed(targets),
-    )
+    result = _append_report_target_if_needed(targets)
 
-    assert result[0]["postconditions"] == ["counted(items)", "at_robot(side_table)"]
-    assert result[1]["location"] == "side_table"
-    assert result[1]["postconditions"] == ["answered(the requested information)"]
-
-
-def test_benchmark_local_report_uses_deterministic_textless_announce(monkeypatch):
-    monkeypatch.setenv("GPSR_REPORT_AT_CURRENT", "1")
-    target = {
-        "id": "t1", "desc": "report the result to the operator",
-        "object": "", "location": "side_table", "depends_on": ["t0"],
-        "preconditions": ["counted(items)"],
-        "postconditions": ["answered(the count)"],
-    }
-    planner = GPSRPlanner()
-    planner._offline_mock = False
-    with planner._lock:
-        planner._slot_context[0] = {
-            "command": "count items on the side table and report the result",
-            "targets": [target],
-        }
-
-    def unexpected_llm_client():
-        raise AssertionError("benchmark-local report should not call the LLM")
-
-    monkeypatch.setattr(planner, "_new_client", unexpected_llm_client)
-    planner.plan_target(
-        0, 0, target["desc"], command="count items on the side table and report the result",
-        target=target, all_targets=[target],
-    )
-
-    assert planner.is_target_ready(0, 0)
-    assert planner.get_error(0, 0) is None
-    assert planner.get_action_plan(0, 0) == [
-        {"action": "announce", "params": {}},
+    assert result[1]["location"] == "start_position"
+    assert result[1]["depends_on"] == ["t0"]
+    assert result[1]["postconditions"] == [
+        "at_robot(start_position)", "answered(the requested information)",
     ]
-
-
-def test_benchmark_does_not_treat_single_target_count_as_report_only(monkeypatch):
-    monkeypatch.setenv("GPSR_REPORT_AT_CURRENT", "1")
-    target = {
-        "id": "t0", "desc": "tell me how many mugs are on the side table",
-        "object": "mugs", "location": "side_table", "depends_on": [],
-        "preconditions": [],
-        "postconditions": ["answered(how many mugs are on the side table)"],
-    }
-
-    assert not _is_benchmark_local_report_target(target)
 
 
 def test_j8_meet_and_say_your_teams_name_gets_no_report_target():

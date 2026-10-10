@@ -128,6 +128,28 @@ def test_goto_count_goto_announce_covers_answered_postcondition():
     assert ok, reason
 
 
+def test_count_people_is_not_person_directed_speech():
+    """Counting people observes them; the report need not approach anyone.
+
+    The generic person-word guard used to read ``people`` in the count target
+    as an addressee and reject this otherwise complete plan for lacking an
+    ``approach_person`` step.
+    """
+    plan = [
+        {"action": "goto", "params": {"location": "laundry_room"}},
+        {"action": "count", "params": {"object": "people", "location": "laundry_room"}},
+        {"action": "goto", "params": {"location": "start_position"}},
+        {"action": "announce", "params": {}},
+    ]
+    ok, reason = validate_plan(
+        plan,
+        "count how many people are in the laundry room",
+        {"goto", "count", "announce"},
+        postconditions=["answered(how many people are in the laundry room)"],
+    )
+    assert ok, reason
+
+
 def test_llm_fallback_added_to_bare_announce_whitelist():
     # H1: llm_fallback joins vlm_fallback/count/describe_person/ask_person as
     # a legitimate predecessor for a text-less announce (structural rule,

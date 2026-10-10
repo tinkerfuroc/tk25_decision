@@ -915,6 +915,50 @@ class BtNode_CheckOperatorDelivery(Behaviour):
         return Status.FAILURE
 
 
+class BtNode_CheckLastNavMatchesTarget(Behaviour):
+    """Guard reuse of a successful navigation already at this step's target.
+
+    Self-navigating actions (notably ``deliver``) traditionally include an
+    internal room ``goto``.  A planner may also emit an explicit ``goto``
+    immediately before the action when the command requires a return leg,
+    e.g. ``goto(start_position)`` followed by ``deliver(...,
+    recipient_location=start_position)``.  ``LAST_NAV_LOCATION`` is written
+    only after a navigation succeeds, so matching it against the materialised
+    target is safe: the action can reuse that pose without driving there a
+    second time, while a stale or failed navigation falls through to the
+    normal retry path.
+    """
+
+    def __init__(self, name: str = "already at target location?"):
+        super().__init__(name)
+        self._client = None
+
+    @staticmethod
+    def _normalise(value):
+        return " ".join(str(value or "").casefold().replace("_", " ").split())
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(bb_keys.LAST_NAV_LOCATION, access=Access.READ)
+        self._client.register_key(bb_keys.TARGET_LOCATION, access=Access.READ)
+
+    def update(self):
+        try:
+            last = self._client.get(bb_keys.LAST_NAV_LOCATION)
+            target = self._client.get(bb_keys.TARGET_LOCATION)
+        except Exception:
+            self.feedback_message = "navigation evidence or target is unavailable"
+            return Status.FAILURE
+        last_norm = self._normalise(last)
+        target_norm = self._normalise(target)
+        if last_norm and target_norm and last_norm == target_norm:
+            return Status.SUCCESS
+        self.feedback_message = (
+            f"last successful navigation {last!r} does not match target {target!r}"
+        )
+        return Status.FAILURE
+
+
 class BtNode_CheckResolvedDeliveryTarget(Behaviour):
     """Guard reuse of a matching person target already resolved in this target.
 
@@ -4880,9 +4924,14 @@ def create_deliver():
         "recipient already resolved?", require_nav=False,
     ))
     reuse_goto.add_child(py_trees.behaviours.Success("already at recipient"))
+    reuse_nav = py_trees.composites.Sequence(
+        "reuse successful target navigation", memory=True,
+    )
+    reuse_nav.add_child(BtNode_CheckLastNavMatchesTarget())
+    reuse_nav.add_child(py_trees.behaviours.Success("already at delivery target"))
     seq.add_child(py_trees.composites.Selector(
         "retry deliver goto", memory=True,
-        children=[reuse_goto, goto_best_effort],
+        children=[reuse_goto, reuse_nav, goto_best_effort],
     ))
     # For the operator, ``TARGET_POSE`` is the captured command-point pose;
     # scanning again at that pose is both redundant and able to select a

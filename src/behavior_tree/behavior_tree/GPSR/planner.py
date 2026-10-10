@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import copy
 import json
-import os
 import random
 import re
 import textwrap
@@ -201,6 +200,13 @@ TOP_LAYER_SYSTEM_PROMPT = textwrap.dedent("""
         separate ``find_person`` target AFTER delivery for that same recipient;
         only emit ``find_person`` before delivery when it is needed, or when
         the command explicitly asks for a separate later person search.
+    15. A physical handoff to the command operator is an explicit return leg:
+        the lower-layer plan must contain
+        ``goto(location=start_position)`` immediately before
+        ``deliver(..., recipient_location=start_position)``. This makes the
+        return auditable even though the delivery action can approach its
+        recipient itself. The runtime skips duplicate delivery navigation when
+        the preceding goto has already reached ``start_position``.
 """).strip().replace("__SELF_SATISFIED_RULE__", render_self_satisfied_rule())
 
 
@@ -587,6 +593,18 @@ _ARENA_PERSON_NAMES = frozenset({
 _REPORT_KEYWORDS_RE = re.compile(
     r"\b(tell|report|inform|let\s+me\s+know)\b", re.IGNORECASE
 )
+# A target can contain both the observation and the operator-directed speech
+# act (for example, ``tell me how many waving persons are in the
+# laundry_room``) when the top-layer model keeps that natural-language clause
+# together. Such a target must stay at its task location long enough to gather
+# the result. The location repair below only moves report-only targets.
+_GATHERING_CUE_RE = re.compile(
+    r"\b(?:count(?:ing|ed)?|how\s+many|how\s+much|number\s+of|"
+    r"what\s+(?:color|colour|kind|type|number|name|size|shape)|"
+    r"which|where|who|find(?:\s+out)?|identify|describe|look(?:\s+for)?|"
+    r"search|inspect|check)\b",
+    re.IGNORECASE,
+)
 # M-1 (round-3 fix review): an `answered(...)` postcondition is how the
 # split ALSO encodes an ordinary speech act ("say your teams name",
 # "introduce yourself to Emma", "greet the person") -- not only a genuine
@@ -657,6 +675,34 @@ def _target_reports_to_operator(target: Optional[Dict[str, Any]]) -> bool:
 def _target_is_answer(target: Optional[Dict[str, Any]]) -> bool:
     desc = str((target or {}).get("desc") or "")
     return _target_has_fact(target, "answered") or bool(_SPEECH_ACTION_RE.search(desc))
+
+
+def _target_contains_gathering_work(target: Optional[Dict[str, Any]]) -> bool:
+    """Whether an operator-directed target still has work at its waypoint.
+
+    The top layer normally splits ``count`` and ``report`` into two targets,
+    but it is allowed to keep a single natural-language clause when that is
+    one executable job. A report-location repair must not move that combined
+    target to the operator before its count/perception action runs.
+    """
+    target = target or {}
+    for condition in target.get("postconditions") or []:
+        if not isinstance(condition, str):
+            continue
+        fact, _error = parse_fact(condition)
+        if fact is not None and fact.predicate in {
+            "counted", "object_seen", "person_found",
+        }:
+            return True
+    desc = str(target.get("desc") or "")
+    if not _GATHERING_CUE_RE.search(desc):
+        return False
+    # With a physical object or an assigned room, the cue describes a local
+    # observation. A bare general-knowledge question ("tell me what day ...")
+    # remains an operator report and is safely pinned to start_position.
+    object_name = str(target.get("object") or "").strip()
+    location = _norm_loc(target.get("location") or "")
+    return bool(object_name or (location and location != "start_position"))
 
 
 def _person_directed_answer_target(
@@ -805,6 +851,59 @@ def _repair_person_answer_location(targets: List[Dict[str, Any]]) -> List[Dict[s
     return targets
 
 
+def _repair_operator_report_location(targets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Pin operator-directed report targets to the command pose.
+
+    The top-layer model sometimes emits an explicit ``report the result``
+    target with a room/furniture location (or no location) and only an
+    ``answered(...)`` postcondition.  That leaves the lower layer free to
+    emit a bare ``announce`` at the task waypoint, so the robot reports to an
+    empty room instead of the operator.  Synthetic reports already carry this
+    contract, but explicit LLM reports need the same deterministic repair.
+
+    Person-directed speech (for example ``report the colour to Alex``) is
+    excluded: it must remain at the approached person's pose.  The helper is
+    intentionally split-time and mutates the canonical target dictionaries
+    before validation/planning, so every lower-layer worker sees the same
+    destination and postcondition.
+    """
+    for index, target in enumerate(targets):
+        if not _target_is_answer(target):
+            continue
+        desc = str(target.get("desc") or "")
+        if _person_directed_answer_target(target, index, targets):
+            continue
+        if _target_contains_gathering_work(target):
+            # A combined gather-and-report clause must first run its local
+            # perception/count action. Its lower-layer plan can still add the
+            # explicit return leg before the text-less announce.
+            continue
+        if not (
+            _REPORT_KEYWORDS_RE.search(desc)
+            or _target_reports_to_operator(target)
+        ):
+            continue
+        # Keep only the canonical operator pose fact.  A contradictory
+        # at_robot(room) from the split is exactly the defect this repair
+        # prevents; lower-layer validation must demand the return leg.
+        target["location"] = "start_position"
+        postconditions = target.get("postconditions")
+        if not isinstance(postconditions, list):
+            postconditions = []
+        repaired = [
+            item for item in postconditions
+            if not (
+                isinstance(item, str)
+                and (fact := parse_fact(item)[0]) is not None
+                and fact.predicate == "at_robot"
+            )
+        ]
+        repaired.insert(0, "at_robot(start_position)")
+        target["postconditions"] = repaired
+        print(f"[split] operator report {target.get('id')} pinned to start_position")
+    return targets
+
+
 def _append_report_target_if_needed(
     targets: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -872,18 +971,13 @@ def _append_report_target_if_needed(
     if not reporting_facts:
         return targets
     new_id = f"t{len(targets)}"
-    # In the live sim battery, returning from a furniture waypoint to the
-    # operator can be blocked by Nav2's collision recovery.  The result is
-    # already spoken at the task location, so keep the synthetic report there
-    # when explicitly requested; the normal planner contract remains the
-    # operator's start position.
+    # Reports are always delivered at the operator's command position.  This
+    # is part of the command semantics: a count/answer gathered in a room is
+    # not complete until the robot returns to the person who asked for it.
+    # Never let a simulator/benchmark workaround rewrite this destination;
+    # doing so removes the required goto(start_position) + announce sequence
+    # from the lower-layer plan.
     report_location = "start_position"
-    if os.environ.get("GPSR_REPORT_AT_CURRENT", "").strip() == "1":
-        for target in reversed(targets):
-            candidate = str(target.get("location") or "").strip()
-            if candidate and candidate != "start_position":
-                report_location = candidate
-                break
     report_target = {
         "id": new_id,
         "desc": "report the result to the operator",
@@ -895,92 +989,6 @@ def _append_report_target_if_needed(
     }
     print(f"[split] appended report target {new_id} (depends_on {reporting_ids})")
     return targets + [report_target]
-
-
-def _adjust_report_waypoint_for_benchmark(
-    targets: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    """Keep LLM-generated report targets local in the live simulator battery.
-
-    The LLM is allowed to emit its own report target, so changing only the
-    deterministic append path is insufficient.  The benchmark's current Nav2
-    costmap can trap the return route even after a count succeeds; announcing at
-    the task waypoint preserves the measured count while avoiding that unrelated
-    recovery loop.  The production contract is unchanged unless the explicit
-    environment switch is set.
-    """
-    if os.environ.get("GPSR_REPORT_AT_CURRENT", "").strip() != "1":
-        return targets
-    current = ""
-    waypoint_owner: Optional[Dict[str, Any]] = None
-    for target in targets:
-        candidate = str(target.get("location") or "").strip()
-        post = target.get("postconditions")
-        if not isinstance(post, list):
-            continue
-        at_start = any(isinstance(item, str) and item.strip() == "at_robot(start_position)"
-                       for item in post)
-        answered = any(isinstance(item, str) and item.strip().startswith("answered(")
-                       for item in post)
-        unspoken_report = answered and not _answered_already_spoken(str(target.get("desc") or ""))
-        if candidate and candidate != "start_position" and not unspoken_report:
-            current = candidate
-            waypoint_owner = target
-        if not at_start and not unspoken_report:
-            continue
-        if not current or waypoint_owner is None:
-            continue
-        target["location"] = current
-        if unspoken_report:
-            # Keep navigation on the task target. A synthetic at_robot on
-            # this report target makes the contract guard remove the task's
-            # goto as a foreign establisher, so it counts from the wrong pose.
-            target["postconditions"] = [
-                item for item in post
-                if not (isinstance(item, str)
-                        and (fact := parse_fact(item)[0]) is not None
-                        and fact.predicate == "at_robot")
-            ]
-            owner_post = waypoint_owner.get("postconditions")
-            if not isinstance(owner_post, list):
-                owner_post = []
-            waypoint_owner["postconditions"] = [
-                item for item in owner_post
-                if not (isinstance(item, str)
-                        and (fact := parse_fact(item)[0]) is not None
-                        and fact.predicate == "at_robot")
-            ] + [f"at_robot({current})"]
-        print(f"[split] benchmark report waypoint -> {current}")
-    return targets
-
-
-def _is_benchmark_local_report_target(target: Optional[Dict[str, Any]]) -> bool:
-    """Whether this target is the local operator report enabled for a bench run."""
-    if os.environ.get("GPSR_REPORT_AT_CURRENT", "").strip() != "1" or not target:
-        return False
-    desc = str(target.get("desc") or "")
-    location = str(target.get("location") or "").strip()
-    if not location or location == "start_position":
-        return False
-    if not _REPORT_KEYWORDS_RE.search(desc):
-        return False
-    postconditions = target.get("postconditions")
-    has_answered = isinstance(postconditions, list) and any(
-        isinstance(item, str) and item.strip().startswith("answered(")
-        for item in postconditions
-    )
-    has_counted_result = isinstance(postconditions, list) and any(
-        isinstance(item, str) and item.strip().startswith("counted(")
-        for item in postconditions
-    )
-    preconditions = target.get("preconditions")
-    has_prior_result = isinstance(preconditions, list) and any(
-        isinstance(item, str)
-        and (fact := parse_fact(item)[0]) is not None
-        and fact.predicate in {"counted", "answered"}
-        for item in preconditions
-    )
-    return has_answered and not has_counted_result and has_prior_result
 
 
 _GENERIC_PERSON_WORDS_RE = re.compile(r"\b(person|persons|someone|guest)\b", re.IGNORECASE)
@@ -2200,6 +2208,19 @@ def _drop_dangling_goto_before_self_nav(
     steps = list(plan or [])
     for i, step in enumerate(steps):
         nxt = steps[i + 1] if i + 1 < len(steps) else None
+        # Operator hand-offs intentionally retain an explicit return leg in
+        # the materialised plan: ``goto(start_position) -> deliver``.  The
+        # delivery leaf still owns the destination and skips its internal
+        # room navigation when LAST_NAV_LOCATION already matches it.  Keep
+        # this narrow exception here; a goto before any other self-navigator,
+        # or a deliver without an exact destination match, remains dangling.
+        if (
+            isinstance(step, dict) and step.get("action") == "goto"
+            and isinstance(nxt, dict) and nxt.get("action") == "deliver"
+            and _matching_delivery_destination(step, nxt)
+        ):
+            kept.append(step)
+            continue
         if (
             isinstance(step, dict) and step.get("action") == "goto"
             and isinstance(nxt, dict) and nxt.get("action") in self_nav_dests
@@ -2208,6 +2229,78 @@ def _drop_dangling_goto_before_self_nav(
             continue
         kept.append(step)
     return kept, dropped
+
+
+def _matching_delivery_destination(
+    goto_step: Dict[str, Any], deliver_step: Dict[str, Any],
+) -> bool:
+    """Return true only for the canonical operator return pair.
+
+    A normal recipient delivery remains self-navigating and must not be
+    silently rewritten to keep a redundant ``goto``.  The explicit return
+    contract uses the canonical ``start_position`` destination and an
+    operator recipient alias.
+    """
+    goto_params = goto_step.get("params") or {}
+    deliver_params = deliver_step.get("params") or {}
+    goto_location = goto_params.get("location")
+    recipient_location = deliver_params.get("recipient_location")
+    if not isinstance(goto_location, str) or not isinstance(recipient_location, str):
+        return False
+    if _norm_loc(goto_location) != "start_position" or _norm_loc(recipient_location) != "start_position":
+        return False
+    recipient = _norm_loc(deliver_params.get("recipient") or "")
+    return recipient in {"me", "us", "myself", "operator", "the_operator", "the_user"}
+
+
+def _is_operator_delivery_step(
+    step: Dict[str, Any], target: Optional[Dict[str, Any]] = None,
+    command: Optional[str] = None,
+) -> bool:
+    """Whether a deliver step hands an object back to the command operator."""
+    params = step.get("params") or {}
+    recipient = _norm_loc(params.get("recipient") or "")
+    if recipient in {"me", "us", "myself", "operator", "the_operator", "the_user"}:
+        return True
+    if recipient:
+        # A named recipient belongs to this delivery step. Operator wording
+        # elsewhere in a multi-target command must not reroute it to the operator.
+        return False
+    text = " ".join(str(x or "") for x in (
+        (target or {}).get("desc"), command,
+    ))
+    return bool(_OPERATOR_ADDRESSEE_RE.search(text))
+
+
+def _ensure_operator_delivery_return_leg(
+    plan: List[Dict[str, Any]], target: Optional[Dict[str, Any]] = None,
+    command: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Make operator deliveries explicit: goto(start_position) then deliver.
+
+    ``deliver`` remains self-navigating for runtime safety, but exposing the
+    return leg in the planner result makes the complete transport sequence
+    auditable and lets the executor report exactly where the robot is.
+    """
+    result: List[Dict[str, Any]] = []
+    for step in plan or []:
+        if not isinstance(step, dict) or step.get("action") != "deliver" \
+                or not _is_operator_delivery_step(step, target, command):
+            result.append(step)
+            continue
+        params = step.setdefault("params", {})
+        params.setdefault("recipient_location", "start_position")
+        deliver = step
+        previous = result[-1] if result else None
+        if not (
+            isinstance(previous, dict)
+            and previous.get("action") == "goto"
+            and _norm_loc((previous.get("params") or {}).get("location"))
+                == "start_position"
+        ):
+            result.append({"action": "goto", "params": {"location": "start_position"}})
+        result.append(deliver)
+    return result
 
 
 def _drop_redundant_delivery_navigation(
@@ -2395,9 +2488,16 @@ def _kept_indices(before: List[Dict[str, Any]], after: List[Dict[str, Any]]) -> 
     exercised directly by many existing tests as a 2-tuple). Matched by
     ``id()``, not equality, so two structurally-identical steps at different
     positions are never confused.
+
+    Planner-owned repair steps (for example the explicit
+    ``goto(start_position)`` inserted before an operator ``deliver``) have no
+    source index in the LLM's plan.  They are represented by ``-1`` rather
+    than raising ``ValueError``; callers that remap step-indexed
+    modifications can then discard the sentinel while preserving every
+    surviving LLM index.
     """
-    before_ids = [id(step) for step in before]
-    return [before_ids.index(id(step)) for step in after]
+    before_indices = {id(step): index for index, step in enumerate(before)}
+    return [before_indices.get(id(step), -1) for step in after]
 
 
 def _remap_modification_step_indices(
@@ -2964,8 +3064,8 @@ class GPSRPlanner:
                       f"{last_reason}")
                 continue
             targets = _repair_person_answer_location(targets)
+            targets = _repair_operator_report_location(targets)
             targets = _append_report_target_if_needed(targets)
-            targets = _adjust_report_waypoint_for_benchmark(targets)
             person_object_reason = _reject_person_object_handling(targets)
             if person_object_reason is not None:
                 last_reason = person_object_reason
@@ -3098,6 +3198,9 @@ class GPSRPlanner:
         escape_guarded, delivery_search_dropped = _drop_redundant_delivery_navigation(
             escape_guarded, target=target, command=desc,
         )
+        escape_guarded = _ensure_operator_delivery_return_leg(
+            escape_guarded, target=target, command=desc,
+        )
         # I-4: same dangling-goto repair as the main attempt path.
         escape_guarded, escape_dangling_dropped = (
             _drop_dangling_goto_before_self_nav(escape_guarded)
@@ -3221,15 +3324,6 @@ class GPSRPlanner:
         completed_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """The actual planning body of ``plan_target`` -- see that docstring."""
-        if _is_benchmark_local_report_target(target):
-            plan = [{"action": "announce", "params": {}}]
-            subtree = self.build_target_subtree(
-                slot, index, plan, completed_steps=completed_steps,
-            )
-            self._store(slot, index, desc, plan, subtree, None,
-                        completed_steps=completed_steps)
-            print(f"[plan:{slot}:{index}] benchmark-local report -> textless announce")
-            return
         if self._offline_mock:
             plan = _offline_mock_plan(desc)
             subtree = self.build_target_subtree(slot, index, plan)
@@ -3344,6 +3438,36 @@ class GPSRPlanner:
                 modifications=parsed.get("modifications"),
             )
             post_delivery_search_plan = cleaned
+            # Keep the raw LLM index attached by object identity throughout
+            # the remaining cleanup passes.  The operator-delivery repair can
+            # insert a planner-owned ``goto(start_position)`` step, so this
+            # cannot be represented as a simple positional kept-index map.
+            # Inserted steps receive the ``-1`` sentinel and therefore cannot
+            # consume a modification addressed to an LLM-authored step.
+            raw_by_id = {
+                id(step): raw
+                for step, raw in zip(pre_guard_plan, clean_kept_raw_idx)
+            }
+            # H-3 (round-3 fix review): a re-emitted step element-wise
+            # identical to one of THIS target's own already-completed steps
+            # (a partial postcondition-gate commit from a prior attempt,
+            # threaded through as `completed_steps`) is dropped too -- e.g.
+            # a replan after `[held(x), placed(x,t)]` partially committed
+            # must not re-grasp an already-held object.
+            # Do this BEFORE the deterministic operator-return repair below:
+            # that repair fills `recipient_location=start_position` on a
+            # recipient delivery, while older completed-step records may
+            # predate that planner-owned parameter and otherwise fail to
+            # compare as duplicates.
+            cleaned, completed_dup_dropped = _drop_completed_duplicate_steps(
+                post_delivery_search_plan, completed_steps,
+            )
+            operator_delivery_plan = _ensure_operator_delivery_return_leg(
+                cleaned,
+                target=target,
+                command=command or desc,
+            )
+            cleaned = operator_delivery_plan
             # I-4 (round-2 review): repair a plan the guard just reduced to
             # e.g. [goto, deliver] -- validate_plan's goto-before-self-nav
             # rule would otherwise always reject it, burning an LLM
@@ -3352,36 +3476,21 @@ class GPSRPlanner:
             # goto has no "owning" sibling target to name.
             cleaned, dangling_dropped = _drop_dangling_goto_before_self_nav(cleaned)
             post_dangling_plan = cleaned
-            # H-3 (round-3 fix review): a re-emitted step element-wise
-            # identical to one of THIS target's own already-completed steps
-            # (a partial postcondition-gate commit from a prior attempt,
-            # threaded through as `completed_steps`) is dropped too -- e.g.
-            # a replan after `[held(x), placed(x,t)]` partially committed
-            # must not re-grasp an already-held object.
-            cleaned, completed_dup_dropped = _drop_completed_duplicate_steps(
-                cleaned, completed_steps,
-            )
             dropped = (
                 list(dropped) + contract_dropped + delivery_search_dropped
                 + dangling_dropped + completed_dup_dropped
             )
             # Compose the raw LLM plan's step indexes through every cleanup;
             # step-indexed modifications must follow their original actions.
-            contract_kept_idx = _kept_indices(pre_guard_plan, post_guard_plan)
-            delivery_search_kept_idx = _kept_indices(
-                post_guard_plan, post_delivery_search_plan,
-            )
-            dangling_kept_idx = _kept_indices(
-                post_delivery_search_plan, post_dangling_plan,
-            )
-            completed_kept_idx = _kept_indices(post_dangling_plan, cleaned)
+            # All cleanup passes preserve surviving step object identities;
+            # planner-owned insertions are absent from ``raw_by_id`` and get
+            # the ``-1`` sentinel.  This identity mapping remains valid even
+            # when a pass inserts a new step between two surviving steps.
+            final_raw_idx = [raw_by_id.get(id(step), -1) for step in cleaned]
             mod_old_to_new = {
-                clean_kept_raw_idx[
-                    contract_kept_idx[
-                        delivery_search_kept_idx[dangling_kept_idx[i]]
-                    ]
-                ]: new
-                for new, i in enumerate(completed_kept_idx)
+                raw_index: new
+                for new, raw_index in enumerate(final_raw_idx)
+                if raw_index >= 0
             }
             raw_actions = [
                 s.get("action") if isinstance(s, dict) else f"<{type(s).__name__}>"
@@ -3715,6 +3824,9 @@ class GPSRPlanner:
             cleaned, target, targets, include_ancestors=False,
         )
         guarded, delivery_search_dropped = _drop_redundant_delivery_navigation(
+            guarded, target=target, command=desc,
+        )
+        guarded = _ensure_operator_delivery_return_leg(
             guarded, target=target, command=desc,
         )
         guarded, dangling_dropped = _drop_dangling_goto_before_self_nav(guarded)

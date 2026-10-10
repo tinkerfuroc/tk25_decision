@@ -670,9 +670,12 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
     - deliver(object: str, recipient: str, recipient_location?: str)
         Hand the currently-held object to ``recipient``. The robot navigates
         to ``recipient_location`` (if given), then detects and approaches the
-        recipient by itself — do not add find_person for the recipient, and
-        do not add a separate ``goto`` to ``recipient_location`` before it.
-        For "deliver/bring it to me", set ``recipient_location=start_position``.
+        recipient by itself — do not add find_person for the recipient. For
+        "deliver/bring it to me", set ``recipient_location=start_position``
+        AND emit ``goto(location=start_position)`` immediately before
+        ``deliver``. The runtime reuses that successful return navigation and
+        skips duplicate movement inside ``deliver``. Ordinary recipients must
+        not have a separate goto to their destination.
     - count(object: str)
         Count visible instances of ``object`` and announce the number on the
         spot. count() performs its own visual scan — NEVER emit find_object for
@@ -730,12 +733,14 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
         [
           {"action": "goto", "params": {"location": "kitchen"}},
           {"action": "grasp", "params": {"object": "coke"}},
+          {"action": "goto", "params": {"location": "start_position"}},
           {"action": "deliver", "params": {"object": "coke", "recipient": "me", "recipient_location": "start_position"}}
         ]
     Example: "fetch me a coke" (no location given -> use coke's default location) =>
         [
           {"action": "goto", "params": {"location": "kitchen"}},
           {"action": "grasp", "params": {"object": "coke"}},
+          {"action": "goto", "params": {"location": "start_position"}},
           {"action": "deliver", "params": {"object": "coke", "recipient": "me", "recipient_location": "start_position"}}
         ]
     Example: "get the plate from the dishwasher and bring it to me" (closed
@@ -744,6 +749,7 @@ ACTION_CATALOGUE_DESCRIPTION = textwrap.dedent("""
           {"action": "goto", "params": {"location": "dishwasher"}},
           {"action": "open", "params": {"location": "dishwasher"}},
           {"action": "grasp", "params": {"object": "plate", "ask_referee": true}},
+          {"action": "goto", "params": {"location": "start_position"}},
           {"action": "deliver", "params": {"object": "plate", "recipient": "me", "recipient_location": "start_position"}}
         ]
 """).strip()
@@ -805,14 +811,20 @@ SYSTEM_PROMPT = textwrap.dedent("""
     9. The place where the robot received the command is the known location
        ``start_position``. Use it for clauses addressed to ME (the operator):
        - "deliver/bring it to me": set ``recipient_location=start_position``
-         on the ``deliver`` step. ``deliver`` drives there itself — do NOT
-         add a separate ``goto`` before it.
+         on the ``deliver`` step AND emit
+         ``goto(location=start_position)`` immediately before ``deliver``.
+         The runtime reuses that successful return navigation and skips
+         duplicate movement inside ``deliver``.
        - "tell me / say to me": emit ``goto(location=start_position)`` before
          the final ``announce`` (``announce`` does not move the robot).
     10. ``deliver`` and ``place`` navigate to their own destination
        (``recipient_location`` / ``location``). NEVER put a ``goto`` to that
-       same place immediately before them — it would drive there twice. This
-       applies to every recipient, not just ME.
+       same place immediately before them for an ordinary recipient — it would
+       drive there twice. The sole exception is an operator handoff: the
+       explicit ``goto(start_position)`` -> ``deliver(...,
+       recipient_location=start_position)`` return leg is required for audit;
+       the runtime skips duplicate internal movement when the location already
+       matches.
     11. If the command reports a result to ME ("tell me ...", "show me ...")
        and the robot had to leave to do the task, the result MUST be reported
        back AT the operator: do the gathering action (count / describe_person /
