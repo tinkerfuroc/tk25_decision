@@ -103,6 +103,10 @@ def test_stalled_navigation_times_out_and_cancels_once(monkeypatch):
 
     node = BtNode_GotoAction.__new__(BtNode_GotoAction)
     node.action_timeout_sec = 5.0
+    node.feedback_stall_sec = 5.0
+    node.wall_backstop_sec = 20.0
+    node._nav_time_s = None
+    node._last_feedback_at = None
     node._action_started_at = 100.0
     node._timeout_cancel_requested = False
     node.feedback_message = ""
@@ -120,7 +124,7 @@ def test_stalled_navigation_times_out_and_cancels_once(monkeypatch):
     assert status == py_trees.common.Status.FAILURE
     goal_handle.cancel_goal_async.assert_called_once_with()
     assert node._timeout_cancel_requested is True
-    assert node.feedback_message == "navigation action timeout after 5.0s"
+    assert node.feedback_message.startswith("navigation action timeout after 5.0s")
 
     # A retry decorator can tick the failed child again before re-entry; do
     # not submit a second cancel request for the same timed-out goal.
@@ -182,3 +186,96 @@ def test_stale_retry_callbacks_do_not_update_current_navigation():
     with mock.patch.object(ActionHandler, "get_result_callback") as result_cb:
         node.get_result_callback(object())
         result_cb.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Issue report 2026-10-11 Bug A: the 120 s budget counts Nav2's own clock.
+# The sim ran at RTF ~0.3, so a 120 s wall deadline gave Nav2 ~36 sim-s and
+# cancelled a still-moving robot 0.2 m short of side_table_02 (battery
+# t2-full-20261010 goals 7492/7613/3808). bt_navigator's feedback
+# navigation_time is on its node clock (sim time in the sim, real time on
+# the robot); wall clock only guards a silent Nav2 and a frozen sim clock.
+# ---------------------------------------------------------------------------
+
+def _timed_goto(monkeypatch, wall_now, timeout=120.0):
+    from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
+
+    class _CancelFuture:
+        def add_done_callback(self, callback):
+            self.callback = callback
+
+    goal_handle = mock.Mock(accepted=True, goal_id="goal-A")
+    goal_handle.cancel_goal_async.return_value = _CancelFuture()
+    node = BtNode_GotoAction.__new__(BtNode_GotoAction)
+    node.action_timeout_sec = timeout
+    node.feedback_stall_sec = timeout
+    node.wall_backstop_sec = 4.0 * timeout
+    node._action_started_at = 0.0
+    node._timeout_cancel_requested = False
+    node._nav_time_s = None
+    node._last_feedback_at = None
+    node.feedback_message = ""
+    node.qualified_name = "test/goto"
+    node.node = mock.Mock()
+    node.goal_handle = goal_handle
+    node.result_status = None
+    node.process_feedback = lambda feedback: None
+    clock = {"t": wall_now}
+    monkeypatch.setattr("behavior_tree.TemplateNodes.Navigation.time.monotonic", lambda: clock["t"])
+    monkeypatch.setattr("behavior_tree.TemplateNodes.Navigation.time.time", lambda: clock["t"])
+    return node, clock
+
+
+def _nav_feedback(nav_s, goal_id="goal-A"):
+    from types import SimpleNamespace
+    sec = int(nav_s)
+    return SimpleNamespace(
+        goal_id=goal_id,
+        feedback=SimpleNamespace(
+            navigation_time=SimpleNamespace(sec=sec, nanosec=int((nav_s - sec) * 1e9))),
+    )
+
+
+def test_slow_sim_goal_is_not_cancelled_while_nav_time_is_under_budget(monkeypatch):
+    from behavior_tree.TemplateNodes.ActionBase import ActionHandler
+
+    node, clock = _timed_goto(monkeypatch, wall_now=0.0)
+    clock["t"] = 125.0                       # 125 wall-s ...
+    node.feedback_callback(_nav_feedback(37.5))   # ... but only 37.5 sim-s
+    with mock.patch.object(ActionHandler, "update", return_value=py_trees.common.Status.RUNNING):
+        assert node.update() == py_trees.common.Status.RUNNING
+    node.goal_handle.cancel_goal_async.assert_not_called()
+
+
+def test_goal_times_out_on_nav2_navigation_time(monkeypatch):
+    node, clock = _timed_goto(monkeypatch, wall_now=0.0)
+    clock["t"] = 400.0
+    node.feedback_callback(_nav_feedback(120.2))
+    assert node.update() == py_trees.common.Status.FAILURE
+    node.goal_handle.cancel_goal_async.assert_called_once_with()
+    assert node.feedback_message.startswith("navigation action timeout after 120.0s")
+    assert "navigation time" in node.feedback_message
+
+
+def test_silent_nav2_still_times_out_on_wall_clock(monkeypatch):
+    node, clock = _timed_goto(monkeypatch, wall_now=0.0)
+    clock["t"] = 10.0
+    node.feedback_callback(_nav_feedback(3.0))
+    clock["t"] = 130.0                       # 120 wall-s without any feedback
+    assert node.update() == py_trees.common.Status.FAILURE
+    assert "no Nav2 feedback" in node.feedback_message
+
+
+def test_frozen_nav_clock_hits_the_wall_backstop(monkeypatch):
+    node, clock = _timed_goto(monkeypatch, wall_now=0.0)
+    clock["t"] = 480.0
+    node.feedback_callback(_nav_feedback(20.0))   # feedback flows, clock stuck
+    assert node.update() == py_trees.common.Status.FAILURE
+    assert "wall" in node.feedback_message
+
+
+def test_feedback_from_a_previous_goal_is_ignored(monkeypatch):
+    node, clock = _timed_goto(monkeypatch, wall_now=0.0)
+    clock["t"] = 5.0
+    node.feedback_callback(_nav_feedback(119.0, goal_id="goal-OLD"))
+    assert node._nav_time_s is None and node._last_feedback_at is None

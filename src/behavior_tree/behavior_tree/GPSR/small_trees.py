@@ -419,6 +419,21 @@ GRASP_HEAD_TILT_DEG = 45.0
 # approach is x=1.172, so 0.75 m avoids the x~=1.03 candidate produced by
 # 0.60 m while remaining within the wrist camera and arm working range.
 GRASP_APPROACH_DISTANCE_M = 0.75
+# Full battery 2026-10-10 (issue report 2026-10-11 Bug B): head-camera
+# centroids came back 0.13-0.27 m BELOW the surface they rest on (7.75 cm
+# of it is a sim odom z offset of base_link; the rest is still open) (mug z=0.46 on the 0.734 kitchen_table, the real bowl
+# z=0.48 on the 0.612 side_table_02). GoToApproach's barrier rule keys on
+# target z, so the chairs round the table read as a barrier and the drive-up
+# aborted. The drive-up clamps z up to the known surface top; a centroid more
+# than this far below the top is not on the surface at all and is not driven to.
+SURFACE_Z_CLAMP_BAND_M = 0.30
+# Same report: right after the pan/tilt reports settled, head-camera points
+# are off by ~0.2 m at 0 s, ~5 cm at 0.5 s and 1-3 cm at 1.0 s (section-4
+# vision session, tilt 20->45 at RTF ~0.2, i.e. ~3 frames at 12 Hz). That
+# transient is real but too small to explain the 0.26 m low z above. Hold the
+# head this long (wall s) after a move before a head-camera scan; 1.0 s stays
+# >= 0.25 sim-s for any RTF >= 0.25. Override with GPSR_HEAD_SETTLE_HOLD_S.
+HEAD_SETTLE_HOLD_S = float(os.environ.get("GPSR_HEAD_SETTLE_HOLD_S", "1.0") or 0.0)
 # Sim rerun59: the confirmed living-room person centroid drifted ~1.4 m from
 # the simulator truth and the deployed go_to_approach ring ([0.45, 1.00] m)
 # had no free candidate around that stale point. Delivery can search a wider
@@ -1088,6 +1103,62 @@ class BtNode_CheckBBKeySet(Behaviour):
         if value is None:
             self.feedback_message = f"{self._key} is None"
             return Status.FAILURE
+        return Status.SUCCESS
+
+
+class BtNode_ClampTargetToSurface(Behaviour):
+    """Clamp a map-frame target point up to the top of the furniture it is on.
+
+    Reads the PointStamped at ``point_key`` and ``bb_keys.TARGET_LOCATION``;
+    looks the location up in ``orchestrator.SURFACE_TOP_Z``. A point at or
+    above the top, or at a location with no single surface (shelves, rooms),
+    is left alone -> SUCCESS. A point up to ``SURFACE_Z_CLAMP_BAND_M`` below
+    the top is raised to the top -> SUCCESS. A point further down -> FAILURE
+    (the caller skips the drive-up). Pure math, no ROS backend.
+    """
+
+    def __init__(self, name: str, point_key: str, band_m: float = None):
+        super().__init__(name)
+        self._point_key = point_key
+        self._band_m = SURFACE_Z_CLAMP_BAND_M if band_m is None else float(band_m)
+        self._client = None
+
+    def setup(self, **kwargs):
+        self._client = self.attach_blackboard_client(name=self.name)
+        self._client.register_key(self._point_key, access=Access.READ)
+        self._client.register_key(self._point_key, access=Access.WRITE)
+        self._client.register_key(bb_keys.TARGET_LOCATION, access=Access.READ)
+
+    def update(self):
+        try:
+            point = self._client.get(self._point_key)
+        except Exception:
+            point = None
+        if not isinstance(point, PointStamped):
+            self.feedback_message = f"no PointStamped at {self._point_key}"
+            return Status.FAILURE
+        try:
+            location = self._client.get(bb_keys.TARGET_LOCATION)
+        except Exception:
+            location = None
+        key = str(location or "").strip().lower().replace(" ", "_")
+        # Import lazily to avoid the orchestrator/small_trees import cycle.
+        from .orchestrator import SURFACE_TOP_Z
+        top = SURFACE_TOP_Z.get(key)
+        z = float(point.point.z)
+        if top is None or z >= top:
+            self.feedback_message = f"target z={z:.2f} kept (surface top {top if top is not None else 'unknown'})"
+            return Status.SUCCESS
+        if z < top - self._band_m:
+            self.feedback_message = (
+                f"target z={z:.2f} is {top - z:.2f} m below the {key} top {top:.2f}; "
+                "not driving up to it"
+            )
+            return Status.FAILURE
+        clamped = PointStamped(header=point.header,
+                               point=Point(x=point.point.x, y=point.point.y, z=float(top)))
+        self._client.set(self._point_key, clamped, overwrite=True)
+        self.feedback_message = f"target z={z:.2f} clamped to the {key} top {top:.2f}"
         return Status.SUCCESS
 
 
@@ -2489,6 +2560,7 @@ def _pantilt_sweep(label: str, tilts, make_detect, pan_deg=None):
                 f"{label} pan={pan:+.0f} tilt={tilt:+.0f}", memory=True)
             branch.add_child(BtNode_TurnPanTilt(
                 f"pan {pan:+.0f} tilt {tilt:+.0f}", x=pan, y=tilt,
+                post_settle_sec=HEAD_SETTLE_HOLD_S,
             ))
             branch.add_child(make_detect())
             sweep.add_child(branch)
@@ -3719,7 +3791,8 @@ def _grasp_table_detection():
         v2 = py_trees.composites.Sequence("table view 2: head camera re-aim", memory=True)
         v2.add_child(_grasp_arm("view 2: arm to orbbec look", bb_keys.ARM_ORBBEC_LOOK))
         v2.add_child(BtNode_TurnPanTilt(
-            f"view 2: head tilt {GRASP_HEAD_TILT_DEG:+.0f}", x=0.0, y=GRASP_HEAD_TILT_DEG))
+            f"view 2: head tilt {GRASP_HEAD_TILT_DEG:+.0f}", x=0.0, y=GRASP_HEAD_TILT_DEG,
+            post_settle_sec=HEAD_SETTLE_HOLD_S))
         v2.add_child(BtNode_ScanForGeneralist(
             name="orbbec generalist detect",
             bb_source=bb_keys.TARGET_OBJECT_PROMPT,
@@ -3735,6 +3808,8 @@ def _grasp_table_detection():
             "view 2: object point", bb_detection_src=bb_keys.GRASP_HEAD_DETECTION,
             bb_object_dst=bb_keys.GRASP_HEAD_OBJECT, bb_point_dst=bb_keys.GRASP_HEAD_POINT,
         ))
+        drive_up.add_child(BtNode_ClampTargetToSurface(
+            "view 2: clamp object z to surface", bb_keys.GRASP_HEAD_POINT))
         drive_up.add_child(BtNode_Approach(
             "view 2: approach object", bb_target_key=bb_keys.GRASP_HEAD_POINT,
             desired_distance=GRASP_APPROACH_DISTANCE_M,
@@ -4970,6 +5045,7 @@ def _count_view(label: str, pan: float, tilt: float):
         f"{label} pan={pan:+.0f} tilt={tilt:+.0f}", memory=True)
     look.add_child(BtNode_TurnPanTilt(
         f"pan {pan:+.0f} tilt {tilt:+.0f}", x=pan, y=tilt,
+        post_settle_sec=HEAD_SETTLE_HOLD_S,
     ))
     look.add_child(py_trees.decorators.FailureIsSuccess(
         "scan to count (no-match keeps frame)",
