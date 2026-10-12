@@ -723,6 +723,9 @@ def test_all_registered_effect_leaves_are_wrapped_in_gpsr_action_factories():
         "BtNode_CountKeepUnclassified",
         "BtNode_CountCombine",
         "BtNode_YawTowardDetection",
+        # Issue report 2026-10-11 Bug B: blackboard-only z clamp of the
+        # grasp drive-up target; the BtNode_Approach after it is contracted.
+        "BtNode_ClampTargetToSurface",
         "Failure",
         # Guards and blackboard-only bookkeeping introduced by the count,
         # delivery, relaxed-identity, and referee fallback paths. These do

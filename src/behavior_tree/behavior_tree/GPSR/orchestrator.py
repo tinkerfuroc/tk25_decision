@@ -152,6 +152,11 @@ ROOM_SEARCH_SPOTS: Dict[str, List[str]] = {}
 # break the loader). See render_team_info_block() for how this reaches the
 # planner prompts.
 TEAM_INFO: Dict[str, str] = {}
+# Furniture name -> top of its single surface (m, map z). Populated from
+# constants.json's OPTIONAL "surface_heights" (empty when absent). The grasp
+# drive-up clamps a head-camera centroid that comes back below its surface
+# up to this height (issue report 2026-10-11 Bug B).
+SURFACE_TOP_Z: Dict[str, float] = {}
 def reduce_unknown_object_query(prompt: str) -> Optional[str]:
     """Token-subset-reduce an unknown object vision query to a known name.
 
@@ -290,6 +295,7 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     DEFAULT_OBJECT_LOCATIONS.clear()
     ROOM_SEARCH_SPOTS.clear()
     TEAM_INFO.clear()
+    SURFACE_TOP_Z.clear()
     with open(constants_path, "r") as fh:
         constants = json.load(fh)
 
@@ -368,6 +374,13 @@ def load_knowledge_from_constants(constants_path: str) -> None:
     team_info = constants.get("team_info")
     if isinstance(team_info, dict):
         TEAM_INFO.update({str(k): str(v) for k, v in team_info.items()})
+    for key, value in (constants.get("surface_heights") or {}).items():
+        if str(key).startswith("_"):
+            continue
+        try:
+            SURFACE_TOP_Z[str(key).lower()] = float(value)
+        except (TypeError, ValueError):
+            print(f"[gpsr] constants: surface_heights[{key!r}] is not a number — skipping it.")
 
 
 def _singular(normalized: str) -> str:

@@ -1442,6 +1442,12 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
     `SETTLE_SAMPLES_REQUIRED` consecutive samples, or until
     `SETTLE_TIMEOUT_SEC` elapses. Best-effort callers proceed on timeout;
     callers that require the view can set `require_settled=True`.
+
+    `post_settle_sec` (default 0) keeps the node RUNNING that many wall
+    seconds after the head settles (or the settle times out), so a camera
+    scan that follows does not use the first frames after the move (GPSR sim:
+    points were ~0.2 m off at 0 s and 1-3 cm off after 1 s, issue report
+    2026-10-11 Bug B). No hold when the head was already at the target.
     """
 
     PAN_TILT_COMMAND_TOPIC  = "/pan_tilt_controller/cmd"
@@ -1460,6 +1466,7 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
                  y_key: Optional[str] = None,
                  speed_key: Optional[str] = None,
                  require_settled: bool = False,
+                 post_settle_sec: float = 0.0,
                  ):
         """
         x_key and y_key takes in RADIANS. x and y are in DEGREES.
@@ -1478,6 +1485,9 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self._skip_settle = False
         self._last_publish_time = None
         self.require_settled = bool(require_settled)
+        self.post_settle_sec = max(0.0, float(post_settle_sec))
+        self._hold_until = None
+        self._head_moves = True
         self.x_key = x_key
         self.y_key = y_key
         self.speed_key = speed_key
@@ -1542,6 +1552,7 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self._settle_count = 0
         self._settle_deadline = time.monotonic() + self.SETTLE_TIMEOUT_SEC
         self._skip_settle = False
+        self._hold_until = None
 
     def _publish_target(self) -> None:
         self.publisher.publish(self._build_command_msg(self.x, self.y))
@@ -1560,6 +1571,8 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
             return
         
         self._arm_settle(self.x, self.y)
+        # Already at the target: no move, so no post-move frames to wait out.
+        self._head_moves = not self._at_target(self._latest_state)
         self._publish_target()
         self.logger.info(
             f"Publishing PanTiltCommand ABSOLUTE pan={self.x:+.2f}° "
@@ -1570,8 +1583,13 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         if self.mock_mode or self._skip_settle:
             return pytree.common.Status.SUCCESS
 
-        state = self._latest_state
         now = time.monotonic()
+        if self._hold_until is not None:
+            if now >= self._hold_until:
+                return pytree.common.Status.SUCCESS
+            return pytree.common.Status.RUNNING
+
+        state = self._latest_state
         feedback_ok = state is not None and getattr(state, "feedback_ok", False)
         pan_err = tilt_err = None
         if feedback_ok:
@@ -1581,7 +1599,7 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
             self._settle_count += 1
             if self._settle_count >= self.SETTLE_SAMPLES_REQUIRED:
                 self.feedback_message = "Pan/tilt target reached"
-                return pytree.common.Status.SUCCESS
+                return self._start_hold(now)
         else:
             self._settle_count = 0
 
@@ -1594,10 +1612,24 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
             if self.require_settled:
                 return pytree.common.Status.FAILURE
             print(f"{detail}; proceeding")
-            return pytree.common.Status.SUCCESS
+            return self._start_hold(now)
 
         if now - self._last_publish_time >= self.RETRY_INTERVAL_SEC:
             self._publish_target()
+        return pytree.common.Status.RUNNING
+
+    def _at_target(self, state) -> bool:
+        if state is None or not getattr(state, "feedback_ok", False):
+            return False
+        return (abs(math.degrees(state.pan_rad) - self._cmd_pan_deg) < self.SETTLE_EPS_DEG
+                and abs(math.degrees(state.tilt_rad) - self._cmd_tilt_deg) < self.SETTLE_EPS_DEG)
+
+    def _start_hold(self, now: float) -> Status:
+        """SUCCESS now, or RUNNING until ``post_settle_sec`` has passed."""
+        if self.post_settle_sec <= 0.0 or not self._head_moves:
+            return pytree.common.Status.SUCCESS
+        self._hold_until = now + self.post_settle_sec
+        self.feedback_message += f"; holding {self.post_settle_sec:.1f}s before the next view"
         return pytree.common.Status.RUNNING
 
     async def wait_seconds(self, seconds):

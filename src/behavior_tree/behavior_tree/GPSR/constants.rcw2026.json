@@ -20,8 +20,8 @@
     "possible_poses": {
         "kitchen_table": {
             "point": {
-                "x": 3.412,
-                "y": -2.238,
+                "x": 3.56,
+                "y": -2.14,
                 "z": 0.0
             },
             "orientation": {
@@ -59,8 +59,8 @@
         },
         "shelf_02": {
             "point": {
-                "x": 1.008,
-                "y": -0.57,
+                "x": 1.05,
+                "y": -0.7,
                 "z": 0.0
             },
             "orientation": {
@@ -72,15 +72,15 @@
         },
         "side_table": {
             "point": {
-                "x": -0.396,
-                "y": -4.304,
+                "x": -0.62,
+                "y": -4.18,
                 "z": 0.0
             },
             "orientation": {
                 "x": 0.0,
                 "y": 0.0,
-                "z": -0.7071067811865475,
-                "w": 0.7071067811865476
+                "z": -0.5877852522924731,
+                "w": 0.8090169943749475
             }
         },
         "side_table_02": {
@@ -122,6 +122,14 @@
                 "w": 1.0
             }
         }
+    },
+    "_possible_poses_comment": "Issue report 2026-10-11 Bug A: kitchen_table, side_table and shelf_02 were 0.35-0.55 m from furniture/walls, inside the sim footprint's 0.525 m turning radius (10, 31 and 22 of 72 in-place headings hit lethal cost; RPP 'collision ahead' loops). Moved to >= 0.60 m clearance with 0/72 lethal headings (tinker-sim docs/issue_reports/2026-10-08-gpsr-nav-tools/costmap_check.py, static map). tinker-sim tests/test_gpsr_person_placements.py SPOT_POSES mirrors kitchen_table.",
+    "surface_heights": {
+        "_comment": "Top of single-level furniture surfaces (m, map z), from tinker-sim simulation/scenarios/rcw2026-placements.json surface_xyz. The grasp drive-up clamps a head-camera centroid that comes back below its surface up to this height before GoToApproach (issue report 2026-10-11 Bug B). Shelves are multi-level and deliberately absent.",
+        "kitchen_table": 0.734,
+        "laundry_desk": 0.734,
+        "side_table": 0.612,
+        "side_table_02": 0.612
     },
     "possible_objects": {
         "soup": "red tomato soup can",

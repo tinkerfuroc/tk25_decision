@@ -89,8 +89,14 @@ class BtNode_GotoAction(ActionHandler):
 
     Attributes:
         key: Blackboard key containing the navigation goal.
-        action_timeout_sec: Maximum wall-clock duration for one Nav2 goal;
-            non-positive values disable this navigation-specific deadline.
+        action_timeout_sec: Maximum duration for one Nav2 goal, measured on
+            Nav2's own clock (feedback ``navigation_time``: sim time in the
+            simulator, real time on the robot); non-positive values disable
+            every navigation-specific deadline.
+        feedback_stall_sec: Wall-clock seconds without any Nav2 feedback
+            after which the goal is given up (default: action_timeout_sec).
+        wall_backstop_sec: Absolute wall-clock cap for one goal, for a Nav2
+            clock that stops advancing (default: 4 x action_timeout_sec).
     """
 
     def __init__(
@@ -101,6 +107,8 @@ class BtNode_GotoAction(ActionHandler):
         wait_for_server_timeout_sec: float = -3,
         action_timeout_ticks=0,
         action_timeout_sec: float = 120.0,
+        feedback_stall_sec: float = None,
+        wall_backstop_sec: float = None,
     ):
         super().__init__(
             name,
@@ -117,16 +125,29 @@ class BtNode_GotoAction(ActionHandler):
         # Nav2 can accept a goal and then stop publishing feedback/results (for
         # example while a controller or TF dependency is unavailable).  The
         # generic ActionHandler timeout is tick based and disabled by default,
-        # so keep a wall-clock deadline for navigation specifically.
+        # so keep a navigation-specific deadline.
+        # Issue report 2026-10-11 Bug A: a pure wall-clock deadline cancelled
+        # still-moving goals when the simulator ran at ~0.3x real time (120
+        # wall-s = ~36 sim-s). The budget is therefore counted on Nav2's own
+        # navigation_time; wall clock only catches a silent Nav2 and a Nav2
+        # clock that stopped advancing.
         self.action_timeout_sec = float(action_timeout_sec)
+        self.feedback_stall_sec = (
+            self.action_timeout_sec if feedback_stall_sec is None else float(feedback_stall_sec))
+        self.wall_backstop_sec = (
+            4.0 * self.action_timeout_sec if wall_backstop_sec is None else float(wall_backstop_sec))
         self._action_started_at = None
         self._timeout_cancel_requested = False
+        self._nav_time_s = None
+        self._last_feedback_at = None
 
     def initialise(self):
         # self.tf_buffer = Buffer()
         # self.tf_listener = TransformListener(self.tf_buffer, self.node)
         self._action_started_at = time.monotonic()
         self._timeout_cancel_requested = False
+        self._nav_time_s = None
+        self._last_feedback_at = None
         return super().initialise()
 
     def update(self):
@@ -147,9 +168,9 @@ class BtNode_GotoAction(ActionHandler):
             and started_at is not None
             and getattr(self, "result_status", None) is None
         ):
-            elapsed = time.monotonic() - started_at
-            if elapsed >= timeout:
-                timeout_message = f"navigation action timeout after {timeout:.1f}s"
+            reason = self._timeout_reason(time.monotonic(), started_at)
+            if reason is not None:
+                timeout_message = f"navigation action timeout after {timeout:.1f}s ({reason})"
                 if not self._timeout_cancel_requested:
                     self._timeout_cancel_requested = True
                     # A goal handle is normally available by this point.  The
@@ -159,6 +180,19 @@ class BtNode_GotoAction(ActionHandler):
                 self.feedback_message = timeout_message
                 return py_trees.common.Status.FAILURE
         return super().update()
+
+    def _timeout_reason(self, now: float, started_at: float):
+        """Why the current goal is over budget, or None while it is not."""
+        nav_time = self._nav_time_s
+        if nav_time is not None and nav_time >= self.action_timeout_sec:
+            return f"{nav_time:.1f}s of Nav2 navigation time"
+        last = self._last_feedback_at if self._last_feedback_at is not None else started_at
+        if now - last >= self.feedback_stall_sec:
+            return f"no Nav2 feedback for {now - last:.1f}s"
+        if now - started_at >= self.wall_backstop_sec:
+            return (f"{now - started_at:.1f}s wall clock, Nav2 navigation time "
+                    f"{nav_time if nav_time is not None else 0.0:.1f}s")
+        return None
 
     def goal_response_callback(self, future):
         """Ignore a goal response belonging to a previous retry attempt."""
@@ -302,8 +336,18 @@ class BtNode_GotoAction(ActionHandler):
         Args:
             msg: incoming feedback message (e.g. move_base_msgs.action.MoveBaseFeedback)
         """
+        goal_handle = getattr(self, "goal_handle", None)
+        if goal_handle is None or getattr(msg, "goal_id", None) != goal_handle.goal_id:
+            return  # a previous retry's goal, or not yet accepted
         feedback = msg.feedback
         self.last_feedback_time = time.time()
+        self._last_feedback_at = time.monotonic()
+        nav_time = getattr(feedback, "navigation_time", None)
+        if nav_time is not None:
+            try:
+                self._nav_time_s = float(nav_time.sec) + float(nav_time.nanosec) * 1e-9
+            except (AttributeError, TypeError, ValueError):
+                pass
         self.feedback_timeout = 1000
         self.action_status = 0
         self.process_feedback(feedback)

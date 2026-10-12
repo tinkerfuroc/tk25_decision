@@ -174,8 +174,8 @@ def test_explicit_kitchen_room_anchor_does_not_change_table_search_pose():
         assert orch_mod.ROOM_SEARCH_SPOTS["kitchen"] == ["kitchen_table", "shelf_02"]
         assert orch_mod.resolve_pose(_EmptyBB(), "kitchen") is room
         assert orch_mod.resolve_pose(_EmptyBB(), "kitchen_table") is table
-        assert table.pose.position.x == pytest.approx(3.412)
-        assert table.pose.position.y == pytest.approx(-2.238)
+        assert table.pose.position.x == pytest.approx(3.56)
+        assert table.pose.position.y == pytest.approx(-2.14)
     finally:
         orch_mod.load_knowledge_from_constants(str(constants))
 
