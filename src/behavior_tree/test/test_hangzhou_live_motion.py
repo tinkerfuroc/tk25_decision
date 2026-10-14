@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import py_trees
+import pytest
+from unittest.mock import Mock
 from behavior_tree.HomeServiceHangzhou.config import load_config, validate
 from behavior_tree.HomeServiceHangzhou.ros_nodes import Tk27MoveArm
 from behavior_tree.HomeServiceHangzhou.state import put, PREFIX
@@ -47,3 +49,39 @@ def test_live_tkmr_configuration():
     assert c['endpoints']['arm'] == '/manipulation/joint_move'
     assert c['endpoints']['approach'] == 'go_to_approach'
     assert math.isclose(c['arm_stow'][0], math.radians(-86))
+
+
+def test_completed_arm_failure_preserves_original_error():
+    leaf = Tk27MoveArm(name='Retract arm', arm_pose_bb_key=PREFIX+'arm_goal',
+                      action_name='/manipulation/joint_move')
+    leaf.mock_mode = False
+    leaf.node = SimpleNamespace(get_logger=lambda: logger)
+    logger = Mock()
+    leaf.status = py_trees.common.Status.RUNNING
+    leaf.send_goal_future = Mock()
+    leaf.goal_handle = Mock(accepted=True)
+    leaf.get_result_future = Mock()
+    leaf.get_result_future.done.return_value = True
+    leaf.result_status = 6
+    leaf.result_status_string = 'STATUS_ABORTED'
+    leaf.result_message = SimpleNamespace(result=leaf.action_type.Result(
+        success=False, status=14,
+        error_msg='Depth image is stale or ahead of the active clock'))
+    leaf.send_cancel_request = Mock()
+    assert leaf.update() == py_trees.common.Status.FAILURE
+    leaf.stop(py_trees.common.Status.FAILURE)
+    leaf.send_cancel_request.assert_not_called()
+    assert 'Depth image is stale' in leaf.feedback_message
+    assert 'Depth image is stale' in logger.error.call_args.args[0]
+
+
+@pytest.mark.parametrize('status', list(py_trees.common.Status))
+def test_terminal_mission_stops_timer_and_keeps_node(status):
+    from behavior_tree.runtime import stop_terminal_ticks
+    tree = Mock()
+    tree.root.status = status
+    stop_terminal_ticks(tree)
+    terminal = status in (py_trees.common.Status.SUCCESS, py_trees.common.Status.FAILURE)
+    assert tree.timer.cancel.called == terminal
+    tree.shutdown.assert_not_called()
+    tree.node.destroy_node.assert_not_called()

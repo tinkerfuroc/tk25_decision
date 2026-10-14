@@ -58,6 +58,24 @@ class Tk27MoveArm(BtNode_MoveArmSingle):
         goal.positions = [float(v) for v in self.blackboard.arm_joint_pose]
         self.send_goal_request(goal)
 
+    def update(self):
+        status = super().update()
+        if status == S.FAILURE:
+            # Log before terminate() replaces feedback with cancellation state.
+            self.node.get_logger().error(
+                f"{self.name} [{self.action_name}]: {self.feedback_message}")
+        return status
+
+    def terminate(self, new_status):
+        # A rejected or completed goal has nothing left to cancel. Preserve
+        # the original result for the GUI instead of obscuring it with a cancel.
+        if (not self.mock_mode and
+                (getattr(self, "result_status", None) is not None or
+                 (getattr(self, "goal_handle", None) is not None and
+                  not self.goal_handle.accepted))):
+            return
+        super().terminate(new_status)
+
 
 class FreshTarget(py_trees.behaviour.Behaviour):
     def __init__(self, context):

@@ -12,6 +12,7 @@ def run_tree(
     node_name: str = "root_node",
     show_during_setup: bool = False,
     setup_timeout: float = 15.0,
+    stop_on_terminal: bool = False,
 ):
     """Run a behaviour tree created by ``root_factory`` until interrupted."""
     import signal
@@ -56,7 +57,12 @@ def run_tree(
     if PRINT_DEBUG:
         py_trees.logging.level = py_trees.logging.Level.DEBUG
 
-    tree.tick_tock(period_ms=period_ms, post_tick_handler=print_tree)
+    def post_tick(current_tree):
+        print_tree(current_tree)
+        if stop_on_terminal:
+            stop_terminal_ticks(current_tree)
+
+    tree.tick_tock(period_ms=period_ms, post_tick_handler=post_tick)
 
     try:
         rclpy.spin(tree.node)
@@ -81,6 +87,17 @@ def run_tree(
                 rclpy.spin_once(tree.node, timeout_sec=0.05)
         tree.shutdown()
         rclpy.try_shutdown()
+
+
+def stop_terminal_ticks(tree):
+    """Keep ROS and the GUI alive, but never tick a completed mission again."""
+    import py_trees
+    if tree.root.status in (py_trees.common.Status.SUCCESS,
+                            py_trees.common.Status.FAILURE):
+        tree.timer.cancel()
+        tree.node.get_logger().info(
+            f"Mission finished: {tree.root.status.name}. Ticking stopped; "
+            "GUI remains available. Ctrl+C to exit.")
 
 
 def draw_tree(

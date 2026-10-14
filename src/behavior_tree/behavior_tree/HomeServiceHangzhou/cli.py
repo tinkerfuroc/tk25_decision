@@ -55,7 +55,7 @@ def main():
     sys.argv = [sys.argv[0]] + ros_args
     from behavior_tree.runtime import run_tree
     run_tree(build, period_ms=200.0, title="杭州居家生活服务", node_name="hangzhou_home_tree",
-             show_during_setup=True, setup_timeout=120.0)
+             show_during_setup=True, setup_timeout=120.0, stop_on_terminal=True)
 
 
 if __name__ == "__main__":
