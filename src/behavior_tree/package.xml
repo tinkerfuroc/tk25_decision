@@ -6,6 +6,23 @@
   <description>TODO: Package description</description>
   <maintainer email="cindy.w0135@gmail.com">cindy</maintainer>
   <license>Apache-2.0</license>
+  <!-- Hangzhou same-frame identity and RGB scene adapters -->
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>tinker_vision_msgs_26</exec_depend>
+  <exec_depend>kimi_api</exec_depend>
+  <exec_depend>vision_util</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>py_trees</exec_depend>
+  <exec_depend>py_trees_ros</exec_depend>
+  <exec_depend>tinker_audio_msgs</exec_depend>
+  <exec_depend>tinker_arm_msgs</exec_depend>
+  <exec_depend>tk27_manipulation_msgs</exec_depend>
+  <exec_depend>tinker_nav_msgs</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

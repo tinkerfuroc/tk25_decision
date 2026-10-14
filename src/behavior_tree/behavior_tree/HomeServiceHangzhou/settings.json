@@ -1,0 +1,99 @@
+{
+  "current_room": "living_room",
+  "rooms": [
+    "living_room",
+    "bedroom",
+    "dining_room",
+    "kitchen"
+  ],
+  "room_names": {
+    "living_room": "客厅",
+    "bedroom": "卧室",
+    "dining_room": "餐厅",
+    "kitchen": "厨房"
+  },
+  "entry_pose": null,
+  "exit_pose": null,
+  "room_poses": {
+    "living_room": null,
+    "bedroom": null,
+    "dining_room": null,
+    "kitchen": null
+  },
+  "switches": {
+    "living_room": {
+      "on": {
+        "navigation": null,
+        "arm": null
+      },
+      "off": {
+        "navigation": null,
+        "arm": null
+      }
+    },
+    "bedroom": {
+      "on": {
+        "navigation": null,
+        "arm": null
+      },
+      "off": {
+        "navigation": null,
+        "arm": null
+      }
+    },
+    "dining_room": {
+      "on": {
+        "navigation": null,
+        "arm": null
+      },
+      "off": {
+        "navigation": null,
+        "arm": null
+      }
+    },
+    "kitchen": {
+      "on": {
+        "navigation": null,
+        "arm": null
+      },
+      "off": {
+        "navigation": null,
+        "arm": null
+      }
+    }
+  },
+  "arm_stow": null,
+  "arm_assist": null,
+  "pan_angles_deg": [
+    -90,
+    -30,
+    30,
+    90
+  ],
+  "level_tilt_deg": 30,
+  "litter_depression_deg": 30,
+  "settle_seconds": 0.4,
+  "max_passes": 2,
+  "patrol_timeout_seconds": 420,
+  "mission_timeout_seconds": 480,
+  "target_max_age_seconds": 45,
+  "listen_timeout_seconds": 7,
+  "service_timeout_seconds": 65,
+  "navigation_timeout_seconds": 60,
+  "evidence_directory": "~/hangzhou_runs",
+  "endpoints": {
+    "announce": "announce",
+    "listen": "listen_action",
+    "phrase": "phrase_extraction_action",
+    "feature_extraction": "feature_extraction_service",
+    "behaviour_detection": "/behaviour_detection/detect",
+    "litter_detection": "/litter_detection/detect",
+    "navigate": "navigate_to_pose",
+    "approach": "go_to_approach_stable",
+    "arm": "joint_move_action"
+  },
+  "identity_vlm_timeout_seconds": 25,
+  "identity_qwen_backend": "dashscope",
+  "identity_model": "",
+  "exit_reserve_seconds": 60
+}

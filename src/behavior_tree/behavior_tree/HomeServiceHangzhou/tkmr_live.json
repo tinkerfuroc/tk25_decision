@@ -1,0 +1,249 @@
+{
+  "current_room": "living_room",
+  "rooms": [
+    "living_room",
+    "bedroom",
+    "dining_room",
+    "kitchen"
+  ],
+  "room_names": {
+    "living_room": "客厅",
+    "bedroom": "卧室",
+    "dining_room": "餐厅",
+    "kitchen": "厨房"
+  },
+  "entry_pose": [
+    -2.89,
+    -12.3,
+    0.0
+  ],
+  "exit_pose": [
+    -0.682,
+    -0.91,
+    -1.5708
+  ],
+  "room_poses": {
+    "living_room": [
+      -2.89,
+      -12.3,
+      0.0
+    ],
+    "bedroom": [
+      -1.225,
+      -7.2,
+      1.5586
+    ],
+    "dining_room": [
+      -0.972,
+      -9.265,
+      3.1415
+    ],
+    "kitchen": [
+      -0.682,
+      -0.91,
+      -1.5708
+    ]
+  },
+  "switches": {
+    "living_room": {
+      "on": {
+        "navigation": [
+          -2.89,
+          -12.3,
+          0.0
+        ],
+        "arm": [
+          -0.045068366934604684,
+          -0.6023097104333373,
+          0.048888717341895954,
+          0.6518661418267733,
+          0.039187298408695,
+          -0.3105804212286862,
+          0.09321474223090026
+        ]
+      },
+      "off": {
+        "navigation": [
+          -2.89,
+          -12.3,
+          0.0
+        ],
+        "arm": [
+          -0.045068366934604684,
+          -0.6023097104333373,
+          0.048888717341895954,
+          0.6518661418267733,
+          0.039187298408695,
+          -0.3105804212286862,
+          0.09321474223090026
+        ]
+      }
+    },
+    "bedroom": {
+      "on": {
+        "navigation": [
+          -1.225,
+          -7.2,
+          1.5586
+        ],
+        "arm": [
+          -0.045068366934604684,
+          -0.6023097104333373,
+          0.048888717341895954,
+          0.6518661418267733,
+          0.039187298408695,
+          -0.3105804212286862,
+          0.09321474223090026
+        ]
+      },
+      "off": {
+        "navigation": [
+          -1.225,
+          -7.2,
+          1.5586
+        ],
+        "arm": [
+          -0.045068366934604684,
+          -0.6023097104333373,
+          0.048888717341895954,
+          0.6518661418267733,
+          0.039187298408695,
+          -0.3105804212286862,
+          0.09321474223090026
+        ]
+      }
+    },
+    "dining_room": {
+      "on": {
+        "navigation": [
+          -0.972,
+          -9.265,
+          3.1415
+        ],
+        "arm": [
+          -0.045068366934604684,
+          -0.6023097104333373,
+          0.048888717341895954,
+          0.6518661418267733,
+          0.039187298408695,
+          -0.3105804212286862,
+          0.09321474223090026
+        ]
+      },
+      "off": {
+        "navigation": [
+          -0.972,
+          -9.265,
+          3.1415
+        ],
+        "arm": [
+          -0.045068366934604684,
+          -0.6023097104333373,
+          0.048888717341895954,
+          0.6518661418267733,
+          0.039187298408695,
+          -0.3105804212286862,
+          0.09321474223090026
+        ]
+      }
+    },
+    "kitchen": {
+      "on": {
+        "navigation": [
+          -0.682,
+          -0.91,
+          -1.5708
+        ],
+        "arm": [
+          -0.045068366934604684,
+          -0.6023097104333373,
+          0.048888717341895954,
+          0.6518661418267733,
+          0.039187298408695,
+          -0.3105804212286862,
+          0.09321474223090026
+        ]
+      },
+      "off": {
+        "navigation": [
+          -0.682,
+          -0.91,
+          -1.5708
+        ],
+        "arm": [
+          -0.045068366934604684,
+          -0.6023097104333373,
+          0.048888717341895954,
+          0.6518661418267733,
+          0.039187298408695,
+          -0.3105804212286862,
+          0.09321474223090026
+        ]
+      }
+    }
+  },
+  "arm_stow": [
+    -1.5009831567151235,
+    -0.9075712110370514,
+    0.3141592653589793,
+    0.03490658503988659,
+    0.5934119456780721,
+    -1.2740903539558606,
+    -0.15707963267948966
+  ],
+  "arm_assist": [
+    0,
+    -0.5235987755982988,
+    0,
+    1.5707963267948966,
+    0,
+    1.5707963267948966,
+    0
+  ],
+  "pan_angles_deg": [
+    -90,
+    -30,
+    30,
+    90
+  ],
+  "level_tilt_deg": 30,
+  "litter_depression_deg": 30,
+  "settle_seconds": 0.4,
+  "max_passes": 2,
+  "patrol_timeout_seconds": 420,
+  "mission_timeout_seconds": 480,
+  "target_max_age_seconds": 45,
+  "listen_timeout_seconds": 7,
+  "service_timeout_seconds": 65,
+  "navigation_timeout_seconds": 60,
+  "evidence_directory": "~/hangzhou_runs",
+  "endpoints": {
+    "announce": "announce",
+    "listen": "listen_action",
+    "phrase": "phrase_extraction_action",
+    "feature_extraction": "feature_extraction_service",
+    "behaviour_detection": "/hangzhou/behaviour_detection/detect",
+    "litter_detection": "/hangzhou/litter_detection/detect",
+    "navigate": "navigate_to_pose",
+    "approach": "go_to_approach",
+    "arm": "/manipulation/joint_move"
+  },
+  "identity_vlm_timeout_seconds": 25,
+  "identity_qwen_backend": "dashscope",
+  "identity_model": "",
+  "exit_reserve_seconds": 60,
+  "map_yaml": "/home/tinker/tk25_ws/src/tk26_navigation/src/navigation_bringup/maps/1013_xlab.yaml",
+  "waypoint_names": {
+    "living_room": "sofa",
+    "bedroom": "pillar",
+    "dining_room": "round_table",
+    "kitchen": "corner"
+  },
+  "pose_sources": {
+    "arm_stow": "HRI/constants.json:arm_pos_navigating (degrees converted to radians)",
+    "arm_assist": "/home/tinker/tk25_ws/src/tk27_manipulation/src/web_manip/export/default.yaml",
+    "switch_arm": "/home/tinker/tk25_ws/src/tk27_manipulation/src/web_manip/export/click.yaml",
+    "temporary_navigation": "Entry=sofa, exit=corner, switches=room scan points"
+  },
+  "arm_timeout_seconds": 120
+}

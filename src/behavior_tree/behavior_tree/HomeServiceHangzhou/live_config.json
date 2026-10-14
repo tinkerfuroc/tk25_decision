@@ -1,0 +1,11 @@
+{
+  "force_mock_nodes": {},
+  "mock_mode": {
+    "enabled": false,
+    "auto_detect": false,
+    "subsystems": {}
+  },
+  "keyboard_control": {
+    "enabled": false
+  }
+}

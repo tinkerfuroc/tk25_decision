@@ -10,6 +10,8 @@ def run_tree(
     period_ms: float,
     title: str,
     node_name: str = "root_node",
+    show_during_setup: bool = False,
+    setup_timeout: float = 15.0,
 ):
     """Run a behaviour tree created by ``root_factory`` until interrupted."""
     import signal
@@ -35,11 +37,21 @@ def run_tree(
 
     root = root_factory()
     tree = py_trees_ros.trees.BehaviourTree(root)
-    tree.setup(node_name=node_name, timeout=15)
-    print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
-        title=title,
-        print_blackboard=PRINT_BLACKBOARD,
-    )
+    shutdown_visualizer = lambda: None
+    try:
+        if show_during_setup:
+            print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+                title=title, print_blackboard=PRINT_BLACKBOARD)
+            print_tree(tree)
+        tree.setup(node_name=node_name, timeout=setup_timeout)
+        if not show_during_setup:
+            print_tree, shutdown_visualizer, _ = create_post_tick_visualizer(
+                title=title, print_blackboard=PRINT_BLACKBOARD)
+    except BaseException:
+        shutdown_visualizer()
+        tree.shutdown()
+        rclpy.try_shutdown()
+        raise
 
     if PRINT_DEBUG:
         py_trees.logging.level = py_trees.logging.Level.DEBUG
