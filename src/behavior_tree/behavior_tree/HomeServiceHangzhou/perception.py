@@ -103,12 +103,16 @@ class DetectScene(py_trees.behaviour.Behaviour):
             self.feedback_message = "Scene service timeout; not a negative detection"
             return S.FAILURE
         if self.response is None:
-            if not self.client.service_is_ready():
+            try:
+                if not self.client.service_is_ready():
+                    return S.RUNNING
+                request = self.message_type.Request()
+                request.target_frame = "map"
+                self.response = self.client.call_async(request)
                 return S.RUNNING
-            request = self.message_type.Request()
-            request.target_frame = "map"
-            self.response = self.client.call_async(request)
-            return S.RUNNING
+            except Exception as exc:
+                self.feedback_message = "Scene request failed: " + str(exc)
+                return S.FAILURE
         if not self.response.done():
             return S.RUNNING
         try:
@@ -120,6 +124,10 @@ class DetectScene(py_trees.behaviour.Behaviour):
                 raise ValueError("Scene detector error: " + scene.error_msg)
             if stamp_seconds(scene.header) < self.capture_after:
                 raise ValueError("Detector returned an image from before head settled")
+            if hasattr(self, "node"):
+                age = self.node.get_clock().now().nanoseconds / 1e9 - stamp_seconds(scene.header)
+                if not 0 <= age <= self.context.config["target_max_age_seconds"]:
+                    raise ValueError("Detector image is stale or ahead of the ROS clock")
             if not scene.log_json or scene.rgb_image.width <= 0 or scene.rgb_image.height <= 0:
                 raise ValueError("Missing captured image or timestamped evidence")
             if bool(scene.observations) != bool(scene.detected):
@@ -149,6 +157,7 @@ class IdentifyOwners(py_trees.behaviour.Behaviour):
         future = Future()
         self.future = future
         scene = get("scene")
+        self.observation_count = len(scene.observations)
         owners = tuple(self.context.owners)
         config = dict(self.context.config)
 
@@ -168,7 +177,8 @@ class IdentifyOwners(py_trees.behaviour.Behaviour):
         if not self.future.done():
             return S.RUNNING
         try:
-            result = self.future.result()
+            result = parse_identities(json.dumps({"owners": self.future.result()}),
+                                      self.observation_count)
             put("identities", result)
             return S.SUCCESS
         except Exception as exc:

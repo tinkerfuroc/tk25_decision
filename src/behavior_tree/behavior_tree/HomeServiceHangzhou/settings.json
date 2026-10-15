@@ -89,8 +89,8 @@
     "behaviour_detection": "/behaviour_detection/detect",
     "litter_detection": "/litter_detection/detect",
     "navigate": "navigate_to_pose",
-    "approach": "go_to_approach_stable",
-    "arm": "joint_move_action"
+    "approach": "go_to_approach",
+    "arm": "/manipulation/joint_move"
   },
   "identity_vlm_timeout_seconds": 25,
   "identity_qwen_backend": "dashscope",

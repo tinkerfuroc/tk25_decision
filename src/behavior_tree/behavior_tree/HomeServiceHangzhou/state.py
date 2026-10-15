@@ -34,6 +34,8 @@ def valid_point(point):
 
 
 def extract_name(text):
+    if not isinstance(text, str) or text.strip() in ("", "(empty)"):
+        raise ValueError("姓名为空")
     name = re.sub(r"^(你好[，, ]*|我叫|我的名字是|我是)", "", str(text).strip())
     name = name.strip(" ，。！!？?、,\n\t")
     if not name or len(name) > 20 or any(c in name for c in "，。！？,!?\n"):
@@ -51,6 +53,10 @@ class Context:
     active: dict = field(default_factory=dict)
     room: str = ""
     arm_dirty: bool = False
+    motion_actions: list = field(default_factory=list)
+    motion_blocked: bool = False
+    audio_actions: list = field(default_factory=list)
+    audio_blocked: bool = False
     ready: bool = False
     started_at: float = 0.0
     evidence_dir: object = None
@@ -87,7 +93,7 @@ class Context:
         import cv2
         name = extract_name(get("heard"))
         features, image = get("features"), get("reference_image")
-        if not features or image.width <= 0 or image.height <= 0:
+        if not isinstance(features, str) or not features.strip() or image is None or image.width <= 0 or image.height <= 0:
             raise ValueError("主人特征或参考图像为空")
         if any(person.name == name for person in self.owners):
             raise ValueError("姓名重复，请使用不同称呼")
@@ -145,7 +151,10 @@ class Context:
         self.event("switch_requested", command=command)
 
     def repeat_request(self):
-        text = str(get("heard")).strip()
+        heard = get("heard")
+        if not isinstance(heard, str):
+            raise ValueError("帮助需求为空")
+        text = heard.strip()
         if not text or text == "(empty)":
             raise ValueError("帮助需求为空")
         put("speech", "我复述一下您的要求：" + text)
@@ -160,10 +169,16 @@ class Context:
         rows = [o for o in scene.observations if "floor_litter" in o.labels]
         room = self.config["room_names"][self.room]
         if rows:
-            self.litter_rooms.add(self.room)
             put("speech", "我在" + room + "的地面上发现了" + str(len(rows)) + "处疑似垃圾。")
         else:
             put("speech", "本次检查未在" + room + "的地面图像中发现垃圾。")
+        self.event("litter_observed", count=len(rows), log_json=scene.log_json)
+
+    def litter_announced(self):
+        scene = get("litter_scene")
+        rows = [o for o in scene.observations if "floor_litter" in o.labels]
+        if rows:
+            self.litter_rooms.add(self.room)
         self.event("litter_announced", count=len(rows), log_json=scene.log_json)
 
     def summary(self):
@@ -171,7 +186,9 @@ class Context:
             + "位主人的交互，在" + str(len(self.litter_rooms))
             + "个房间发现垃圾。本次未执行垃圾抓取和放置，现在从出口离场。")
         self.event("patrol_summary", completed=sorted(self.completed),
-                   visited=sorted(self.visited), litter_rooms=sorted(self.litter_rooms))
+                   visited=sorted(self.visited), litter_rooms=sorted(self.litter_rooms),
+                   scope_complete=(len(self.completed) == 3 and len(self.visited) == 4
+                                   and len(self.litter_rooms) >= 3))
 
 
 def pose(values):
@@ -193,7 +210,7 @@ class StateNode(py_trees.behaviour.Behaviour):
         try:
             result = self.callback()
             return S.FAILURE if result is False else S.SUCCESS
-        except (ValueError, KeyError, TypeError, OSError, RuntimeError, ImportError) as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, OSError, RuntimeError, ImportError) as exc:
             self.feedback_message = str(exc)
             self.logger.error(self.feedback_message)
             return S.FAILURE

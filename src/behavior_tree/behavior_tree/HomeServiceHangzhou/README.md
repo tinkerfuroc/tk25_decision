@@ -1,5 +1,8 @@
 # HomeServiceHangzhou：杭州居家生活服务
 
+2026-10-15 静态检查、HRI 对照、重试与恢复策略、离线验证说明见
+[STATIC_REVIEW.md](STATIC_REVIEW.md)。
+
 与 HRI、Restaurant、PickAndPlace 并列的 Python 任务子包，沿用同一个 ROS 包
 `behavior_tree` 和 `py_trees` 写法。入口：
 `ros2 run behavior_tree hangzhou-home`。

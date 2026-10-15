@@ -10,6 +10,106 @@ from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_TurnPanTilt
 from .perception import DetectScene, IdentifyOwners
 from .state import PREFIX, S, get, put, stamp_seconds, valid_point
+from .control import MotionBarrier
+
+
+class MotionDiagnostics:
+    """Keep terminal action errors visible; never cancel a completed goal."""
+    def initialise(self):
+        self._transport_error = None
+        try:
+            super().initialise()
+        except Exception as exc:
+            self._transport_error = "Action initialization failed: " + str(exc)
+
+    def goal_response_callback(self, future):
+        try:
+            super().goal_response_callback(future)
+        except Exception as exc:
+            self._transport_error = "Goal response failed: " + str(exc)
+
+    def get_result_callback(self, future):
+        try:
+            super().get_result_callback(future)
+        except Exception as exc:
+            self._transport_error = "Action result failed: " + str(exc)
+
+    def update(self):
+        try:
+            if getattr(self, "_transport_error", None):
+                raise RuntimeError(self._transport_error)
+            status = super().update()
+        except Exception as exc:
+            self.feedback_message = str(exc)
+            status = S.FAILURE
+        if status == S.FAILURE:
+            self.node.get_logger().error(
+                f"{self.name} [{self.action_name}]: {self.feedback_message}")
+        return status
+
+    def terminate(self, new_status):
+        if (not self.mock_mode and
+                (getattr(self, "result_status", None) in (4, 5, 6) or
+                 (getattr(self, "goal_handle", None) is not None and
+                  not self.goal_handle.accepted))):
+            return
+        super().terminate(new_status)
+
+
+class ServiceDiagnostics:
+    """Convert service transport exceptions into recoverable BT failures."""
+    def initialise(self):
+        self._request_error = None
+        try:
+            super().initialise()
+        except Exception as exc:
+            self._request_error = "Service request failed: " + str(exc)
+
+    def update(self):
+        try:
+            if self._request_error:
+                raise RuntimeError(self._request_error)
+            return super().update()
+        except Exception as exc:
+            self.feedback_message = str(exc)
+            self.node.get_logger().error(f"{self.name}: {exc}")
+            return S.FAILURE
+
+
+class HangzhouAnnounce(ServiceDiagnostics, BtNode_Announce):
+    pass
+
+
+class HangzhouFeature(ServiceDiagnostics, BtNode_FeatureExtraction):
+    pass
+
+
+class HangzhouGoto(MotionDiagnostics, BtNode_GotoAction):
+    def process_result(self):
+        result = getattr(self.result_message, "result", None)
+        code = getattr(result, "error_code", 0)
+        if self.result_status == 4 and code == 0:
+            self.feedback_message = "Navigation succeeded"
+            return S.SUCCESS
+        self.feedback_message = (f"Navigation failed: status={self.result_status}, "
+                                 f"error_code={code}, {getattr(result, 'error_msg', '')}")
+        return S.FAILURE
+
+
+class HangzhouApproach(MotionDiagnostics, BtNode_Approach):
+    def process_result(self):
+        if self.result_status != 4:
+            self.feedback_message = f"Approach action failed: status={self.result_status}"
+            return S.FAILURE
+        return super().process_result()
+
+
+class HangzhouListen(MotionDiagnostics, BtNode_ListenAction):
+    pass
+
+
+class HangzhouCommand(MotionDiagnostics, BtNode_PhraseExtractionAction):
+    pass
 
 
 class SettledPanTilt(BtNode_TurnPanTilt):
@@ -45,7 +145,7 @@ class SettledPanTilt(BtNode_TurnPanTilt):
         return S.SUCCESS
 
 
-class Tk27MoveArm(BtNode_MoveArmSingle):
+class Tk27MoveArm(MotionDiagnostics, BtNode_MoveArmSingle):
     """Reuse action lifecycle/result handling with the real TK27 joint schema."""
     def __init__(self, **kwargs):
         from tk27_manipulation_msgs.action import JointMove
@@ -58,25 +158,6 @@ class Tk27MoveArm(BtNode_MoveArmSingle):
         goal.positions = [float(v) for v in self.blackboard.arm_joint_pose]
         self.send_goal_request(goal)
 
-    def update(self):
-        status = super().update()
-        if status == S.FAILURE:
-            # Log before terminate() replaces feedback with cancellation state.
-            self.node.get_logger().error(
-                f"{self.name} [{self.action_name}]: {self.feedback_message}")
-        return status
-
-    def terminate(self, new_status):
-        # A rejected or completed goal has nothing left to cancel. Preserve
-        # the original result for the GUI instead of obscuring it with a cancel.
-        if (not self.mock_mode and
-                (getattr(self, "result_status", None) is not None or
-                 (getattr(self, "goal_handle", None) is not None and
-                  not self.goal_handle.accepted))):
-            return
-        super().terminate(new_status)
-
-
 class FreshTarget(py_trees.behaviour.Behaviour):
     def __init__(self, context):
         super().__init__("Check person target frame and capture age")
@@ -86,11 +167,19 @@ class FreshTarget(py_trees.behaviour.Behaviour):
         self.node = kwargs["node"]
 
     def update(self):
-        target = get("target")
-        if not get("target_valid") or not valid_point(target):
+        try:
+            target = get("target")
+            if not get("target_valid") or not valid_point(target):
+                self.feedback_message = "Person target has no valid map position"
+                return S.FAILURE
+            age = self.node.get_clock().now().nanoseconds / 1e9 - stamp_seconds(target.header)
+        except (KeyError, AttributeError, TypeError) as exc:
+            self.feedback_message = "Invalid person target: " + str(exc)
             return S.FAILURE
-        age = self.node.get_clock().now().nanoseconds / 1e9 - stamp_seconds(target.header)
-        return S.SUCCESS if 0 <= age <= self.context.config["target_max_age_seconds"] else S.FAILURE
+        if not 0 <= age <= self.context.config["target_max_age_seconds"]:
+            self.feedback_message = f"Person observation expired or future-dated: age={age:.2f}s"
+            return S.FAILURE
+        return S.SUCCESS
 
 
 class RosLeaves:
@@ -103,27 +192,41 @@ class RosLeaves:
         return py_trees.decorators.Timeout(name=name + " timeout", child=node,
             duration=float(seconds or self.config["service_timeout_seconds"]))
 
+    def motion(self, name, node, seconds, guards=()):
+        self.context.motion_actions.append(node)
+        return py_trees.composites.Sequence(name=name + " guarded motion", memory=True,
+            children=[MotionBarrier(self.context), *guards, self.bounded(name, node, seconds)])
+
+    def audio(self, name, node):
+        self.context.audio_actions.append(node)
+        return py_trees.composites.Sequence(name=name + " guarded audio", memory=True,
+            children=[MotionBarrier(self.context, "audio"), self.bounded(name, node)])
+
     def say(self, name, text=None):
-        return self.bounded(name, BtNode_Announce(name=name,
+        return self.audio(name, HangzhouAnnounce(name=name,
             bb_source=PREFIX + "speech" if text is None else None,
             message=text, service_name=self.endpoints["announce"]))
 
     def listen(self, name):
-        return self.bounded(name, BtNode_ListenAction(name=name,
+        return self.audio(name, HangzhouListen(name=name,
             bb_dest_key=PREFIX + "heard", timeout=self.config["listen_timeout_seconds"],
             action_name=self.endpoints["listen"]))
 
     def command(self):
-        return self.bounded("Listen switch command", BtNode_PhraseExtractionAction(
+        return self.audio("Listen switch command", HangzhouCommand(
             name="Listen switch command", wordlist=["开", "关"],
             bb_dest_key=PREFIX + "command", timeout=self.config["listen_timeout_seconds"],
             action_name=self.endpoints["phrase"]))
 
     def feature(self):
-        return self.bounded("Extract owner features", BtNode_FeatureExtraction(
+        from .state import StateNode
+        return py_trees.composites.Sequence(name="Capture owner features", memory=True, children=[
+            StateNode("Clear previous feature result", lambda: [put(k, None) for k in
+                      ("features", "reference_image")]),
+            self.bounded("Extract owner features", HangzhouFeature(
             name="Extract owner features", bb_dest_key=PREFIX + "features",
             bb_image_key=PREFIX + "reference_image",
-            service_name=self.endpoints["feature_extraction"], use_orbbec=True))
+            service_name=self.endpoints["feature_extraction"], use_orbbec=True))])
 
     def head(self, pan, tilt):
         return SettledPanTilt(name=f"Pan {pan} tilt {tilt}", x=float(pan), y=float(tilt))
@@ -139,20 +242,18 @@ class RosLeaves:
         return IdentifyOwners("Identify owners in behaviour image", self.context)
 
     def goto(self, name):
-        return self.bounded(name, BtNode_GotoAction(name=name, key=PREFIX + "nav_goal",
+        return self.motion(name, HangzhouGoto(name=name, key=PREFIX + "nav_goal",
             action_name=self.endpoints["navigate"]), self.config["navigation_timeout_seconds"])
 
     def approach(self):
-        return py_trees.composites.Sequence(name="Approach detected owner", memory=True, children=[
-            FreshTarget(self.context),
-            self.bounded("Approach owner", BtNode_Approach(
+        return self.motion("Approach owner", HangzhouApproach(
                 name="Navigate around obstacles to owner", bb_target_key=PREFIX + "target",
                 desired_distance=0.7, min_distance=0.55, max_distance=1.2,
                 timeout_sec=self.config["navigation_timeout_seconds"],
                 action_name=self.endpoints["approach"]),
-                self.config["navigation_timeout_seconds"] + 2)])
+                self.config["navigation_timeout_seconds"] + 2, guards=[FreshTarget(self.context)])
 
     def arm(self, name):
-        return self.bounded(name, Tk27MoveArm(name=name,
+        return self.motion(name, Tk27MoveArm(name=name,
             arm_pose_bb_key=PREFIX + "arm_goal", action_name=self.endpoints["arm"]),
             self.config.get("arm_timeout_seconds", 120.0))

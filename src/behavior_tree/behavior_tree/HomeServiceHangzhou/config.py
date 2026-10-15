@@ -10,12 +10,17 @@ FALL = {"lying_on_floor_possible_fall"}
 WAVE = {"standing_waving", "sitting_waving"}
 EXPECTED = {1: REST, 2: FALL, 3: WAVE}
 BEHAVIOUR_ZH = {1: "躺卧或坐着休息", 2: "倒在地上，疑似摔倒", 3: "挥手示意"}
+RETRY_DEFAULTS = {"navigation_attempts": 5, "approach_attempts": 3,
+                  "arm_attempts": 3, "head_attempts": 3,
+                  "dialogue_attempts": 3, "feature_attempts": 4,
+                  "perception_attempts": 2, "retry_delay_seconds": 1.0,
+                  "cancel_timeout_seconds": 10.0, "arm_timeout_seconds": 120.0}
 
 
 def load_config(path=None):
     path = path or os.environ.get("HANGZHOU_CONFIG") or Path(__file__).with_name("settings.json")
     with open(path, encoding="utf-8") as stream:
-        return json.load(stream)
+        return {**RETRY_DEFAULTS, **json.load(stream)}
 
 
 def room_order(config):
@@ -27,6 +32,14 @@ def room_order(config):
 def validate(config):
     """All fixed poses must be deliberately calibrated before any robot I/O."""
     errors = []
+    for key, default in RETRY_DEFAULTS.items():
+        value = config.get(key, default)
+        if key.endswith("_attempts"):
+            if type(value) is not int or not 1 <= value <= 10:
+                errors.append(key + " must be an integer in [1, 10]")
+        elif (type(value) not in (int, float) or not math.isfinite(value)
+              or value < 0 or (key != "retry_delay_seconds" and value == 0)):
+            errors.append(key + " must be finite and positive (retry delay may be zero)")
     rooms = config.get("rooms", [])
     if len(rooms) != 4 or len(set(rooms)) != 4:
         errors.append("rooms must contain four unique rooms")

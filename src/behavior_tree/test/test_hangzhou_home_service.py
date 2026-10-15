@@ -47,6 +47,7 @@ def scene(owner=None, litter=False, status=0):
 @pytest.fixture
 def config(tmp_path):
     c = load_config()
+    c["retry_delay_seconds"] = 0.0
     c["entry_pose"] = [1.0, 2.0, 0.0]
     c["exit_pose"] = [9.0, 2.0, 3.14]
     c["current_room"] = "dining_room"
