@@ -9,7 +9,7 @@ import re
 import time
 
 import py_trees
-from .config import BEHAVIOUR_ZH, EXPECTED, OWNER_NAMES, validate
+from .config import BEHAVIOUR_ZH, EXPECTED, OWNER_NAMES, ROLE_PRIORITY, validate
 
 PREFIX = "/hangzhou/"
 S = py_trees.common.Status
@@ -162,8 +162,10 @@ class Context:
         self.active.clear()
         scene = get("scene")
         for index, obs in enumerate(scene.observations):
-            roles = [role for role, labels in EXPECTED.items() if set(obs.labels) & labels]
-            if len(roles) == 1 and roles[0] not in self.serviced_roles:
+            roles = [role for role in ROLE_PRIORITY if set(obs.labels) & EXPECTED[role]]
+            # A served role is not reassigned to a lower-priority label: a person
+            # still waving from a chair after service is not a new resting target.
+            if roles and roles[0] not in self.serviced_roles:
                 self.active.setdefault(roles[0], (index, obs))
         self.event("behaviour_targets", roles=list(self.active), log_json=scene.log_json)
 
@@ -200,6 +202,7 @@ class Context:
     def accept_identity(self, source):
         identities = get("identities")
         if len(identities) != 1 or type(identities[0]) is not int or not 1 <= identities[0] <= len(self.owners):
+            self.event("identity_attempt_unresolved", source=source, identities=list(identities))
             return False
         owner = identities[0]
         put("matched_owner", owner)

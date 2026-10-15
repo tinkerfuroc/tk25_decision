@@ -491,13 +491,63 @@ def test_facing_success_does_not_require_original_behaviour_face(cfg):
 
 
 def test_unidentified_person_still_receives_service_without_false_identity(cfg):
-    root, io = run(cfg, owners=(2,), identities=[[None], [None]])
+    # facing image, original crop, then two re-prompted facing images
+    root, io = run(cfg, owners=(2,), identities=[[None]] * 4)
     assert root.status == S.SUCCESS
     assert root.context.completed == set()
     assert root.context.serviced_roles == {2}
+    assert io.counts['identify'] == 4
+    assert io.counts['Ask person to face top camera again'] == 2
     assert io.counts['Extend assistance arm over person'] == 1
     assert io.counts['approach'] == 1
     assert any(e['event'] == 'interaction_completed_unidentified' for e in root.context.events)
+    assert len([e for e in root.context.events if e['event'] == 'identity_attempt_unresolved']) == 4
+
+
+def test_reprompted_facing_image_identifies_after_both_first_sources_unknown(cfg):
+    root, io = run(cfg, owners=(3,), identities=[[None], [None], [3]])
+    assert root.context.completed == {3}
+    assert io.counts['identify'] == 3 and io.counts['approach'] == 1
+    assert io.counts['Ask person to face top camera again'] == 1
+    calls = io.calls
+    assert calls.index('Ask person to face top camera') < calls.index('Ask person to face top camera again')
+    records = [e for e in root.context.events if e['event'] == 'post_interaction_identity']
+    assert [r['source'] for r in records] == ['facing_image']
+
+
+def test_identity_retry_attempts_are_configurable(cfg):
+    cfg['identity_retry_attempts'] = 4
+    root, io = run(cfg, owners=(1,), identities=[[None]] * 6)
+    assert io.counts['identify'] == 6
+    assert io.counts['Ask person to face top camera again'] == 4
+    assert root.context.serviced_roles == {1} and root.context.completed == set()
+
+
+def behaviour_scene(*label_sets):
+    header = NS(frame_id='map', stamp=NS(sec=100, nanosec=0))
+    return NS(header=header, log_json='evidence.json', observations=[
+        NS(labels=list(labels), position=NS(header=header), position_valid=True,
+           bbox=NS(x_offset=0, y_offset=0, width=4, height=4)) for labels in label_sets])
+
+
+@pytest.mark.parametrize('labels,role', [
+    (('sitting_on_chair', 'sitting_waving'), 3),
+    (('sitting_on_sofa', 'standing_waving'), 3),
+    (('lying_on_floor_possible_fall', 'lying_resting_or_sleeping'), 2),
+    (('sitting_on_bed',), 1)])
+def test_multi_label_person_gets_highest_priority_role(cfg, labels, role):
+    context = Context(cfg)
+    put('scene', behaviour_scene(labels))
+    context.observe_behaviours()
+    assert list(context.active) == [role]
+
+
+def test_served_waver_still_sitting_is_not_reassigned_as_resting(cfg):
+    context = Context(cfg)
+    context.serviced_roles.add(3)
+    put('scene', behaviour_scene(('sitting_on_chair', 'sitting_waving'), ('sitting_on_sofa',)))
+    context.observe_behaviours()
+    assert context.active == {1: (1, get('scene').observations[1])}
 
 
 def test_identity_is_not_inferred_from_behaviour_role(cfg):

@@ -80,24 +80,38 @@ def create_task(config=None, leaves_factory=None):
             optional(io.say("Repeat registered name")))
 
     def identify_before_leaving():
-        fresh = sequence("Match post-interaction facing image",
-            retry(io.feature(), "feature", 4),
-            step("Use fresh facing person crop", context.prepare_facing_identity),
-            io.identify(),
-            step("Accept facing-image identity", lambda: context.accept_identity("facing_image")))
+        def fresh(name):
+            return sequence(name,
+                retry(io.feature(), "feature", 4),
+                step("Use fresh facing person crop", context.prepare_facing_identity),
+                io.identify(),
+                step("Accept facing-image identity", lambda: context.accept_identity("facing_image")))
+
+        def face_camera(prompt_name, text, wait_name):
+            return [io.say(prompt_name, text), head(0, level),
+                    py_trees.timers.Timer(name=wait_name,
+                        duration=config.get("identity_facing_wait_seconds", 2.0))]
+
         original = sequence("Match original behaviour person crop",
             step("Restore selected behaviour crop", lambda: put("scene", get("behaviour_identity_scene"))),
             io.identify(),
             step("Accept behaviour-image identity", lambda: context.accept_identity("behaviour_image")))
+        # Cheap sources first (one prompt, then the stored crop without speech);
+        # only then spend time re-prompting the person for new facing images.
+        again = retry(sequence("Re-prompt and match facing image",
+            *face_camera("Ask person to face top camera again",
+                "我还没看清您的脸。请站到我的正前方，抬头看向我顶部的摄像头，保持两秒不动。",
+                "Wait for person to face camera again"),
+            fresh("Match repeated facing image")), "identity_retry", 2)
         return sequence("Identify person before leaving",
-            io.say("Ask person to face top camera",
-                "请您面向我顶部的摄像头，让我看清您的脸，方便我认出您。"),
-            head(0, level),
-            py_trees.timers.Timer(name="Wait for person to face camera",
-                duration=config.get("identity_facing_wait_seconds", 2.0)),
+            *face_camera("Ask person to face top camera",
+                "请您面向我顶部的摄像头，让我看清您的脸，方便我认出您。",
+                "Wait for person to face camera"),
             selector("Facing image or original behaviour image",
-                sequence("Identity matched", selector("Try two identity sources", fresh, original),
-                         optional(io.say("Announce recognized name"))),
+                sequence("Identity matched",
+                    selector("Try identity sources",
+                        fresh("Match post-interaction facing image"), original, again),
+                    optional(io.say("Announce recognized name"))),
                 sequence("Identity remains unknown",
                     step("Record unidentified service", lambda: context.event("identity_unresolved")),
                     optional(io.say("Report unknown identity", "暂时还没能确认您的身份，我会记录本次服务。")))))

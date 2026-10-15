@@ -10,10 +10,15 @@ REST = {"lying_resting_or_sleeping", "sitting_on_bed", "sitting_on_sofa", "sitti
 FALL = {"lying_on_floor_possible_fall"}
 WAVE = {"standing_waving", "sitting_waving"}
 EXPECTED = {1: REST, 2: FALL, 3: WAVE}
+# One person may carry labels of several roles (the detector is told to use e.g.
+# sitting_on_chair + sitting_waving on one box). The highest-priority role wins:
+# a possible fall first, then an explicit wave over passive resting.
+ROLE_PRIORITY = (2, 3, 1)
 BEHAVIOUR_ZH = {1: "躺卧或坐着休息", 2: "倒在地上，疑似摔倒", 3: "挥手示意"}
 RETRY_DEFAULTS = {"navigation_attempts": 5, "approach_attempts": 3,
                   "arm_attempts": 3, "head_attempts": 3,
                   "dialogue_attempts": 3, "feature_attempts": 4,
+                  "identity_retry_attempts": 2,
                   "perception_attempts": 2, "retry_delay_seconds": 1.0,
                   "cancel_timeout_seconds": 10.0, "arm_timeout_seconds": 120.0,
                   "identity_facing_wait_seconds": 2.0}
