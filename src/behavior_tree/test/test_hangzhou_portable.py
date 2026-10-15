@@ -22,7 +22,7 @@ def cfg(tmp_path, monkeypatch):
     c = load_config()
     c.update(entry_pose=[0., 0., 0.], exit_pose=[9., 0., 0.],
              arm_stow=[0.] * 7, arm_assist=[1.] * 7, max_passes=1,
-             evidence_directory=str(tmp_path), retry_delay_seconds=0.)
+             evidence_directory=str(tmp_path), retry_delay_seconds=0., identity_facing_wait_seconds=0.)
     for i, room in enumerate(c['rooms']):
         c['room_poses'][room] = [float(i), 2., 0.]
         for command in ('on', 'off'):
@@ -38,19 +38,22 @@ def cfg(tmp_path, monkeypatch):
 def scene(owners=(), litter=False):
     labels = {1: 'sitting_on_sofa', 2: 'lying_on_floor_possible_fall', 3: 'standing_waving'}
     header = NS(frame_id='map', stamp=NS(sec=100, nanosec=0))
-    observations = [NS(labels=[labels[o]], position=NS(header=header), position_valid=True)
+    observations = [NS(labels=[labels[o]], position=NS(header=header), position_valid=True,
+                       bbox=NS(x_offset=0, y_offset=0, width=4, height=4))
                     for o in owners]
     if litter:
         observations = [NS(labels=['floor_litter'])]
-    return NS(observations=observations, header=header, log_json='evidence.json')
+    return NS(observations=observations, header=header, log_json='evidence.json',
+              rgb_image=NS(width=4, height=4, header=header))
 
 
 class IO:
-    def __init__(self, context, fail=None, names=None, owners=()):
+    def __init__(self, context, fail=None, names=None, owners=(), identities=None):
         self.context, self.fail = context, fail or {}
         self.counts, self.calls = Counter(), []
         self.names = iter(names or ['杰克', '安东', '李华'])
         self.owners = owners
+        self.identities = iter(identities) if identities is not None else None
         context.io = self
 
     def leaf(self, name, effect=lambda: None):
@@ -89,7 +92,7 @@ class IO:
         return self.leaf('approach')
 
     def head(self, pan, tilt):
-        return self.leaf(f'head {pan} {tilt}')
+        return self.leaf(f'head {pan} {tilt}', lambda: put('capture_after', 100.))
 
     def settle(self):
         return self.leaf('settle')
@@ -102,7 +105,10 @@ class IO:
         return self.leaf('detect ' + task, capture)
 
     def identify(self):
-        return self.leaf('identify', lambda: put('identities', list(self.owners)))
+        def match():
+            role = next(e['role'] for e in reversed(self.context.events) if e['event'] == 'behaviour_selected')
+            put('identities', next(self.identities) if self.identities is not None else [role])
+        return self.leaf('identify', match)
 
 
 def run(c, **kwargs):
@@ -450,6 +456,64 @@ def test_action_transport_error_returns_failure_with_diagnostics(adapters):
     node._transport_error = 'result transport failed'
     assert node.update() == S.FAILURE
     assert errors and 'result transport failed' in node.feedback_message
+
+
+@pytest.mark.parametrize('role,dialogue_end', [(1, 'Repeat electrical request'),
+    (2, 'Acknowledge fallen owner'), (3, 'Speak original help request')])
+def test_identity_only_after_approach_and_dialogue(cfg, role, dialogue_end):
+    root, io = run(cfg, owners=(role,))
+    calls = io.calls
+    assert root.context.completed == {role}
+    assert calls.index('detect behaviour') < calls.index('approach') < calls.index(dialogue_end)
+    assert calls.index(dialogue_end) < calls.index('Ask person to face top camera') < calls.index('identify')
+    assert calls.index('identify') < calls.index('Return to room scan point')
+    if role == 1:
+        assert calls.index('identify') < calls.index('Navigate to switch mark')
+
+
+def test_unknown_facing_image_falls_back_to_selected_behaviour_image(cfg):
+    root, io = run(cfg, owners=(2,), identities=[[None], [2]])
+    assert root.context.completed == {2}
+    assert io.counts['identify'] == 2 and io.counts['approach'] == 1
+    records = [e for e in root.context.events if e['event'] == 'post_interaction_identity']
+    assert records[0]['source'] == 'behaviour_image'
+    selected = get('behaviour_identity_scene')
+    assert len(selected.observations) == 1
+    assert selected.observations[0].labels == ['lying_on_floor_possible_fall']
+
+
+def test_facing_success_does_not_require_original_behaviour_face(cfg):
+    root, io = run(cfg, owners=(2,), identities=[[2]])
+    assert root.context.completed == {2}
+    assert io.counts['identify'] == 1
+    assert any(e['event'] == 'post_interaction_identity' and e['source'] == 'facing_image'
+               for e in root.context.events)
+
+
+def test_unidentified_person_still_receives_service_without_false_identity(cfg):
+    root, io = run(cfg, owners=(2,), identities=[[None], [None]])
+    assert root.status == S.SUCCESS
+    assert root.context.completed == set()
+    assert root.context.serviced_roles == {2}
+    assert io.counts['Extend assistance arm over person'] == 1
+    assert io.counts['approach'] == 1
+    assert any(e['event'] == 'interaction_completed_unidentified' for e in root.context.events)
+
+
+def test_identity_is_not_inferred_from_behaviour_role(cfg):
+    root, _ = run(cfg, owners=(2,), identities=[[3]])
+    assert root.context.completed == {3}
+    assert root.context.serviced_roles == {2}
+    assert any(e['event'] == 'interaction_completed' and e['owner'] == 3 and e['role'] == 2
+               for e in root.context.events)
+
+
+def test_facing_image_requires_post_prompt_head_timestamp(cfg):
+    context = Context(cfg)
+    put('capture_after', 101.)
+    put('reference_image', NS(width=4, height=4, header=NS(stamp=NS(sec=100, nanosec=0))))
+    with pytest.raises(ValueError, match='早于'):
+        context.prepare_facing_identity()
 
 
 @pytest.mark.parametrize('key,value', [('navigation_attempts', 0), ('arm_attempts', True),

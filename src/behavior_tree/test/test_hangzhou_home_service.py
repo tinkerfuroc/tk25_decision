@@ -48,6 +48,7 @@ def scene(owner=None, litter=False, status=0):
 def config(tmp_path):
     c = load_config()
     c["retry_delay_seconds"] = 0.0
+    c["identity_facing_wait_seconds"] = 0.0
     c["entry_pose"] = [1.0, 2.0, 0.0]
     c["exit_pose"] = [9.0, 2.0, 3.14]
     c["current_room"] = "dining_room"
@@ -99,7 +100,10 @@ class FakeLeaves:
         return self.node("Feature", run)
 
     def head(self, pan, tilt):
-        return self.node("Head", lambda: self.calls.append(("head", self.context.room, pan, tilt)))
+        def run():
+            put("capture_after", 100.)
+            self.calls.append(("head", self.context.room, pan, tilt))
+        return self.node("Head", run)
 
     def settle(self):
         return self.node("Settle")
@@ -172,7 +176,7 @@ def test_complete_random_order_and_four_room_sweep(config, command, expected):
     assert ("arm", "Move end effector over switch mark", [expected] * 7) in calls
     assert ("say", "我复述一下您的要求：请帮我拿一杯温水，不要加糖。") in calls
     for name in ("杰克", "安东", "李华"):
-        assert any(call[0] == "say" and name in call[1] and "识别到" in call[1] for call in calls)
+        assert any(call[0] == "say" and name in call[1] and "认出" in call[1] for call in calls)
     assert any(call[0] == "goto" and call[1] == "Leave through separate exit" for call in calls)
     assert len(list(c.evidence_dir.glob("owner_*.png"))) == 3
     records = [json.loads(line) for line in (c.evidence_dir / "events.jsonl").read_text().splitlines()]
@@ -189,8 +193,12 @@ def test_unknown_empty_and_error_never_trigger_interactions(config, options):
     root, io = run_tree(config, **options)
     assert root.status == S.SUCCESS
     assert not root.context.completed
-    assert not any(call[0] == "approach" for call in io.calls)
-    assert not any(call[:2] == ("arm", "Move end effector over switch mark") for call in io.calls)
+    if options.get("unknown"):
+        assert any(call[0] == "approach" for call in io.calls)
+        assert root.context.serviced_roles == {1, 2, 3}
+    else:
+        assert not any(call[0] == "approach" for call in io.calls)
+        assert not any(call[:2] == ("arm", "Move end effector over switch mark") for call in io.calls)
     if options.get("detect_error"):
         assert not root.context.litter_rooms
         assert len([e for e in root.context.events if e["event"] == "perception_failed"]) == 16

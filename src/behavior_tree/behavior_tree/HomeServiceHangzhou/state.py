@@ -73,6 +73,7 @@ class Context:
     config: dict
     owners: list = field(default_factory=list)
     completed: set = field(default_factory=set)
+    serviced_roles: set = field(default_factory=set)
     visited: set = field(default_factory=set)
     litter_rooms: set = field(default_factory=set)
     active: dict = field(default_factory=dict)
@@ -82,6 +83,8 @@ class Context:
     motion_blocked: bool = False
     audio_actions: list = field(default_factory=list)
     audio_blocked: bool = False
+    feature_actions: list = field(default_factory=list)
+    feature_blocked: bool = False
     ready: bool = False
     started_at: float = 0.0
     evidence_dir: object = None
@@ -100,6 +103,7 @@ class Context:
         validate(self.config)
         self.owners.clear()
         self.completed.clear()
+        self.serviced_roles.clear()
         self.visited.clear()
         self.litter_rooms.clear()
         self.active.clear()
@@ -152,6 +156,68 @@ class Context:
         self.active = {owner: obs for owner, obs in zip(get("identities"), scene.observations)
                        if owner is not None}
         self.event("identity_association", owners=list(self.active), log_json=scene.log_json)
+
+    def observe_behaviours(self):
+        """Select behaviour targets without requiring visible faces or identity."""
+        self.active.clear()
+        scene = get("scene")
+        for index, obs in enumerate(scene.observations):
+            roles = [role for role, labels in EXPECTED.items() if set(obs.labels) & labels]
+            if len(roles) == 1 and roles[0] not in self.serviced_roles:
+                self.active.setdefault(roles[0], (index, obs))
+        self.event("behaviour_targets", roles=list(self.active), log_json=scene.log_json)
+
+    def select_behaviour(self, role):
+        if role in self.serviced_roles or role not in self.active:
+            return False
+        index, obs = self.active[role]
+        scene = get("scene")
+        # Preserve exactly the approached person's original ROI, not every
+        # bystander in the frame. Identity is deliberately deferred.
+        put("behaviour_identity_scene", SimpleNamespace(
+            header=scene.header, rgb_image=scene.rgb_image,
+            observations=[obs], log_json=scene.log_json))
+        put("matched_owner", None)
+        put("target", obs.position)
+        put("target_valid", obs.position_valid)
+        put("speech", "您好，我注意到您" + BEHAVIOUR_ZH[role] + "，我过来帮助您。")
+        self.event("behaviour_selected", role=role, observation=index,
+                   capture_stamp=stamp_seconds(scene.header))
+        return True
+
+    def prepare_facing_identity(self):
+        """The feature service returns the foreground person's cropped image."""
+        image = get("reference_image")
+        if image is None or image.width <= 0 or image.height <= 0:
+            raise ValueError("正面人物图像为空")
+        if stamp_seconds(image.header) < get("capture_after"):
+            raise ValueError("正面图像早于面向摄像头提示后的拍摄时刻")
+        put("scene", SimpleNamespace(header=image.header, rgb_image=image,
+            observations=[SimpleNamespace(bbox=SimpleNamespace(
+                x_offset=0, y_offset=0, width=image.width, height=image.height))],
+            log_json="post_interaction_person_crop"))
+
+    def accept_identity(self, source):
+        identities = get("identities")
+        if len(identities) != 1 or type(identities[0]) is not int or not 1 <= identities[0] <= len(self.owners):
+            return False
+        owner = identities[0]
+        put("matched_owner", owner)
+        put("speech", self.owners[owner - 1].name + "，我认出您了。")
+        self.event("post_interaction_identity", owner=owner,
+                   name=self.owners[owner - 1].name, source=source)
+        return True
+
+    def finish_behaviour(self, role):
+        # Do not repeat a completed physical service just because recognition
+        # was inconclusive. Unidentified service is never scored as a known owner.
+        self.serviced_roles.add(role)
+        owner = get("matched_owner")
+        if owner is not None:
+            self.completed.add(owner)
+            self.event("interaction_completed", owner=owner, role=role)
+        else:
+            self.event("interaction_completed_unidentified", role=role)
 
     def select_owner(self, owner):
         obs = self.active.get(owner)

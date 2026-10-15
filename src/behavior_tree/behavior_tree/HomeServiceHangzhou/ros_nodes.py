@@ -80,8 +80,20 @@ class HangzhouAnnounce(ServiceDiagnostics, BtNode_Announce):
     pass
 
 
-class HangzhouFeature(ServiceDiagnostics, BtNode_FeatureExtraction):
-    pass
+class HangzhouFeature(MotionDiagnostics, BtNode_FeatureExtraction):
+    """Feature extraction is an action; reject images from before head settling."""
+    def initialise(self):
+        self.capture_started = get("capture_after")
+        super().initialise()
+
+    def process_result(self):
+        status = super().process_result()
+        if status == S.SUCCESS:
+            image = self.blackboard.comparison_image
+            if image is None or image.width <= 0 or image.height <= 0 or stamp_seconds(image.header) < self.capture_started:
+                self.feedback_message = "Feature image is empty or predates head settling"
+                return S.FAILURE
+        return status
 
 
 class HangzhouGoto(MotionDiagnostics, BtNode_GotoAction):
@@ -220,13 +232,15 @@ class RosLeaves:
 
     def feature(self):
         from .state import StateNode
+        action = HangzhouFeature(name="Extract owner features",
+            bb_dest_key=PREFIX + "features", bb_image_key=PREFIX + "reference_image",
+            service_name=self.endpoints["feature_extraction"], use_orbbec=True)
+        self.context.feature_actions.append(action)
         return py_trees.composites.Sequence(name="Capture owner features", memory=True, children=[
+            MotionBarrier(self.context, "feature"),
             StateNode("Clear previous feature result", lambda: [put(k, None) for k in
                       ("features", "reference_image")]),
-            self.bounded("Extract owner features", HangzhouFeature(
-            name="Extract owner features", bb_dest_key=PREFIX + "features",
-            bb_image_key=PREFIX + "reference_image",
-            service_name=self.endpoints["feature_extraction"], use_orbbec=True))])
+            self.bounded("Extract owner features", action)])
 
     def head(self, pan, tilt):
         return SettledPanTilt(name=f"Pan {pan} tilt {tilt}", x=float(pan), y=float(tilt))

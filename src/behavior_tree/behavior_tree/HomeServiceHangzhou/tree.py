@@ -1,6 +1,6 @@
 """Phase factories in the same py_trees idiom as HRI, Restaurant and PickAndPlace."""
 import py_trees
-from .config import EXPECTED, load_config, room_order
+from .config import load_config, room_order
 from .state import Context, PatrolBudget, StateNode, get, put, pose, extract_owner_name
 from .control import PacedRetry, ReportFailure
 
@@ -79,61 +79,81 @@ def create_task(config=None, leaves_factory=None):
             retry(intake, "dialogue", 3),
             optional(io.say("Repeat registered name")))
 
-    def interaction(owner):
-        if owner == 1:
+    def identify_before_leaving():
+        fresh = sequence("Match post-interaction facing image",
+            retry(io.feature(), "feature", 4),
+            step("Use fresh facing person crop", context.prepare_facing_identity),
+            io.identify(),
+            step("Accept facing-image identity", lambda: context.accept_identity("facing_image")))
+        original = sequence("Match original behaviour person crop",
+            step("Restore selected behaviour crop", lambda: put("scene", get("behaviour_identity_scene"))),
+            io.identify(),
+            step("Accept behaviour-image identity", lambda: context.accept_identity("behaviour_image")))
+        return sequence("Identify person before leaving",
+            io.say("Ask person to face top camera",
+                "请您面向我顶部的摄像头，让我看清您的脸，方便我认出您。"),
+            head(0, level),
+            py_trees.timers.Timer(name="Wait for person to face camera",
+                duration=config.get("identity_facing_wait_seconds", 2.0)),
+            selector("Facing image or original behaviour image",
+                sequence("Identity matched", selector("Try two identity sources", fresh, original),
+                         optional(io.say("Announce recognized name"))),
+                sequence("Identity remains unknown",
+                    step("Record unidentified service", lambda: context.event("identity_unresolved")),
+                    optional(io.say("Report unknown identity", "暂时还没能确认您的身份，我会记录本次服务。")))))
+
+    def interaction(role):
+        if role == 1:
             request = sequence("Ask switch command",
                 step("Clear previous switch command", lambda: put("command", None)),
                 io.say("Ask electrical request", "您希望打开还是关闭电器？请说开或者关。"),
                 io.command(), step("Choose on/off mark", context.switch_command))
-            return sequence("Owner 1 electrical control",
+            return sequence("Resting person electrical control",
                 retry(request, "dialogue", 3),
                 io.say("Repeat electrical request"),
+                identify_before_leaving(),
                 navigate("Navigate to switch mark", lambda: config["switches"][context.room][
                     "on" if get("command") == "开" else "off"]["navigation"]),
                 arm("Move end effector over switch mark", lambda: get("switch_arm")),
                 retract(),
                 optional(io.say("Electrical operation done", "已完成电器开关模拟操作。")))
-        if owner == 2:
-            return sequence("Owner 2 simulated assistance",
-                retract(), head(0, level), retry(io.approach(), "approach", 3),
+        if role == 2:
+            return sequence("Fallen person simulated assistance",
                 arm("Extend assistance arm over person", lambda: config["arm_assist"]),
                 dialogue("Ask fallen owner", "我已伸出机械臂模拟扶起您。您现在感觉怎么样，需要什么帮助？",
                          "Listen fallen owner"),
-                io.say("Acknowledge fallen owner"), retract())
-        return sequence("Owner 3 help consultation",
-            retract(), head(0, level), retry(io.approach(), "approach", 3),
+                io.say("Acknowledge fallen owner"), retract(), identify_before_leaving())
+        return sequence("Waving person help consultation",
             dialogue("Ask waved owner", "请问您需要什么帮助？", "Listen help request"),
-            io.say("Speak original help request"))
+            io.say("Speak original help request"), identify_before_leaving())
 
-    def handle_owner(owner):
-        run = sequence("Perform owner " + str(owner) + " interaction",
-            io.say("Announce owner name and behaviour"), interaction(owner),
-            step("Mark owner completed", lambda: context.complete(owner)))
-        recover = sequence("Recover unsuccessful owner interaction",
+    def handle_role(role):
+        run = sequence("Perform behaviour " + str(role) + " interaction",
+            io.say("Announce observed behaviour"),
+            retract(), head(0, level), retry(io.approach(), "approach", 3),
+            interaction(role),
+            step("Record completed behaviour service", lambda: context.finish_behaviour(role)))
+        recover = sequence("Recover unsuccessful role interaction",
             retract(),
-            step("Record incomplete interaction", lambda: context.event("interaction_failed", owner=owner)),
+            step("Record incomplete interaction", lambda: context.event("interaction_failed", role=role)),
             optional(io.say("Report interaction failure", "这次交互没有完成，我会继续巡游后再尝试。")))
-        selected = sequence("Selected owner " + str(owner),
-            step("Select matching owner/action", lambda: context.select_owner(owner)),
+        selected = sequence("Selected behaviour " + str(role),
+            step("Select person by behaviour", lambda: context.select_behaviour(role)),
             selector("Attempt interaction and recover", run, recover),
             return_to_scan(),
             step("Discard observations after robot movement", lambda: context.active.clear()))
-        # Only an absent/done/mismatched owner is skippable. A failed retraction or
+        # Only an absent/already serviced behaviour is skippable. A failed retraction or
         # return navigation must propagate FAILURE, not get swallowed by a selector.
-        return selector("Owner " + str(owner) + " dispatch",
-            sequence("No matching pending owner",
-                step("No pending matching behaviour", lambda: owner in context.completed
-                     or owner not in context.active
-                     or not bool(set(context.active[owner].labels) & EXPECTED[owner]))),
+        return selector("Behaviour " + str(role) + " dispatch",
+            sequence("No pending behaviour",
+                step("No pending matching behaviour", lambda: role in context.serviced_roles
+                     or role not in context.active)),
             selected)
 
     def scan_angle(angle):
-        recognise = sequence("Recognise behaviour and identity",
+        recognise = sequence("Recognise behaviour without identity gate",
             retry(io.detect("behaviour"), "perception", 2),
-            selector("Only identify positive scenes",
-                step("No behaviour present", lambda: not get("scene").observations),
-                sequence("Identify positive scene", io.identify(),
-                         step("Bind owners to observations", context.match_scene))))
+            step("Select observed behaviour targets", context.observe_behaviours))
         scan = sequence("Pan observation " + str(angle),
             step("Clear active observations", lambda: context.active.clear()),
             head(angle, level), io.settle(),
@@ -143,7 +163,7 @@ def create_task(config=None, leaves_factory=None):
                     step("Clear failed perception", lambda: context.active.clear()),
                     step("Log perception failure", lambda: context.event("perception_failed", pan=angle)),
                     optional(io.say("Perception uncertain", "这次图像识别未完成，继续检查下一个角度。")))),
-            *(handle_owner(i) for i in (1, 2, 3)))
+            *(handle_role(i) for i in (1, 2, 3)))
         return scan
 
     def room_task(room):
