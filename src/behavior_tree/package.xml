@@ -14,6 +14,7 @@
   <!-- Optional at runtime for legacy GPSR, required by adaptive declarative
        tree integrations and the developer debugger tooling. -->
   <exec_depend>gpsr_trace</exec_depend>
+  <exec_depend>tk27_manipulation_msgs</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

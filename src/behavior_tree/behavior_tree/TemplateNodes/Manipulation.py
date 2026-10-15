@@ -48,14 +48,16 @@
 #
 
 from typing import Any, Optional
+import copy
+import time
 import os
 import py_trees as pytree
 
 # from tinker_decision_msgs.srv import Grasp, Drop
 # from tinker_decision_msgs.srv import ObjectDetection
-from geometry_msgs.msg import PointStamped, Pose, Point
+from geometry_msgs.msg import PointStamped, Pose, PoseStamped, Point
 from behavior_tree.messages import (
-    Grasp,
+    Pick,
     ObjectDetection,
     Drop,
     Place,
@@ -150,124 +152,106 @@ class BtNode_CartesianMove(ActionHandler):
         return super().feedback_callback(msg)
 
 
-class BtNode_Grasp(ActionHandler):
-    """
-    Node for grasping an object with a specific prompt
-    """
+class _Tk27Task(ActionHandler):
+    """Shared minimal-result and progress handling for TK27 business actions."""
+
+    def process_result(self):
+        result = self.result_message.result
+        succeeded = (
+            self.result_status == action_msgs.GoalStatus.STATUS_SUCCEEDED
+            and result.success
+            and result.status == 0
+        )
+        self.feedback_message = (
+            f"{self.action_name}: ros_status={self.result_status}, "
+            f"status={result.status}, success={result.success}, "
+            f"detail={result.error_msg}"
+        )
+        return Status.SUCCESS if succeeded else Status.FAILURE
+
+    def feedback_callback(self, msg):
+        progress = msg.feedback.progress
+        self.last_feedback_time = time.time()
+        self.action_stage = progress.stage
+        self.feedback_message = (
+            f"stage={progress.stage}, elapsed={progress.elapsed_s:.2f}s: "
+            f"{progress.detail}"
+        )
+
+
+class BtNode_Grasp(_Tk27Task):
+    """Execute TK27 Pick; vision capture, closure and lift belong to the server."""
 
     def __init__(
         self,
         name: str,
         bb_source: Optional[str] = None,
-        action_name: str = "start_grasp",
+        action_name: str = "/manipulation/pick",
         bb_key_vision_res: Optional[str] = None,
         bb_key_object_label: Optional[str] = None,
-        use_mesh: bool = True,
-        stay: bool = False,
+        *,
+        prompt: str = "",
+        plan_effort: str = "",
     ):
-        """
-        executed when creating tree diagram, therefor very minimal
-
-        Args:
-            name: name of the node (to be displayed in the tree)
-            bb_source: blackboard key to a str prompt
-            action_name: name of the action running Grasp
-            bb_key_object_label: blackboard key to a str object label
-                (e.g. "plate", "bowl"); if None, falls back to
-                vision_result.objects[0].cls, then empty string
-        """
-        # A grasp server can accept a goal and then stop publishing feedback
-        # while its planner exhausts candidates.  GPSR needs the bounded
-        # referee fallback to remain reachable; keep the default unchanged for
-        # other callers and opt in through the live-battery environment.
         timeout_ticks = 0
         raw_timeout = os.environ.get("GPSR_GRASP_ACTION_TIMEOUT_S")
         if raw_timeout:
             try:
                 timeout_ticks = max(1, round(float(raw_timeout) / 0.5))
             except (TypeError, ValueError):
-                timeout_ticks = 0
-        super(BtNode_Grasp, self).__init__(
-            name, Grasp, action_name, bb_source, wait_for_server_timeout_sec=-3,
+                pass
+        super().__init__(
+            name,
+            Pick,
+            action_name,
+            None,
+            wait_for_server_timeout_sec=-3,
             action_timeout_ticks=timeout_ticks,
         )
-        self.blackboard = self.attach_blackboard_client(name=self.name)
+        self.prompt = prompt
+        self.plan_effort = plan_effort
+        self._bb_source = bb_source
         self._bb_key_vision_res = bb_key_vision_res
-        if bb_key_vision_res is not None:
-            self.blackboard.register_key(
-                key="vision_result",
-                access=pytree.common.Access.READ,
-                remap_to=pytree.blackboard.Blackboard.absolute_name(
-                    "/", bb_key_vision_res
-                ),
-            )
         self._bb_key_object_label = bb_key_object_label
-        if bb_key_object_label is not None:
-            self.blackboard.register_key(
-                key="object_label",
-                access=pytree.common.Access.READ,
-                remap_to=pytree.blackboard.Blackboard.absolute_name(
-                    "/", bb_key_object_label
-                ),
-            )
-        self.stay = stay
-        self.use_mesh = use_mesh
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        for local, key in (
+            ("prompt", bb_source),
+            ("object_label", bb_key_object_label),
+            ("vision_result", bb_key_vision_res),
+        ):
+            if key is not None:
+                self.blackboard.register_key(
+                    key=local,
+                    access=pytree.common.Access.READ,
+                    remap_to=pytree.blackboard.Blackboard.absolute_name("/", key),
+                )
 
     def send_goal(self):
-        # Mock guard: initialise() calls send_goal() even in mock mode, but the
-        # action client is None (skipped in setup). Mirror ActionHandler.send_goal's
-        # mock branch so offline runs don't hit a None client. (update() routes
-        # mock ticks through wait_for_keypress_in_mock; this just satisfies the
-        # initialise() call.)
         if self.mock_mode:
-            self.feedback_message = "MOCK: grasp goal sent (mock mode)"
-
-            class MockFuture:
-                def done(self):
-                    return True
-
-            self.send_goal_future = MockFuture()
-            return
+            return super().send_goal()
         try:
-            goal = Grasp.Goal()
-            goal.header = self.blackboard.vision_result.header
-            goal.rgb_image = self.blackboard.vision_result.rgb_image
-            goal.depth_image = self.blackboard.vision_result.depth_image
-            goal.segments = self.blackboard.vision_result.segments
-            goal.use_mesh = self.use_mesh
-            goal.stay = self.stay
-            # Resolve object_label: explicit bb key > vision_result.objects[0].cls > ""
-            if self._bb_key_object_label is not None:
-                goal.object_label = str(self.blackboard.object_label or "")
-            else:
-                try:
-                    goal.object_label = str(
-                        self.blackboard.vision_result.objects[0].cls
-                    )
-                except (AttributeError, IndexError):
-                    goal.object_label = ""
+            # Existing discovery trees may supply a label from an observation.
+            # Only its text is reused; TK27 obtains a fresh capture itself.
+            prompt = self.prompt
+            if self._bb_source is not None:
+                prompt = self.blackboard.prompt
+            elif self._bb_key_object_label is not None:
+                prompt = self.blackboard.object_label
+            elif not prompt and self._bb_key_vision_res is not None:
+                prompt = self.blackboard.vision_result.objects[0].cls
+            if not isinstance(prompt, str) or not prompt.strip():
+                raise ValueError("Pick requires a nonempty text prompt")
+            if self.plan_effort not in ("", "auto", "low", "medium", "high"):
+                raise ValueError("Unsupported plan_effort")
+            goal = Pick.Goal()
+            goal.prompt = prompt.strip()
+            goal.plan_effort = self.plan_effort
             self.send_goal_request(goal)
-            self.feedback_message = f"Sent grasp goal with header {goal.header}, segments {len(goal.segments)}, label '{goal.object_label}'"
-        except Exception as e:
-            self.feedback_message = f"Failed to send grasp goal; error: {e}"
-            self.logger.error(f"Failed to send grasp goal; error: {e}")
-            return pytree.common.Status.FAILURE
-
-    def process_result(self):
-        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            result = self.result_message.result
-            self.feedback_message = f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}"
-            self.logger.debug(
-                f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}"
-            )
-            return pytree.common.Status.FAILURE
-        else:
-            self.feedback_message = "Grasp succeeded"
-            self.logger.debug("Grasp succeeded")
-            return pytree.common.Status.SUCCESS
-
-    def feedback_callback(self, msg: Any):
-        return super().feedback_callback(msg)
+            self.feedback_message = f"Sent Pick prompt: {goal.prompt}"
+        except Exception as exc:
+            self.feedback_message = f"Failed to send Pick: {exc}"
+            self.logger.error(self.feedback_message)
+            return Status.FAILURE
 
 
 class BtNode_Drop(ServiceHandler):
@@ -454,14 +438,8 @@ class BtNode_FoldClothingDn(BtNode_FoldClothingAction):
         )
 
 
-class BtNode_Place(ActionHandler):
-    """
-    Places an object at a target location.
-
-    This node performs a place action using vision guidance and collision
-    avoidance. It takes the target point, current grasp pose, and
-    environment point cloud to plan and execute the place motion.
-    """
+class BtNode_Place(_Tk27Task):
+    """Convert the tree's framed TCP point and orientation into TK27 Place."""
 
     def __init__(
         self,
@@ -469,88 +447,110 @@ class BtNode_Place(ActionHandler):
         bb_key_point: str,
         bb_key_pose: str,
         bb_key_env_points: str,
-        action_name: str = "place_action",
+        action_name: str = "/manipulation/place",
+        *,
+        retain_grasp_orientation: Optional[bool] = None,
     ):
-        super(BtNode_Place, self).__init__(
-            name, Place, action_name, None, wait_for_server_timeout_sec=-3
-        )
+        super().__init__(name, Place, action_name, None, wait_for_server_timeout_sec=-3)
         self.bb_key_point = bb_key_point
         self.bb_key_pose = bb_key_pose
-
+        self.retain_grasp_orientation = retain_grasp_orientation
         self.blackboard = self.attach_blackboard_client(name=self.name)
-        self.blackboard.register_key(
-            key="target_point",
-            access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_key_point),
-        )
-        self.blackboard.register_key(
-            key="grasp_pose",
-            access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", self.bb_key_pose),
-        )
-        self.blackboard.register_key(
-            key="env_points",
-            access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", bb_key_env_points),
-        )
+        for local, key in (
+            ("target_point", bb_key_point),
+            ("grasp_pose", bb_key_pose),
+            ("env_points", bb_key_env_points),
+        ):
+            self.blackboard.register_key(
+                key=local,
+                access=pytree.common.Access.READ,
+                remap_to=pytree.blackboard.Blackboard.absolute_name("/", key),
+            )
 
     def send_goal(self):
-        # Mock guard: see BtNode_Grasp.send_goal — initialise() calls this even
-        # under mock, where the action client is None. Mirror the base mock branch.
         if self.mock_mode:
-            self.feedback_message = "MOCK: place goal sent (mock mode)"
-
-            class MockFuture:
-                def done(self):
-                    return True
-
-            self.send_goal_future = MockFuture()
-            return
+            return super().send_goal()
         try:
+            point = self.blackboard.target_point
+            if not isinstance(point, PointStamped) or not point.header.frame_id:
+                raise ValueError("Place requires a framed TCP PointStamped")
             goal = Place.Goal()
-            goal.target_point = self.blackboard.target_point
-            goal.orientation = self.blackboard.grasp_pose
+            goal.tcp_pose.header = copy.deepcopy(point.header)
+            goal.tcp_pose.pose.position = copy.deepcopy(point.point)
+            orientation = None
+            if self.retain_grasp_orientation is not True:
+                pose = self.blackboard.grasp_pose
+                if pose is not None:
+                    if isinstance(pose, PoseStamped):
+                        if pose.header.frame_id != point.header.frame_id:
+                            raise ValueError(
+                                "Place point and orientation frames differ"
+                            )
+                        pose = pose.pose
+                    if not isinstance(pose, Pose):
+                        raise ValueError(
+                            "Place orientation must be Pose or PoseStamped"
+                        )
+                    q = pose.orientation
+                    values = (q.x, q.y, q.z, q.w)
+                    if not all(math.isfinite(v) for v in values):
+                        raise ValueError("Place orientation must be finite")
+                    if any(values):
+                        if abs(sum(v * v for v in values) - 1.0) > 1e-3:
+                            raise ValueError(
+                                "Place orientation must be a unit quaternion"
+                            )
+                        orientation = q
+            retain = self.retain_grasp_orientation
+            if retain is None:
+                retain = orientation is None
+            if not retain and orientation is None:
+                raise ValueError("Explicit Place orientation is missing")
+            goal.retain_grasp_orientation = retain
+            if retain:
+                # The server replaces this valid placeholder with its cached Pick orientation.
+                goal.tcp_pose.pose.orientation.w = 1.0
+            else:
+                goal.tcp_pose.pose.orientation = copy.deepcopy(orientation)
             goal.env_points = self.blackboard.env_points
             self.send_goal_request(goal)
-            self.feedback_message = f"Sent place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}"
-            self.logger.debug(
-                f"Sent place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}"
-            )
-        except Exception as e:
-            self.feedback_message = f"Failed to send place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}; error: {e}"
-            self.logger.error(
-                f"Failed to send place goal with target point {self.blackboard.target_point} and grasp pose {self.blackboard.grasp_pose}; error: {e}"
-            )
-            return pytree.common.Status.FAILURE
-
-    def process_result(self):
-        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            result = self.result_message.result
-            self.feedback_message = f"Place failed with status: {self.result_status}, error: {result.error_msg}"
-            self.logger.debug(
-                f"Place failed with status: {self.result_status}, error: {result.error_msg}"
-            )
-            return pytree.common.Status.FAILURE
-        else:
-            self.feedback_message = "Place succeeded"
-            self.logger.debug("Place succeeded")
-            return pytree.common.Status.SUCCESS
-
-    def feedback_callback(self, msg: Any):
-        feedback = msg.feedback
-        if feedback.status != 0:
-            self.feedback_message = f"ERROR:  {feedback.status} - {feedback.message}"
-            self.logger.error(
-                f"Place feedback received with error: {feedback.status} - {feedback.message}"
-            )
-        else:
-            self.feedback_message = f"INFO:  {feedback.status} - {feedback.message}"
-            self.logger.debug(
-                f"Place feedback received with info: {feedback.status} - {feedback.message}"
-            )
+            self.feedback_message = f"Sent Place TCP pose in {point.header.frame_id}"
+        except Exception as exc:
+            self.feedback_message = f"Failed to send Place: {exc}"
+            self.logger.error(self.feedback_message)
+            return Status.FAILURE
 
 
-class BtNode_MoveArm(ActionHandler):
+def _joint_move_goal(pose):
+    # Existing decision poses describe xArm7. Named dictionaries support other
+    # configured groups without imposing this legacy ordering on the server.
+    if isinstance(pose, dict):
+        names, values = list(pose), list(pose.values())
+    else:
+        names, values = [f"joint{i}" for i in range(1, 8)], list(pose)
+    if (
+        len(names) != len(values)
+        or not names
+        or any(
+            not isinstance(value, (int, float)) or not math.isfinite(value)
+            for value in values
+        )
+    ):
+        raise ValueError("Expected a complete finite joint target in radians")
+    goal = JointMove.Goal()
+    goal.joint_names = names
+    goal.positions = [float(value) for value in values]
+    return goal
+
+
+class _Tk27JointTask(_Tk27Task):
+    def feedback_callback(self, msg):
+        self.last_feedback_time = time.time()
+        self.action_stage = msg.feedback.stage
+        self.feedback_message = f"stage={msg.feedback.stage}: {msg.feedback.detail}"
+
+
+class BtNode_MoveArm(_Tk27JointTask):
     """
     Moves arm through predefined scan poses (iterative).
 
@@ -558,13 +558,7 @@ class BtNode_MoveArm(ActionHandler):
     operations. It reads an index from the blackboard and moves to the
     corresponding pose, incrementing the index for the next iteration.
 
-    Migrated from the ``arm_joint_service`` service (ArmJointService) to the
-    ``joint_move_action`` action (JointMove). The interfaces are field
-    equivalent (joint0..joint6 + add_octomap; result.success). The action name
-    is selected via the ``action_name`` kwarg (default ``"joint_move_action"``).
-    The legacy ``service_name`` kwarg is retained as a deprecated alias; a
-    passed value of ``"arm_joint_service"`` is transparently remapped to
-    ``"joint_move_action"`` for back-compat.
+    Uses TK27 named joint targets with observed collision checking.
     """
 
     def __init__(
@@ -572,19 +566,16 @@ class BtNode_MoveArm(ActionHandler):
         name: str,
         #  arm_joint_pose: list[float]
         arm_pose_bb_key,
-        action_name: str = "joint_move_action",
+        action_name: str = "/manipulation/joint_move",
         add_octomap: bool = False,
         *,
         service_name: Optional[str] = None,  # deprecated alias for action_name
     ):
-        # Back-compat: the node was migrated from the ``arm_joint_service``
-        # service to the ``joint_move_action`` action. The legacy
-        # ``service_name=`` kwarg and the old ``"arm_joint_service"`` value are
-        # still accepted and transparently mapped to ``action_name``.
+        # Legacy tree keyword; collision checks are always enabled.
         if service_name is not None:
             action_name = service_name
         if action_name == "arm_joint_service":
-            action_name = "joint_move_action"
+            action_name = "/manipulation/joint_move"
         super().__init__(
             name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
         )
@@ -628,15 +619,7 @@ class BtNode_MoveArm(ActionHandler):
             return
 
         try:
-            goal = JointMove.Goal()
-            goal.joint0 = self.arm_joint_pose[0]
-            goal.joint1 = self.arm_joint_pose[1]
-            goal.joint2 = self.arm_joint_pose[2]
-            goal.joint3 = self.arm_joint_pose[3]
-            goal.joint4 = self.arm_joint_pose[4]
-            goal.joint5 = self.arm_joint_pose[5]
-            goal.joint6 = self.arm_joint_pose[6]
-            goal.add_octomap = self.add_octomap
+            goal = _joint_move_goal(self.arm_joint_pose)
             self.send_goal_request(goal)
             self.feedback_message = (
                 f"Sent move arm joint goal for joints {self.arm_joint_pose}"
@@ -645,26 +628,8 @@ class BtNode_MoveArm(ActionHandler):
             self.feedback_message = f"Failed to send move arm joint goal; error: {e}"
             self.logger.error(f"Failed to send move arm joint goal; error: {e}")
 
-    def process_result(self):
-        # JointMove.Result has ONLY `success` (no status, no error_msg).
-        if (
-            self.result_status == action_msgs.GoalStatus.STATUS_SUCCEEDED
-            and self.result_message.result.success
-        ):
-            self.feedback_message = "Move arm Successful"
-            return pytree.common.Status.SUCCESS
-        self.feedback_message = (
-            f"Move arm failed with status: {self.result_status}"
-        )
-        return pytree.common.Status.FAILURE
 
-    def feedback_callback(self, msg):
-        # JointMove feedback is EMPTY; override the base (which reads
-        # delay_limit/status/stage) to a no-op.
-        pass
-
-
-class BtNode_MoveArmSingle(ActionHandler):
+class BtNode_MoveArmSingle(_Tk27JointTask):
     """
     Moves arm to a single predefined pose.
 
@@ -672,33 +637,24 @@ class BtNode_MoveArmSingle(ActionHandler):
     blackboard. Unlike BtNode_MoveArm, it does not iterate through
     multiple poses.
 
-    Migrated from the ``arm_joint_service`` service (ArmJointService) to the
-    ``joint_move_action`` action (JointMove). The interfaces are field
-    equivalent (joint0..joint6 + add_octomap; result.success). The action name
-    is selected via the ``action_name`` kwarg (default ``"joint_move_action"``).
-    The legacy ``service_name`` kwarg is retained as a deprecated alias; a
-    passed value of ``"arm_joint_service"`` is transparently remapped to
-    ``"joint_move_action"``.
+    Uses TK27 named joint targets with observed collision checking.
     """
 
     def __init__(
         self,
         name: str,
         arm_pose_bb_key: str,
-        action_name: str = "joint_move_action",
+        action_name: str = "/manipulation/joint_move",
         #  arm_joint_pose: list[float]
         add_octomap: bool = False,
         *,
         service_name: Optional[str] = None,  # deprecated alias for action_name
     ):
-        # Back-compat: the node was migrated from the ``arm_joint_service``
-        # service to the ``joint_move_action`` action. The legacy
-        # ``service_name=`` kwarg and the old ``"arm_joint_service"`` value are
-        # still accepted and transparently mapped to ``action_name``.
+        # Legacy tree keyword; collision checks are always enabled.
         if service_name is not None:
             action_name = service_name
         if action_name == "arm_joint_service":
-            action_name = "joint_move_action"
+            action_name = "/manipulation/joint_move"
         super().__init__(
             name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
         )
@@ -727,15 +683,7 @@ class BtNode_MoveArmSingle(ActionHandler):
 
         try:
             arm_joint_pose = self.blackboard.arm_joint_pose
-            goal = JointMove.Goal()
-            goal.joint0 = arm_joint_pose[0]
-            goal.joint1 = arm_joint_pose[1]
-            goal.joint2 = arm_joint_pose[2]
-            goal.joint3 = arm_joint_pose[3]
-            goal.joint4 = arm_joint_pose[4]
-            goal.joint5 = arm_joint_pose[5]
-            goal.joint6 = arm_joint_pose[6]
-            goal.add_octomap = self.add_octomap
+            goal = _joint_move_goal(arm_joint_pose)
             self.send_goal_request(goal)
             self.feedback_message = (
                 f"Sent move arm joint goal for joints {arm_joint_pose}"
@@ -743,24 +691,6 @@ class BtNode_MoveArmSingle(ActionHandler):
         except Exception as e:
             self.feedback_message = f"Failed to send move arm joint goal; error: {e}"
             self.logger.error(f"Failed to send move arm joint goal; error: {e}")
-
-    def process_result(self):
-        # JointMove.Result has ONLY `success` (no status, no error_msg).
-        if (
-            self.result_status == action_msgs.GoalStatus.STATUS_SUCCEEDED
-            and self.result_message.result.success
-        ):
-            self.feedback_message = "Move arm Successful"
-            return pytree.common.Status.SUCCESS
-        self.feedback_message = (
-            f"Move arm failed with status: {self.result_status}"
-        )
-        return pytree.common.Status.FAILURE
-
-    def feedback_callback(self, msg):
-        # JointMove feedback is EMPTY; override the base (which reads
-        # delay_limit/status/stage) to a no-op.
-        pass
 
 
 class BtNode_GripperAction(ActionHandler):
@@ -836,7 +766,7 @@ class BtNode_GripperAction(ActionHandler):
         return pytree.common.Status.FAILURE
 
 
-class BtNode_PointTo(ActionHandler):
+class BtNode_PointTo(_Tk27JointTask):
     """
     Points the arm towards a specific person.
 
@@ -844,24 +774,7 @@ class BtNode_PointTo(ActionHandler):
     It reads the target's position from the blackboard and computes an
     appropriate arm configuration for pointing.
 
-    Migrated from the ``arm_joint_service`` service (ArmJointService) to the
-    ``joint_move_action`` action (JointMove). The interfaces are field
-    equivalent (joint0..joint6 + add_octomap; result.success). The action name
-    is selected via the ``action_name`` kwarg (default ``"joint_move_action"``).
-    The legacy ``service_name`` kwarg is retained as a deprecated alias; a
-    passed value of ``"arm_joint_service"`` is transparently remapped to
-    ``"joint_move_action"``.
-
-    ``pan_bias`` (radians, default ``0.0``) corrects a constant rotation
-    between the target point's source frame and the arm joint0 frame before the
-    range check. It is subtracted from the raw ``atan2(y, x)`` bearing and the
-    result is wrapped to ``(-pi, pi]``. With a correctly-calibrated camera TF the
-    seat/person centroid is correct in ``base_link`` and the arm base is aligned
-    with ``base_link``, so ALL call sites use ``pan_bias=0.0`` (joint0 =
-    ``atan2(y, x)`` directly). Historically seat-pointing passed
-    ``pan_bias=math.pi`` to cancel a ~180deg-wrong camera TF (camera physically
-    forward but modelled backward); that camera_mount calibration was fixed
-    2026-06-27, after which pan_bias=math.pi would point the arm 180deg off.
+    Uses TK27 named joint targets with observed collision checking.
     """
 
     def __init__(
@@ -871,19 +784,16 @@ class BtNode_PointTo(ActionHandler):
         bb_key_points: str,
         bb_key_init_pose: str,
         target_id: int = 0,
-        action_name: str = "joint_move_action",
+        action_name: str = "/manipulation/joint_move",
         *,
         service_name: Optional[str] = None,  # deprecated alias for action_name
         pan_bias: float = 0.0,
     ):
-        # Back-compat: the node was migrated from the ``arm_joint_service``
-        # service to the ``joint_move_action`` action. The legacy
-        # ``service_name=`` kwarg and the old ``"arm_joint_service"`` value are
-        # still accepted and transparently mapped to ``action_name``.
+        # Legacy tree keyword; collision checks are always enabled.
         if service_name is not None:
             action_name = service_name
         if action_name == "arm_joint_service":
-            action_name = "joint_move_action"
+            action_name = "/manipulation/joint_move"
         super().__init__(
             name, JointMove, action_name, None, wait_for_server_timeout_sec=-3
         )
@@ -958,49 +868,16 @@ class BtNode_PointTo(ActionHandler):
         point = points[self.target_id]
 
         try:
-            goal = JointMove.Goal()
-            goal.joint0 = compute_point_to_pan(
-                point.point.x, point.point.y, self.pan_bias
-            )
-            self.node.get_logger().info(
-                f"Calculated joint0 angle {goal.joint0} (pan_bias={self.pan_bias}) to point at target {self.target_id} with coordinates ({point.point.x}, {point.point.y})"
-            )
-            if goal.joint0 < -math.pi / 2 or goal.joint0 > math.pi / 2:
-                self.node.get_logger().warning(
-                    f"Calculated joint0 angle {goal.joint0} is out of expected range [-pi/2, pi/2]"
-                )
-            goal.joint1 = self.blackboard.arm_joint_pose[1]
-            goal.joint2 = self.blackboard.arm_joint_pose[2]
-            goal.joint3 = self.blackboard.arm_joint_pose[3]
-            goal.joint4 = self.blackboard.arm_joint_pose[4]
-            goal.joint5 = self.blackboard.arm_joint_pose[5]
-            goal.joint6 = self.blackboard.arm_joint_pose[6]
-            goal.add_octomap = False
-
-            self.angle = goal.joint0
+            pan = compute_point_to_pan(point.point.x, point.point.y, self.pan_bias)
+            positions = list(self.blackboard.arm_joint_pose)
+            positions[0] = pan
+            goal = _joint_move_goal(positions)
+            self.angle = pan
             self.send_goal_request(goal)
             self.feedback_message = f"Sent point to goal for joints {self.angle}"
         except Exception as e:
             self.feedback_message = f"Failed to send point to goal; error: {e}"
             self.logger.error(f"Failed to send point to goal; error: {e}")
-
-    def process_result(self):
-        # JointMove.Result has ONLY `success` (no status, no error_msg).
-        if (
-            self.result_status == action_msgs.GoalStatus.STATUS_SUCCEEDED
-            and self.result_message.result.success
-        ):
-            self.feedback_message = "Point To Successful"
-            return pytree.common.Status.SUCCESS
-        self.feedback_message = (
-            f"Point To failed for joints {self.angle} with status: {self.result_status}"
-        )
-        return pytree.common.Status.FAILURE
-
-    def feedback_callback(self, msg):
-        # JointMove feedback is EMPTY; override the base (which reads
-        # delay_limit/status/stage) to a no-op.
-        pass
 
 
 # Deferred to the bottom of the module (not with the top imports) on purpose:
@@ -1098,7 +975,9 @@ class BtNode_ScanAndPlace(ActionHandler):
         try:
             goal = ScanAndPlace.Goal()
             goal.item_description = str(self._read("item_description", ""))
-            goal.placement_mode = int(self._read("placement_mode", PLACEMENT_MODE_FREE_SPACE))
+            goal.placement_mode = int(
+                self._read("placement_mode", PLACEMENT_MODE_FREE_SPACE)
+            )
             goal.reference_label = str(self._read("reference_label", ""))
             goal.margin_m = float(self._read("margin", 0.0))
             goal.max_candidates = 0
@@ -1114,7 +993,9 @@ class BtNode_ScanAndPlace(ActionHandler):
             goal.skip_scan_move = bool(self._read("skip_scan_move", False))
             goal.dry_run = bool(self._read("dry_run", False))
             self.send_goal_request(goal)
-            self.feedback_message = f"ScanAndPlace goal sent (mode {goal.placement_mode})"
+            self.feedback_message = (
+                f"ScanAndPlace goal sent (mode {goal.placement_mode})"
+            )
         except Exception as e:
             self.feedback_message = f"Failed to send ScanAndPlace goal: {e}"
             self.logger.error(self.feedback_message)
@@ -1137,9 +1018,17 @@ class BtNode_ScanAndPlace(ActionHandler):
                 self.blackboard.place_status = {"status": st, "reason": err}
             except Exception:
                 pass
-            record_event(self.blackboard, phase="", item=item,
-                         action="scan_and_place", outcome="failure", points_est=0)
-            self.feedback_message = f"ScanAndPlace failed: status={self.result_status} err={err}"
+            record_event(
+                self.blackboard,
+                phase="",
+                item=item,
+                action="scan_and_place",
+                outcome="failure",
+                points_est=0,
+            )
+            self.feedback_message = (
+                f"ScanAndPlace failed: status={self.result_status} err={err}"
+            )
             return pytree.common.Status.FAILURE
         result = self.result_message.result
         try:
@@ -1147,7 +1036,10 @@ class BtNode_ScanAndPlace(ActionHandler):
         except Exception:
             pass
         try:
-            self.blackboard.place_status = {"status": result.status, "reason": result.error_msg}
+            self.blackboard.place_status = {
+                "status": result.status,
+                "reason": result.error_msg,
+            }
         except Exception:
             pass
         # Scoring is owned by the BT route leaf (_RecordEventLeaf in
@@ -1160,65 +1052,10 @@ class BtNode_ScanAndPlace(ActionHandler):
         # ScanAndPlace.Feedback is stage-only (no delay_limit/status), so the
         # base feedback_callback (which reads delay_limit/status) must NOT run.
         import time
+
         self.action_stage = msg.feedback.stage
         self.last_feedback_time = time.time()
 
 
-class BtNode_JointMoveAction(ActionHandler):
-    def __init__(
-        self,
-        name: str,
-        arm_pose_bb_key: str,
-        action_name="joint_move_action",
-        # TODO: add octomap
-    ):
-        super().__init__(
-            name,
-            JointMove,
-            action_name,
-            arm_pose_bb_key,
-            wait_for_server_timeout_sec=-3,
-        )
-        self.blackboard.register_key(
-            key="arm_joint_pose",
-            access=pytree.common.Access.READ,
-            remap_to=pytree.blackboard.Blackboard.absolute_name("/", arm_pose_bb_key),
-        )
-
-    def setup(self, **kwargs):
-        return super().setup(**kwargs)
-
-    def send_goal(self):
-        try:
-            goal = JointMove.Goal()
-            goal.joint0 = self.blackboard.arm_joint_pose[0]
-            goal.joint1 = self.blackboard.arm_joint_pose[1]
-            goal.joint2 = self.blackboard.arm_joint_pose[2]
-            goal.joint3 = self.blackboard.arm_joint_pose[3]
-            goal.joint4 = self.blackboard.arm_joint_pose[4]
-            goal.joint5 = self.blackboard.arm_joint_pose[5]
-            goal.joint6 = self.blackboard.arm_joint_pose[6]
-            self.send_goal_request(goal)
-            self.feedback_message = "Send goal pose"
-        except Exception as e:
-            self.feedback_message = f"Failed to send JointMove goal {e}"
-            pass
-
-    def feedback_callback(self, msg: Any):
-        pass
-
-    def process_result(self):
-        if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-            self.feedback_message = f"JointMoveAction failed"
-            self.logger.debug(f"MoveArmJointPC failed")
-            return pytree.common.Status.FAILURE
-        else:
-            result = self.result_message.result
-            if result.success:
-                self.feedback_message = f"JointMoveAction succeeded"
-                self.logger.debug(f"JointMoveAction succeeded")
-                return pytree.common.Status.SUCCESS
-            else:
-                self.feedback_message = f"JointMoveAction failed"
-                self.logger.debug(f"JointMoveAction failed")
-                return pytree.common.Status.FAILURE
+class BtNode_JointMoveAction(BtNode_MoveArmSingle):
+    """Retain the existing tree class name for the shared joint-target adapter."""

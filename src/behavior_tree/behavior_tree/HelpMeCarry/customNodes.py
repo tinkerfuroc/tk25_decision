@@ -2,7 +2,7 @@ import py_trees
 import time
 from behavior_tree.TemplateNodes.BaseBehaviors import ServiceHandler
 from behavior_tree.TemplateNodes.ActionBase import ActionHandler
-from behavior_tree.messages import ObjectDetection,Grasp
+from behavior_tree.messages import ObjectDetection
 from std_msgs.msg import Header
 from geometry_msgs.msg import PointStamped
   # Make sure pytree is imported

@@ -196,7 +196,7 @@ def main_grasp_diag():
       6. arm -> base_moving
 
     REQUIRES these servers running first (launch the manipulation + realsense +
-    yolo bringup): ``joint_move_action``, ``object_detection_yolo``,
+    yolo bringup): ``/manipulation/joint_move``, ``object_detection_yolo``,
     ``start_grasp``. Object via ``BT_GPSR_TEST_OBJECT`` (default "coke").
     Setup will BLOCK waiting for a server that is not up — start them first.
     """
@@ -252,7 +252,7 @@ def main_grasp_diag():
                                            return_depth_image=True, return_segments=True))
     seq.add_child(_Report("detect report", bb_keys.TARGET_OBJECT, "RealSense BEFORE grasp"))
     seq.add_child(BtNode_GraspWithPose("4. grasp", bb_key_vision_res=bb_keys.TARGET_OBJECT,
-                                       bb_key_pose=bb_keys.GRASP_POSE, action_name="start_grasp"))
+                                       bb_key_pose=bb_keys.GRASP_POSE, action_name="/manipulation/pick"))
     seq.add_child(BtNode_ScanForGeneralist(name="5. realsense generalist recheck",
                                            bb_source=bb_keys.TARGET_OBJECT_PROMPT,
                                            bb_key="gpsr/recheck_result", use_orbbec=False,

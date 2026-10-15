@@ -162,9 +162,9 @@ SCAN_RETRY_LIMIT = int(constants["scan_retry_limit"])
 GRASP_RETRY_LIMIT = int(constants["grasp_retry_limit"])
 
 # --- Service / action names ---
-ARM_ACTION_NAME = "joint_move_action"
-GRASP_ACTION_NAME = "start_grasp"
-PLACE_ACTION_NAME = "place_action"
+ARM_ACTION_NAME = "/manipulation/joint_move"
+GRASP_ACTION_NAME = "/manipulation/pick"
+PLACE_ACTION_NAME = "/manipulation/place"
 TARGET_FRAME = "base_link"
 
 # ============================================================

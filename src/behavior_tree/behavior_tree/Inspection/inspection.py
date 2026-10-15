@@ -56,7 +56,7 @@ KEY_ARM_NAVIGATING = "arm_navigating"
 KEY_DOOR_STATUS = "door_status"
 
 
-arm_service_name = "arm_joint_service"
+arm_service_name = "/manipulation/joint_move"
 
 def createConstantWriter():
     root = py_trees.composites.Parallel(name="Write constants to blackboard", policy=py_trees.common.ParallelPolicy.SuccessOnAll())

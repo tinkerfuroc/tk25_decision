@@ -65,6 +65,7 @@ class BehaviorTreeConfig:
         self.required_packages = {
             'tinker_vision_msgs_26': ['tinker_vision_msgs_26.srv', 'tinker_vision_msgs_26.msg', 'tinker_vision_msgs_26.action'],
             'tinker_arm_msgs': ['tinker_arm_msgs.srv', 'tinker_arm_msgs.action'],
+            'tk27_manipulation_msgs': ['tk27_manipulation_msgs.action'],
             'tinker_audio_msgs': ['tinker_audio_msgs.srv'],  # Only has services, no messages
             'tinker_nav_msgs': ['tinker_nav_msgs.srv'],  # Only has services
             'control_msgs': ['control_msgs.action'],

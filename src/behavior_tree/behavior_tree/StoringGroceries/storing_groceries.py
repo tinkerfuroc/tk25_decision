@@ -146,9 +146,9 @@ KEY_PLACE_REASON = "place_reason"
 
 KEY_SCAN_RESULT = "scan_result"
 
-arm_service_name = "arm_joint_service"
-grasp_service_name = "start_grasp"
-place_service_name = "place_action"
+arm_service_name = "/manipulation/joint_move"
+grasp_service_name = "/manipulation/pick"
+place_service_name = "/manipulation/place"
 point_target_frame = "base_link"
 
 def createEnterArena():

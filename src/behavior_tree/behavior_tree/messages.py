@@ -23,16 +23,21 @@ else:
     from behavior_tree.mock_messages import Object, PanTiltCtrl, PanTiltCommand, PanTiltState, BoundingBox
     from behavior_tree.mock_messages import Categorize, FollowHeadAction, HumanFollowing, TrackPerson
 
+if _config.has_dependency('tk27_manipulation_msgs'):
+    from tk27_manipulation_msgs.action import Pick, Place, JointMove
+else:
+    from behavior_tree.mock_messages import Pick, Place, JointMove
+
 if _config.has_dependency('tinker_arm_msgs'):
     from tinker_arm_msgs.srv import Drop, ArmJointService, PointTo
-    from tinker_arm_msgs.action import Place, Grasp, JointMove, CartesianMove, ScanAndPlace
+    from tinker_arm_msgs.action import CartesianMove, ScanAndPlace
     try:
         from tinker_arm_msgs.action import Fold
     except ImportError:
         from behavior_tree.mock_messages import Fold
 else:
     from behavior_tree.mock_messages import Drop, ArmJointService, PointTo
-    from behavior_tree.mock_messages import Place, Grasp, JointMove, CartesianMove, ScanAndPlace
+    from behavior_tree.mock_messages import CartesianMove, ScanAndPlace
     from behavior_tree.mock_messages import Fold
 
 if _config.has_dependency('tinker_audio_msgs'):

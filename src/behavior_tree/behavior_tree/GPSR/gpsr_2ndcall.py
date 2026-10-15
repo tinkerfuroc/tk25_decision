@@ -68,8 +68,8 @@ KEY_POSE_BATHROOM = "bathroom"
 KEY_POSE_QA_POINT = "QA_point"
 KEY_POSE_COMMAND = "pose_command"
 
-arm_action_name = "joint_move_action"
-grasp_service_name = "start_grasp"
+arm_action_name = "/manipulation/joint_move"
+grasp_service_name = "/manipulation/pick"
 point_target_frame = "base_link"
 
 def createConstantWriter():

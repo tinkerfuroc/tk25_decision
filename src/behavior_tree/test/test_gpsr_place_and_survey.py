@@ -126,7 +126,7 @@ def test_place_primary_scans_surface_with_wrist_camera_then_calls_place_action()
     assert surf.bb_orientation_key == bb_keys.PLACE_ORIENTATION
 
     place = _first(primary, BtNode_Place)
-    assert place.action_name == PLACE_ACTION_NAME == "place_action"
+    assert place.action_name == PLACE_ACTION_NAME == "/manipulation/place"
     assert place.bb_key_point == bb_keys.PLACE_TARGET_POINT
     assert place.bb_key_pose == bb_keys.PLACE_ORIENTATION
     # the scan is retried; the place is retried once

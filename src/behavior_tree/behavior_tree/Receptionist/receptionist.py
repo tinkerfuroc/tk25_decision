@@ -97,7 +97,7 @@ KEY_SEAT_RECOMMENDATION = "seat_recommendation"
 
 KEY_DOOR_STATUS = "door_status"
 
-arm_service_name = "arm_joint_service"
+arm_service_name = "/manipulation/joint_move"
 
 def createEnterArena():
     root = py_trees.composites.Sequence(name="Enter", memory=True)

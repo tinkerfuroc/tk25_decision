@@ -404,7 +404,7 @@ class RosEventListener:
         "announce": ("announce", "tinker_audio_msgs/srv/TextToSpeech"),
     }
     #: Action servers, detected via the /_action/send_goal hidden services.
-    PROBE_ACTIONS = ("listen_action", "navigate_to_pose", "joint_move_action")
+    PROBE_ACTIONS = ("listen_action", "navigate_to_pose", "/manipulation/joint_move")
 
     def __init__(self, state: ConsoleState, topic: str = _EVENTS_TOPIC) -> None:
         self.state = state

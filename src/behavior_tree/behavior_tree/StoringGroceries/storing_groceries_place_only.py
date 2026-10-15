@@ -60,9 +60,9 @@ KEY_TARGET_FRAME = "target_frame"
 KEY_PROMPT = "prompt"
 KEY_GRASP_ANNOUNCEMENT = "grasp_announcement"
 
-arm_service_name = "arm_joint_service"
-grasp_service_name = "start_grasp"
-place_service_name = "place_action"
+arm_service_name = "/manipulation/joint_move"
+grasp_service_name = "/manipulation/pick"
+place_service_name = "/manipulation/place"
 point_target_frame = "base_link"
 
 def createConstantWriter():

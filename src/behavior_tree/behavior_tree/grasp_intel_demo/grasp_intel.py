@@ -45,8 +45,8 @@ KEY_OBJECT = "object"
 
 KEY_DUMMY = 'dummy'
 
-arm_service_name = "arm_joint_service"
-grasp_service_name = "start_grasp"
+arm_service_name = "/manipulation/joint_move"
+grasp_service_name = "/manipulation/pick"
 
 
 def createGraspOnce():

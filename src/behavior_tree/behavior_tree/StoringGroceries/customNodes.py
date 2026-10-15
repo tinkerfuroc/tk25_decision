@@ -231,39 +231,25 @@ class BtNode_CategorizeGrocery(ActionHandler):
 
 
 class BtNode_GraspWithPose(BtNode_Grasp):
-    def __init__(self, name: str,
-                 bb_key_vision_res: str,
-                 bb_key_pose: str,
-                 action_name: str = "grasp",
-                 bb_key_object_label: str = None):
-        # NOTE: pass bb_key_vision_res as a KEYWORD. BtNode_Grasp's 2nd positional
-        # is bb_source, not bb_key_vision_res — passing it positionally left
-        # bb_key_vision_res=None, so the "vision_result" key was never registered
-        # and send_goal failed with "no read/write access to '/vision_result'".
-        super().__init__(name, bb_key_vision_res=bb_key_vision_res,
-                         action_name=action_name,
-                         bb_key_object_label=bb_key_object_label)
-        self.blackboard.register_key(
-            key="pose",
-            access=py_trees.common.Access.WRITE,
-            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_pose)
+    """Keep the tree output key without inventing a pose absent from Pick.Result."""
+
+    def __init__(
+        self, name: str, bb_key_vision_res: str, bb_key_pose: str,
+        action_name: str = "/manipulation/pick",
+        bb_key_object_label: str = None,
+    ):
+        super().__init__(
+            name, bb_key_vision_res=bb_key_vision_res, action_name=action_name,
+            bb_key_object_label=bb_key_object_label,
         )
-    
+        self.blackboard.register_key(
+            key="pose", access=py_trees.common.Access.WRITE,
+            remap_to=py_trees.blackboard.Blackboard.absolute_name("/", bb_key_pose),
+        )
+
     def process_result(self):
-        try:
-            if self.result_status != action_msgs.GoalStatus.STATUS_SUCCEEDED:
-                result = self.result_message.result
-                self.feedback_message = f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}"
-                self.logger.debug(f"Grasp failed with status: {self.result_status}, stage: {result.stage}, error: {result.error_msg}")
-                return py_trees.common.Status.FAILURE
-            else:
-                # Grasp.Result 不再返回 grasp_pose；下游 Place 的 orientation 留空即可，
-                # pick_and_place server 会回退到它在 Pick 里缓存的 last_grasp_orientation_
-                self.blackboard.pose = Pose()
-                self.feedback_message = "Grasp succeeded"
-                self.logger.debug("Grasp succeeded")
-                return py_trees.common.Status.SUCCESS
-        except Exception as e:
-            self.feedback_message = f"Failed to process grasp result: {e}"
-            self.logger.debug(f"Failed to process grasp result: {e}")
-            return py_trees.common.Status.FAILURE
+        status = super().process_result()
+        if status == py_trees.common.Status.SUCCESS:
+            # Place asks the same coordinator to retain its cached orientation.
+            self.blackboard.pose = None
+        return status

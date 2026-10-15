@@ -64,8 +64,8 @@ KEY_ARM_NAVIGATING = "arm_navigating"
 
 KEY_WAVING_PERSON = "waving person"
 
-arm_service_name = "arm_joint_service"
-grasp_service_name = "start_grasp"
+arm_service_name = "/manipulation/joint_move"
+grasp_service_name = "/manipulation/pick"
 place_service_name = "place_service"
 
 def createConstantWriter():

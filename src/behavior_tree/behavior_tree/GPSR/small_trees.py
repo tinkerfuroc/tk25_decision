@@ -339,8 +339,8 @@ class bb_keys:
     # list[str] — canonical facts established by successful target postcondition gates for the active command slot.
 
 
-ARM_ACTION_NAME = "joint_move_action"
-GRASP_SERVICE_NAME = "start_grasp"
+ARM_ACTION_NAME = "/manipulation/joint_move"
+GRASP_SERVICE_NAME = "/manipulation/pick"
 WAVING_THRESHOLD_METERS = 6.0
 
 # Nav2's footprint inflation can make a semantic furniture waypoint (and a
@@ -4142,17 +4142,14 @@ def create_place():
 # pre-existing call sites are create_place (above) and create_find_object.
 # ---------------------------------------------------------------------------
 
-# place_action is served by the pick_and_place C++ executor, which BOTH the
-# hardware bringup (mobile_bringup/grasp_bringup.launch.py) and the sim's
-# live-manipulation stage (manipulation_planning_task_only.launch.py) start.
-# scan_and_place_action (arm_api/scan_and_place_server, a VLM-driven wrapper
-# around this same server) is launched by NEITHER, so the BT owns the
-# "where on the surface" step itself (BtNode_SurfacePointFromCloud).
-PLACE_ACTION_NAME = "place_action"
+# TK27 owns placement, release and retreat. The BT selects the TCP destination
+# from the surface. Place requires a held object tracked by the coordinator
+# that completed Pick; it does not call the legacy ScanAndPlace wrapper.
+PLACE_ACTION_NAME = "/manipulation/place"
 # camera_server's compat bridge (vision_bringup enable_gpsr, also launched by
 # the sim's vision stage) serves the wrist/head cloud on this legacy name.
 PLACE_POINT_CLOUD_SERVICE = "get_point_cloud_service"
-# Place.action CONTRACT: target_point is the TCP (link_tcp) target and the
+# Place.action CONTRACT: tcp_pose is the TCP (link_tcp) target and the
 # server does NOT compensate for how far the held object hangs below the
 # TCP. The grasp closes around the object's middle, so lift the TCP by
 # about half a typical GPSR object (banana / can / box ~ 8-10 cm) plus a
@@ -4307,9 +4304,9 @@ class BtNode_SurfacePointFromCloud(Behaviour):
     support underneath and NO point above the plane within ``free_radius``.
     Writes ``bb_point_key`` = PointStamped(base_frame) at (x, y, plane_z +
     tcp_clearance) -- the TCP target Place.action expects -- and
-    ``bb_orientation_key`` = an all-zero Pose, which place_action treats as
-    "not supplied" (it then reuses the orientation stored at the last pick,
-    or a horizontal default).
+    ``bb_orientation_key`` = an all-zero Pose. BtNode_Place converts this
+    internal marker to retain_grasp_orientation=true. No zero quaternion
+    is sent as the TCP orientation; TK27 reuses its cached Pick orientation.
 
     FAILURE (with the reason in ``feedback_message``) when the cloud is
     missing / empty / has no TF to ``base_frame`` / shows no plane / has no
@@ -4489,10 +4486,9 @@ class BtNode_SurfacePointFromCloud(Behaviour):
         ps.point.x, ps.point.y, ps.point.z = float(x), float(y), float(z)
         self._client.set(self.bb_point_key, ps, overwrite=True)
         if self.bb_orientation_key:
-            # All-zero quaternion == "orientation not supplied" for
-            # place_action (validate_optional_orientation). NOT Pose(): its
-            # default is the identity (w=1), which the server would take as
-            # an explicit, sideways TCP orientation.
+            # Internal unset marker, converted to retain_grasp_orientation.
+            # Pose() on this platform defaults to an identity quaternion,
+            # which is an explicit orientation.
             self._client.set(
                 self.bb_orientation_key,
                 Pose(orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=0.0)),

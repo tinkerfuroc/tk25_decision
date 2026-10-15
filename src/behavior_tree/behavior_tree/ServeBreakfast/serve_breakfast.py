@@ -70,9 +70,9 @@ prompts = [prompt_milk, prompt_cereal, prompt_bowl, prompt_spoon]
 
 MAX_SCAN_DISTANCE = 2.0
 
-arm_service_name = "arm_joint_service"
-grasp_service_name = "start_grasp"
-place_service_name = "place_service"
+arm_service_name = "/manipulation/joint_move"
+grasp_service_name = "/manipulation/pick"
+place_service_name = "/manipulation/place"
 point_cloud_service_name = "get_point_cloud_service"
 point_target_frame = "base_link"
 

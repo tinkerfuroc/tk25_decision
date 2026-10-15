@@ -78,8 +78,8 @@ KEY_ALL_WAVING_PERSONS = "all_waving_persons"
 
 WAVING_PERSON_THRESHOLD_METERS = 6.0
 
-arm_action_name = "joint_move_action"
-grasp_service_name = "start_grasp"
+arm_action_name = "/manipulation/joint_move"
+grasp_service_name = "/manipulation/pick"
 point_target_frame = "base_link"
 
 categories = {

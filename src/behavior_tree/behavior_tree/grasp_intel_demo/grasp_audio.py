@@ -18,8 +18,8 @@ KEY_ARM_SCAN = "arm_scan"
 KEY_ARM_HANDING = "arm_handing"
 KEY_ARM_HOLD = "arm_hold"
 
-arm_service_name = "arm_joint_service"
-grasp_service_name = "start_grasp"
+arm_service_name = "/manipulation/joint_move"
+grasp_service_name = "/manipulation/pick"
 
 def createGraspAudio():
     # create sequence root, memory set to True

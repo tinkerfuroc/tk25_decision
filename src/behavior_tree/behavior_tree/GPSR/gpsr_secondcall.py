@@ -68,8 +68,8 @@ KEY_POSE_OFFICE = "office"
 KEY_POSE_COMMAND = "pose_command"
 KEY_POSE_QA_POINT = "qa_point"
 
-arm_action_name = "joint_move_action"
-grasp_service_name = "start_grasp"
+arm_action_name = "/manipulation/joint_move"
+grasp_service_name = "/manipulation/pick"
 point_target_frame = "base_link"
 
 def createConstantWriter():

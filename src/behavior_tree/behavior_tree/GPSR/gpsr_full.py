@@ -47,7 +47,7 @@ CONSTANTS_PATH = os.environ.get(
     "/home/tinker/tk25_ws/src/tk25_decision/src/behavior_tree/"
     "behavior_tree/GPSR/constants.json",
 )
-ARM_ACTION_NAME = "joint_move_action"
+ARM_ACTION_NAME = "/manipulation/joint_move"
 NUM_COMMANDS = 3
 DEBUG_COMMAND = os.environ.get("BT_GPSR_DEBUG_CMD", "").strip()
 

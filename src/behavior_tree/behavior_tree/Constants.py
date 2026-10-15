@@ -4,12 +4,12 @@ SRV_ANNOUNCE = "announce"
 SRV_DROP = "start_drop"
 SRV_GOTO = "go_to"
 SRV_GOTO_GRASP = "go_to_grasp"
-SRV_GRASP = "start_grasp"
+SRV_GRASP = "/manipulation/pick"
 # SRV_GRASP = "grasp"
 SRV_OBJ_DETECTION = "object_detection"
 # SRV_REL_TO_ABS = "rel_to_abs"
 SRV_WAIT_FOR_START = "wait_for_start"
-ACTION_MOVE_ARM = "joint_move_action"
+ACTION_MOVE_ARM = "/manipulation/joint_move"
 
 PRINT_BLACKBOARD = False
 PRINT_DEBUG = True

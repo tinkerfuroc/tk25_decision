@@ -54,8 +54,8 @@ KEY_POSE_WAVING_PERSON = "waving_person"
 KEY_DOOR_STATUS = "door_status"
 KEY_ALL_WAVING_PERSONS = "all_waving_persons"
 
-arm_action_name = "joint_move_action"
-grasp_service_name = "start_grasp"
+arm_action_name = "/manipulation/joint_move"
+grasp_service_name = "/manipulation/pick"
 point_target_frame = "base_link"
 
 def createEnterArena():

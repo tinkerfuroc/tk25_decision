@@ -58,8 +58,8 @@ KEY_FOLLOW_TARGET_GOAL = "follow_target"
 
 
 # 服务名称
-arm_service_name = "arm_joint_service"
-grasp_service_name = "grasp"
+arm_service_name = "/manipulation/joint_move"
+grasp_service_name = "/manipulation/pick"
 point_target_frame = "base_link"
 follow_action_name = "human_following"
 
