@@ -32,6 +32,10 @@ def main():
 
     def build():
         # Check generated interfaces before any hardware leaf can run.
+        try:
+            import pypinyin
+        except ImportError as exc:
+            raise RuntimeError("Hangzhou name matching requires pypinyin; install the behavior_tree Python dependencies in the ROS runtime environment") from exc
         import cv2
         from cv_bridge import CvBridge
         from kimi_api._env import load_env, resolve_qwen_target

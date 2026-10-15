@@ -49,7 +49,7 @@ class IO:
     def __init__(self, context, fail=None, names=None, owners=()):
         self.context, self.fail = context, fail or {}
         self.counts, self.calls = Counter(), []
-        self.names = iter(names or ['甲', '乙', '丙'])
+        self.names = iter(names or ['杰克', '安东', '李华'])
         self.owners = owners
         context.io = self
 
@@ -147,11 +147,59 @@ def test_retraction_exhaustion_blocks_navigation_and_records_recovery(cfg):
 
 
 def test_duplicate_name_reasks_without_duplicate_memory(cfg):
-    root, io = run(cfg, names=['甲', '甲', '乙', '丙'])
+    root, io = run(cfg, names=['杰克', '杰克', '安东', '李华'])
     assert root.status == S.SUCCESS
-    assert [o.name for o in root.context.owners] == ['甲', '乙', '丙']
+    assert [o.name for o in root.context.owners] == ['杰克', '安东', '李华']
     assert io.counts['Call owner 2'] == 2
     assert len([e for e in root.context.events if e['event'] == 'owner_registered']) == 3
+
+
+@pytest.mark.parametrize('text,expected', [('杰克', '杰克'), ('我叫安东。', '安东'),
+    ('你好，我的名字叫李华。', '李华'), ('杰克，杰克', '杰克')])
+def test_candidate_name_matching(text, expected):
+    assert state.extract_owner_name(text) == expected
+
+
+@pytest.mark.parametrize('text', [None, '', '(empty)', '王五', 'Jack', '杰克和李华', '安东或者杰克'])
+def test_unknown_or_ambiguous_name_rejected(text):
+    with pytest.raises(ValueError):
+        state.extract_owner_name(text)
+
+
+def test_unknown_name_retries_and_enrollment_order_is_not_fixed(cfg):
+    root, io = run(cfg, names=['王五', '我叫李华', '我是杰克', '安东'])
+    assert root.status == S.SUCCESS
+    assert [o.name for o in root.context.owners] == ['李华', '杰克', '安东']
+    assert io.counts['Call owner 1'] == 2
+
+
+@pytest.mark.parametrize('text,expected', [('我叫李花。', '李华'), ('梨华', '李华'),
+    ('你好，我是安冬', '安东'), ('岸东', '安东'), ('杰可', '杰克'),
+    ('我的名字是洁克。', '杰克'), ('李华，李花', '李华')])
+def test_name_homophones_ignore_tones(text, expected):
+    assert state.extract_owner_name(text) == expected
+
+
+@pytest.mark.parametrize('text', ['杰克和梨花', '安冬还是李花', '王五',
+    '李，花', '李 花', '李abc花', '力发', 'jieke'])
+def test_homophones_do_not_force_ambiguous_or_near_matches(text):
+    with pytest.raises(ValueError):
+        state.extract_owner_name(text)
+
+
+def test_homophones_are_normalized_in_real_enrollment_tree(cfg):
+    root, io = run(cfg, names=['梨花', '我叫杰可', '安冬'])
+    assert root.status == S.SUCCESS
+    assert [o.name for o in root.context.owners] == ['李华', '杰克', '安东']
+    assert any(c[0] == 'speech' and c[1].startswith('李华，')
+               for c in io.calls if isinstance(c, tuple))
+
+
+def test_homophone_of_registered_name_is_still_duplicate(cfg):
+    root, io = run(cfg, names=['李华', '梨花', '杰可', '安冬'])
+    assert root.status == S.SUCCESS
+    assert [o.name for o in root.context.owners] == ['李华', '杰克', '安东']
+    assert io.counts['Call owner 2'] == 2
 
 
 def test_feature_failure_retries_without_reasking_name(cfg):

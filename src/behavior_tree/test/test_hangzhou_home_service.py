@@ -70,7 +70,7 @@ class FakeLeaves:
         self.fail_arm, self.fail_listen = fail_arm, fail_listen
         self.unknown, self.detect_error, self.no_detections = unknown, detect_error, no_detections
         self.calls = []
-        self.names = iter(["小明", "小红", "小王"])
+        self.names = iter(["杰克", "安东", "李华"])
         context.fake_io = self
 
     def node(self, name, callback=lambda: None):
@@ -159,7 +159,7 @@ def test_complete_random_order_and_four_room_sweep(config, command, expected):
     assert c.visited == set(config["rooms"])
     assert len(c.litter_rooms) == 3
     assert [e["owner"] for e in c.events if e["event"] == "interaction_completed"] == [3, 1, 2]
-    assert [p.name for p in c.owners] == ["小明", "小红", "小王"]
+    assert [p.name for p in c.owners] == ["杰克", "安东", "李华"]
     calls = io.calls
     scans = [call for call in calls if call[0] == "head" and call[2] in (-90, -30, 30, 90)]
     assert [(c[1], c[2]) for c in scans] == [
@@ -171,7 +171,7 @@ def test_complete_random_order_and_four_room_sweep(config, command, expected):
     assert switch[0][2].pose.position.x == expected
     assert ("arm", "Move end effector over switch mark", [expected] * 7) in calls
     assert ("say", "我复述一下您的要求：请帮我拿一杯温水，不要加糖。") in calls
-    for name in ("小明", "小红", "小王"):
+    for name in ("杰克", "安东", "李华"):
         assert any(call[0] == "say" and name in call[1] and "识别到" in call[1] for call in calls)
     assert any(call[0] == "goto" and call[1] == "Leave through separate exit" for call in calls)
     assert len(list(c.evidence_dir.glob("owner_*.png"))) == 3

@@ -9,7 +9,7 @@ import re
 import time
 
 import py_trees
-from .config import BEHAVIOUR_ZH, EXPECTED, validate
+from .config import BEHAVIOUR_ZH, EXPECTED, OWNER_NAMES, validate
 
 PREFIX = "/hangzhou/"
 S = py_trees.common.Status
@@ -41,6 +41,31 @@ def extract_name(text):
     if not name or len(name) > 20 or any(c in name for c in "，。！？,!?\n"):
         raise ValueError("请仅说您的名字")
     return name
+
+
+def extract_owner_name(text):
+    """Match canonical names or identical Mandarin syllables, ignoring tones.
+
+    Only contiguous Han characters form a phonetic candidate: punctuation,
+    Latin letters and spaces cannot silently join unrelated syllables.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("未听清姓名，请重新说您的名字")
+    from pypinyin import Style, lazy_pinyin
+
+    def syllables(value):
+        return tuple(lazy_pinyin(value, style=Style.NORMAL, strict=True))
+
+    runs = [syllables(run) for run in re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]+", text)]
+    matches = {name for name in OWNER_NAMES if name in text}
+    for name in OWNER_NAMES:
+        expected = syllables(name)
+        if any(run[i:i + len(expected)] == expected
+               for run in runs for i in range(len(run) - len(expected) + 1)):
+            matches.add(name)
+    if len(matches) != 1:
+        raise ValueError("请只说一个姓名：" + "、".join(OWNER_NAMES))
+    return next(iter(matches))
 
 
 @dataclass
@@ -91,7 +116,7 @@ class Context:
     def remember(self, owner):
         from cv_bridge import CvBridge
         import cv2
-        name = extract_name(get("heard"))
+        name = extract_owner_name(get("heard"))
         features, image = get("features"), get("reference_image")
         if not isinstance(features, str) or not features.strip() or image is None or image.width <= 0 or image.height <= 0:
             raise ValueError("主人特征或参考图像为空")

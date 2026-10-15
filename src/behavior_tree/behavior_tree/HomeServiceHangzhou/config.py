@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 PAN_ANGLES = [-90, -30, 30, 90]
+OWNER_NAMES = ("杰克", "安东", "李华")
 REST = {"lying_resting_or_sleeping", "sitting_on_bed", "sitting_on_sofa", "sitting_on_chair"}
 FALL = {"lying_on_floor_possible_fall"}
 WAVE = {"standing_waving", "sitting_waving"}

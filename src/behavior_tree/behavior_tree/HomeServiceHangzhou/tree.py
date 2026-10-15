@@ -1,7 +1,7 @@
 """Phase factories in the same py_trees idiom as HRI, Restaurant and PickAndPlace."""
 import py_trees
 from .config import EXPECTED, load_config, room_order
-from .state import Context, PatrolBudget, StateNode, get, put, pose, extract_name
+from .state import Context, PatrolBudget, StateNode, get, put, pose, extract_owner_name
 from .control import PacedRetry, ReportFailure
 
 
@@ -70,9 +70,9 @@ def create_task(config=None, leaves_factory=None):
                  ("heard", "features", "reference_image")]),
             head(0, level), io.settle(),
             io.say("Call owner " + str(owner),
-                "请第" + str(owner) + "位主人单独走到我的正前方，看向摄像头。请只说您的名字。"),
+                "请第" + str(owner) + "位主人单独走到我的正前方，看向摄像头。请说您的名字：杰克、安东或者李华，只说您自己的名字。"),
             io.listen("Listen owner name"),
-            step("Validate name", lambda: put("heard", extract_name(get("heard")))),
+            step("Match candidate owner name", lambda: put("heard", extract_owner_name(get("heard")))),
             retry(io.feature(), "feature", 4),
             step("Remember owner " + str(owner), lambda: context.remember(owner)))
         return sequence("Enroll owner " + str(owner),

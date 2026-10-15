@@ -23,7 +23,7 @@ setup(
         "behavior_tree.PickAndPlace": ["constants.json"],
         "behavior_tree.DoingLaundry": ["constants.json"],
     },
-    install_requires=["setuptools"],
+    install_requires=["setuptools", "pypinyin>=0.51,<1"],
     zip_safe=True,
     maintainer="cindy",
     maintainer_email="cindy.w0135@gmail.com",
