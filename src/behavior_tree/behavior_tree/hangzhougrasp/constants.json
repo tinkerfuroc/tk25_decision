@@ -55,10 +55,10 @@
     71,
     5
   ],
-  "prompt": "coke",
+  "prompt": "",
   "label_map": {
     "Banana": "香蕉",
-    "Pringles": "品客薯片",
+    "Pringles": "薯片",
     "Shampoo": "洗发水",
     "Coke": "可乐",
     "Biscuits": "饼干",
@@ -66,7 +66,7 @@
     "Apple": "苹果",
     "Cup": "杯子",
     "HandSanitizer": "洗手液",
-    "SoapBox": "肥皂盒",
+    "SoapBox": "药盒",
     "TeddyBear": "泰迪熊",
     "Detergent": "洗衣液"
   },
