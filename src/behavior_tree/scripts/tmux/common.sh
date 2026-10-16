@@ -32,7 +32,7 @@ new_window() {
     if ! tmux has-session -t "$session" 2>/dev/null; then
         tmux new-session -d -s "$session" -n "$window"
     else
-        tmux kill-window -t "$session:$window" 2>/dev/null
+        tmux kill-window -t "$session:$window" 2>/dev/null || true
         tmux new-window -t "$session" -n "$window"
     fi
 }
