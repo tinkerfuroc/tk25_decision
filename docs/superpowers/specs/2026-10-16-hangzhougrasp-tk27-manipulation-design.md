@@ -40,6 +40,20 @@ request is the intended use and no special server setting is needed. If the
 deployed server rejects it anyway, Pick fails with the server's message; live
 validation step 3 checks this.
 
+## What Pick does with the prompt (verified in TK27 source)
+
+Pick's goal carries only text. The server calls `/object_detection_generalist`
+with `camera=realsense`, the prompt, `sort_closest=true`, and RGB, depth and
+masks returned. The production `runtime.json` sets
+`vision_force_vlm_sam: true`, so the detector skips YOLO: a VLM locates the
+prompt and MobileSAM segments it. Pick grasps the first (closest) object
+with that mask. So:
+- The mask Pick grasps comes from its own capture, never from the tree's
+  yolo26 scans.
+- The RealSense yolo26 scan at `pick45` is the gate (skip Pick when nothing
+  is visible from that pose) and the label source (you confirmed this).
+- `generalist_node` and its VLM API must be up for every Pick.
+
 ## Decisions from you
 
 1. **Scan order, Pick prompt and gating (revised after approval):** at each
