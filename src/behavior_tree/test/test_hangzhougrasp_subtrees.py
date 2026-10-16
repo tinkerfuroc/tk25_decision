@@ -172,8 +172,8 @@ def test_viewpoint_order(monkeypatch):
     assert _tick(root) == S.SUCCESS
     # SetHolding is a real (unlogged) node; test_holding_set_before_retract
     # pins that it runs between Pick and the retract.
-    assert log == [TABLE_HEAD, ORBBEC_SCAN, ANNOUNCE, SAW, TABLE_POSE, REALSENSE_SCAN,
-                   SELECT, OPEN, PICK, RETRACT]
+    assert log == [TABLE_HEAD, ORBBEC_SCAN, ANNOUNCE, SAW, SELECT, TABLE_POSE,
+                   OPEN, PICK, RETRACT]
     assert _holding() is True
 
 
@@ -225,22 +225,28 @@ def test_stale_orbbec_result_is_cleared(monkeypatch):
     assert _arm_or_grasp(log) == []
 
 
-def test_realsense_miss_is_miss_with_stow(monkeypatch):
+def test_no_label_means_no_arm_move_and_no_pick(monkeypatch):
     log = []
-    _stub(monkeypatch, log, overrides={REALSENSE_SCAN: S.FAILURE})
+    _stub(monkeypatch, log, overrides={SELECT: S.FAILURE})
     root = hg.createVisitTable(_cfg(), [_rec(0)])
     assert _tick(root) == S.SUCCESS
-    assert CLEANUP in log and PICK not in log and OPEN not in log
-    assert not _holding()
+    assert TABLE_POSE not in log and PICK not in log and OPEN not in log
+    assert CLEANUP in log and not _holding()
+
+
+def test_no_realsense_scan_in_grasp():
+    names = [n.name for n in hg.createGrasp(_cfg()).iterate()]
+    assert REALSENSE_SCAN not in names
+    assert names.index(SELECT) < names.index(TABLE_POSE)
 
 
 def test_whole_grasp_attempt_retried_up_to_limit(monkeypatch):
     log = []
-    _stub(monkeypatch, log, overrides={REALSENSE_SCAN: S.FAILURE})
+    _stub(monkeypatch, log, overrides={OPEN: S.FAILURE})
     root = hg.createViewpointScanGrasp(_cfg(grasp_retry_limit=3), miss_is_success=True)
     assert _tick(root) == S.SUCCESS
-    assert log.count(TABLE_POSE) == 3 and log.count(REALSENSE_SCAN) == 3
-    assert log.count(CLEANUP) == 1 and PICK not in log
+    assert log.count(TABLE_POSE) == 3 and log.count(OPEN) == 3
+    assert log.count(SELECT) == 1 and log.count(CLEANUP) == 1 and PICK not in log
 
 
 def test_grasp_succeeds_on_a_later_attempt(monkeypatch):

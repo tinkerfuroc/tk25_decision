@@ -10,7 +10,7 @@ from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import BtNode_ScanForYolo26
 
 from .config import (
-    KEY_SCAN_RESULT, KEY_GRASP_SCAN_RESULT, KEY_TARGET_LABEL,
+    KEY_SCAN_RESULT, KEY_TARGET_LABEL,
     KEY_ANNOUNCEMENT, KEY_HOLDING, load_config, pose_key,
 )
 from .custom_nodes import (
@@ -139,24 +139,21 @@ def createScanAnnounce(config, *, surface):
 
 
 def createGrasp(config):
-    """pick45, RealSense gate and label, then open + TK27 Pick, then stow.
+    """Label from the Orbbec scan, then pick45 + open + TK27 Pick, then stow.
 
-    Once the tree has entered grasping (the Orbbec scan saw something), the
-    whole attempt is retried up to grasp_retry_limit times: back to pick45,
-    a fresh RealSense scan and label, a fresh open and a fresh Pick goal.
+    TK27 Pick does its own RealSense observation and segmentation, so the
+    tree trusts it and sends only the nearest label the Orbbec scan saw.
+    Once grasping has started, the attempt is retried up to grasp_retry_limit
+    times: back to pick45, a fresh open and a fresh Pick goal.
     """
     root = py_trees.composites.Sequence(name="Grasp nearest object", memory=True)
+    root.add_child(BtNode_SelectNearestLabel(
+        name="Select nearest label", bb_source=KEY_SCAN_RESULT,
+        label_key=KEY_TARGET_LABEL,
+    ))
     attempt = py_trees.composites.Sequence(name="Grasp attempt", memory=True)
     # Re-sent every round: a failed Pick may leave the arm off pick45.
     attempt.add_child(_savedPoseRetry("Arm to table pose", config.arm_pose_table, config))
-    attempt.add_child(_scanYolo26Retry(
-        "Scan table with RealSense", config, bb_key=KEY_GRASP_SCAN_RESULT,
-        use_orbbec=False, prompt=config.prompt,
-    ))
-    attempt.add_child(BtNode_SelectNearestLabel(
-        name="Select nearest label", bb_source=KEY_GRASP_SCAN_RESULT,
-        label_key=KEY_TARGET_LABEL,
-    ))
     # Voice note: always open before Pick; a failed open means no Pick.
     attempt.add_child(_gripperOpen("Open gripper before pick", config))
     attempt.add_child(BtNode_Tk27Pick(

@@ -16,7 +16,6 @@ from .route import build_route
 log = logging.getLogger(__name__)
 
 KEY_SCAN_RESULT = "hg_scan_result"              # Orbbec scan at the viewpoint
-KEY_GRASP_SCAN_RESULT = "hg_grasp_scan_result"  # RealSense scan at the table pose
 KEY_TARGET_LABEL = "hg_target_label"            # Pick prompt
 KEY_ANNOUNCEMENT = "hg_announcement"
 KEY_HOLDING = "hg_holding"

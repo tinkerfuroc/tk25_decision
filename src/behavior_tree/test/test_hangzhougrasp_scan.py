@@ -47,16 +47,12 @@ def test_scans_request_no_image_payload():
                         or scan.return_segments)
 
 
-def test_grasp_scan_is_realsense_after_table_pose():
+def test_grasp_trusts_pick_without_its_own_scan():
     root = createGrasp(_config())
-    order = [n for n in root.iterate()
-             if isinstance(n, (BtNode_Tk27SavedPose, BtNode_ScanForYolo26))]
-    assert isinstance(order[0], BtNode_Tk27SavedPose)
-    assert order[0].pose_name == "pick45"
-    assert isinstance(order[1], BtNode_ScanForYolo26)
-    assert not order[1].use_orbbec
-    assert order[1].object == "cup"
+    assert not _nodes(root, BtNode_ScanForYolo26)
     assert not _nodes(root, BtNode_AnnounceDetections)
+    poses = [n.pose_name for n in _nodes(root, BtNode_Tk27SavedPose)]
+    assert poses[0] == "pick45"
 
 
 # ---- a speech failure is logged, not a miss ----

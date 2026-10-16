@@ -236,7 +236,7 @@ def test_room_and_ground_build_without_grasp(config, name):
 
 # Keys a part's own subtree writes while it runs; every other hg_ key a part
 # reads must come from that part's constants writer.
-RUNTIME_KEYS = {cfg.KEY_SCAN_RESULT, cfg.KEY_GRASP_SCAN_RESULT,
+RUNTIME_KEYS = {cfg.KEY_SCAN_RESULT,
                 cfg.KEY_TARGET_LABEL, cfg.KEY_ANNOUNCEMENT, cfg.KEY_HOLDING}
 Access = py_trees.common.Access
 Status = py_trees.common.Status

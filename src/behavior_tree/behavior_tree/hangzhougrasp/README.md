@@ -31,9 +31,10 @@ Visit table:  对每个视点（升序 m）
     Clear previous scan result
     Orbbec 扫描 + 中文播报（机械臂保持 navigation 姿态）
     只有 Orbbec 看到物体才继续（没看到：该视点算 miss，机械臂不动）：
+      取 Orbbec 扫描中最近目标的标签（只取一次；本任务不再做 RealSense 扫描，
+      Pick 自己观测和分割）
       整个抓取尝试最多 grasp_retry_limit（3）次，每次都重新执行：
         MoveToSavedPose(pick45)
-        → RealSense yolo26 扫描（门控 + 取最近目标的标签；不再播报）
         → 打开夹爪（严格检查）→ TK27 Pick(标签, high)
       → 记为持有 → MoveToSavedPose(navigation)
       任一步失败：MoveToSavedPose(navigation)；成功则该视点算 miss，
@@ -60,7 +61,7 @@ Deliver if holding:  持有物体才执行（规则见“放置规则”）
 
 | 节点 | Action | 目标 | 成功条件 |
 |---|---|---|---|
-| Pick | `/manipulation/pick`（`tk27_manipulation_msgs/Pick`） | `prompt`=RealSense 最近目标的标签，`plan_effort`=`high` | SUCCEEDED 且 `success` 且 `status==OK` |
+| Pick | `/manipulation/pick`（`tk27_manipulation_msgs/Pick`） | `prompt`=Orbbec 扫描最近目标的标签，`plan_effort`=`high` | SUCCEEDED 且 `success` 且 `status==OK` |
 | 机械臂姿态 | `/manipulation/move_to_saved_pose`（`MoveToSavedPose`） | `pose_name`=`pick45` / `navigation`，`avoid_collisions`=`false`（固定） | SUCCEEDED 且 `success` 且 `status==SUCCESS` |
 | 打开夹爪 | `/xarm_gripper/gripper_action`（`GripperCommand`） | `position`=0.0，`max_effort`=50 | SUCCEEDED 且 `reached_goal` 且位置与 0.0 相差 ≤0.025（与 TK27 自身的判断相同） |
 
@@ -188,7 +189,7 @@ SoapBox 肥皂盒、TeddyBear 泰迪熊、Detergent 洗衣液；换模型时要�
 本任务的播报必须是普通话：`prompt` 里的每个标签都必须在 `label_map` 中有
 中文名，否则启动即报错并列出缺少的标签。
 扫描无检测结果会失败，所以在各阶段被包在 `Scan or miss` 里。
-`--grasp` 的桌面扫描使用 RealSense（含 RGB/depth/mask），其余扫描使用 Orbbec。
+本任务的扫描都使用 Orbbec；`--grasp` 时 RealSense 只由 TK27 Pick 自己使用。
 `label_map` 只控制中文播报，不控制抓取类别；每次抓最近的目标，重新检测时
 选同类的最近实例，不保证跨帧跟踪。
 
@@ -304,7 +305,7 @@ root = createHangzhouGrasp(config=config, enable_grasp=True)
   `arm_action`、`grasp_action` 已删除，出现即为未知键错误。
 - 人工中断沿用共享 runtime 的取消行为，不会在退出后另发收回。
 - 黑板键均用 `hg_` 前缀；`hg_scan_result` 是 Orbbec 检测，
-  `hg_grasp_scan_result` 是 pick45 处的 RealSense 检测，`hg_target_label`
+  `hg_target_label`
   是 Pick 的 prompt，`hg_announcement` 是中文文本。
 - CLI 使用共享 `run_tree`，500 ms tick、可视化和原有 mock 配置。
   `stop_on_terminal=True` 防止完成后重复导航/抓取，GUI 保留至 Ctrl+C。

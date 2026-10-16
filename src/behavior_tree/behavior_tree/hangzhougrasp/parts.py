@@ -9,7 +9,7 @@ from .config import pose_key
 
 PARTS = {
     "scan-announce": "Scan with the Orbbec camera and announce where the robot stands (or after --at); never moves the arm to the table pose",
-    "scan-grasp": "Orbbec scan and announce, then pick45, RealSense gate, open gripper and TK27 Pick, with failure cleanup (needs --grasp)",
+    "scan-grasp": "Orbbec scan and announce, then nearest label, pick45, open gripper and TK27 Pick, with failure cleanup (needs --grasp)",
     "visit-table": "All viewpoints of --room --table N without delivery (needs --grasp)",
     "deliver": "Arm to nav pose, go to the destination, open gripper (needs --grasp)",
     "drop-elsewhere": "Drop the object at --next-pose (needs --grasp)",

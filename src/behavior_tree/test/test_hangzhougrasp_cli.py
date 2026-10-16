@@ -341,7 +341,8 @@ def test_cli_grasp_print_tree_uses_tk27(conf_path, capsys):
     cli.main(["--config", conf_path, "--grasp", "--print-tree"])
     out = capsys.readouterr().out
     for name in ("Pick selected object", "Arm to table pose",
-                 "Open gripper before pick", "Scan table with RealSense"):
+                 "Open gripper before pick"):
         assert name in out
     assert "Grasp selected object" not in out
+    assert "Scan table with RealSense" not in out
     assert out.index("Scan objects with YOLO26 SAM") < out.index("Arm to table pose")
