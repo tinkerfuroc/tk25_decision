@@ -26,6 +26,11 @@ add() { pane_add "$1" "$RENV && $2"; }
 
 new_window "$SESSION" "cameras"
 run "$SESSION:cameras" "ros2 launch orbbec_camera femto_bolt.launch.py depth_registration:=true enable_ir:=false enable_frame_sync:=false"
+# yolo26_sam reads Orbbec frames only via /head_camera_server/get_snapshot;
+# without this server every Orbbec scan returns "No orbbec camera frame is
+# available". The wrist server comes from TK27 arm.launch.py, so not here.
+add "$SESSION:cameras" "ros2 launch camera_server camera_server.launch.py enable_head:=true enable_wrist:=false"
+retile "$SESSION:cameras"
 
 new_window "$SESSION" "drivers"
 run "$SESSION:drivers" "ros2 launch navigation_bringup driver.launch.py"
