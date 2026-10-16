@@ -1,4 +1,5 @@
 """TK27 action contracts for hangzhougrasp: Pick, MoveToSavedPose, gripper open."""
+import time
 from types import SimpleNamespace
 
 import py_trees
@@ -213,3 +214,95 @@ def test_select_nearest_label_clears_old_label(value):
     py_trees.blackboard.Blackboard.set("/" + SCAN_KEY, value)
     assert _tick(_select()) == S.FAILURE
     assert _bb(PROMPT_KEY) == ""
+
+
+# ---- final review: real-mode lifecycle ----
+from unittest.mock import Mock  # noqa: E402
+
+from tk27_manipulation_msgs.msg import TaskProgress  # noqa: E402
+
+
+def _all_leaves():
+    return [_pick(),
+            BtNode_Tk27SavedPose("Arm", "navigation", "/manipulation/move_to_saved_pose"),
+            _gripper()]
+
+
+def _running(leaf):
+    """A live leaf mid-goal, with a node stub and spied logger / cancel dispatch."""
+    leaf.mock_mode = False
+    leaf.node = SimpleNamespace(get_logger=lambda: Mock())
+    leaf.logger = Mock()
+    leaf._dispatch_cancel_request = Mock()
+    leaf.initialise = lambda: None
+    leaf.status = S.RUNNING
+    leaf.goal_handle = Mock(accepted=True)
+    leaf.send_goal_future = Mock()
+    leaf.get_result_future = Mock(done=Mock(return_value=True))
+    leaf._cancel_requested = leaf._cancel_pending = False
+    leaf.result_status = None
+    leaf.result_status_string = None
+    leaf.result_message = None
+    leaf.action_status = 0
+    leaf.counter = 0
+    leaf.action_timeout_ticks = 0
+    leaf.last_feedback_time = time.time()
+    leaf.feedback_timeout = 1e9
+    leaf._no_goal_reason = None
+    return leaf
+
+
+def test_pick_feedback_does_not_crash():
+    leaf = _running(_pick())
+    msg = SimpleNamespace(feedback=Pick.Feedback(
+        progress=TaskProgress(stage=6, detail="Acquiring target observation")))
+    leaf.feedback_callback(msg)
+    assert leaf.feedback_message == "Acquiring target observation"
+    assert leaf.action_status == 0
+
+
+def _fail_result(leaf):
+    if isinstance(leaf, BtNode_Tk27GripperOpen):
+        return GripperCommand.Result(position=0.5, reached_goal=False)
+    return leaf.action_type.Result(success=False, status=2, error_msg="server said no")
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_failure_message_survives_stop_and_no_cancel_of_finished_goal(index):
+    leaf = _running(_all_leaves()[index])
+    leaf.result_status = GoalStatus.STATUS_SUCCEEDED
+    leaf.result_message = SimpleNamespace(result=_fail_result(leaf))
+    leaf.tick_once()  # update -> FAILURE, then stop() -> terminate() while RUNNING
+    assert leaf.status == S.FAILURE
+    assert "cancelling" not in leaf.feedback_message
+    assert ("server said no" in leaf.feedback_message
+            or "reached_goal=False" in leaf.feedback_message)
+    leaf._dispatch_cancel_request.assert_not_called()
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_rejected_goal_logs_error(index):
+    leaf = _running(_all_leaves()[index])
+    leaf.goal_handle = Mock(accepted=False)
+    assert leaf.update() == S.FAILURE
+    leaf.logger.error.assert_called_once()
+    assert "rejected" in leaf.logger.error.call_args[0][0]
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_failed_goal_request_fails_instead_of_hanging(index):
+    leaf = _running(_all_leaves()[index])
+    leaf.goal_handle = None
+    future = Mock()
+    future.result.return_value = None
+    future.exception.return_value = RuntimeError("transport down")
+    leaf.goal_response_callback(future)
+    assert leaf.update() == S.FAILURE
+    assert "transport down" in leaf.feedback_message
+    leaf.logger.error.assert_called_once()
+
+
+def test_running_goal_is_still_cancelled_on_interrupt():
+    leaf = _running(_pick())
+    leaf.stop(S.INVALID)  # e.g. a higher-priority branch preempts a live Pick
+    assert leaf._cancel_requested

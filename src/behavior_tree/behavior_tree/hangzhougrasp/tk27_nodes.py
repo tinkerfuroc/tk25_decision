@@ -4,6 +4,8 @@ Modelled on HomeServiceHangzhou.ros_nodes.Tk27SavedPose. Every leaf fails unless
 the server reports success, and keeps the server's message in its feedback.
 """
 
+import time
+
 import py_trees
 from action_msgs.msg import GoalStatus
 
@@ -13,12 +15,50 @@ S = py_trees.common.Status
 
 
 class _Tk27Leaf(ActionHandler):
-    """Shared failure reporting: feedback plus an ERROR log line."""
+    """Shared real-mode lifecycle for the TK27 leaves.
+
+    - Every FAILURE, including the base class's "goal rejected" path, keeps
+      its reason in feedback and logs one ERROR line.
+    - A failed goal request fails the leaf instead of leaving it RUNNING.
+    - A goal that already finished is not cancelled on stop(), so the
+      server's failure message survives in feedback.
+    """
+    _logged = False
+    _request_error = None
+
+    def initialise(self):
+        self._logged = False
+        self._request_error = None
+        super().initialise()
 
     def _fail(self, message):
         self.feedback_message = message
-        self.logger.error(f"{self.name} [{self.action_name}]: {message}")
+        if not self._logged:
+            self._logged = True
+            self.logger.error(f"{self.name} [{self.action_name}]: {message}")
         return S.FAILURE
+
+    def goal_response_callback(self, future):
+        super().goal_response_callback(future)
+        if future.result() is None:
+            self._request_error = self.feedback_message
+
+    def update(self):
+        if self._request_error is not None:
+            return self._fail(self._request_error)
+        status = super().update()
+        if status == S.FAILURE:
+            return self._fail(self.feedback_message)
+        return status
+
+    def terminate(self, new_status):
+        finished = self.result_status is not None or self.send_goal_future is None
+        message = self.feedback_message
+        if finished:
+            self._cancel_requested = True  # nothing live to cancel
+        super().terminate(new_status)
+        if finished:
+            self.feedback_message = message
 
 
 class BtNode_Tk27Pick(_Tk27Leaf):
@@ -53,6 +93,15 @@ class BtNode_Tk27Pick(_Tk27Leaf):
         if self._no_goal_reason is not None:
             return self._fail(self._no_goal_reason)
         return super().update()
+
+    def feedback_callback(self, msg):
+        # Pick feedback is TaskProgress (stage, detail, elapsed_s); the base
+        # callback's delay_limit/status fields do not exist and would raise
+        # inside the executor.
+        progress = msg.feedback.progress
+        self.last_feedback_time = time.time()
+        self.action_stage = progress.stage
+        self.feedback_message = progress.detail
 
     def process_result(self):
         result = self.result_message.result
