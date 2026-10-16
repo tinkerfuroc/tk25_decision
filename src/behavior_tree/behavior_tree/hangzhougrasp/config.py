@@ -11,8 +11,6 @@ from .pose_index import PoseIndex
 from .route import Stop, build_route
 
 
-KEY_POSE_SCAN = "hg_pose_scan"
-KEY_POSE_DESTINATION = "hg_pose_destination"
 KEY_ARM_NAVIGATING = "hg_arm_navigating"
 KEY_ARM_TABLE = "hg_arm_table"
 KEY_SCAN_RESULT = "hg_scan_result"

@@ -13,7 +13,7 @@ from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import BtNode_ScanForYolo26
 
 from .config import (
-    KEY_POSE_SCAN, KEY_POSE_DESTINATION, KEY_ARM_NAVIGATING, KEY_ARM_TABLE,
+    KEY_ARM_NAVIGATING, KEY_ARM_TABLE,
     KEY_SCAN_RESULT, KEY_GRASP_SCAN_RESULT, KEY_GRASP_VISION_RES,
     KEY_TARGET_LABEL, KEY_GRASP_LABEL, KEY_ANNOUNCEMENT, KEY_HOLDING,
     load_config, pose_key,
@@ -26,10 +26,14 @@ def createConstantWriter(config, *, enable_grasp=False):
         name="Write HangzhouGrasp constants",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
     )
-    writes = [
-        ("Write scan pose", KEY_POSE_SCAN, config.pose_scan),
-        ("Write destination pose", KEY_POSE_DESTINATION, config.pose_destination),
-    ]
+    writes, seen = [], set()
+    named = [(rec.name, rec.pose) for stop in config.route
+             for rec in stop.viewpoints]
+    named.append((config.destination_name, config.destination))
+    for name, pose in named:
+        if name not in seen:
+            seen.add(name)
+            writes.append((f"Write {name}", pose_key(name), pose))
     if enable_grasp:
         writes.extend([
             ("Write arm navigating", KEY_ARM_NAVIGATING, config.arm_pos_navigating),
@@ -76,15 +80,6 @@ def _scanYolo26Retry(name, config, *, bb_key, use_orbbec,
         ),
         num_failures=config.scan_retry_limit,
     )
-
-
-def createNavigateToScan(config, *, enable_grasp=False):
-    root = py_trees.composites.Sequence(name="Navigate to scan point", memory=True)
-    if enable_grasp:
-        root.add_child(_moveArmRetry(
-            "Arm to nav before first navigation", KEY_ARM_NAVIGATING, config))
-    root.add_child(_gotoRetry("Go to scan point", KEY_POSE_SCAN, config))
-    return root
 
 
 def createScanAnnounce(config, *, grasp=False):
@@ -206,7 +201,7 @@ def _release(name, config, goto_key):
 
 
 def createDeliver(config):
-    root = _release("Deliver object", config, KEY_POSE_DESTINATION)
+    root = _release("Deliver object", config, pose_key(config.destination_name))
     root.add_child(BtNode_GripperAction(name="Open gripper", open_gripper=True))
     root.add_child(BtNode_SetHolding(name="Clear holding", value=False))
     return root
@@ -225,11 +220,67 @@ def createDropElsewhere(config, next_pose):
     return root
 
 
-def createNavigateToDestination(config):
-    return py_trees.composites.Sequence(
-        name="Navigate to destination", memory=True,
-        children=[_gotoRetry("Go to destination", KEY_POSE_DESTINATION, config)],
-    )
+def _scan_or_miss(config, name):
+    return py_trees.composites.Selector(
+        name=f"Scan or miss at {name}", memory=True,
+        children=[createScanAnnounce(config, grasp=False),
+                  py_trees.behaviours.Success(name="Miss, skip")])
+
+
+def _delivery_or_nothing(config, stop, next_pose):
+    if stop.room == config.enter_room:
+        delivery = createDeliver(config)
+    else:
+        delivery = createDropElsewhere(config, next_pose)
+    holding = py_trees.composites.Sequence(
+        name="Deliver held object", memory=True,
+        children=[_holding_is_set(), delivery])
+    return py_trees.composites.Selector(
+        name="Deliver if holding", memory=True,
+        children=[py_trees.decorators.Inverter(
+            name="Not holding", child=_holding_is_set()), holding])
+
+
+def createTablesPhase(config, stops, *, enable_grasp=True):
+    root = py_trees.composites.Sequence(name="Tables phase", memory=True)
+    for stop, next_pose in stops:
+        if stop.kind != "table":
+            continue
+        if enable_grasp:
+            root.add_child(createVisitTable(config, stop.viewpoints))
+            root.add_child(_delivery_or_nothing(config, stop, next_pose))
+        else:
+            for rec in stop.viewpoints:
+                visit = py_trees.composites.Sequence(
+                    name=f"Visit {rec.name}", memory=True)
+                visit.add_child(_gotoRetry(
+                    f"Go to {rec.name}", pose_key(rec.name), config))
+                visit.add_child(_scan_or_miss(config, rec.name))
+                root.add_child(visit)
+    return root
+
+
+def createGroundPhase(config, stops):
+    root = py_trees.composites.Sequence(name="Ground phase", memory=True)
+    for stop, _ in stops:
+        if stop.kind != "ground":
+            continue
+        rec = stop.viewpoints[0]
+        visit = py_trees.composites.Sequence(
+            name=f"Visit {rec.name}", memory=True)
+        visit.add_child(_gotoRetry(
+            f"Go to {rec.name}", pose_key(rec.name), config))
+        visit.add_child(_scan_or_miss(config, rec.name))
+        root.add_child(visit)
+    return root
+
+
+def createRoom(config, room, route_slice, *, enable_grasp=True):
+    root = py_trees.composites.Sequence(name=f"Room {room}", memory=True)
+    root.add_child(createTablesPhase(
+        config, route_slice, enable_grasp=enable_grasp))
+    root.add_child(createGroundPhase(config, route_slice))
+    return root
 
 
 def createHangzhouGrasp(*, enable_grasp=False, config=None):
@@ -239,11 +290,15 @@ def createHangzhouGrasp(*, enable_grasp=False, config=None):
     config = config if config is not None else load_config()
     root = py_trees.composites.Sequence(name="HangzhouGrasp Root", memory=True)
     root.add_child(createConstantWriter(config, enable_grasp=enable_grasp))
-    root.add_child(createNavigateToScan(config, enable_grasp=enable_grasp))
     if enable_grasp:
-        root.add_child(createScanGraspWithCleanup(config))
-    else:
-        root.add_child(createScanAnnounce(config))
-    root.add_child(createNavigateToDestination(config))
+        root.add_child(_moveArmRetry(
+            "Arm to nav before first navigation", KEY_ARM_NAVIGATING, config))
+    route = config.route
+    paired = [
+        (stop, route[i + 1].viewpoints[0] if i + 1 < len(route) else None)
+        for i, stop in enumerate(route)]
+    for room in config.rooms:
+        root.add_child(createRoom(
+            config, room, [p for p in paired if p[0].room == room],
+            enable_grasp=enable_grasp))
     return root
-

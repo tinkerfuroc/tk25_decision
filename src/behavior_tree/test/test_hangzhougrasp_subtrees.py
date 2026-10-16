@@ -6,7 +6,7 @@ import pytest
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce
 from behavior_tree.TemplateNodes.Manipulation import BtNode_GripperAction
 from behavior_tree.hangzhougrasp import hangzhougrasp as hg
-from behavior_tree.hangzhougrasp.config import KEY_HOLDING, KEY_POSE_DESTINATION
+from behavior_tree.hangzhougrasp.config import KEY_HOLDING
 from behavior_tree.hangzhougrasp.pose_index import PoseRecord
 
 
@@ -27,7 +27,7 @@ def _rec(n):
 def _cfg():
     return SimpleNamespace(
         arm_action="arm", arm_retry_limit=1, nav_retry_limit=1,
-        navigation_action="nav")
+        navigation_action="nav", destination_name="dest")
 
 
 @pytest.fixture(autouse=True)
@@ -91,7 +91,7 @@ def test_deliver_opens_gripper_and_clears_holding(monkeypatch):
         hg, "_gotoRetry",
         lambda name, key, config: keys.append(key) or py_trees.behaviours.Success(name))
     root = hg.createDeliver(_cfg())
-    assert keys == [KEY_POSE_DESTINATION]
+    assert keys == ["hg_pose_dest"]
     grippers = _nodes(root, BtNode_GripperAction)
     assert len(grippers) == 1
     assert grippers[0].goal == 0.10
@@ -118,6 +118,6 @@ def test_drop_elsewhere_without_next_pose_goes_to_destination(monkeypatch):
         hg, "_gotoRetry",
         lambda name, key, config: keys.append(key) or py_trees.behaviours.Success(name))
     root = hg.createDropElsewhere(_cfg(), None)
-    assert keys == [KEY_POSE_DESTINATION]
+    assert keys == ["hg_pose_dest"]
     assert not _nodes(root, BtNode_Announce)
     assert len(_nodes(root, BtNode_GripperAction)) == 1
