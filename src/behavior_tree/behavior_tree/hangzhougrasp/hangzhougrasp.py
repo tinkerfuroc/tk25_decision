@@ -6,7 +6,7 @@ from behavior_tree.TemplateNodes.Audio import BtNode_AnnounceDetections
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
-from behavior_tree.TemplateNodes.Vision import BtNode_ScanForGeneralist
+from behavior_tree.TemplateNodes.Vision import BtNode_ScanForYolo26
 
 from .config import (
     KEY_POSE_SCAN, KEY_POSE_DESTINATION, KEY_ARM_NAVIGATING, KEY_ARM_TABLE,
@@ -58,14 +58,13 @@ def _gotoRetry(name, pose_key, config):
     )
 
 
-def _scanForYoloWorldRetry(name, config, *, bb_key, use_orbbec,
-                       bb_source=None, prompt=None, grasp_payload=False):
+def _scanYolo26Retry(name, config, *, bb_key, use_orbbec,
+                     bb_source=None, prompt=None, grasp_payload=False):
     return py_trees.decorators.Retry(
         name=f"Retry {name}",
-        child=BtNode_ScanForGeneralist(
+        child=BtNode_ScanForYolo26(
             name=name, bb_source=bb_source, bb_key=bb_key, object=prompt,
             service_name=config.detection_service, use_orbbec=use_orbbec,
-            use_vlm_sam_fallback=False, force_vlm_sam=False,
             transform_to_map=False, sort_closest=True, sort_highest=False,
             return_rgb_image=grasp_payload, return_depth_image=grasp_payload,
             return_segments=grasp_payload,
@@ -83,14 +82,18 @@ def createNavigateToScan(config, *, enable_grasp=False):
     return root
 
 
-def createScanAndAnnounce(config, *, enable_grasp=False):
+def createScanAnnounce(config, *, grasp=False):
+    """Scan on yolo26_sam and announce; grasp=True adds arm pose + payload.
+
+    A scan with no detections FAILS; wrap in a Selector ending in
+    py_trees.behaviours.Success where a miss must not abort the mission.
+    """
     root = py_trees.composites.Sequence(name="Scan and announce objects", memory=True)
-    if enable_grasp:
+    if grasp:
         root.add_child(_moveArmRetry("Arm to table scan pose", KEY_ARM_TABLE, config))
-    root.add_child(_scanForYoloWorldRetry(
-        "Scan objects with YOLO-World", config, bb_key=KEY_SCAN_RESULT,
-        use_orbbec=(not enable_grasp and config.scan_camera == "orbbec"),
-        prompt=config.prompt, grasp_payload=enable_grasp,
+    root.add_child(_scanYolo26Retry(
+        "Scan objects with YOLO26 SAM", config, bb_key=KEY_SCAN_RESULT,
+        use_orbbec=not grasp, prompt=config.prompt, grasp_payload=grasp,
     ))
     root.add_child(py_trees.decorators.Retry(
         name="Retry announce detected objects",
@@ -112,7 +115,7 @@ def createGrasp(config):
         bb_key=KEY_GRASP_VISION_RES, label_key=KEY_TARGET_LABEL,
     ))
     attempt = py_trees.composites.Sequence(name="Reacquire and grasp", memory=True)
-    attempt.add_child(_scanForYoloWorldRetry(
+    attempt.add_child(_scanYolo26Retry(
         "Reacquire selected label with RealSense", config,
         bb_key=KEY_GRASP_SCAN_RESULT, use_orbbec=False,
         bb_source=KEY_TARGET_LABEL, grasp_payload=True,
@@ -140,7 +143,7 @@ def createScanGraspWithCleanup(config):
     """Selector cleanup like PickAndPlace, retaining failure after recovery."""
     attempt = py_trees.composites.Sequence(
         name="Scan announce and grasp", memory=True,
-        children=[createScanAndAnnounce(config, enable_grasp=True), createGrasp(config)],
+        children=[createScanAnnounce(config, grasp=True), createGrasp(config)],
     )
     cleanup = py_trees.composites.Sequence(
         name="Retract on scan or grasp failure", memory=True,
@@ -173,7 +176,7 @@ def createHangzhouGrasp(*, enable_grasp=False, config=None):
     if enable_grasp:
         root.add_child(createScanGraspWithCleanup(config))
     else:
-        root.add_child(createScanAndAnnounce(config))
+        root.add_child(createScanAnnounce(config))
     root.add_child(createNavigateToDestination(config))
     return root
 
