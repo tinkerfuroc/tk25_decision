@@ -148,3 +148,68 @@ def test_mock_config_names():
     assert BtNode_Tk27Pick.mock_config_name == "BtNode_Grasp"
     assert BtNode_Tk27SavedPose.mock_config_name == "BtNode_MoveArmSingle"
     assert BtNode_Tk27GripperOpen.mock_config_name == "BtNode_GripperAction"
+
+
+# ---- Task 2: blackboard helper leaves ----
+from behavior_tree.hangzhougrasp.custom_nodes import (  # noqa: E402
+    BtNode_ClearKey, BtNode_ScanSawObjects, BtNode_SelectNearestLabel,
+)
+
+SCAN_KEY = "hg_scan_result"
+
+
+def _scan(*labels, status=0):
+    return SimpleNamespace(status=status,
+                           objects=[SimpleNamespace(cls=c) for c in labels])
+
+
+def _bb(key):
+    return py_trees.blackboard.Blackboard.storage.get("/" + key, "<unset>")
+
+
+def _tick(node):
+    node.tick_once()
+    return node.status
+
+
+def test_clear_key_sets_none():
+    py_trees.blackboard.Blackboard.set("/" + SCAN_KEY, _scan("coke"))
+    assert _tick(BtNode_ClearKey("Clear previous scan result", SCAN_KEY)) == S.SUCCESS
+    assert _bb(SCAN_KEY) is None
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("<unset>", S.FAILURE),
+    (None, S.FAILURE),
+    (_scan("coke", status=1), S.FAILURE),
+    (_scan(), S.FAILURE),
+    (_scan("coke"), S.SUCCESS),
+])
+def test_scan_saw_objects(value, expected):
+    if value != "<unset>":
+        py_trees.blackboard.Blackboard.set("/" + SCAN_KEY, value)
+    assert _tick(BtNode_ScanSawObjects("Scan saw objects?", SCAN_KEY)) == expected
+
+
+def _select():
+    return BtNode_SelectNearestLabel("Select nearest label", SCAN_KEY, PROMPT_KEY)
+
+
+def test_select_nearest_label_takes_first():
+    py_trees.blackboard.Blackboard.set("/" + SCAN_KEY, _scan(" cup ", "coke"))
+    assert _tick(_select()) == S.SUCCESS
+    assert _bb(PROMPT_KEY) == "cup"
+
+
+def test_select_nearest_label_rejects_blank():
+    py_trees.blackboard.Blackboard.set("/" + SCAN_KEY, _scan("  "))
+    assert _tick(_select()) == S.FAILURE
+    assert _bb(PROMPT_KEY) == ""
+
+
+@pytest.mark.parametrize("value", [None, _scan(), _scan("coke", status=3)])
+def test_select_nearest_label_clears_old_label(value):
+    _set_prompt("coke")
+    py_trees.blackboard.Blackboard.set("/" + SCAN_KEY, value)
+    assert _tick(_select()) == S.FAILURE
+    assert _bb(PROMPT_KEY) == ""
