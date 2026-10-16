@@ -25,6 +25,7 @@ The verifier prints an OK/MISS table and always exits 0; fix any MISS row by ins
 | `hri.sh` | `tinker-hri` | `behavior_tree hri` |
 | `restaurant.sh` | `tinker-restaurant` | `behavior_tree restaurant` (override with `BT_ENTRY=restaurant-simplified`) |
 | `pick_and_place.sh` | `tinker-pick-and-place` | `behavior_tree pick-and-place` |
+| `hangzhougrasp.sh` | `tinker-hangzhougrasp` | none: run `ros2 run behavior_tree hangzhougrasp --map <map> --enter-room <room> [--grasp]` by hand in the `bt` window. Uses the TK27 arm stack (`manipulation_bringup` arm + manipulation launches); never start TK25 `grasp_bringup` alongside it. |
 
 Each script sources `common.sh` for: workspace sourcing, FastDDS profile env, pan-tilt device probing, and tmux pane helpers.
 

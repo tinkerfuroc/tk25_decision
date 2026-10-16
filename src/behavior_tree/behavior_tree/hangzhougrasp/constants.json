@@ -37,9 +37,20 @@
       }
     }
   },
-  "prompt": "coke",
+  "prompt": "",
   "label_map": {
-    "coke": "可乐"
+    "Banana": "香蕉",
+    "Pringles": "薯片",
+    "Shampoo": "洗发水",
+    "Coke": "可乐",
+    "Biscuits": "饼干",
+    "IceTea": "冰红茶",
+    "Apple": "苹果",
+    "Cup": "杯子",
+    "HandSanitizer": "洗手液",
+    "SoapBox": "药盒",
+    "TeddyBear": "泰迪熊",
+    "Detergent": "洗衣液"
   },
   "detection_service": "object_detection_yolo26_sam",
   "announce_service": "announce",

@@ -174,7 +174,11 @@ ros2 run object_detection_generalist yolo26_sam_node
 ```
 
 该节点用仅 bbox 的 YOLO26 权重加 MobileSAM 掩码。非空 `prompt` 必须与
-checkpoint 的标签完全一致，`label_map` 的键同理（当前 `coke` → 可乐）；
+checkpoint 的标签完全一致，`label_map` 的键同理。`label_map`（`constants.json`）
+是 YOLO 类别 → 普通话的词典，覆盖 `yolo26n-20261016-171034-yolo26n-c8ec-best.pt`
+的全部 12 类：Banana 香蕉、Pringles 品客薯片、Shampoo 洗发水、Coke 可乐、
+Biscuits 饼干、IceTea 冰红茶、Apple 苹果、Cup 杯子、HandSanitizer 洗手液、
+SoapBox 肥皂盒、TeddyBear 泰迪熊、Detergent 洗衣液；换模型时要同步更新；
 `prompt=""` 时使用 `label_map` 的全部键，两者都空则拒绝启动。
 本任务的播报必须是普通话：`prompt` 里的每个标签都必须在 `label_map` 中有
 中文名，否则启动即报错并列出缺少的标签。

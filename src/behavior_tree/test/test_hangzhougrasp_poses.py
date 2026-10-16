@@ -167,16 +167,29 @@ def test_missing_enter_room_says_how_to_set_it(tmp_path, value):
         hgcfg.load_config(path, poses=POSES)
 
 
-@pytest.mark.parametrize("prompt", ["coke . cup", "coke, cup", "cup"])
+@pytest.mark.parametrize("prompt", ["coke . mug", "coke, mug", "mug"])
 def test_prompt_label_without_mandarin_name_fails(prompt):
-    with pytest.raises(ValueError, match="cup.*Mandarin"):
+    with pytest.raises(ValueError, match="mug.*Mandarin"):
         hgcfg.load_config(TEST_CONFIG, enter_room="bedroom", prompt=prompt, poses=POSES)
 
 
 @pytest.mark.parametrize("prompt", ["coke", "Coke", "", "coke , coke"])
 def test_prompt_labels_with_mandarin_names_pass(prompt):
     c = hgcfg.load_config(TEST_CONFIG, enter_room="bedroom", prompt=prompt, poses=POSES)
-    assert c.label_map == {"coke": "可乐"}
+    assert c.label_map["Coke"] == "可乐"
+
+
+# Classes of yolo26n-20261016-171034-yolo26n-c8ec-best.pt (the vision pane's model).
+CHECKPOINT_LABELS = ["Banana", "Pringles", "Shampoo", "Coke", "Biscuits", "IceTea",
+                     "Apple", "Cup", "HandSanitizer", "SoapBox", "TeddyBear",
+                     "Detergent"]
+
+
+def test_label_map_covers_every_checkpoint_class():
+    c = hgcfg.load_config(TEST_CONFIG, enter_room="bedroom", prompt="", poses=POSES)
+    assert set(c.label_map) == set(CHECKPOINT_LABELS)
+    assert all(c.label_map.values())
+    assert c.prompt == " . ".join(c.label_map)
 
 
 # ---- TK27 manipulation config ----
