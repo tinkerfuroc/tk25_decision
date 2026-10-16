@@ -127,8 +127,9 @@ def test_next_pose_is_next_stop_first_viewpoint(config, goto_keys):
     drop = _by_name(_by_name(root, "Room kitchen"), "Drop object elsewhere")
     assert drop is not None
     # bedroom (enter room) delivers to the destination, kitchen drops at next pose
-    assert goto_keys["Go to drop pose"] == [
-        "hg_pose_point_area", "hg_pose_kitchen_ground_0_0"]
+    assert goto_keys["Go to destination point_area"] == ["hg_pose_point_area"]
+    assert goto_keys["Go to drop pose kitchen_ground_0_0"] == [
+        "hg_pose_kitchen_ground_0_0"]
 
 
 def test_last_table_stop_drops_at_destination(goto_keys):
@@ -139,7 +140,7 @@ def test_last_table_stop_drops_at_destination(goto_keys):
     kitchen = _by_name(root, "Room kitchen")
     assert _by_name(kitchen, "Deliver object")
     assert not any(n.name == "Drop object elsewhere" for n in kitchen.iterate())
-    assert goto_keys["Go to drop pose"][-1] == "hg_pose_point_area"
+    assert goto_keys["Go to destination point_area"][-1] == "hg_pose_point_area"
 
 
 def test_room_with_only_ground_poses():
@@ -266,3 +267,26 @@ def test_invalid_grasp_bundle_clears_old_target(bad):
     assert BB.get("selected") is None and BB.get("label") == ""
 
 
+
+
+def test_table_stop_then_ground_drop_elsewhere_targets_first_ground(goto_keys):
+    poses = {"bedroom_table_0_0": _pose(1, 2), "kitchen_table_0_0": _pose(5, 2),
+             "kitchen_ground_0_0": _pose(6, 2), "kitchen_ground_0_1": _pose(6, 3),
+             "point_area": _pose(3, 4)}
+    conf = _with_rooms(_config(poses), ["bedroom", "kitchen"], poses)
+    root = task.createHangzhouGrasp(config=conf, enable_grasp=True)
+    kitchen = _by_name(root, "Room kitchen")
+    assert _by_name(kitchen, "Drop object elsewhere")
+    assert goto_keys["Go to drop pose kitchen_ground_0_0"] == [
+        "hg_pose_kitchen_ground_0_0"]
+    assert "Go to drop pose kitchen_ground_0_1" not in goto_keys
+
+
+def test_enable_grasp_is_required_keyword(config):
+    stops = [(s, None) for s in config.route]
+    with pytest.raises(TypeError):
+        task.createTablesPhase(config, stops)
+    with pytest.raises(TypeError):
+        task.createRoom(config, "bedroom", stops)
+    with pytest.raises(TypeError):
+        task.createTablesPhase(config, stops, True)

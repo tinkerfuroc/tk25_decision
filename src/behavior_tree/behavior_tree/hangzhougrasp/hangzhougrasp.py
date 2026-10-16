@@ -134,22 +134,33 @@ def createGrasp(config):
         name="Retry reacquire and grasp", child=attempt,
         num_failures=config.grasp_retry_limit,
     ))
+    # Holding is true the moment the grasp succeeds, even if the retract fails.
+    root.add_child(BtNode_SetHolding(name="Set holding after grasp", value=True))
     root.add_child(_moveArmRetry(
         "Retract arm with object", KEY_ARM_NAVIGATING, config))
     return root
 
 
-def createScanGraspWithCleanup(config):
-    """Selector cleanup like PickAndPlace, retaining failure after recovery."""
+def createScanGraspWithCleanup(config, *, miss_is_success=False):
+    """Selector cleanup like PickAndPlace.
+
+    The grasp sets holding as soon as it succeeds. On any failure the arm is
+    retracted; if that retract succeeds the result is FAILURE (a recovered
+    miss) unless miss_is_success, in which case SUCCESS. If the cleanup
+    retract itself fails, FAILURE always propagates.
+    """
     attempt = py_trees.composites.Sequence(
         name="Scan announce and grasp", memory=True,
         children=[createScanAnnounce(config, grasp=True), createGrasp(config)],
     )
+    outcome = (py_trees.behaviours.Success(name="Report recovered miss")
+               if miss_is_success else
+               py_trees.behaviours.Failure(name="Report scan or grasp failure"))
     cleanup = py_trees.composites.Sequence(
         name="Retract on scan or grasp failure", memory=True,
         children=[
             _moveArmRetry("Retract arm on failure", KEY_ARM_NAVIGATING, config),
-            py_trees.behaviours.Failure(name="Report scan or grasp failure"),
+            outcome,
         ],
     )
     return py_trees.composites.Selector(
@@ -170,8 +181,9 @@ def _holding_is_set():
 def createVisitTable(config, viewpoints):
     """Try each viewpoint in order; stop after the first successful grasp.
 
-    Navigation failure fails the tree; a scan or grasp miss moves on.
-    Succeeds with holding true or false.
+    Each viewpoint succeeds when the attempt succeeded or failed and the arm
+    was retracted afterwards (a miss, or holding already set). A failed
+    navigation or a failed cleanup retract fails the table.
     """
     root = py_trees.composites.Sequence(name="Visit table", memory=True)
     for rec in viewpoints:
@@ -179,31 +191,33 @@ def createVisitTable(config, viewpoints):
             name=f"Visit {rec.name}", memory=True)
         visit.add_child(_gotoRetry(
             f"Go to {rec.name}", pose_key(rec.name), config))
-        grasp = py_trees.composites.Sequence(
-            name=f"Grasp at {rec.name}", memory=True,
-            children=[createScanGraspWithCleanup(config),
-                      BtNode_SetHolding(name="Set holding", value=True)])
-        visit.add_child(py_trees.composites.Selector(
-            name=f"Grasp or miss at {rec.name}", memory=True,
-            children=[grasp, py_trees.behaviours.Success(name="Miss, skip")]))
+        visit.add_child(createScanGraspWithCleanup(config, miss_is_success=True))
         root.add_child(py_trees.composites.Selector(
             name=f"Skip or visit {rec.name}", memory=True,
             children=[_holding_is_set(), visit]))
     return root
 
 
-def _release(name, config, goto_key):
+def _release(name, config, goto_name, goto_key):
     root = py_trees.composites.Sequence(name=name, memory=True)
     root.add_child(_moveArmRetry(
         "Arm to navigation pose", KEY_ARM_NAVIGATING, config))
-    root.add_child(_gotoRetry("Go to drop pose", goto_key, config))
+    root.add_child(_gotoRetry(goto_name, goto_key, config))
     return root
 
 
+def _open_and_clear(root, where):
+    root.add_child(BtNode_GripperAction(
+        name=f"Open gripper at {where}", open_gripper=True))
+    root.add_child(BtNode_SetHolding(
+        name=f"Clear holding after release at {where}", value=False))
+
+
 def createDeliver(config):
-    root = _release("Deliver object", config, pose_key(config.destination_name))
-    root.add_child(BtNode_GripperAction(name="Open gripper", open_gripper=True))
-    root.add_child(BtNode_SetHolding(name="Clear holding", value=False))
+    dest = config.destination_name
+    root = _release("Deliver object", config, f"Go to destination {dest}",
+                    pose_key(dest))
+    _open_and_clear(root, dest)
     return root
 
 
@@ -211,12 +225,12 @@ def createDropElsewhere(config, next_pose):
     """Drop at the next scan pose; with no next pose, the real drop."""
     if next_pose is None:
         return createDeliver(config)
-    root = _release("Drop object elsewhere", config, pose_key(next_pose.name))
+    root = _release("Drop object elsewhere", config,
+                    f"Go to drop pose {next_pose.name}", pose_key(next_pose.name))
     root.add_child(BtNode_Announce(
         name="Announce unreachable drop target", bb_source=None,
         message="无法到达真正的放置位置，我将在这里放下物体。"))
-    root.add_child(BtNode_GripperAction(name="Open gripper", open_gripper=True))
-    root.add_child(BtNode_SetHolding(name="Clear holding", value=False))
+    _open_and_clear(root, next_pose.name)
     return root
 
 
@@ -241,7 +255,7 @@ def _delivery_or_nothing(config, stop, next_pose):
             name="Not holding", child=_holding_is_set()), holding])
 
 
-def createTablesPhase(config, stops, *, enable_grasp=True):
+def createTablesPhase(config, stops, *, enable_grasp):
     root = py_trees.composites.Sequence(name="Tables phase", memory=True)
     for stop, next_pose in stops:
         if stop.kind != "table":
@@ -275,7 +289,7 @@ def createGroundPhase(config, stops):
     return root
 
 
-def createRoom(config, room, route_slice, *, enable_grasp=True):
+def createRoom(config, room, route_slice, *, enable_grasp):
     root = py_trees.composites.Sequence(name=f"Room {room}", memory=True)
     root.add_child(createTablesPhase(
         config, route_slice, enable_grasp=enable_grasp))
