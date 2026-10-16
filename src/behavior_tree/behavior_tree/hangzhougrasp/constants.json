@@ -1,7 +1,14 @@
 {
   "map_name": "8902_2_edit",
-  "pose_scan": "grasp2",
-  "pose_destination": "point_area",
+  "enter_room": "bedroom",
+  "enter_profiles": {
+    "bedroom": {
+      "rooms": [
+        "bedroom"
+      ],
+      "destination": "point_area"
+    }
+  },
   "arm_pos_navigating": [
     -15,
     -44,
@@ -25,7 +32,7 @@
     "coke": "可乐"
   },
   "scan_camera": "orbbec",
-  "detection_service": "object_detection_yolo_world",
+  "detection_service": "object_detection_yolo26_sam",
   "announce_service": "announce",
   "navigation_action": "navigate_to_pose",
   "arm_action": "joint_move_action",
@@ -36,4 +43,3 @@
   "grasp_retry_limit": 3,
   "announce_retry_limit": 2
 }
-

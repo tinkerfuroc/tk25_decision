@@ -27,9 +27,22 @@ def clear_blackboard():
     BB.clear()
 
 
+def _pose(x, y):
+    from geometry_msgs.msg import PoseStamped
+    p = PoseStamped(header=Header(frame_id="map"))
+    p.pose.position.x = float(x)
+    p.pose.position.y = float(y)
+    p.pose.orientation.w = 1.0
+    return p
+
+
+SMALL_POSES = {"bedroom_table_0_0": _pose(1, 2), "bedroom_ground_0_0": _pose(2, 2),
+               "point_area": _pose(3, 4)}
+
+
 @pytest.fixture
 def config():
-    return cfg.load_config(scan_pose=[1, 2, 90], destination_pose=[3, 4, 180])
+    return cfg.load_config(enter_room="bedroom", poses=SMALL_POSES)
 
 
 def result(labels=("bottle", "cup")):

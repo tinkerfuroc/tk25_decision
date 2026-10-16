@@ -5,8 +5,10 @@ import json
 import math
 from pathlib import Path
 
-from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from std_msgs.msg import Header
+from geometry_msgs.msg import PoseStamped
+
+from .pose_index import PoseIndex
+from .route import Stop, build_route
 
 
 KEY_POSE_SCAN = "hg_pose_scan"
@@ -21,40 +23,18 @@ KEY_GRASP_LABEL = "hg_grasp_label"
 KEY_ANNOUNCEMENT = "hg_announcement"
 
 
-def pose_from_xyyaw(x, y, yaw_deg):
-    """CLI poses use metres and degrees, in map."""
-    yaw = math.radians(float(yaw_deg))
-    return {
-        "point": {"x": float(x), "y": float(y), "z": 0.0},
-        "orientation": {"x": 0.0, "y": 0.0,
-                        "z": math.sin(yaw / 2), "w": math.cos(yaw / 2)},
-    }
-
-
-def _pose_reader(value, name):
-    if value is None:
-        raise ValueError(f"{name} is unset; configure it or pass its CLI pose option")
-    point, quat = value["point"], value["orientation"]
-    xyz = [float(point["x"]), float(point["y"]), float(point.get("z", 0.0))]
-    q = [float(quat[k]) for k in ("x", "y", "z", "w")]
-    if not all(math.isfinite(v) for v in xyz + q):
-        raise ValueError(f"{name} must contain finite coordinates")
-    norm = math.sqrt(sum(v * v for v in q))
-    if norm < 1e-6:
-        raise ValueError(f"{name} quaternion must be nonzero")
-    q = [v / norm for v in q]
-    return PoseStamped(
-        header=Header(frame_id="map"),
-        pose=Pose(position=Point(x=xyz[0], y=xyz[1], z=xyz[2]),
-                  orientation=Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])),
-    )
+def pose_key(name: str) -> str:
+    return "hg_pose_" + name
 
 
 @dataclass
 class TaskConfig:
     map_name: str
-    pose_scan: PoseStamped
-    pose_destination: PoseStamped
+    enter_room: str
+    rooms: list
+    destination_name: str
+    destination: PoseStamped
+    route: list
     arm_pos_navigating: list
     arm_pos_table: list
     label_map: dict
@@ -72,7 +52,7 @@ class TaskConfig:
     announce_retry_limit: int
 
 
-def load_config(path=None, *, scan_pose=None, destination_pose=None, prompt=None):
+def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
     """Load packaged defaults, overlay an optional JSON file and CLI values."""
     with Path(__file__).with_name("constants.json").open(encoding="utf-8") as stream:
         data = json.load(stream)
@@ -83,27 +63,39 @@ def load_config(path=None, *, scan_pose=None, destination_pose=None, prompt=None
         if unknown:
             raise ValueError(f"Unknown configuration keys: {sorted(unknown)}")
         data.update(overrides)
-    if scan_pose is not None:
-        data["pose_scan"] = pose_from_xyyaw(*scan_pose)
-    if destination_pose is not None:
-        data["pose_destination"] = pose_from_xyyaw(*destination_pose)
+    if enter_room is not None:
+        data["enter_room"] = enter_room
     if prompt is not None:
         data["prompt"] = prompt
     if not isinstance(data["map_name"], str) or not data["map_name"].strip():
         raise ValueError("map_name must be a nonempty map name")
-    named_poses = None
-    for key in ("pose_scan", "pose_destination"):
-        value = data[key]
-        if isinstance(value, str):
-            if named_poses is None:
-                from map_studio.poses import load_poses
-                named_poses = load_poses(data["map_name"])
-            if value not in named_poses:
-                raise ValueError(
-                    f"{key}: pose {value!r} is missing from map {data['map_name']!r}")
-            data[key] = named_poses[value]
-        else:
-            data[key] = _pose_reader(value, key)
+    profiles = data.pop("enter_profiles", None)
+    if not isinstance(profiles, dict) or not profiles:
+        raise ValueError("enter_profiles is missing or empty")
+    room = data["enter_room"]
+    if room not in profiles:
+        raise ValueError(
+            f"enter_room {room!r} is not a key of enter_profiles {sorted(profiles)}")
+    profile = profiles[room]
+    rooms = profile.get("rooms")
+    if (not isinstance(rooms, list) or not rooms
+            or not all(isinstance(r, str) and r for r in rooms)):
+        raise ValueError(f"enter_profiles[{room!r}].rooms must be a nonempty list")
+    if room not in rooms:
+        raise ValueError(
+            f"enter_room {room!r} is not in its own rooms {rooms}")
+    destination_name = profile.get("destination")
+    if poses is None:
+        from map_studio.poses import load_poses
+        poses = load_poses(data["map_name"])
+    if destination_name not in poses:
+        raise ValueError(
+            f"destination pose {destination_name!r} is missing from map "
+            f"{data['map_name']!r}")
+    data["rooms"] = list(rooms)
+    data["destination_name"] = destination_name
+    data["destination"] = poses[destination_name]
+    data["route"] = build_route(PoseIndex(poses), data["rooms"])
     for key in ("arm_pos_navigating", "arm_pos_table"):
         values = data[key]
         if len(values) != 7 or not all(math.isfinite(float(v)) for v in values):
