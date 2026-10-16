@@ -84,13 +84,21 @@ POSES = {"bedroom_table_0_0": ps(1, 1), "bedroom_ground_0_0": ps(2, 2),
 
 
 def _write(tmp_path, **over):
+    """Override JSON; enter_room/enter_profiles go into the 8902_2_edit map."""
+    entry = {"enter_room": "bedroom", "enter_profiles": {
+        "bedroom": {"rooms": ["bedroom"], "destination": "point_area"}}}
+    for key in ("enter_room", "enter_profiles"):
+        if key in over:
+            entry[key] = over.pop(key)
+    over.setdefault("map_name", "8902_2_edit")
+    over.setdefault("maps", {over["map_name"]: entry})
     path = tmp_path / "run.json"
     path.write_text(json.dumps(over))
     return path
 
 
 def test_load_config_builds_route_and_destination():
-    c = hgcfg.load_config(enter_room="bedroom", poses=POSES)
+    c = hgcfg.load_config(map_name="8902_2_edit", enter_room="bedroom", poses=POSES)
     assert c.enter_room == "bedroom"
     assert c.rooms == ["bedroom"]
     assert c.destination_name == "point_area"
@@ -103,7 +111,7 @@ def test_load_config_builds_route_and_destination():
 
 def test_load_config_unknown_enter_room_fails():
     with pytest.raises(ValueError, match="attic"):
-        hgcfg.load_config(enter_room="attic", poses=POSES)
+        hgcfg.load_config(map_name="8902_2_edit", enter_room="attic", poses=POSES)
 
 
 def test_enter_room_not_in_rooms_fails(tmp_path):
@@ -159,10 +167,10 @@ def test_missing_enter_room_says_how_to_set_it(tmp_path, value):
 @pytest.mark.parametrize("prompt", ["coke . cup", "coke, cup", "cup"])
 def test_prompt_label_without_mandarin_name_fails(prompt):
     with pytest.raises(ValueError, match="cup.*Mandarin"):
-        hgcfg.load_config(enter_room="bedroom", prompt=prompt, poses=POSES)
+        hgcfg.load_config(map_name="8902_2_edit", enter_room="bedroom", prompt=prompt, poses=POSES)
 
 
 @pytest.mark.parametrize("prompt", ["coke", "Coke", "", "coke , coke"])
 def test_prompt_labels_with_mandarin_names_pass(prompt):
-    c = hgcfg.load_config(enter_room="bedroom", prompt=prompt, poses=POSES)
+    c = hgcfg.load_config(map_name="8902_2_edit", enter_room="bedroom", prompt=prompt, poses=POSES)
     assert c.label_map == {"coke": "可乐"}

@@ -55,9 +55,23 @@ class TaskConfig:
 
 
 def _report_unmatched(index, rooms, destination_name):
-    """Fail on misnamed poses of a profile room; warn about other strays."""
+    """Fail on misnamed route poses of a profile room; warn about other strays.
+
+    A profile room's pose counts as a misnamed route pose when it starts with
+    ``<room>_table`` / ``<room>_ground`` or ends in ``_<n>_<m>``; helper
+    poses such as ``bedroom_search`` are only logged.
+    """
+    def looks_like_route_pose(name):
+        for r in rooms:
+            if name.startswith(r + "_"):
+                rest = name[len(r) + 1:]
+                if (rest.startswith(("table", "ground"))
+                        or re.search(r"_\d+_\d+$", name)):
+                    return True
+        return False
+
     stray = [n for n in index.unmatched if n != destination_name]
-    misnamed = sorted(n for n in stray if any(n.startswith(r + "_") for r in rooms))
+    misnamed = sorted(n for n in stray if looks_like_route_pose(n))
     if misnamed:
         raise ValueError(
             f"pose names {misnamed} start with a profile room but do not match "
@@ -82,7 +96,29 @@ def _check_mandarin_names(prompt, label_map):
             "every detectable label must be announced in Mandarin")
 
 
-def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
+def _select_map(data, map_name):
+    """Return (enter_room, enter_profiles) of the chosen known map."""
+    maps = data.pop("maps", None)
+    if not isinstance(maps, dict) or not maps:
+        raise ValueError("maps is missing or empty")
+    if map_name not in maps:
+        raise ValueError(
+            f"map {map_name!r} is not a known map; known maps are {sorted(maps)}")
+    entry = maps[map_name]
+    if not isinstance(entry, dict):
+        raise ValueError(f"maps[{map_name!r}] must be an object with "
+                         f"'enter_room' and 'enter_profiles'")
+    unknown = set(entry) - {"enter_room", "enter_profiles"}
+    if unknown:
+        raise ValueError(f"maps[{map_name!r}] has unknown keys {sorted(unknown)}")
+    profiles = entry.get("enter_profiles")
+    if not isinstance(profiles, dict) or not profiles:
+        raise ValueError(f"maps[{map_name!r}].enter_profiles is missing or empty")
+    return entry.get("enter_room"), profiles
+
+
+def load_config(path=None, *, map_name=None, enter_room=None, prompt=None,
+                poses=None):
     """Load packaged defaults, overlay an optional JSON file and CLI values."""
     with Path(__file__).with_name("constants.json").open(encoding="utf-8") as stream:
         data = json.load(stream)
@@ -93,20 +129,20 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
         if unknown:
             raise ValueError(f"Unknown configuration keys: {sorted(unknown)}")
         data.update(overrides)
-    if enter_room is not None:
-        data["enter_room"] = enter_room
+    if map_name is not None:
+        data["map_name"] = map_name
     if prompt is not None:
         data["prompt"] = prompt
     if not isinstance(data["map_name"], str) or not data["map_name"].strip():
         raise ValueError("map_name must be a nonempty map name")
-    profiles = data.pop("enter_profiles", None)
-    if not isinstance(profiles, dict) or not profiles:
-        raise ValueError("enter_profiles is missing or empty")
-    room = data.get("enter_room")
+    room, profiles = _select_map(data, data["map_name"])
+    if enter_room is not None:
+        room = enter_room
     if not isinstance(room, str) or not room.strip():
         raise ValueError(
-            "enter_room is missing; set enter_room in constants.json or pass "
-            "--enter-room")
+            f"enter_room is missing; set maps[{data['map_name']!r}].enter_room "
+            "in constants.json or pass --enter-room")
+    data["enter_room"] = room
     if room not in profiles:
         raise ValueError(
             f"enter_room {room!r} is not a key of enter_profiles {sorted(profiles)}")

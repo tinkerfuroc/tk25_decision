@@ -3,6 +3,8 @@
 与 `HRI/`、`PickAndPlace/` 并列的任务模块，入口：
 `ros2 run behavior_tree hangzhougrasp`。多房间任务：每个房间先逐个桌子
 扫描并尝试抓取，再扫地面；房间顺序由 enterRoom profile 决定。
+支持两张已知地图（`--map`）：`robocup_home_2026_measured_5cm`（默认）和
+`8902_2_edit`，每张地图有自己的入口房间与 profile。
 
 ## 决策树
 
@@ -58,34 +60,53 @@ Map Studio 点位名为 `<room>_<furniture>_<n>_<m>`，例如
   会启动即报错。
 
 顺序：房间内桌子按 `n` 升序，一个桌子的视点按 `m` 升序，地面点按
-`(n, m)` 升序。不符合命名的点位不进入索引：以 profile 中某个房间名加下划线开头
-（如 `bedroom_tabel_1_0`）的错误命名会启动即报错并列出点位名；其他不符合
-命名的点位只记一条 warning。房间在 profile 里却没有任何
+`(n, m)` 升序。不符合命名的点位不进入索引：profile 房间里**看起来像路线点**
+的错误命名——以 `<room>_table` / `<room>_ground` 开头，或以 `_<数字>_<数字>`
+结尾（如 `diningroom_table1_1`、`bedroom_tabel_1_0`）——会启动即报错并列出
+点位名；其他点位（如 `bedroom_search`、`livingroom_switch`、`register`）
+只记一条 warning。房间在 profile 里却没有任何
 桌子/地面点也会启动即报错；`rooms` 中重复的房间名同样报错。destination 点位直接按名称从原始点位表读取，
 不要求符合上面的命名。
 
-## enter_profiles 与 enter_room
+## 地图、enter_profiles 与 enter_room
 
-`constants.json`（或 `--config` 的 JSON）中：
+`constants.json`（或 `--config` 的 JSON）中，每张已知地图在 `maps` 下有自己的
+`enter_room`（默认入口）和 `enter_profiles`；`map_name` 选默认地图：
 
 ```json
 {
-  "map_name": "8902_2_edit",
-  "enter_room": "bedroom",
-  "enter_profiles": {
-    "bedroom":    {"rooms": ["bedroom", "livingroom", "kitchen"], "destination": "point_area"},
-    "livingroom": {"rooms": ["livingroom", "kitchen", "bedroom"], "destination": "point_area"}
+  "map_name": "robocup_home_2026_measured_5cm",
+  "maps": {
+    "robocup_home_2026_measured_5cm": {
+      "enter_room": "livingroom",
+      "enter_profiles": {
+        "livingroom": {"rooms": ["livingroom", "kitchen", "diningroom", "bedroom"],
+                       "destination": "livingroom_destination"},
+        "diningroom": {"rooms": ["diningroom", "kitchen", "bedroom", "livingroom"],
+                       "destination": "diningroom_destination"}
+      }
+    },
+    "8902_2_edit": {
+      "enter_room": "bedroom",
+      "enter_profiles": {"bedroom": {"rooms": ["bedroom"], "destination": "point_area"}}
+    }
   }
 }
 ```
 
+- `--map NAME` 覆盖 `map_name`；不在 `maps` 里的地图是启动错误，并列出已知地图。
+- robocup 地图只有客厅（livingroom）和餐厅（diningroom）两个入口。
+  `livingroom_destination`、`diningroom_destination` 需要在 Map Studio 里标出
+  （名字可在 `constants.json` 改）；没标之前启动会报错并给出缺失的点位名。
+- `8902_2_edit` 目前没有 `<room>_table|ground_<n>_<m>` 点位，标好之前无法启动。
 - 每个 profile 给出覆盖房间的顺序 `rooms`（必须包含自身）和本次的
   `destination` 点位名。profile 不是对象、缺 `destination` 都是启动错误。
-- `--enter-room NAME` 覆盖 JSON 的 `enter_room`；未知名称是启动错误。
-- 不做任何回退：缺 `enter_profiles`、未知 `enter_room`、点位名找不到、
-  点位文件不存在，都会在 setup 与任何运动之前以清晰信息退出
-  （`--print-tree` 同样需要有效 profile）。
-- 外部 JSON 只需提供要覆盖的字段；未知键会被拒绝。
+- `--enter-room NAME` 覆盖所选地图的 `enter_room`；未知名称是启动错误。
+- 不做任何回退：缺 `maps`、未知地图、缺 `enter_profiles`、未知 `enter_room`、
+  点位名找不到、点位文件不存在，都会在 setup 与任何运动之前以清晰信息退出
+  （`--print-tree` 同样需要有效 profile）。顶层的旧键 `enter_room` /
+  `enter_profiles` 以及地图条目里的其他键都会被拒绝。
+- 外部 JSON 只需提供要覆盖的字段；未知键会被拒绝（覆盖 `maps` 时整体替换）。
 
 ## 放置规则
 
@@ -151,7 +172,7 @@ Python 工厂：
 from behavior_tree.hangzhougrasp.config import load_config
 from behavior_tree.hangzhougrasp.hangzhougrasp import createHangzhouGrasp
 
-config = load_config(enter_room="bedroom")
+config = load_config(map_name="robocup_home_2026_measured_5cm", enter_room="livingroom")
 root = createHangzhouGrasp(config=config, enable_grasp=True)
 ```
 
@@ -187,8 +208,8 @@ root = createHangzhouGrasp(config=config, enable_grasp=True)
 
 1. 现场准备：Map Studio 标好 `<room>_table_<n>_<m>`、`<room>_ground_<n>_<m>`
    和每个 profile 的 destination，重建 navigation_bringup。
-2. 编辑 `enter_profiles`，运行
-   `ros2 run behavior_tree hangzhougrasp --enter-room <room> --grasp --print-tree`，
+2. 编辑对应地图的 `enter_profiles`，运行
+   `ros2 run behavior_tree hangzhougrasp --map <map> --enter-room <room> --grasp --print-tree`，
    确认路线点位顺序；名称或 profile 写错会清晰报错退出。
 3. 启动 `yolo26_sam_node`，然后依次：
    `--part scan-announce`（不动）→ `--part scan-announce --at <pose>` →

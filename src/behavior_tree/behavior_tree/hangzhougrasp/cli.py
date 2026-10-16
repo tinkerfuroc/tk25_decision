@@ -11,6 +11,8 @@ from .parts import PARTS, createPart
 def _build_parser():
     parser = argparse.ArgumentParser(prog="hangzhougrasp")
     parser.add_argument("--config", help="JSON overrides for constants.json")
+    parser.add_argument("--map", default=None, metavar="NAME",
+                        help="Known map from constants.json maps; overrides map_name")
     parser.add_argument("--enter-room", default=None, metavar="NAME",
                         help="Entry room; overrides the enter_room key")
     parser.add_argument("--grasp", action=argparse.BooleanOptionalAction, default=False,
@@ -48,7 +50,8 @@ def main(args=None):
         parser.error(f"unrecognized arguments: {' '.join(extras)}")
     try:
         config = load_config(
-            options.config, enter_room=options.enter_room, prompt=options.prompt)
+            options.config, map_name=options.map,
+            enter_room=options.enter_room, prompt=options.prompt)
         # Validate the part now so errors precede any ROS setup.
         createPart(options.part, config, enable_grasp=options.grasp,
                    room=options.room, table=options.table,
@@ -67,7 +70,8 @@ def main(args=None):
         return
     run_tree(
         factory, period_ms=500.0,
-        title=f"HangzhouGrasp {options.part} (grasp={options.grasp})",
+        title=(f"HangzhouGrasp {options.part} on {config.map_name} "
+               f"from {config.enter_room} (grasp={options.grasp})"),
         node_name="hangzhougrasp", show_during_setup=True,
         stop_on_terminal=True,
     )

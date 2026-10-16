@@ -45,7 +45,7 @@ ROUTE_POSES = {
 
 def _config(poses=None, rooms=("bedroom", "kitchen"), enter="bedroom"):
     import behavior_tree.hangzhougrasp.config as c
-    conf = c.load_config(enter_room=enter, poses=poses or ROUTE_POSES)
+    conf = c.load_config(map_name="8902_2_edit", enter_room=enter, poses=poses or ROUTE_POSES)
     return conf
 
 

@@ -1,12 +1,39 @@
 {
-  "map_name": "8902_2_edit",
-  "enter_room": "bedroom",
-  "enter_profiles": {
-    "bedroom": {
-      "rooms": [
-        "bedroom"
-      ],
-      "destination": "point_area"
+  "map_name": "robocup_home_2026_measured_5cm",
+  "maps": {
+    "robocup_home_2026_measured_5cm": {
+      "enter_room": "livingroom",
+      "enter_profiles": {
+        "livingroom": {
+          "rooms": [
+            "livingroom",
+            "kitchen",
+            "diningroom",
+            "bedroom"
+          ],
+          "destination": "livingroom_destination"
+        },
+        "diningroom": {
+          "rooms": [
+            "diningroom",
+            "kitchen",
+            "bedroom",
+            "livingroom"
+          ],
+          "destination": "diningroom_destination"
+        }
+      }
+    },
+    "8902_2_edit": {
+      "enter_room": "bedroom",
+      "enter_profiles": {
+        "bedroom": {
+          "rooms": [
+            "bedroom"
+          ],
+          "destination": "point_area"
+        }
+      }
     }
   },
   "arm_pos_navigating": [

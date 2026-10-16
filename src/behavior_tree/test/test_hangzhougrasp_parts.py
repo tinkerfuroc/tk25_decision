@@ -41,7 +41,7 @@ POSES = {
 
 @pytest.fixture
 def config():
-    conf = cfg.load_config(enter_room="bedroom", poses=POSES)
+    conf = cfg.load_config(map_name="8902_2_edit", enter_room="bedroom", poses=POSES)
     rooms = ["bedroom", "kitchen"]
     return dataclasses.replace(
         conf, rooms=rooms, route=build_route(PoseIndex(POSES), rooms))
