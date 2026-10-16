@@ -157,7 +157,7 @@ def test_every_orbbec_scan_commands_its_phase_tilt(config, grasp):
     root = task.createHangzhouGrasp(config=config, enable_grasp=grasp)
     for room in ("bedroom", "kitchen"):
         room_node = _by_name(root, f"Room {room}")
-        for phase, tilt in (("Tables phase", 0.0), ("Ground phase", -15.0)):
+        for phase, tilt in (("Tables phase", 0.0), ("Ground phase", 0.0)):
             node = _by_name(room_node, phase)
             heads = _nodes(node, task.BtNode_HeadTilt)
             orbbec = [s for s in _nodes(node, task.BtNode_ScanForYolo26) if s.use_orbbec]

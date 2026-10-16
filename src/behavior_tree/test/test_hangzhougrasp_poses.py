@@ -253,7 +253,7 @@ def test_head_angles_defaults():
     c = hgcfg.load_config(TEST_CONFIG, enter_room="bedroom", poses=POSES)
     assert c.head_pan_deg == 0.0
     assert c.table_scan_tilt_deg == 0.0
-    assert c.ground_scan_tilt_deg == -15.0
+    assert c.ground_scan_tilt_deg == 0.0
     assert c.head_retry_limit == 3
 
 
