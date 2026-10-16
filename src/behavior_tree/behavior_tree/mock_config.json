@@ -19,6 +19,7 @@
         "nodes": {
           "BtNode_ScanFor": "KEYPRESS",
           "BtNode_ScanForGeneralist": "KEYPRESS",
+          "BtNode_ScanForYolo26": "KEYPRESS",
           "BtNode_ObjectScan": "NO_MOCK",
           "BtNode_VLMQuery": "IMMEDIATE",
           "BtNode_LLMQuery": "IMMEDIATE",
@@ -81,7 +82,7 @@
         }
       },
       "audio_input": {
-        "enabled": true,
+        "enabled": false,
         "announce_movement": false,
         "description": "Per-node mock mode for audio input nodes (not announcement)",
         "nodes": {
@@ -106,6 +107,7 @@
         "description": "Per-node mock mode for TTS nodes",
         "nodes": {
           "BtNode_Announce": "KEYPRESS",
+          "BtNode_AnnounceDetections": "KEYPRESS",
           "BtNode_TTSCN": "KEYPREfSS",
           "BtNode_Introduce": "KEYPRESS",
           "BtNode_Confirm": "KEYPRESS"

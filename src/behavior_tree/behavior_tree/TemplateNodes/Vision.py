@@ -342,6 +342,52 @@ class BtNode_ScanForGeneralist(ServiceHandler):
         return pytree.common.Status.RUNNING
 
 
+class BtNode_ScanForYolo26(BtNode_ScanForGeneralist):
+    """Detect checkpoint labels via /object_detection_yolo26.
+
+    Uses the same request, response and blackboard contract as generalist.
+    With neither object nor bb_source, the empty prompt detects all labels.
+    An explicit object (including "") takes precedence over bb_source.
+    Otherwise the prompt is read from bb_source on every initialise().
+    Multiple labels may be separated by " . ", commas or newlines.
+    """
+
+    def __init__(self,
+                 name: str,
+                 bb_source: Optional[str] = None,
+                 bb_key: str = "yolo26_detection",
+                 service_name: str = "object_detection_yolo26",
+                 object: Optional[str] = None,
+                 use_orbbec: bool = True,
+                 transform_to_map: bool = False,
+                 sort_closest: bool = True,
+                 sort_highest: bool = False,
+                 return_rgb_image: bool = False,
+                 return_depth_image: bool = False,
+                 return_segments: bool = True,
+                 ):
+        # None with a source means read the blackboard; without one it means
+        # all labels. Preserve explicit empty strings rather than "object".
+        if object is None and bb_source is None:
+            object = ""
+        super().__init__(
+            name=name,
+            bb_source=bb_source,
+            bb_key=bb_key,
+            service_name=service_name,
+            object=object,
+            use_orbbec=use_orbbec,
+            transform_to_map=transform_to_map,
+            use_vlm_sam_fallback=False,
+            force_vlm_sam=False,
+            sort_closest=sort_closest,
+            sort_highest=sort_highest,
+            return_rgb_image=return_rgb_image,
+            return_depth_image=return_depth_image,
+            return_segments=return_segments,
+        )
+
+
 class BtNode_ObjectScan(ActionHandler):
     """Labels-only batched-VLM scene scan via ``/object_scan``.
 
@@ -1503,7 +1549,8 @@ class BtNode_TurnPanTilt(pytree.behaviour.Behaviour):
         self.x_key = x_key
         self.y_key = y_key
         self.speed_key = speed_key
-        self.mock_mode = is_node_mocked(self.__class__.__name__)
+        self.mock_mode = is_node_mocked(
+            getattr(self, "mock_config_name", self.__class__.__name__))
 
     def setup(self, **kwargs) -> None:
         try:

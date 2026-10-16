@@ -334,6 +334,113 @@ class BtNode_Announce(ServiceHandler):
             return pytree.common.Status.RUNNING
 
 
+class BtNode_AnnounceDetections(BtNode_Announce):
+    """Translate detection labels with a dictionary and announce Chinese text.
+
+    Reads a detection response (objects[].cls) from bb_source on each visit.
+    Preserves detection order, skips unknown labels and optionally deduplicates
+    translated names. Uses the existing announce service and mock behaviour.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        bb_source: str,
+        label_map: dict,
+        service_name: str = "announce",
+        bb_text_key: Optional[str] = None,
+        prefix: str = "我看到了",
+        suffix: str = "。",
+        deduplicate: bool = True,
+        empty_message: str = "",
+    ):
+        if not isinstance(label_map, dict):
+            raise TypeError("label_map must be a dictionary of label -> Chinese name")
+        self.label_map = {}
+        for label, chinese in label_map.items():
+            if (not isinstance(label, str) or not label.strip()
+                    or not isinstance(chinese, str) or not chinese.strip()):
+                raise ValueError("label_map keys and values must be nonempty strings")
+            key = label.strip().casefold()
+            value = chinese.strip()
+            if key in self.label_map and self.label_map[key] != value:
+                raise ValueError(f"Conflicting translations for label {label!r}")
+            self.label_map[key] = value
+        if not isinstance(bb_source, str) or not bb_source.strip():
+            raise ValueError("bb_source must name a detection blackboard key")
+        if bb_text_key is not None and (
+            pytree.blackboard.Blackboard.absolute_name("/", bb_text_key)
+            == pytree.blackboard.Blackboard.absolute_name("/", bb_source)
+        ):
+            raise ValueError("bb_text_key must differ from the detection source")
+        super().__init__(name, bb_source=None, service_name=service_name, message="")
+        self.detection_source = bb_source
+        self.bb_text_key = bb_text_key
+        self.prefix = prefix
+        self.suffix = suffix
+        self.deduplicate = deduplicate
+        self.empty_message = empty_message
+        self._preparation_status = None
+        self.detection_bb = self.attach_blackboard_client(name=f"{name} detections")
+        self.detection_bb.register_key(bb_source, access=pytree.common.Access.READ)
+        if bb_text_key is not None:
+            self.detection_bb.register_key(bb_text_key, access=pytree.common.Access.WRITE)
+
+    def initialise(self):
+        # Clear per-visit text and future before reading fresh detections.
+        ServiceHandler.initialise(self)
+        self._preparation_status = None
+        self.given_msg = ""
+        self.announce_msg = ""
+        if self.bb_text_key is not None:
+            self.detection_bb.set(self.bb_text_key, "", overwrite=True)
+        try:
+            result = self.detection_bb.get(self.detection_source)
+            if getattr(result, "status", 0) != 0:
+                raise ValueError(
+                    f"Detection failed: {getattr(result, 'error_msg', '')}"
+                )
+            names = []
+            seen = set()
+            unknown = []
+            for obj in result.objects:
+                label = obj.cls.strip()
+                chinese = self.label_map.get(label.casefold())
+                if chinese is None:
+                    unknown.append(label)
+                    continue
+                if self.deduplicate and chinese in seen:
+                    continue
+                names.append(chinese)
+                seen.add(chinese)
+            if unknown:
+                self.logger.warning(f"Skipping unmapped detection labels: {unknown}")
+            self.given_msg = (
+                self.prefix + "、".join(names) + self.suffix
+                if names else self.empty_message
+            )
+            if self.bb_text_key is not None:
+                self.detection_bb.set(self.bb_text_key, self.given_msg, overwrite=True)
+        except (KeyError, AttributeError, TypeError, ValueError) as exc:
+            self._preparation_status = Status.FAILURE
+            self.feedback_message = f"Cannot announce detections: {exc}"
+            return
+        if not self.given_msg.strip():
+            self._preparation_status = Status.SUCCESS
+            self.feedback_message = "No mapped detections to announce"
+            return
+        super().initialise()
+
+    def update(self) -> Status:
+        if self._preparation_status is not None:
+            return self._preparation_status
+        try:
+            return super().update()
+        except Exception as exc:
+            self.feedback_message = f"Detection announcement failed: {exc}"
+            return Status.FAILURE
+
+
 class BtNode_WaitForStart(ServiceHandler):
     """
     Node to wait for an audio signal to start task, returns success once signal is received
@@ -963,6 +1070,7 @@ class BtNode_ListenAction(ActionHandler):
         timeout: float = 5.0,
         action_name: str = "listen_action",
         wait_for_server_timeout_sec: float = -3.0,
+        initial_prompt: str = "",
     ):
         super().__init__(
             name,
@@ -972,6 +1080,7 @@ class BtNode_ListenAction(ActionHandler):
             wait_for_server_timeout_sec=wait_for_server_timeout_sec,
         )
         self.timeout = timeout
+        self.initial_prompt = initial_prompt
         self._feedback_timeout_secs = max(self.timeout + 10.0, 30.0)
         self.bb_dest_key = bb_dest_key
         self.message_blackboard = self.attach_blackboard_client(
@@ -992,6 +1101,7 @@ class BtNode_ListenAction(ActionHandler):
             return
         goal = ListenAction.Goal()
         goal.timeout = float(self.timeout)
+        goal.initial_prompt = self.initial_prompt
         self.send_goal_request(goal)
         self.feedback_message = f"sent Listen goal (timeout={self.timeout}s)"
 

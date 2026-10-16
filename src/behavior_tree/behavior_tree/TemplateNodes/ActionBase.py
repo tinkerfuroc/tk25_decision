@@ -144,9 +144,10 @@ class ActionHandler(py_trees.behaviour.Behaviour):
         self.wait_for_server_timeout_sec = wait_for_server_timeout_sec
         
         # Check if this specific node should be mocked
-        self.mock_mode = is_node_mocked(self.__class__.__name__)
-        self.mock_interaction_mode = get_node_mock_interaction_mode(self.__class__.__name__)
-        self.mock_subsystem = get_node_subsystem_name(self.__class__.__name__)
+        config_name = getattr(self, "mock_config_name", self.__class__.__name__)
+        self.mock_mode = is_node_mocked(config_name)
+        self.mock_interaction_mode = get_node_mock_interaction_mode(config_name)
+        self.mock_subsystem = get_node_subsystem_name(config_name)
         
         # For mock mode keyboard press
         self._mock_pressed = False

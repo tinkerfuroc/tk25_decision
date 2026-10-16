@@ -860,7 +860,10 @@ class GetConfirmationAction(MockAction):
 
 class ListenAction(MockAction):
     """Mock Listen action from tinker_audio_msgs."""
-    pass
+    class Goal(MockAction.Goal):
+        def __init__(self):
+            super().__init__()
+            self.initial_prompt = ""
 
 
 class Doorbell(MockAction):

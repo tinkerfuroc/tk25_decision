@@ -27,6 +27,20 @@ All 30+ template nodes updated with native mock support. No more conditional log
 
 ## 🚀 Quick Start
 
+### Hangzhou grasp task
+
+`ros2 run behavior_tree hangzhougrasp` runs grasp2 navigation, YOLO-World detection,
+Chinese announcement and an optional `--grasp` branch, followed by navigation
+to a second point. See [configuration, Retry policy and examples](behavior_tree/hangzhougrasp/README.md).
+
+### YOLO26 checkpoint detection
+
+Use `BtNode_ScanForYolo26` from `behavior_tree.TemplateNodes.Vision` to
+call the tk26_vision YOLO26 segmentation server. It supports an empty prompt
+for all checkpoint labels, fixed labels or blackboard prompts, and the same
+depth sorting and response fields as generalist.
+See [YOLO26 usage and configuration](../../docs/YOLO26_DETECTION.md).
+
 ### Basic Usage
 
 ```bash

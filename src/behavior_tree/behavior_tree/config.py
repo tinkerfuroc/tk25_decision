@@ -82,9 +82,10 @@ class BehaviorTreeConfig:
 
         cwd = Path.cwd().resolve()
         for parent in [cwd] + list(cwd.parents):
-            candidate = parent / "src" / "behavior_tree" / "behavior_tree" / "mock_config.json"
-            if candidate.exists():
-                return candidate
+            for source in (parent, parent / "src" / "tk25_decision"):
+                candidate = source / "src" / "behavior_tree" / "behavior_tree" / "mock_config.json"
+                if candidate.exists():
+                    return candidate
 
         return Path(__file__).parent / 'mock_config.json'
 
