@@ -1,2 +1,2 @@
-"""Hangzhou navigation, YOLO-World detection, announcement and optional grasp task."""
+"""Hangzhou navigation, YOLO26 detection, announcement and optional grasp task."""
 

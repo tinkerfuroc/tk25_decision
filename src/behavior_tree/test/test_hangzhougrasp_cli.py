@@ -130,3 +130,62 @@ def test_scan_camera_key_no_longer_accepted(tmp_path):
     path.write_text(json.dumps({"scan_camera": "orbbec"}))
     with pytest.raises(ValueError, match="Unknown"):
         cfg.load_config(str(path), poses=POSES)
+
+
+def test_ros_args_remainder_tolerated(conf_path, capsys):
+    cli.main(["--config", conf_path, "--print-tree",
+              "--ros-args", "-r", "__node:=foo"])
+    assert "bedroom_table_0_0" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("args", [
+    ["--scan-pose", "1", "2", "3"], ["--scan-pose=1"],
+    ["--destination-pose", "1"], ["--destination-pose=1,2,3"]])
+def test_removed_pose_flags_rejected_even_with_ros_args(conf_path, args):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--config", conf_path, *args, "--print-tree",
+                  "--ros-args", "-r", "__node:=foo"])
+    assert exc.value.code != 0
+
+
+def test_other_unknown_flags_still_rejected(conf_path):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--config", conf_path, "--bogus", "--print-tree"])
+    assert exc.value.code != 0
+
+
+def test_duplicate_rooms_in_profile_rejected(tmp_path):
+    profiles = {"bedroom": {"rooms": ["bedroom", "kitchen", "kitchen"],
+                            "destination": "point_area"}}
+    with pytest.raises(ValueError, match="duplicate.*kitchen"):
+        cfg.load_config(_write(tmp_path, profiles), poses=POSES)
+
+
+def test_misnamed_pose_in_profile_room_rejected(tmp_path):
+    poses = dict(POSES)
+    poses["bedroom_tabel_1_0"] = _pose(9, 9)
+    poses["grasp2"] = _pose(8, 8)
+    with pytest.raises(ValueError) as exc:
+        cfg.load_config(_write(tmp_path, PROFILES), poses=poses)
+    msg = str(exc.value)
+    assert "bedroom_tabel_1_0" in msg and "table|ground" in msg
+    assert "grasp2" not in msg
+
+
+def test_unmatched_other_names_warn(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        cfg.log, "warning", lambda msg, *args: seen.append(msg % args))
+    poses = dict(POSES)
+    poses["grasp2"] = _pose(8, 8)
+    cfg.load_config(_write(tmp_path, PROFILES), poses=poses)
+    assert len(seen) == 1 and "grasp2" in seen[0]
+
+
+def test_unmatched_room_prefix_only_for_profile_rooms(tmp_path):
+    poses = dict(POSES)
+    poses["living_room_table_0_0"] = _pose(7, 7)  # not a profile room: warning only
+    cfg.load_config(_write(tmp_path, PROFILES), poses=poses)
+    poses["kitchen_table_x_0"] = _pose(6, 6)
+    with pytest.raises(ValueError, match="kitchen_table_x_0"):
+        cfg.load_config(_write(tmp_path, PROFILES), poses=poses)

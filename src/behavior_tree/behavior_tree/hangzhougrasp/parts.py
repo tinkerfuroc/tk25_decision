@@ -8,7 +8,7 @@ from . import hangzhougrasp as task
 from .config import KEY_ARM_NAVIGATING, KEY_ARM_TABLE, pose_key
 
 PARTS = {
-    "scan-announce": "Scan and announce where the robot stands (or after --at); no arm",
+    "scan-announce": "Scan and announce where the robot stands (or after --at); with --grasp the scan also moves the arm to the table pose",
     "scan-grasp": "Scan, announce, select and grasp, with failure cleanup (needs --grasp)",
     "visit-table": "All viewpoints of --room --table N without delivery (needs --grasp)",
     "deliver": "Arm to nav pose, go to the destination, open gripper (needs --grasp)",

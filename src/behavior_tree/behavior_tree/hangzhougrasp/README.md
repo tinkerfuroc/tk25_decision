@@ -28,8 +28,9 @@ Visit table:  对每个视点（升序 m）
     Go to <table 视点>
     Grasp or miss:
       Arm to table scan pose → RealSense 扫描 + 中文播报
-      → 选最近目标 → 重新扫描并抓取 → 收回机械臂 → 记为持有
-      任一步失败：收回机械臂，该视点算 miss，换下一个视点
+      → 选最近目标 → 重新扫描并抓取 → 抓取一成功立即记为持有 → 收回机械臂
+      任一步失败：收回机械臂；收回成功则该视点算 miss（已持有则后续视点
+      直接跳过），收回本身失败则整个任务失败
 Deliver if holding:  持有物体才执行（规则见“放置规则”）
 ```
 
@@ -38,9 +39,10 @@ Deliver if holding:  持有物体才执行（规则见“放置规则”）
 只扫描播报，不抓取、不放置。
 
 `--grasp` 是**构建参数**：关闭时不构建机械臂、抓取、收回、夹爪节点，
-也不等待这些 action server。导航失败会让任务失败；扫描/抓取 miss 不会。
-抓取分支用 `Selector(memory=True)`：失败后先收回机械臂再换视点，
-不会带着张开的状态继续导航。
+也不等待这些 action server。导航失败会让任务失败；扫描/抓取 miss 不会，
+但失败后的收回机械臂（cleanup）若重试后仍失败，任务失败并停止，
+不会带着伸出的机械臂继续导航。
+抓取分支用 `Selector(memory=True)`：失败后先收回机械臂再换视点。
 
 ## 点位命名
 
@@ -52,8 +54,10 @@ Map Studio 点位名为 `<room>_<furniture>_<n>_<m>`，例如
 - `room` 和 `furniture` 不含下划线（写 `livingroom`，不是 `living_room`）。
 
 顺序：房间内桌子按 `n` 升序，一个桌子的视点按 `m` 升序，地面点按
-`(n, m)` 升序。不符合命名的点位不进入索引，房间在 profile 里却没有任何
-桌子/地面点会启动即报错。destination 点位直接按名称从原始点位表读取，
+`(n, m)` 升序。不符合命名的点位不进入索引：以 profile 中某个房间名加下划线开头
+（如 `bedroom_tabel_1_0`）的错误命名会启动即报错并列出点位名；其他不符合
+命名的点位只记一条 warning。房间在 profile 里却没有任何
+桌子/地面点也会启动即报错；`rooms` 中重复的房间名同样报错。destination 点位直接按名称从原始点位表读取，
 不要求符合上面的命名。
 
 ## enter_profiles 与 enter_room
@@ -147,7 +151,7 @@ root = createHangzhouGrasp(config=config, enable_grasp=True)
 
 ### 已移除的参数
 
-- `--scan-pose`、`--destination-pose`：删除，传入会报错（不是忽略）。
+- `--scan-pose`、`--destination-pose`：删除，传入会报错（不是忽略；`--ros-args ...` 尾部参数仍被容忍）。
 - JSON 键 `pose_scan`、`pose_destination`：删除，出现即为未知键错误。
 - `scan_camera`：删除（从未被读取；相机由是否 `--grasp` 决定）。
 - YOLO-World 检测器（`object_detection_yolo_world`）已被 yolo26_sam 取代。
@@ -162,7 +166,7 @@ root = createHangzhouGrasp(config=config, enable_grasp=True)
 
 | part | 作用 | 示例 |
 |---|---|---|
-| `scan-announce` | 原地扫描并播报，不动机械臂 | `--part scan-announce` |
+| `scan-announce` | 原地扫描并播报（加 `--grasp` 时扫描前会把机械臂移到桌面扫描姿态） | `--part scan-announce` |
 | `scan-grasp` | 扫描、选择、抓取，失败收回（需 `--grasp`） | `--grasp --part scan-grasp` |
 | `visit-table` | 某房间某桌子的全部视点，不放置（需 `--grasp`） | `--grasp --part visit-table --room bedroom --table 0` |
 | `deliver` | 臂回导航姿态，去 destination，开夹爪（需 `--grasp`） | `--grasp --part deliver` |
@@ -203,7 +207,10 @@ root = createHangzhouGrasp(config=config, enable_grasp=True)
 - 抓取 Retry 包住“重新扫描 + 选目标 + 抓取”，因此上一次抓取失败后不会
   重用之前的 RGB/depth/mask。内部扫描 Retry 与抓取 Retry 是嵌套预算。
 - 抓取场景失败收尾沿用 PickAndPlace 的 Selector + cleanup Sequence。
-  本任务保留失败结果，避免把 cleanup 成功当作抓取成功后继续运输。
+  `scan-grasp` part 保留失败结果；桌子流程（visit-table）中 cleanup 成功
+  视为该视点 miss 并继续，cleanup 失败则整体失败。抓取成功后立即记为持有，
+  即使随后的收回失败。drop/deliver 的导航节点以目标点位命名
+  （`Go to destination <name>`、`Go to drop pose <name>`）。
 - 相机响应保持原始 camera frame，`transform_to_map=False`；
   导航目标才在 map frame。抓取只传同一目标对应的一个 mask 和 label，
   检查 RGB/depth/mask 尺寸一致。原始扫描响应不被修改。

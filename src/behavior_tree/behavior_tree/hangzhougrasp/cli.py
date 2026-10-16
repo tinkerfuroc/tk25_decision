@@ -34,7 +34,18 @@ def _build_parser():
 
 def main(args=None):
     parser = _build_parser()
-    options = parser.parse_args(args)
+    # Tolerate a trailing ``--ros-args ...`` remainder, but never silently
+    # accept the removed pose flags (or their ``=`` forms) as leftovers.
+    options, extras = parser.parse_known_args(args)
+    removed = ("--scan-pose", "--destination-pose")
+    for extra in extras:
+        if extra.split("=", 1)[0] in removed:
+            parser.error(f"{extra.split('=', 1)[0]} was removed; use a pose "
+                         "name in the map instead")
+    if "--ros-args" in extras:
+        extras = extras[:extras.index("--ros-args")]
+    if extras:
+        parser.error(f"unrecognized arguments: {' '.join(extras)}")
     try:
         config = load_config(
             options.config, enter_room=options.enter_room, prompt=options.prompt)

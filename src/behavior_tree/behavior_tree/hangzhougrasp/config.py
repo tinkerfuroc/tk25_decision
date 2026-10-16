@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import json
+import logging
 import math
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from geometry_msgs.msg import PoseStamped
 from .pose_index import PoseIndex
 from .route import build_route
 
+
+log = logging.getLogger(__name__)
 
 KEY_ARM_NAVIGATING = "hg_arm_navigating"
 KEY_ARM_TABLE = "hg_arm_table"
@@ -50,6 +53,20 @@ class TaskConfig:
     announce_retry_limit: int
 
 
+def _report_unmatched(index, rooms, destination_name):
+    """Fail on misnamed poses of a profile room; warn about other strays."""
+    stray = [n for n in index.unmatched if n != destination_name]
+    misnamed = sorted(n for n in stray if any(n.startswith(r + "_") for r in rooms))
+    if misnamed:
+        raise ValueError(
+            f"pose names {misnamed} start with a profile room but do not match "
+            f"<room>_<table|ground>_<n>_<m> (e.g. {rooms[0]}_table_0_0)")
+    other = sorted(n for n in stray if n not in misnamed)
+    if other:
+        log.warning("Ignoring poses not named <room>_<table|ground>_<n>_<m>: %s",
+                    other)
+
+
 def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
     """Load packaged defaults, overlay an optional JSON file and CLI values."""
     with Path(__file__).with_name("constants.json").open(encoding="utf-8") as stream:
@@ -82,6 +99,10 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
     if (not isinstance(rooms, list) or not rooms
             or not all(isinstance(r, str) and r for r in rooms)):
         raise ValueError(f"enter_profiles[{room!r}].rooms must be a nonempty list")
+    duplicates = sorted({r for r in rooms if rooms.count(r) > 1})
+    if duplicates:
+        raise ValueError(
+            f"enter_profiles[{room!r}].rooms has duplicate rooms {duplicates}")
     if room not in rooms:
         raise ValueError(
             f"enter_room {room!r} is not in its own rooms {rooms}")
@@ -99,7 +120,9 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
     data["rooms"] = list(rooms)
     data["destination_name"] = destination_name
     data["destination"] = poses[destination_name]
-    data["route"] = build_route(PoseIndex(poses), data["rooms"])
+    index = PoseIndex(poses)
+    data["route"] = build_route(index, data["rooms"])
+    _report_unmatched(index, data["rooms"], destination_name)
     for key in ("arm_pos_navigating", "arm_pos_table"):
         values = data[key]
         if len(values) != 7 or not all(math.isfinite(float(v)) for v in values):
@@ -117,12 +140,11 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
         if (not isinstance(label, str) or not label.strip()
                 or not isinstance(translation, str) or not translation.strip()):
             raise ValueError("label_map keys and values must be nonempty strings")
-    # YOLO-World has no fixed checkpoint vocabulary. An empty task prompt
-    # means all configured dictionary labels.
+    # An empty task prompt means all configured dictionary labels.
     if not data["prompt"].strip():
         data["prompt"] = " . ".join(data["label_map"])
         if not data["prompt"]:
-            raise ValueError("YOLO-World requires a prompt or a nonempty label_map")
+            raise ValueError("a prompt or a nonempty label_map is required")
     for key in ("detection_service", "announce_service", "navigation_action",
                 "arm_action", "grasp_action"):
         if not isinstance(data[key], str) or not data[key].strip():
