@@ -1,6 +1,6 @@
 # hangzhougrasp: TK27 manipulation (Pick, MoveToSavedPose, gripper)
 
-Status: draft for approval. Date: 2026-10-16.
+Status: approved; implemented on branch `hangzhougrasp-tk27`. Date: 2026-10-16.
 Source: `2026-10-16-hangzhougrasp-tk27-manipulation-handoff.md` (the voice
 note and the static review). Builds on the multiroom, audit-fixes and
 map-switch specs, which still hold except where this one changes them.

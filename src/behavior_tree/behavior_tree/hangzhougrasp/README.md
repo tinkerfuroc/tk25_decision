@@ -22,17 +22,21 @@ Write constants
 `Go to <pose>` → `Scan or miss`（Orbbec + yolo26_sam 扫描，中文播报；
 没检测到则跳过，不算失败）。不构建任何机械臂、抓取、夹爪节点。
 
-抓取（`--grasp`）：桌子阶段对每个桌子：
+抓取（`--grasp`，TK27 机械臂）：桌子阶段对每个桌子：
 
 ```text
 Visit table:  对每个视点（升序 m）
   Skip or visit：已持有物体则跳过剩余视点
     Go to <table 视点>
-    Grasp or miss:
-      Arm to table scan pose → RealSense 扫描 + 中文播报
-      → 选最近目标 → 重新扫描并抓取 → 抓取一成功立即记为持有 → 收回机械臂
-      任一步失败：收回机械臂；收回成功则该视点算 miss（已持有则后续视点
-      直接跳过），收回本身失败则整个任务失败
+    Clear previous scan result
+    Orbbec 扫描 + 中文播报（机械臂保持 navigation 姿态）
+    只有 Orbbec 看到物体才继续（没看到：该视点算 miss，机械臂不动）：
+      MoveToSavedPose(pick45)
+      → RealSense yolo26 扫描（门控 + 取最近目标的标签；不再播报）
+      → 重试（grasp_retry_limit）：打开夹爪（严格检查）→ TK27 Pick(标签, high)
+      → 记为持有 → MoveToSavedPose(navigation)
+      任一步失败：MoveToSavedPose(navigation)；成功则该视点算 miss，
+      收回本身失败则整个任务失败
 Deliver if holding:  持有物体才执行（规则见“放置规则”）
 ```
 
@@ -40,13 +44,48 @@ Deliver if holding:  持有物体才执行（规则见“放置规则”）
 地面阶段：按 `(n, m)` 升序逐个 `Go to <ground pose>` → `Scan or miss`，
 只扫描播报，不抓取、不放置。
 
-`--grasp` 是**构建参数**：关闭时不构建机械臂、抓取、收回、夹爪节点，
+`--grasp` 是**构建参数**：关闭时不构建机械臂、Pick、夹爪节点，
 也不等待这些 action server。导航失败会让任务失败；扫描/抓取 miss 不会，
 但失败后的收回机械臂（cleanup）若重试后仍失败，任务失败并停止，
 不会带着伸出的机械臂继续导航。
-抓取分支用 `Selector(memory=True)`：失败后先收回机械臂再换视点。
 播报（TTS）重试后仍失败只记一条 ERROR 日志（`Log announce failure`），
 不算 miss：照常继续抓取和后续路线。
+
+### TK27 机械臂接口
+
+| 节点 | Action | 目标 | 成功条件 |
+|---|---|---|---|
+| Pick | `/manipulation/pick`（`tk27_manipulation_msgs/Pick`） | `prompt`=RealSense 最近目标的标签，`plan_effort`=`high` | SUCCEEDED 且 `success` 且 `status==OK` |
+| 机械臂姿态 | `/manipulation/move_to_saved_pose`（`MoveToSavedPose`） | `pose_name`=`pick45` / `navigation`，`avoid_collisions`=`false`（固定） | SUCCEEDED 且 `success` 且 `status==SUCCESS` |
+| 打开夹爪 | `/xarm_gripper/gripper_action`（`GripperCommand`） | `position`=0.0，`max_effort`=50 | SUCCEEDED 且 `reached_goal` 且位置与 0.0 相差 ≤0.025（与 TK27 自身的判断相同） |
+
+- 每次 Pick 之前都单独打开夹爪（语音指令要求），打开失败则不发送 Pick。
+- Pick 只接收文字 prompt。服务器自己调用 `/object_detection_generalist`
+  （RealSense，生产配置 `vision_force_vlm_sam: true`：VLM 定位 + MobileSAM
+  分割），抓取最近的目标；本任务两次 yolo26 扫描的结果都不会传给 Pick。
+  因此每次 Pick 都需要 `generalist_node` 及其 VLM API 正常工作。
+- 放下物体（destination 或其他房间的放置点）：打开夹爪重试
+  `arm_retry_limit` 次；仍失败则记 ERROR 并继续任务（剩下的扫描播报照样得分），
+  持有状态无论如何都清除，否则后面所有视点都会被当作“已持有”而跳过。
+- mock 模式里扫描节点返回空物体列表，所以 mock 跑不到 Pick；Pick 的行为
+  由单元测试（打桩）覆盖，真实验证见下面的上机顺序。
+
+TK27 启动（`ROBOT_NAME=tinker2`，各自终端 source 后运行）：
+
+```bash
+ros2 launch manipulation_bringup arm.launch.py           # 机械臂硬件、夹爪、TF、RealSense
+ros2 launch manipulation_bringup manipulation.launch.py  # GPU worker + Pick / MoveToSavedPose
+ros2 run object_detection_generalist generalist_node     # Pick 使用的检测服务
+ros2 run object_detection_generalist yolo26_sam_node     # 本任务自己的扫描
+```
+
+不要同时启动 TK25 的 `grasp_bringup` / `arm_api`。保存的姿态来自
+`tk27_manipulation/src/web_manip/export/`（需要 `navigation.yaml`、`pick45.yaml`）。
+
+上机验证顺序：确认三个 action 类型 → 确认运行中服务器的 `export_directory`
+里有 `navigation`、`pick45` → 单独一次 `plan_effort="high"` 的 Pick 被接受
+（不是 `INVALID_GOAL`）→ `--grasp --part scan-grasp` → `--part visit-table`
+→ 完整任务。建树、`--print-tree`、mock 成功都不能证明真实接口正确。
 
 ## 点位命名
 
@@ -153,7 +192,7 @@ cd /home/tinker/tk25_ws
 ./tkbuild tk26_vision --packages-select object_detection_generalist
 source install/setup.bash
 
-# 全流程（还需要 start_grasp 和 joint_move_action）
+# 全流程（还需要 TK27 的 Pick、MoveToSavedPose 和夹爪 action，见上文）
 ros2 run behavior_tree hangzhougrasp --enter-room bedroom --grasp
 
 # 只打印树，不 setup，不连接服务，不发运动指令
@@ -229,29 +268,35 @@ root = createHangzhouGrasp(config=config, enable_grasp=True)
   `parts.py` 的 `createPart` 复用同一批工厂。
 - 根与阶段均使用 `Sequence(memory=True)`；常量写入使用
   `Parallel(SuccessOnAll()) + BtNode_WriteToBlackboard`。
-- 原语直接复用 TemplateNodes：GotoAction、MoveArmSingle、Grasp、
-  ScanForYolo26、AnnounceDetections。
-- `_gotoRetry`、`_moveArmRetry`、`_scanYolo26Retry` 与
+- 原语复用 TemplateNodes：GotoAction、ScanForYolo26、AnnounceDetections；
+  TK27 机械臂节点在本目录 `tk27_nodes.py`（参照
+  `HomeServiceHangzhou.ros_nodes.Tk27SavedPose`），mock 模式分别复用
+  `BtNode_Grasp`、`BtNode_MoveArmSingle`、`BtNode_GripperAction` 的 mock 配置。
+  共享的 `TemplateNodes.BtNode_GripperAction`（总是报成功）不再被本任务使用，
+  也未修改。
+- `_gotoRetry`、`_savedPoseRetry`、`_scanYolo26Retry` 与
   PickAndPlace helper 写法一致，均使用 `Retry(num_failures=...)`。
   默认导航 3、扫描 5、机械臂 3、抓取 3、播报 2；均可在 JSON 覆盖。
   数字是允许失败的总次数，例如 3 表示最多 3 次失败，不是额外重试 3 次。
-- 抓取 Retry 包住“重新扫描 + 选目标 + 抓取”，因此上一次抓取失败后不会
-  重用之前的 RGB/depth/mask。内部扫描 Retry 与抓取 Retry 是嵌套预算。
+- 抓取 Retry 只包住“打开夹爪 + Pick”：每轮都重新发送打开和新的 Pick 目标；
+  Pick 自己观测，所以不重复扫描。
 - 抓取场景失败收尾沿用 PickAndPlace 的 Selector + cleanup Sequence。
-  `scan-grasp` part 保留失败结果；桌子流程（visit-table）中 cleanup 成功
-  视为该视点 miss 并继续，cleanup 失败则整体失败。抓取成功后立即记为持有，
-  即使随后的收回失败。drop/deliver 的导航节点以目标点位命名
+  `scan-grasp` part 保留失败结果（Orbbec 没看到物体时为成功、机械臂不动）；
+  桌子流程（visit-table）中 cleanup 成功视为该视点 miss 并继续，cleanup
+  失败则整体失败。Pick 成功后立即记为持有，即使随后的收回失败。
+  drop/deliver 的导航节点以目标点位命名
   （`Go to destination <name>`、`Go to drop pose <name>`）。
 - 相机响应保持原始 camera frame，`transform_to_map=False`；
-  导航目标才在 map frame。抓取只传同一目标对应的一个 mask 和 label，
-  检查 RGB/depth/mask 尺寸一致。原始扫描响应不被修改。
-- `arm_pos_navigating` / `arm_pos_table` 初始值取自当前
-  PickAndPlace/constants.json，同样以度存储，写入黑板前转弧度。
-  可在任务配置独立调整，不修改其他任务。
-- 抓取使用已有 `stay=False, use_mesh=True` 行为，随后显式收回到本任务的
-  导航姿态。人工中断沿用共享 runtime 的取消行为，不会在退出后另发收回。
-- 黑板键均用 `hg_` 前缀；`hg_scan_result` 是初次检测，
-  `hg_grasp_vision_result` 是选出的抓取包，`hg_announcement` 是中文文本。
+  导航目标才在 map frame。两次扫描都不请求 RGB/depth/mask。
+- 配置键：`pick_action`、`saved_pose_action`、`gripper_action`、
+  `pick_plan_effort`（low/medium/high/auto）、`arm_pose_navigating`、
+  `arm_pose_table`、`gripper_open_position`、`gripper_open_tolerance`、
+  `gripper_max_effort`。旧键 `arm_pos_navigating`、`arm_pos_table`、
+  `arm_action`、`grasp_action` 已删除，出现即为未知键错误。
+- 人工中断沿用共享 runtime 的取消行为，不会在退出后另发收回。
+- 黑板键均用 `hg_` 前缀；`hg_scan_result` 是 Orbbec 检测，
+  `hg_grasp_scan_result` 是 pick45 处的 RealSense 检测，`hg_target_label`
+  是 Pick 的 prompt，`hg_announcement` 是中文文本。
 - CLI 使用共享 `run_tree`，500 ms tick、可视化和原有 mock 配置。
   `stop_on_terminal=True` 防止完成后重复导航/抓取，GUI 保留至 Ctrl+C。
 - Mock 遵守原节点的配置。普通视觉 mock 返回空 objects，不伪造可抓取物体；
