@@ -74,7 +74,7 @@ bringup_drivers() {
     if [ -n "$dev" ]; then
         pane_add "$session:drivers" "ros2 run pan_tilt controller --ros-args -p device:=$dev"
     fi
-    pane_add "$session:drivers" "ros2 run pan_tilt state_publisher"
+    pane_add "$session:drivers" "ros2 run pan_tilt state_publisher --ros-args -p joint_state_topic:=/pan_tilt/joint_states"
     if [ "$with_follow_head" = "1" ]; then
         pane_add "$session:drivers" "ros2 run pan_tilt follow_head"
     fi
