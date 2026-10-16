@@ -27,7 +27,35 @@ RETRY_DEFAULTS = {"navigation_attempts": 5, "approach_attempts": 3,
 def load_config(path=None):
     path = path or os.environ.get("HANGZHOU_CONFIG") or Path(__file__).with_name("settings.json")
     with open(path, encoding="utf-8") as stream:
-        return {**RETRY_DEFAULTS, **json.load(stream)}
+        config = {**RETRY_DEFAULTS, **json.load(stream)}
+    resolve_navigation_poses(config)
+    return config
+
+
+
+def resolve_navigation_poses(config):
+    """Resolve Map Studio names from the selected map's pose file."""
+    if not config.get("map_yaml"):
+        return
+    from map_studio.pose_store import PoseStore
+    map_path = Path(config["map_yaml"]).expanduser()
+    poses = PoseStore(map_path.parent).load(map_path.stem)
+
+    def resolve(value):
+        if not isinstance(value, str):
+            return value
+        if value not in poses:
+            raise ValueError(f"Map Studio pose {value!r} is missing for {map_path.stem}")
+        point = poses[value]
+        return [point.x, point.y, point.yaw]
+
+    for key in ("registration_pose",):
+        config[key] = resolve(config.get(key))
+    config["room_poses"] = {room: resolve(value)
+                            for room, value in config["room_poses"].items()}
+    for room in config["switches"].values():
+        for target in room.values():
+            target["navigation"] = resolve(target.get("navigation"))
 
 
 def room_order(config):
@@ -63,22 +91,26 @@ def validate(config):
         ):
             errors.append(name + ": configure " + str(size) + " finite numbers")
 
-    for key in ("entry_pose", "exit_pose"):
+    for key in ("registration_pose",):
         vector(config.get(key), 3, key)
+    def saved_pose(value, name):
+        if not isinstance(value, str) or not value.strip():
+            errors.append(name + ": configure a saved pose name")
+
     for key in ("arm_stow", "arm_assist"):
-        vector(config.get(key), 7, key)
+        saved_pose(config.get(key), key)
     for room in rooms:
         vector(config.get("room_poses", {}).get(room), 3, "room_poses." + room)
         if not config.get("room_names", {}).get(room):
             errors.append("room_names." + room + " is missing")
+    for room, targets in config.get("switches", {}).items():
+        if room not in rooms:
+            errors.append("switches." + room + ": unknown room")
         for command in ("on", "off"):
-            switch = config.get("switches", {}).get(room, {}).get(command, {})
+            switch = targets.get(command, {})
             vector(switch.get("navigation"), 3, "switches." + room + "." + command + ".navigation")
-            vector(switch.get("arm"), 7, "switches." + room + "." + command + ".arm")
-    if config.get("entry_pose") is not None and config.get("exit_pose") == config["entry_pose"]:
-        errors.append("exit_pose must differ from entry_pose (different exit)")
-    for key in ("settle_seconds", "patrol_timeout_seconds", "mission_timeout_seconds",
-                "identity_vlm_timeout_seconds", "target_max_age_seconds", "exit_reserve_seconds",
+            saved_pose(switch.get("arm"), "switches." + room + "." + command + ".arm")
+    for key in ("settle_seconds", "identity_vlm_timeout_seconds",
                 "listen_timeout_seconds", "service_timeout_seconds", "navigation_timeout_seconds"):
         value = config.get(key)
         if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
@@ -89,18 +121,10 @@ def validate(config):
         errors.append("identity_qwen_backend must be dashscope or openrouter")
     if not isinstance(config.get("identity_model", ""), str):
         errors.append("identity_model must be a string")
-    reserve = config.get("exit_reserve_seconds")
-    total = config.get("mission_timeout_seconds")
-    if type(reserve) in (int, float) and type(total) in (int, float) and reserve >= total:
-        errors.append("exit_reserve_seconds must be less than mission_timeout_seconds")
     level = config.get("level_tilt_deg")
     if type(level) not in (int, float) or not math.isfinite(level) or not 0 <= level <= 90:
         errors.append("level_tilt_deg must be within [0, 90]")
-    if (isinstance(config.get("patrol_timeout_seconds"), (int, float))
-            and isinstance(config.get("mission_timeout_seconds"), (int, float))
-            and config["patrol_timeout_seconds"] >= config["mission_timeout_seconds"]):
-        errors.append("patrol timeout must leave time for retract and exit")
-    for key in ("announce", "listen", "phrase", "feature_extraction",
+    for key in ("announce", "listen", "feature_extraction",
                 "behaviour_detection", "litter_detection", "navigate", "approach", "arm"):
         if not isinstance(config.get("endpoints", {}).get(key), str) or not config["endpoints"][key].strip():
             errors.append("endpoints." + key + " is missing")

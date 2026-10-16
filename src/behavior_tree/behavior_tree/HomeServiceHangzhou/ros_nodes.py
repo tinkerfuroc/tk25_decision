@@ -4,12 +4,15 @@ import time
 import py_trees
 
 from behavior_tree.TemplateNodes.Audio import (
-    BtNode_Announce, BtNode_ListenAction, BtNode_PhraseExtractionAction)
+    BtNode_Announce, BtNode_ListenAction)
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_Approach
-from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
+from behavior_tree.TemplateNodes.ActionBase import ActionHandler
+from action_msgs.msg import GoalStatus
 from behavior_tree.TemplateNodes.Vision import BtNode_FeatureExtraction, BtNode_TurnPanTilt
 from .perception import DetectScene, IdentifyOwners
-from .state import PREFIX, S, get, put, stamp_seconds, valid_point
+from .switch_intent import SwitchIntent
+from .speech import HELP_PROMPT, SWITCH_PROMPT
+from .state import PREFIX, S, get, put, valid_point
 from .control import MotionBarrier
 
 
@@ -77,26 +80,25 @@ class ServiceDiagnostics:
 
 
 class HangzhouAnnounce(ServiceDiagnostics, BtNode_Announce):
-    pass
+    mock_config_name = "BtNode_Announce"
 
 
 class HangzhouFeature(MotionDiagnostics, BtNode_FeatureExtraction):
-    """Feature extraction is an action; reject images from before head settling."""
-    def initialise(self):
-        self.capture_started = get("capture_after")
-        super().initialise()
-
+    """Feature extraction accepts nonempty images regardless of capture age."""
+    mock_config_name = "BtNode_FeatureExtraction"
     def process_result(self):
         status = super().process_result()
         if status == S.SUCCESS:
             image = self.blackboard.comparison_image
-            if image is None or image.width <= 0 or image.height <= 0 or stamp_seconds(image.header) < self.capture_started:
-                self.feedback_message = "Feature image is empty or predates head settling"
+            if image is None or image.width <= 0 or image.height <= 0:
+                self.feedback_message = "Feature image is empty"
                 return S.FAILURE
         return status
 
 
 class HangzhouGoto(MotionDiagnostics, BtNode_GotoAction):
+    mock_config_name = "BtNode_GotoAction"
+
     def process_result(self):
         result = getattr(self.result_message, "result", None)
         code = getattr(result, "error_code", 0)
@@ -109,6 +111,8 @@ class HangzhouGoto(MotionDiagnostics, BtNode_GotoAction):
 
 
 class HangzhouApproach(MotionDiagnostics, BtNode_Approach):
+    mock_config_name = "BtNode_Approach"
+
     def process_result(self):
         if self.result_status != 4:
             self.feedback_message = f"Approach action failed: status={self.result_status}"
@@ -117,15 +121,13 @@ class HangzhouApproach(MotionDiagnostics, BtNode_Approach):
 
 
 class HangzhouListen(MotionDiagnostics, BtNode_ListenAction):
-    pass
-
-
-class HangzhouCommand(MotionDiagnostics, BtNode_PhraseExtractionAction):
-    pass
+    mock_config_name = "BtNode_ListenAction"
 
 
 class SettledPanTilt(BtNode_TurnPanTilt):
     """Existing command protocol, but no 'timeout means success' for photography."""
+    mock_config_name = "BtNode_TurnPanTilt"
+
     def initialise(self):
         self._feedback_received = 0.0
         self._command_at = time.monotonic()
@@ -137,10 +139,10 @@ class SettledPanTilt(BtNode_TurnPanTilt):
 
     def update(self):
         result = super().update()
-        if result != S.SUCCESS:
+        if result != S.SUCCESS or self.mock_mode:
             return result
         state = self._latest_state
-        if (self.mock_mode or state is None or not state.feedback_ok
+        if (state is None or not state.feedback_ok
                 or self._feedback_received < self._command_at
                 or time.monotonic() - self._feedback_received > 0.5
                 or abs(math.degrees(state.pan_rad) - self.x) >= self.SETTLE_EPS_DEG
@@ -149,7 +151,7 @@ class SettledPanTilt(BtNode_TurnPanTilt):
             # A previously aligned sample can make the base leaf report success
             # on the command tick. Wait for a post-command sample within the
             # original deadline, rather than failing before ROS can deliver it.
-            if not self.mock_mode and time.time() <= self._settle_deadline:
+            if time.time() <= self._settle_deadline:
                 return S.RUNNING
             return S.FAILURE
         self.feedback_message = ""
@@ -157,42 +159,54 @@ class SettledPanTilt(BtNode_TurnPanTilt):
         return S.SUCCESS
 
 
-class Tk27MoveArm(MotionDiagnostics, BtNode_MoveArmSingle):
-    """Reuse action lifecycle/result handling with the real TK27 joint schema."""
-    def __init__(self, **kwargs):
-        from tk27_manipulation_msgs.action import JointMove
-        super().__init__(**kwargs)
-        self.action_type = JointMove
+class Tk27SavedPose(MotionDiagnostics, ActionHandler):
+    """Call TK27 directly; saved joint targets are resolved by the server."""
+    mock_config_name = "BtNode_MoveArmSingle"
+
+    def __init__(self, name, pose_name_bb_key,
+                 action_name="/manipulation/move_to_saved_pose"):
+        from tk27_manipulation_msgs.action import MoveToSavedPose
+        super().__init__(name, MoveToSavedPose, action_name, pose_name_bb_key,
+                         wait_for_server_timeout_sec=-3)
 
     def send_goal(self):
+        if self.mock_mode:
+            return super().send_goal()
         goal = self.action_type.Goal()
-        goal.joint_names = ["joint" + str(i) for i in range(1, 8)]
-        goal.positions = [float(v) for v in self.blackboard.arm_joint_pose]
+        goal.pose_name = self.blackboard.goal
+        goal.avoid_collisions = True
         self.send_goal_request(goal)
 
-class FreshTarget(py_trees.behaviour.Behaviour):
-    def __init__(self, context):
-        super().__init__("Check person target frame and capture age")
-        self.context = context
+    def process_result(self):
+        result = self.result_message.result
+        if (self.result_status == GoalStatus.STATUS_SUCCEEDED
+                and result.success and result.status == result.SUCCESS):
+            self.feedback_message = "Saved arm pose reached"
+            return S.SUCCESS
+        self.feedback_message = (
+            f"MoveToSavedPose failed: action_status={self.result_status}, "
+            f"status={result.status}, error={result.error_msg}")
+        return S.FAILURE
 
-    def setup(self, **kwargs):
-        self.node = kwargs["node"]
+    def feedback_callback(self, msg):
+        self.action_stage = msg.feedback.stage
+        self.feedback_message = msg.feedback.detail
+
+
+class ValidTarget(py_trees.behaviour.Behaviour):
+    def __init__(self):
+        super().__init__("Check person target map position")
 
     def update(self):
         try:
-            target = get("target")
-            if not get("target_valid") or not valid_point(target):
+            if not get("target_valid") or not valid_point(get("target")):
                 self.feedback_message = "Person target has no valid map position"
                 return S.FAILURE
-            age = self.node.get_clock().now().nanoseconds / 1e9 - stamp_seconds(target.header)
         except (KeyError, AttributeError, TypeError) as exc:
             self.feedback_message = "Invalid person target: " + str(exc)
             return S.FAILURE
-        if not 0 <= age <= self.context.config["target_max_age_seconds"]:
-            self.feedback_message = f"Person observation expired or future-dated: age={age:.2f}s"
-            return S.FAILURE
+        self.feedback_message = ""
         return S.SUCCESS
-
 
 class RosLeaves:
     def __init__(self, context):
@@ -219,16 +233,15 @@ class RosLeaves:
             bb_source=PREFIX + "speech" if text is None else None,
             message=text, service_name=self.endpoints["announce"]))
 
-    def listen(self, name):
+    def listen(self, name, initial_prompt=HELP_PROMPT):
         return self.audio(name, HangzhouListen(name=name,
             bb_dest_key=PREFIX + "heard", timeout=self.config["listen_timeout_seconds"],
-            action_name=self.endpoints["listen"]))
+            action_name=self.endpoints["listen"], initial_prompt=initial_prompt))
 
     def command(self):
-        return self.audio("Listen switch command", HangzhouCommand(
-            name="Listen switch command", wordlist=["开", "关"],
-            bb_dest_key=PREFIX + "command", timeout=self.config["listen_timeout_seconds"],
-            action_name=self.endpoints["phrase"]))
+        return py_trees.composites.Sequence(name="Understand switch request", memory=True,
+            children=[self.listen("Listen electrical request", initial_prompt=SWITCH_PROMPT),
+                      SwitchIntent(self.context)])
 
     def feature(self):
         from .state import StateNode
@@ -265,9 +278,9 @@ class RosLeaves:
                 desired_distance=0.7, min_distance=0.55, max_distance=1.2,
                 timeout_sec=self.config["navigation_timeout_seconds"],
                 action_name=self.endpoints["approach"]),
-                self.config["navigation_timeout_seconds"] + 2, guards=[FreshTarget(self.context)])
+                self.config["navigation_timeout_seconds"] + 2, guards=[ValidTarget()])
 
     def arm(self, name):
-        return self.motion(name, Tk27MoveArm(name=name,
-            arm_pose_bb_key=PREFIX + "arm_goal", action_name=self.endpoints["arm"]),
+        return self.motion(name, Tk27SavedPose(name=name,
+            pose_name_bb_key=PREFIX + "arm_pose_name", action_name=self.endpoints["arm"]),
             self.config.get("arm_timeout_seconds", 120.0))

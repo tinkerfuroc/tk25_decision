@@ -46,6 +46,8 @@ class ReportFailure(py_trees.decorators.Decorator):
 
 def action_idle(action):
     """A cancel response alone does not prove the action has stopped."""
+    if getattr(action, "mock_mode", False):
+        return action.status != S.RUNNING
     future = getattr(action, "send_goal_future", None)
     if future is None:
         return True

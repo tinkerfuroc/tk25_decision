@@ -8,7 +8,7 @@ import urllib.request
 from concurrent.futures import Future
 
 import py_trees
-from .state import S, get, put, stamp_seconds
+from .state import S, get, put
 
 
 def parse_identities(text, count):
@@ -29,11 +29,6 @@ def identify(scene, owners, config):
     """Only reference images and appearance are used; behaviour roles are withheld."""
     import cv2
     from cv_bridge import CvBridge
-    from kimi_api._env import load_env, resolve_qwen_target
-
-    load_env()
-    url, key, model = resolve_qwen_target(config["identity_qwen_backend"],
-                                         config.get("identity_model", ""))
     bridge = CvBridge()
 
     def image_part(image):
@@ -66,15 +61,27 @@ def identify(scene, owners, config):
         "for an unknown person, occlusion, uncertain or ambiguous match. Never force "
         "a match. An owner may occur at most once. No explanations."
     )
-    payload = {"model": model, "messages": [{"role": "system", "content": prompt},
-               {"role": "user", "content": content}], "temperature": 0, "max_tokens": 300}
+    reply = request_completion([{"role": "system", "content": prompt},
+                                {"role": "user", "content": content}], config, 300)
+    return parse_identities(reply, len(scene.observations))
+
+
+def request_completion(messages, config, max_tokens):
+    """Use the existing task model and credentials for image or text requests."""
+    from kimi_api._env import load_env, resolve_qwen_target
+
+    load_env()
+    url, key, model = resolve_qwen_target(config["identity_qwen_backend"],
+                                         config.get("identity_model", ""))
+
+    payload = {"model": model, "messages": messages, "temperature": 0, "max_tokens": max_tokens}
     request = urllib.request.Request(url.rstrip("/") + "/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
         method="POST")
     with urllib.request.urlopen(request, timeout=config["identity_vlm_timeout_seconds"]) as response:
         result = json.load(response)
-    return parse_identities(result["choices"][0]["message"]["content"], len(scene.observations))
+    return result["choices"][0]["message"]["content"]
 
 
 class DetectScene(py_trees.behaviour.Behaviour):
@@ -96,7 +103,6 @@ class DetectScene(py_trees.behaviour.Behaviour):
         put(self.output, None)
         self.response = None
         self.started = time.monotonic()
-        self.capture_after = get("capture_after")
 
     def update(self):
         if time.monotonic() - self.started > self.context.config["service_timeout_seconds"]:
@@ -122,14 +128,8 @@ class DetectScene(py_trees.behaviour.Behaviour):
             self.context.record_scene(scene, self.task)
             if scene.status != 0:
                 raise ValueError("Scene detector error: " + scene.error_msg)
-            if stamp_seconds(scene.header) < self.capture_after:
-                raise ValueError("Detector returned an image from before head settled")
-            if hasattr(self, "node"):
-                age = self.node.get_clock().now().nanoseconds / 1e9 - stamp_seconds(scene.header)
-                if not 0 <= age <= self.context.config["target_max_age_seconds"]:
-                    raise ValueError("Detector image is stale or ahead of the ROS clock")
-            if not scene.log_json or scene.rgb_image.width <= 0 or scene.rgb_image.height <= 0:
-                raise ValueError("Missing captured image or timestamped evidence")
+            if scene.rgb_image.width <= 0 or scene.rgb_image.height <= 0:
+                raise ValueError("Missing captured image")
             if bool(scene.observations) != bool(scene.detected):
                 raise ValueError("Inconsistent detection result")
             put(self.output, scene)

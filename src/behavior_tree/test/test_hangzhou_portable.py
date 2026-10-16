@@ -20,13 +20,14 @@ from behavior_tree.HomeServiceHangzhou.perception import DetectScene
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
     c = load_config()
-    c.update(entry_pose=[0., 0., 0.], exit_pose=[9., 0., 0.],
-             arm_stow=[0.] * 7, arm_assist=[1.] * 7, max_passes=1,
+    c.update(registration_pose=[0., 0., 0.],
+             arm_stow="navigation", arm_assist="help", max_passes=1,
              evidence_directory=str(tmp_path), retry_delay_seconds=0., identity_facing_wait_seconds=0.)
     for i, room in enumerate(c['rooms']):
         c['room_poses'][room] = [float(i), 2., 0.]
+        c['switches'].setdefault(room, {})
         for command in ('on', 'off'):
-            c['switches'][room][command] = {'navigation': [1., 1., 0.], 'arm': [2.] * 7}
+            c['switches'][room][command] = {'navigation': [1., 1., 0.], 'arm': 'click'}
     monkeypatch.setattr('behavior_tree.HomeServiceHangzhou.tree.pose', lambda x: list(x))
     monkeypatch.setattr(state, 'pose', lambda x: list(x))
     monkeypatch.setitem(sys.modules, 'cv_bridge', NS(CvBridge=lambda: NS(imgmsg_to_cv2=lambda *a, **k: b'image')))
@@ -68,7 +69,7 @@ class IO:
     def say(self, name, text=None):
         return self.leaf(name, lambda: self.calls.append(('speech', text or get('speech'))))
 
-    def listen(self, name):
+    def listen(self, name, initial_prompt=""):
         return self.leaf(name, lambda: put('heard', next(self.names) if name == 'Listen owner name' else '请给我一杯水'))
 
     def feature(self):
@@ -78,7 +79,7 @@ class IO:
         return self.leaf('feature', capture)
 
     def command(self):
-        return self.leaf('command', lambda: put('command', '开'))
+        return self.leaf('command', lambda: put('command', 'on'))
 
     def arm(self, name):
         return self.leaf(name)
@@ -113,6 +114,9 @@ class IO:
 
 def run(c, **kwargs):
     root = create_task(c, lambda ctx: IO(ctx, **kwargs))
+    for node in root.iterate():
+        if node.name == "Wait silently before registration":
+            node.duration = 0.0
     for _ in range(2000):
         root.tick_once()
         if root.status in (S.SUCCESS, S.FAILURE):
@@ -122,7 +126,7 @@ def run(c, **kwargs):
 
 @pytest.mark.parametrize('failures', [0, 1, 4, 5])
 def test_entry_navigation_has_five_bounded_attempts(cfg, failures):
-    name = 'Enter arena to enrollment point'
+    name = 'Navigate to registration point'
     root, io = run(cfg, fail={name: failures})
     assert io.counts[name] == min(failures + 1, 5)
     assert root.status == (S.FAILURE if failures == 5 else S.SUCCESS)
@@ -139,14 +143,14 @@ def test_unreachable_room_skipped_but_other_rooms_still_visited(cfg):
     assert io.counts['Navigate to bedroom scan point'] == 5
     assert root.context.visited == set(cfg['rooms']) - {'bedroom'}
     assert any(e['event'] == 'room_skipped' for e in root.context.events)
-    assert io.counts['Leave through separate exit'] == 1
+    assert io.counts['Leave through separate exit'] == 0
 
 
 def test_retraction_exhaustion_blocks_navigation_and_records_recovery(cfg):
     root, io = run(cfg, fail={'Retract arm': 100})
     assert root.status == S.FAILURE
     assert io.counts['Retract arm'] == 6  # three normal + three recovery attempts
-    assert not any('Enter arena' in str(c) for c in io.calls)
+    assert not any('Navigate to registration point' in str(c) for c in io.calls)
     kinds = [e['event'] for e in root.context.events]
     assert 'mission_failed' in kinds and 'retraction_failed' in kinds
     assert ('speech', '任务已停止，机械臂已收回。') not in io.calls
@@ -218,7 +222,7 @@ def test_feature_failure_retries_without_reasking_name(cfg):
 def test_nonessential_tts_failure_does_not_stop_task(cfg):
     root, io = run(cfg, fail={'Enrollment completed': 100, 'Speak task summary': 100})
     assert root.status == S.SUCCESS
-    assert io.counts['Leave through separate exit'] == 1
+    assert io.counts['Leave through separate exit'] == 0
 
 
 def test_litter_is_not_credited_until_announcement_succeeds(cfg):
@@ -238,7 +242,7 @@ def test_dialogue_retries_only_dialogue_not_approach_or_arm(cfg):
 def test_required_repeat_failure_never_marks_owner_complete(cfg):
     root, io = run(cfg, owners=(3,), fail={'Speak original help request': 100})
     assert not root.context.completed
-    assert io.counts['Leave through separate exit'] == 1
+    assert io.counts['Leave through separate exit'] == 0
 
 
 def test_move_discards_other_people_from_old_frame(cfg):
@@ -363,11 +367,32 @@ def test_perception_error_never_turns_into_negative_detection(cfg):
     assert io.counts['identify'] == 0
 
 
-def test_exit_navigation_exhaustion_retains_failure(cfg):
-    root, io = run(cfg, fail={'Leave through separate exit': 100})
-    assert root.status == S.FAILURE
-    assert io.counts['Leave through separate exit'] == 5
-    assert not any(e['event'] == 'exited' for e in root.context.events)
+@pytest.mark.parametrize("role", [1, 2, 3])
+def test_rooms_without_switches_keep_other_services(cfg, role):
+    cfg["switches"] = {}
+    validate(cfg)
+    root, io = run(cfg, owners=(role,))
+    assert root.status == S.SUCCESS
+    assert root.context.visited == set(cfg["rooms"])
+    assert io.counts["Announce location, owner and behaviour"] > 0
+    assert io.counts["detect litter"] == 4
+    assert io.counts["command"] == 0
+    assert io.counts["Navigate to switch mark"] == 0
+    if role == 1:
+        assert io.counts["approach"] == 0
+        assert not root.context.serviced_roles
+        assert any(e["event"] == "switch_service_not_applicable" for e in root.context.events)
+    else:
+        assert role in root.context.serviced_roles
+        assert io.counts["approach"] > 0
+
+
+def test_mission_completes_without_exit_navigation(cfg):
+    root, io = run(cfg)
+    assert root.status == S.SUCCESS
+    assert io.counts['Leave through separate exit'] == 0
+    assert any(e['event'] == 'mission_completed' for e in root.context.events)
+
 
 
 def test_placeholder_config_never_calls_io(tmp_path):
@@ -389,7 +414,7 @@ def adapters(monkeypatch):
     modules = {
         'Audio': ['BtNode_Announce', 'BtNode_ListenAction', 'BtNode_PhraseExtractionAction'],
         'Navigation': ['BtNode_GotoAction', 'BtNode_Approach'],
-        'Manipulation': ['BtNode_MoveArmSingle'],
+        'ActionBase': ['ActionHandler'],
         'Vision': ['BtNode_FeatureExtraction', 'BtNode_TurnPanTilt'],
     }
     for module, names in modules.items():
@@ -420,17 +445,20 @@ def test_actual_approach_adapter_requires_transport_and_semantic_success(adapter
     assert node.process_result() == expected
 
 
-def test_actual_fresh_target_blocks_expired_position(cfg, adapters):
-    put('target', NS(header=NS(frame_id='map', stamp=NS(sec=100, nanosec=0)),
+@pytest.mark.parametrize("stamp", [0, 1, 100, 10**9])
+def test_target_position_does_not_require_a_clock_or_fresh_timestamp(adapters, stamp):
+    put("target", NS(header=NS(frame_id="map", stamp=NS(sec=stamp, nanosec=0)),
                      point=NS(x=1., y=2., z=0.)))
-    put('target_valid', True)
-    node = adapters.FreshTarget(Context(cfg))
-    now = [100.]
-    node.node = NS(get_clock=lambda: NS(now=lambda: NS(nanoseconds=now[0]*1e9)))
-    assert node.update() == S.SUCCESS
-    now[0] = 146.
-    assert node.update() == S.FAILURE
-    assert 'expired' in node.feedback_message
+    put("target_valid", True)
+    assert adapters.ValidTarget().update() == S.SUCCESS
+
+
+@pytest.mark.parametrize("frame,valid,x", [("camera", True, 1.), ("map", False, 1.),
+                                          ("map", True, float("nan"))])
+def test_invalid_target_position_still_blocks_approach(adapters, frame, valid, x):
+    put("target", NS(header=NS(frame_id=frame), point=NS(x=x, y=2., z=0.)))
+    put("target_valid", valid)
+    assert adapters.ValidTarget().update() == S.FAILURE
 
 
 def test_unknown_transport_result_is_not_proof_motion_stopped():
@@ -460,38 +488,43 @@ def test_action_transport_error_returns_failure_with_diagnostics(adapters):
 
 @pytest.mark.parametrize('role,dialogue_end', [(1, 'Repeat electrical request'),
     (2, 'Acknowledge fallen owner'), (3, 'Speak original help request')])
-def test_identity_only_after_approach_and_dialogue(cfg, role, dialogue_end):
+def test_location_identity_and_behaviour_are_announced_before_approach(cfg, role, dialogue_end):
     root, io = run(cfg, owners=(role,))
     calls = io.calls
     assert root.context.completed == {role}
-    assert calls.index('detect behaviour') < calls.index('approach') < calls.index(dialogue_end)
-    assert calls.index(dialogue_end) < calls.index('Ask person to face top camera') < calls.index('identify')
-    assert calls.index('identify') < calls.index('Return to room scan point')
-    if role == 1:
-        assert calls.index('identify') < calls.index('Navigate to switch mark')
+    announcement = calls.index("Announce location, owner and behaviour")
+    assert calls.index("detect behaviour") < calls.index("identify") < announcement
+    assert announcement < calls.index("approach") < calls.index(dialogue_end)
+    report = calls[announcement + 1][1]
+    assert report == (f"\u5728{cfg['room_names'][cfg['current_room']]}\u53d1\u73b0"
+                      f"{root.context.owners[role - 1].name}\uff0c\u6b63\u5728"
+                      f"{state.BEHAVIOUR_ZH[role]}\u3002")
+    assert io.counts["identify"] == 1
+    assert io.counts["Ask person to face top camera"] == 0
 
 
-def test_unknown_facing_image_falls_back_to_selected_behaviour_image(cfg):
+def test_unknown_behaviour_image_falls_back_to_facing_image(cfg):
     root, io = run(cfg, owners=(2,), identities=[[None], [2]])
     assert root.context.completed == {2}
     assert io.counts['identify'] == 2 and io.counts['approach'] == 1
-    records = [e for e in root.context.events if e['event'] == 'post_interaction_identity']
-    assert records[0]['source'] == 'behaviour_image'
+    records = [e for e in root.context.events if e['event'] == 'owner_identified']
+    assert records[0]['source'] == 'facing_image'
     selected = get('behaviour_identity_scene')
     assert len(selected.observations) == 1
     assert selected.observations[0].labels == ['lying_on_floor_possible_fall']
 
 
-def test_facing_success_does_not_require_original_behaviour_face(cfg):
+def test_behaviour_identity_success_skips_facing_capture(cfg):
     root, io = run(cfg, owners=(2,), identities=[[2]])
     assert root.context.completed == {2}
     assert io.counts['identify'] == 1
-    assert any(e['event'] == 'post_interaction_identity' and e['source'] == 'facing_image'
+    assert io.counts['feature'] == 3  # Enrollment only.
+    assert any(e['event'] == 'owner_identified' and e['source'] == 'behaviour_image'
                for e in root.context.events)
 
 
 def test_unidentified_person_still_receives_service_without_false_identity(cfg):
-    # facing image, original crop, then two re-prompted facing images
+    # Original crop, facing image, then two re-prompted facing images.
     root, io = run(cfg, owners=(2,), identities=[[None]] * 4)
     assert root.status == S.SUCCESS
     assert root.context.completed == set()
@@ -511,7 +544,7 @@ def test_reprompted_facing_image_identifies_after_both_first_sources_unknown(cfg
     assert io.counts['Ask person to face top camera again'] == 1
     calls = io.calls
     assert calls.index('Ask person to face top camera') < calls.index('Ask person to face top camera again')
-    records = [e for e in root.context.events if e['event'] == 'post_interaction_identity']
+    records = [e for e in root.context.events if e['event'] == 'owner_identified']
     assert [r['source'] for r in records] == ['facing_image']
 
 
@@ -558,12 +591,13 @@ def test_identity_is_not_inferred_from_behaviour_role(cfg):
                for e in root.context.events)
 
 
-def test_facing_image_requires_post_prompt_head_timestamp(cfg):
+def test_facing_image_does_not_require_post_prompt_timestamp(cfg):
     context = Context(cfg)
-    put('capture_after', 101.)
-    put('reference_image', NS(width=4, height=4, header=NS(stamp=NS(sec=100, nanosec=0))))
-    with pytest.raises(ValueError, match='早于'):
-        context.prepare_facing_identity()
+    put("capture_after", 101.)
+    image = NS(width=4, height=4, header=NS(stamp=NS(sec=0, nanosec=0)))
+    put("reference_image", image)
+    context.prepare_facing_identity()
+    assert get("scene").rgb_image is image
 
 
 @pytest.mark.parametrize('key,value', [('navigation_attempts', 0), ('arm_attempts', True),
@@ -572,3 +606,46 @@ def test_invalid_recovery_settings_fail_preflight(cfg, key, value):
     cfg[key] = value
     with pytest.raises(ValueError, match=key):
         validate(cfg)
+
+
+def test_unknown_identity_is_explicit_in_pre_approach_report(cfg):
+    root, io = run(cfg, owners=(3,), identities=[[None]] * 4)
+    index = io.calls.index("Announce location, owner and behaviour")
+    text = io.calls[index + 1][1]
+    assert cfg["room_names"][cfg["current_room"]] in text
+    assert "\u8eab\u4efd\u5c1a\u672a\u786e\u8ba4" in text
+    assert state.BEHAVIOUR_ZH[3] in text
+    assert all(owner.name not in text for owner in root.context.owners)
+    assert index < io.calls.index("approach")
+
+
+def test_announcement_failure_does_not_start_service(cfg):
+    root, io = run(cfg, owners=(3,), fail={"Announce location, owner and behaviour": 100})
+    assert io.counts["approach"] == 0
+    assert not root.context.serviced_roles
+
+
+@pytest.mark.parametrize("stamp", [0, 1, 100, 10**9])
+def test_detector_accepts_capture_age_and_missing_diagnostic_log(cfg, stamp):
+    value = scene()
+    value.header.stamp.sec = stamp
+    value.status, value.detected, value.error_msg, value.log_json = 0, False, "", ""
+    context = Context(cfg)
+    node = DetectScene("detector", context, "behaviour")
+    put("capture_after", 100.)
+    node.initialise()
+    node.node = NS(get_clock=lambda: NS(now=lambda: NS(nanoseconds=100_000_000_000)))
+    node.response = Future()
+    node.response.set_result(value)
+    assert node.update() == S.SUCCESS
+    assert get("scene") is value
+
+
+@pytest.mark.parametrize("width,expected", [(4, S.SUCCESS), (0, S.FAILURE)])
+def test_feature_image_checks_content_not_timestamp(adapters, width, expected):
+    node = adapters.HangzhouFeature("feature")
+    node.result_message = NS(result=NS(status=0))
+    node.capture_started = 100.
+    node.blackboard = NS(comparison_image=NS(width=width, height=4,
+                         header=NS(stamp=NS(sec=0, nanosec=0))))
+    assert node.process_result() == expected

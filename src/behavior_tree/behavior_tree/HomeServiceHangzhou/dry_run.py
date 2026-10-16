@@ -14,13 +14,14 @@ def mock_config(config):
     result = copy.deepcopy(config)
     for task in ("behaviour", "litter"):
         result["endpoints"][task + "_detection"] = "/hangzhou/" + task + "_detection/detect"
-    result.update(entry_pose=[0, 0, 0], exit_pose=[1, 0, 0],
-                  arm_stow=[0] * 7, arm_assist=[0] * 7,
+    result.update(registration_pose=[0, 0, 0],
+                  arm_stow="navigation", arm_assist="help",
                   evidence_directory="~/hangzhou_dry_runs")
     for room in result["rooms"]:
         result["room_poses"][room] = [0, 0, 0]
+    for room in result["switches"]:
         for command in ("on", "off"):
-            result["switches"][room][command] = {"navigation": [0, 0, 0], "arm": [0] * 7}
+            result["switches"][room][command] = {"navigation": [0, 0, 0], "arm": "click"}
     return result
 
 
@@ -45,7 +46,7 @@ def motion_mock_factory(context):
             return self.record("Approach owner", "approach", "target")
 
         def arm(self, name):
-            return self.record(name, "arm", "arm_goal")
+            return self.record(name, "arm", "arm_pose_name")
     return MotionMockLeaves(context)
 
 
@@ -58,10 +59,10 @@ def build_tree(config):
     configure_real_perception()
     from .tree import create_task
     from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_Approach
-    from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
+    from .ros_nodes import Tk27SavedPose
     root = create_task(mock_config(config), leaves_factory=motion_mock_factory)
     for node in root.iterate():
-        if isinstance(node, (BtNode_GotoAction, BtNode_Approach, BtNode_MoveArmSingle)):
+        if isinstance(node, (BtNode_GotoAction, BtNode_Approach, Tk27SavedPose)):
             raise RuntimeError("Real motion node found in dry-run: " + node.name)
         if getattr(node, "mock_mode", False):
             raise RuntimeError("Non-motion node unexpectedly mocked: " + node.name)
@@ -109,10 +110,9 @@ def main():
             root = build_tree(config)
             tree = py_trees.trees.BehaviourTree(root)
             tree.setup(timeout=20, node=node)
-            deadline = time.monotonic() + config["mission_timeout_seconds"] + 70
             previous_tip = None
             failures = []
-            while time.monotonic() < deadline:
+            while True:
                 tree.tick()
                 for leaf in root.iterate():
                     if (not leaf.children and leaf.status == py_trees.common.Status.FAILURE

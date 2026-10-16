@@ -49,22 +49,22 @@ def config(tmp_path):
     c = load_config()
     c["retry_delay_seconds"] = 0.0
     c["identity_facing_wait_seconds"] = 0.0
-    c["entry_pose"] = [1.0, 2.0, 0.0]
-    c["exit_pose"] = [9.0, 2.0, 3.14]
+    c["registration_pose"] = [1.0, 2.0, 0.0]
     c["current_room"] = "dining_room"
-    c["arm_stow"] = [0.0] * 7
-    c["arm_assist"] = [1.0] * 7
+    c["arm_stow"] = "navigation"
+    c["arm_assist"] = "help"
     c["evidence_directory"] = str(tmp_path)
     for index, room in enumerate(c["rooms"]):
         c["room_poses"][room] = [float(index), 2.0, 0.0]
+        c["switches"].setdefault(room, {})
         for command, coordinate in (("on", 6.0), ("off", 7.0)):
             c["switches"][room][command] = {
-                "navigation": [coordinate, 3.0, 0.0], "arm": [coordinate] * 7}
+                "navigation": [coordinate, 3.0, 0.0], "arm": "click_" + command}
     return c
 
 
 class FakeLeaves:
-    def __init__(self, context, *, command="关", fail_arm=None, fail_listen=None,
+    def __init__(self, context, *, command="off", fail_arm=None, fail_listen=None,
                  unknown=False, detect_error=False, no_detections=False):
         self.context = context
         self.command_value = command
@@ -83,7 +83,7 @@ class FakeLeaves:
     def say(self, name, text=None):
         return self.node(name, lambda: self.calls.append(("say", text if text is not None else get("speech"))))
 
-    def listen(self, name):
+    def listen(self, name, initial_prompt=""):
         def run():
             if name == self.fail_listen:
                 return False
@@ -139,7 +139,7 @@ class FakeLeaves:
 
     def arm(self, name):
         def run():
-            self.calls.append(("arm", name, list(get("arm_goal"))))
+            self.calls.append(("arm", name, get("arm_pose_name")))
             if name == self.fail_arm:
                 return False
         return self.node(name, run)
@@ -147,6 +147,7 @@ class FakeLeaves:
 
 def run_tree(config, **kwargs):
     root = create_task(config, lambda context: FakeLeaves(context, **kwargs))
+    skip_startup_delay(root)
     for _ in range(100):
         root.tick_once()
         if root.status in (S.SUCCESS, S.FAILURE):
@@ -154,7 +155,7 @@ def run_tree(config, **kwargs):
     pytest.fail("tree failed to terminate")
 
 
-@pytest.mark.parametrize("command,expected", [("开", 6.0), ("关", 7.0)])
+@pytest.mark.parametrize("command,expected", [("on", 6.0), ("off", 7.0)])
 def test_complete_random_order_and_four_room_sweep(config, command, expected):
     root, io = run_tree(config, command=command)
     assert root.status == S.SUCCESS
@@ -173,11 +174,13 @@ def test_complete_random_order_and_four_room_sweep(config, command, expected):
     assert len([call for call in calls if call[0] == "head" and call[3] == 0]) == 4
     switch = [call for call in calls if call[:2] == ("goto", "Navigate to switch mark")]
     assert switch[0][2].pose.position.x == expected
-    assert ("arm", "Move end effector over switch mark", [expected] * 7) in calls
+    assert ("arm", "Move end effector over switch mark",
+            "click_on" if expected == 6.0 else "click_off") in calls
     assert ("say", "我复述一下您的要求：请帮我拿一杯温水，不要加糖。") in calls
     for name in ("杰克", "安东", "李华"):
-        assert any(call[0] == "say" and name in call[1] and "认出" in call[1] for call in calls)
-    assert any(call[0] == "goto" and call[1] == "Leave through separate exit" for call in calls)
+        assert any(call[0] == "say" and name in call[1] and "\u53d1\u73b0" in call[1] for call in calls)
+    assert not any(call[0] == "goto" and call[1] == "Leave through separate exit" for call in calls)
+    assert any(e["event"] == "mission_completed" for e in c.events)
     assert len(list(c.evidence_dir.glob("owner_*.png"))) == 3
     records = [json.loads(line) for line in (c.evidence_dir / "events.jsonl").read_text().splitlines()]
     assert all(record["time"] for record in records)
@@ -251,8 +254,8 @@ def test_behaviour_is_not_identity(config):
     assert context.select_owner(3) is False
 
 
-@pytest.mark.parametrize("status,stamp,success", [(0, 100, True), (0, 80, False), (2, 100, False)])
-def test_detection_error_and_pre_settle_frame_are_not_negative(config, status, stamp, success):
+@pytest.mark.parametrize("status,stamp,success", [(0, 100, True), (0, 80, True), (2, 100, False)])
+def test_detection_errors_fail_but_capture_age_is_accepted(config, status, stamp, success):
     context = Context(config)
     node = DetectScene("test detector", context, "behaviour")
     put("capture_after", 90)
@@ -287,22 +290,51 @@ def test_timed_out_identity_cannot_publish_late_result(config):
 
 
 def test_invalid_numeric_configuration(config):
-    config["arm_assist"][0] = float("nan")
-    with pytest.raises(ValueError, match="arm_assist"):
+    config["registration_pose"][0] = float("nan")
+    with pytest.raises(ValueError, match="registration_pose"):
         validate(config)
 
 
-def test_patrol_deadline_reserves_exit_without_ticking_child(config):
-    from behavior_tree.HomeServiceHangzhou.state import PatrolBudget
-    context = Context(config)
-    context.started_at = 100.0
-    context.clock = lambda: 100.0 + config["mission_timeout_seconds"] - config["exit_reserve_seconds"]
-    calls = []
-    child = StateNode("must not run", lambda: calls.append("ran"))
-    root = PatrolBudget(child, context)
+def test_task_has_no_mission_or_patrol_deadline(config):
+    root = create_task(config, FakeLeaves)
+    assert not any(node.name in ("Mission deadline", "Patrol budget") for node in root.iterate())
+    assert not any(key in config for key in
+                   ("mission_timeout_seconds", "patrol_timeout_seconds", "exit_reserve_seconds"))
+
+
+def skip_startup_delay(root):
+    for node in root.iterate():
+        if node.name == "Wait silently before registration":
+            node.duration = 0.0
+
+
+def test_startup_is_silent_for_five_seconds(config, monkeypatch):
+    import py_trees
+    clock = [1000.0]
+    monkeypatch.setattr(py_trees.timers.time, "time", lambda: clock[0])
+    root = create_task(config, FakeLeaves)
     root.tick_once()
-    assert root.status == S.FAILURE
-    assert calls == []
+    assert root.status == S.RUNNING
+    assert root.context.fake_io.calls == []
+    clock[0] += 4.9
+    root.tick_once()
+    assert root.context.fake_io.calls == []
+    clock[0] += 0.2
+    root.tick_once()
+    calls = root.context.fake_io.calls
+    assert any(c[:2] == ("goto", "Navigate to registration point") for c in calls)
+    nav_index = next(i for i, c in enumerate(calls)
+                     if c[:2] == ("goto", "Navigate to registration point"))
+    assert not any(c[0] == "say" for c in calls[:nav_index])
+
+
+def test_keep_state_request_does_not_operate_switch(config):
+    root, io = run_tree(config, command="none")
+    assert root.status == S.SUCCESS
+    assert 1 in root.context.serviced_roles
+    assert not any(c[:2] == ("goto", "Navigate to switch mark") for c in io.calls)
+    assert not any(c[:2] == ("arm", "Move end effector over switch mark") for c in io.calls)
+
 
 
 def test_live_scene_request_and_failure_semantics(config):
@@ -327,17 +359,17 @@ def test_live_scene_request_and_failure_semantics(config):
 
 
 def test_missing_position_blocks_approach(config):
-    from behavior_tree.HomeServiceHangzhou.ros_nodes import FreshTarget
+    from behavior_tree.HomeServiceHangzhou.ros_nodes import ValidTarget
     context = Context(config)
     put("target", scene(2).observations[0].position)
     put("target_valid", False)
-    node = FreshTarget(context)
+    node = ValidTarget()
     node.node = NS(get_clock=lambda: NS(now=lambda: NS(nanoseconds=100_000_000_000)))
     assert node.update() == S.FAILURE
     put("target_valid", True)
     assert node.update() == S.SUCCESS
     node.node = NS(get_clock=lambda: NS(now=lambda: NS(nanoseconds=200_000_000_000)))
-    assert node.update() == S.FAILURE
+    assert node.update() == S.SUCCESS
 
 
 def test_pan_timeout_is_not_a_photo_success(config):

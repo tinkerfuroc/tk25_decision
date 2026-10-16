@@ -10,6 +10,7 @@ import time
 
 import py_trees
 from .config import BEHAVIOUR_ZH, EXPECTED, OWNER_NAMES, ROLE_PRIORITY, validate
+from .speech import match_owner_name
 
 PREFIX = "/hangzhou/"
 S = py_trees.common.Status
@@ -29,7 +30,6 @@ def stamp_seconds(header):
 
 def valid_point(point):
     return (point is not None and point.header.frame_id == "map"
-            and stamp_seconds(point.header) > 0
             and all(math.isfinite(v) for v in (point.point.x, point.point.y, point.point.z)))
 
 
@@ -44,28 +44,8 @@ def extract_name(text):
 
 
 def extract_owner_name(text):
-    """Match canonical names or identical Mandarin syllables, ignoring tones.
-
-    Only contiguous Han characters form a phonetic candidate: punctuation,
-    Latin letters and spaces cannot silently join unrelated syllables.
-    """
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError("未听清姓名，请重新说您的名字")
-    from pypinyin import Style, lazy_pinyin
-
-    def syllables(value):
-        return tuple(lazy_pinyin(value, style=Style.NORMAL, strict=True))
-
-    runs = [syllables(run) for run in re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]+", text)]
-    matches = {name for name in OWNER_NAMES if name in text}
-    for name in OWNER_NAMES:
-        expected = syllables(name)
-        if any(run[i:i + len(expected)] == expected
-               for run in runs for i in range(len(run) - len(expected) + 1)):
-            matches.add(name)
-    if len(matches) != 1:
-        raise ValueError("请只说一个姓名：" + "、".join(OWNER_NAMES))
-    return next(iter(matches))
+    """Normalize enrollment speech against the configured owner names."""
+    return match_owner_name(text)
 
 
 @dataclass
@@ -86,7 +66,6 @@ class Context:
     feature_actions: list = field(default_factory=list)
     feature_blocked: bool = False
     ready: bool = False
-    started_at: float = 0.0
     evidence_dir: object = None
     events: list = field(default_factory=list)
     clock: object = time.monotonic
@@ -114,7 +93,6 @@ class Context:
         put("state", self)
         put("owners", self.owners)
         self.ready = True
-        self.started_at = self.clock()
         self.event("mission_started", excluded=["litter_pickup", "litter_placement"])
 
     def remember(self, owner):
@@ -138,6 +116,17 @@ class Context:
         put("speech", name + "，我已记住您的名字和外貌特征。" + suffix)
         self.event("owner_registered", owner=owner, name=name, features=features,
                    image=str(path), capture_stamp=stamp_seconds(image.header))
+
+    def match_owner_name(self):
+        raw = get("heard")
+        try:
+            name = extract_owner_name(raw)
+        except ValueError as exc:
+            self.event("owner_name_match", transcript=raw, matched=None, error=str(exc))
+            raise
+        self.event("owner_name_match", transcript=raw, matched=name)
+        put("heard_raw", raw)
+        put("heard", name)
 
     def select_room(self, room):
         self.room = room
@@ -174,15 +163,14 @@ class Context:
             return False
         index, obs = self.active[role]
         scene = get("scene")
-        # Preserve exactly the approached person's original ROI, not every
-        # bystander in the frame. Identity is deliberately deferred.
+        # Preserve the selected person's original ROI for pre-service identity.
         put("behaviour_identity_scene", SimpleNamespace(
             header=scene.header, rgb_image=scene.rgb_image,
             observations=[obs], log_json=scene.log_json))
         put("matched_owner", None)
         put("target", obs.position)
         put("target_valid", obs.position_valid)
-        put("speech", "您好，我注意到您" + BEHAVIOUR_ZH[role] + "，我过来帮助您。")
+
         self.event("behaviour_selected", role=role, observation=index,
                    capture_stamp=stamp_seconds(scene.header))
         return True
@@ -192,12 +180,10 @@ class Context:
         image = get("reference_image")
         if image is None or image.width <= 0 or image.height <= 0:
             raise ValueError("正面人物图像为空")
-        if stamp_seconds(image.header) < get("capture_after"):
-            raise ValueError("正面图像早于面向摄像头提示后的拍摄时刻")
         put("scene", SimpleNamespace(header=image.header, rgb_image=image,
             observations=[SimpleNamespace(bbox=SimpleNamespace(
                 x_offset=0, y_offset=0, width=image.width, height=image.height))],
-            log_json="post_interaction_person_crop"))
+            log_json="facing_person_crop"))
 
     def accept_identity(self, source):
         identities = get("identities")
@@ -206,10 +192,18 @@ class Context:
             return False
         owner = identities[0]
         put("matched_owner", owner)
-        put("speech", self.owners[owner - 1].name + "，我认出您了。")
-        self.event("post_interaction_identity", owner=owner,
+        self.event("owner_identified", owner=owner,
                    name=self.owners[owner - 1].name, source=source)
         return True
+
+    def prepare_observation_report(self, role):
+        """Report location, matched identity and behaviour before approaching."""
+        owner = get("matched_owner")
+        name = (self.owners[owner - 1].name if owner is not None
+                else "\u4e00\u4f4d\u8eab\u4efd\u5c1a\u672a\u786e\u8ba4\u7684\u4eba")
+        room = self.config["room_names"][self.room]
+        put("speech", f"\u5728{room}\u53d1\u73b0{name}\uff0c\u6b63\u5728{BEHAVIOUR_ZH[role]}\u3002")
+        self.event("observation_report_prepared", owner=owner, role=role, name=name)
 
     def finish_behaviour(self, role):
         # Do not repeat a completed physical service just because recognition
@@ -236,13 +230,16 @@ class Context:
 
     def switch_command(self):
         command = get("command")
-        if command not in ("开", "关"):
-            raise ValueError("开关指令无效")
-        switch = self.config["switches"][self.room]["on" if command == "开" else "off"]
-        put("switch_pose", pose(switch["navigation"]))
-        put("switch_arm", switch["arm"])
-        put("speech", "好的，您的要求是" + command + "电器。我现在前往" + command + "的标记位置。")
-        self.event("switch_requested", command=command)
+        if command not in ("on", "off", "none"):
+            raise ValueError("Switch intent is unresolved")
+        if command == "none":
+            put("speech", "\u597d\u7684\uff0c\u4fdd\u6301\u7535\u5668\u5f53\u524d\u72b6\u6001\uff0c\u4e0d\u64cd\u4f5c\u5f00\u5173\u3002")
+        else:
+            switch = self.config["switches"][self.room][command]
+            put("switch_arm", switch["arm"])
+            operation = "\u6253\u5f00" if command == "on" else "\u5173\u95ed"
+            put("speech", f"\u597d\u7684\uff0c\u60a8\u7684\u8981\u6c42\u662f{operation}\u7535\u5668\u3002")
+        self.event("switch_requested", command=command, transcript=get("heard"))
 
     def repeat_request(self):
         heard = get("heard")
@@ -278,7 +275,7 @@ class Context:
     def summary(self):
         put("speech", "巡游结束。已完成" + str(len(self.completed))
             + "位主人的交互，在" + str(len(self.litter_rooms))
-            + "个房间发现垃圾。本次未执行垃圾抓取和放置，现在从出口离场。")
+            + "\u4e2a\u623f\u95f4\u53d1\u73b0\u5783\u573e\u3002\u672c\u6b21\u672a\u6267\u884c\u5783\u573e\u6293\u53d6\u548c\u653e\u7f6e\uff0c\u4efb\u52a1\u7ed3\u675f\u3002")
         self.event("patrol_summary", completed=sorted(self.completed),
                    visited=sorted(self.visited), litter_rooms=sorted(self.litter_rooms),
                    scope_complete=(len(self.completed) == 3 and len(self.visited) == 4
@@ -308,30 +305,3 @@ class StateNode(py_trees.behaviour.Behaviour):
             self.feedback_message = str(exc)
             self.logger.error(self.feedback_message)
             return S.FAILURE
-
-
-class PatrolBudget(py_trees.decorators.Decorator):
-    """Reserve exit time from match start, including entry and enrollment."""
-    def __init__(self, child, context):
-        super().__init__(name="Patrol budget with exit reserve", child=child)
-        self.context = context
-
-    def initialise(self):
-        self.started = self.context.clock()
-
-    def tick(self):
-        now = self.context.clock()
-        config = self.context.config
-        expired = now >= self.context.started_at + config["mission_timeout_seconds"] - config["exit_reserve_seconds"]
-        if self.status == S.RUNNING:
-            expired = expired or now >= self.started + config["patrol_timeout_seconds"]
-        if expired:
-            self.decorated.stop(S.INVALID)
-            self.stop(S.FAILURE)
-            self.feedback_message = "Patrol budget reached; retract then leave"
-            yield self
-            return
-        yield from super().tick()
-
-    def update(self):
-        return self.decorated.status

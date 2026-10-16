@@ -8,20 +8,21 @@ def test_dry_run_keeps_calibration_placeholders_untouched():
     original = load_config()
     effective = mock_config(original)
     validate(effective)
-    assert original["entry_pose"] is None
-    assert original["arm_stow"] is None
+    assert set(effective["switches"]) == set(original["switches"]) == {"living_room", "bedroom"}
+    assert original["registration_pose"] is None
+    assert original["arm_stow"] == "navigation"
     assert all(value is None for value in original["room_poses"].values())
 
 
 def test_motion_clients_are_absent_but_real_perception_remains():
     from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction, BtNode_Approach
-    from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
+    from behavior_tree.HomeServiceHangzhou.ros_nodes import Tk27SavedPose
     from behavior_tree.TemplateNodes.Audio import BtNode_Announce
     from behavior_tree.HomeServiceHangzhou.ros_nodes import SettledPanTilt
     from behavior_tree.HomeServiceHangzhou.perception import DetectScene
     root = build_tree(load_config())
     nodes = list(root.iterate())
-    assert not any(isinstance(n, (BtNode_GotoAction, BtNode_Approach, BtNode_MoveArmSingle))
+    assert not any(isinstance(n, (BtNode_GotoAction, BtNode_Approach, Tk27SavedPose))
                    for n in nodes)
     assert any("[MOCK]" in n.name for n in nodes)
     for kind in (BtNode_Announce, SettledPanTilt, DetectScene):

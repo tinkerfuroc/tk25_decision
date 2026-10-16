@@ -12,8 +12,6 @@
     "dining_room": "餐厅",
     "kitchen": "厨房"
   },
-  "entry_pose": null,
-  "exit_pose": null,
   "room_poses": {
     "living_room": null,
     "bedroom": null,
@@ -24,46 +22,26 @@
     "living_room": {
       "on": {
         "navigation": null,
-        "arm": null
+        "arm": "click"
       },
       "off": {
         "navigation": null,
-        "arm": null
+        "arm": "click"
       }
     },
     "bedroom": {
       "on": {
         "navigation": null,
-        "arm": null
+        "arm": "click"
       },
       "off": {
         "navigation": null,
-        "arm": null
-      }
-    },
-    "dining_room": {
-      "on": {
-        "navigation": null,
-        "arm": null
-      },
-      "off": {
-        "navigation": null,
-        "arm": null
-      }
-    },
-    "kitchen": {
-      "on": {
-        "navigation": null,
-        "arm": null
-      },
-      "off": {
-        "navigation": null,
-        "arm": null
+        "arm": "click"
       }
     }
   },
-  "arm_stow": null,
-  "arm_assist": null,
+  "arm_stow": "navigation",
+  "arm_assist": "help",
   "pan_angles_deg": [
     -90,
     -30,
@@ -74,9 +52,6 @@
   "litter_depression_deg": 30,
   "settle_seconds": 0.4,
   "max_passes": 2,
-  "patrol_timeout_seconds": 420,
-  "mission_timeout_seconds": 480,
-  "target_max_age_seconds": 45,
   "listen_timeout_seconds": 7,
   "service_timeout_seconds": 65,
   "navigation_timeout_seconds": 60,
@@ -84,16 +59,15 @@
   "endpoints": {
     "announce": "announce",
     "listen": "listen_action",
-    "phrase": "phrase_extraction_action",
     "feature_extraction": "feature_extraction_service",
     "behaviour_detection": "/behaviour_detection/detect",
     "litter_detection": "/litter_detection/detect",
     "navigate": "navigate_to_pose",
     "approach": "go_to_approach",
-    "arm": "/manipulation/joint_move"
+    "arm": "/manipulation/move_to_saved_pose"
   },
   "identity_vlm_timeout_seconds": 25,
   "identity_qwen_backend": "dashscope",
   "identity_model": "",
-  "exit_reserve_seconds": 60
+  "registration_pose": null
 }

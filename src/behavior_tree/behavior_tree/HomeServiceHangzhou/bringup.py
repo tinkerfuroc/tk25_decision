@@ -34,7 +34,7 @@ def missing_requirements(graph, config):
     for key in ("announce", "behaviour_detection", "litter_detection"):
         if "/" + endpoints[key].strip("/") not in graph["services"]:
             missing.append(key)
-    for key in ("listen", "phrase", "feature_extraction"):
+    for key in ("listen", "feature_extraction"):
         if "/" + endpoints[key].strip("/") not in graph["actions"]:
             missing.append(key)
     missing.extend(key for key in ("camera", "head", "head_feedback") if not graph[key])
