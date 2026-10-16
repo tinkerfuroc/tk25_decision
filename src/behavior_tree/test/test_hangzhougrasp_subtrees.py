@@ -11,6 +11,7 @@ from behavior_tree.hangzhougrasp.tk27_nodes import BtNode_Tk27GripperOpen
 
 S = py_trees.common.Status
 
+TABLE_HEAD = "Head to table scan tilt"
 ORBBEC_SCAN = "Scan objects with YOLO26 SAM"
 ANNOUNCE = "Announce detected objects in Chinese"
 TABLE_POSE = "Arm to table pose"
@@ -48,7 +49,8 @@ def _cfg(**over):
         pick_action="/manipulation/pick", pick_plan_effort="high",
         gripper_action="/xarm_gripper/gripper_action",
         gripper_open_position=0.0, gripper_open_tolerance=0.025,
-        gripper_max_effort=50.0)
+        gripper_max_effort=50.0, head_pan_deg=0.0, table_scan_tilt_deg=20.0,
+        ground_scan_tilt_deg=0.0, head_retry_limit=1)
     values.update(over)
     return SimpleNamespace(**values)
 
@@ -72,7 +74,8 @@ def _stub(monkeypatch, log, goto=S.SUCCESS, grasp=S.SUCCESS, overrides=None,
     monkeypatch.setattr(
         hg, "_gotoRetry", lambda name, key, config: Leaf(name, goto, log))
     for cls in ("BtNode_Tk27SavedPose", "BtNode_Tk27Pick", "BtNode_Tk27GripperOpen",
-                "BtNode_SelectNearestLabel", "BtNode_AnnounceDetections"):
+                "BtNode_SelectNearestLabel", "BtNode_AnnounceDetections",
+                "BtNode_HeadTilt"):
         monkeypatch.setattr(hg, cls, lambda **kw: leaf(kw["name"]))
     if not real_scan_check:
         monkeypatch.setattr(hg, "BtNode_ScanSawObjects", lambda **kw: leaf(kw["name"]))
@@ -169,9 +172,30 @@ def test_viewpoint_order(monkeypatch):
     assert _tick(root) == S.SUCCESS
     # SetHolding is a real (unlogged) node; test_holding_set_before_retract
     # pins that it runs between Pick and the retract.
-    assert log == [ORBBEC_SCAN, ANNOUNCE, SAW, TABLE_POSE, REALSENSE_SCAN, SELECT,
-                   OPEN, PICK, RETRACT]
+    assert log == [TABLE_HEAD, ORBBEC_SCAN, ANNOUNCE, SAW, TABLE_POSE, REALSENSE_SCAN,
+                   SELECT, OPEN, PICK, RETRACT]
     assert _holding() is True
+
+
+def test_head_failure_is_logged_and_scan_still_runs(monkeypatch):
+    log = []
+    _stub(monkeypatch, log, overrides={TABLE_HEAD: S.FAILURE})
+    root = hg.createViewpointScanGrasp(_cfg(), miss_is_success=True)
+    assert _tick(root) == S.SUCCESS
+    assert log[:2] == [TABLE_HEAD, ORBBEC_SCAN]
+    logged = [n for n in root.iterate() if n.name == "Log head failure"]
+    assert len(logged) == 1 and logged[0].status == S.SUCCESS
+
+
+def test_ground_and_table_scans_use_their_own_tilt():
+    table = hg.createScanAnnounce(_cfg(), surface="table")
+    ground = hg.createScanAnnounce(_cfg(), surface="ground")
+    tilt = lambda root: [n.y for n in root.iterate() if isinstance(n, hg.BtNode_HeadTilt)]
+    pan = lambda root: [n.x for n in root.iterate() if isinstance(n, hg.BtNode_HeadTilt)]
+    assert tilt(table) == [20.0] and tilt(ground) == [0.0]
+    assert pan(table) == [0.0] and pan(ground) == [0.0]
+    with pytest.raises(ValueError, match="surface"):
+        hg.createScanAnnounce(_cfg(), surface="shelf")
 
 
 def test_orbbec_miss_moves_no_arm(monkeypatch):

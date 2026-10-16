@@ -306,3 +306,55 @@ def test_running_goal_is_still_cancelled_on_interrupt():
     leaf = _running(_pick())
     leaf.stop(S.INVALID)  # e.g. a higher-priority branch preempts a live Pick
     assert leaf._cancel_requested
+
+
+# ---- Orbbec head: strict settle ----
+import math  # noqa: E402
+
+from behavior_tree.hangzhougrasp.custom_nodes import BtNode_HeadTilt  # noqa: E402
+
+
+def _head(tilt=20.0):
+    head = BtNode_HeadTilt(name="Head to table scan tilt", x=0.0, y=tilt)
+    head.mock_mode = False
+    head._skip_settle = False
+    head._cmd_pan_deg, head._cmd_tilt_deg = 0.0, tilt
+    head._settle_count = 0
+    head._command_at = time.monotonic()
+    head._feedback_received = 0.0
+    return head
+
+
+def _state(tilt_deg, ok=True):
+    return SimpleNamespace(feedback_ok=ok, pan_rad=0.0, tilt_rad=math.radians(tilt_deg))
+
+
+def test_head_mock_config_name():
+    assert BtNode_HeadTilt.mock_config_name == "BtNode_TurnPanTilt"
+
+
+def test_head_succeeds_on_fresh_in_tolerance_feedback():
+    head = _head()
+    head._settle_deadline = time.time() + 5
+    head._state_cb(_state(20.3))
+    assert head.update() == S.SUCCESS
+
+
+@pytest.mark.parametrize("case", ["off_target", "no_feedback", "stale"])
+def test_head_fails_after_deadline_without_settled_feedback(case):
+    head = _head()
+    head._settle_deadline = time.time() - 0.1  # already past: base reports SUCCESS
+    if case == "off_target":
+        head._state_cb(_state(28.0))
+    elif case == "stale":
+        head._state_cb(_state(20.0))
+        head._command_at = time.monotonic() + 1  # feedback predates the command
+    assert head.update() == S.FAILURE
+    assert "did not settle" in head.feedback_message
+
+
+def test_head_waits_while_deadline_open():
+    head = _head()
+    head._settle_deadline = time.time() + 5
+    head._state_cb(_state(28.0))
+    assert head.update() == S.RUNNING

@@ -93,7 +93,7 @@ def createPart(name, config, *, enable_grasp, room=None, table=None,
 
     poses, body = [], None
     if name == "scan-announce":
-        body = task.createScanAnnounce(config)
+        body = task.createScanAnnounce(config, surface="table")
     elif name == "scan-grasp":
         body = task.createViewpointScanGrasp(config, miss_is_success=False)
     elif name == "visit-table":

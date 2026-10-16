@@ -48,6 +48,10 @@ class TaskConfig:
     gripper_open_position: float
     gripper_open_tolerance: float
     gripper_max_effort: float
+    head_pan_deg: float
+    table_scan_tilt_deg: float
+    ground_scan_tilt_deg: float
+    head_retry_limit: int
     nav_retry_limit: int
     scan_retry_limit: int
     arm_retry_limit: int
@@ -105,6 +109,24 @@ def _check_tk27(data):
     for key in ("gripper_open_tolerance", "gripper_max_effort"):
         if data[key] <= 0:
             raise ValueError(f"{key} must be positive, got {data[key]}")
+
+
+# Firmware tilt range of the head: 30 = optical axis horizontal, 0 = ~30 deg down.
+HEAD_TILT_RANGE_DEG = (0.0, 30.0)
+
+
+def _check_head(data):
+    for key in ("head_pan_deg", "table_scan_tilt_deg", "ground_scan_tilt_deg"):
+        value = data[key]
+        if type(value) not in (int, float) or not math.isfinite(value):
+            raise ValueError(f"{key} must be a finite number of degrees, got {value!r}")
+        data[key] = float(value)
+    low, high = HEAD_TILT_RANGE_DEG
+    for key in ("table_scan_tilt_deg", "ground_scan_tilt_deg"):
+        if not low <= data[key] <= high:
+            raise ValueError(
+                f"{key} must be within the head's tilt range [{low}, {high}], "
+                f"got {data[key]}")
 
 
 def _check_mandarin_names(prompt, label_map):
@@ -211,8 +233,9 @@ def load_config(path=None, *, map_name=None, enter_room=None, prompt=None,
     _report_unmatched(index, data["rooms"], destination_name)
     data["route"] = build_route(index, data["rooms"])
     _check_tk27(data)
+    _check_head(data)
     for key in ("nav_retry_limit", "scan_retry_limit", "arm_retry_limit",
-                "grasp_retry_limit", "announce_retry_limit"):
+                "grasp_retry_limit", "announce_retry_limit", "head_retry_limit"):
         if type(data[key]) is not int or data[key] < 1:
             raise ValueError(f"{key} must be a positive integer")
     if not isinstance(data["prompt"], str):

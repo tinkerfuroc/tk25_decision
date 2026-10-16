@@ -14,7 +14,7 @@ from .config import (
     KEY_ANNOUNCEMENT, KEY_HOLDING, load_config, pose_key,
 )
 from .custom_nodes import (
-    BtNode_ClearKey, BtNode_LogError, BtNode_ScanSawObjects,
+    BtNode_ClearKey, BtNode_HeadTilt, BtNode_LogError, BtNode_ScanSawObjects,
     BtNode_SelectNearestLabel, BtNode_SetHolding,
 )
 from .tk27_nodes import BtNode_Tk27GripperOpen, BtNode_Tk27Pick, BtNode_Tk27SavedPose
@@ -85,13 +85,37 @@ def _scanYolo26Retry(name, config, *, bb_key, use_orbbec, prompt):
     )
 
 
-def createScanAnnounce(config):
-    """Orbbec scan on yolo26_sam, then the Mandarin announcement.
+def _headTilt(config, surface):
+    """Point the Orbbec head at the surface; a head that will not settle is
+    logged and the scan goes ahead anyway (the run keeps scoring)."""
+    tilt = {"table": config.table_scan_tilt_deg,
+            "ground": config.ground_scan_tilt_deg}[surface]
+    name = f"Head to {surface} scan tilt"
+    return py_trees.composites.Selector(
+        name=f"{name} or log", memory=True,
+        children=[
+            py_trees.decorators.Retry(
+                name=f"Retry {name}",
+                child=BtNode_HeadTilt(name=name, x=config.head_pan_deg, y=tilt),
+                num_failures=config.head_retry_limit),
+            BtNode_LogError(
+                name="Log head failure",
+                message=f"Orbbec head did not settle at tilt {tilt} for the "
+                        f"{surface} scan; scanning anyway"),
+        ])
 
+
+def createScanAnnounce(config, *, surface):
+    """Point the Orbbec head for the surface, scan on yolo26_sam, announce.
+
+    surface is "table" or "ground"; each has its own tilt in constants.json.
     A scan with no detections FAILS; wrap in a Selector ending in
     py_trees.behaviours.Success where a miss must not abort the mission.
     """
+    if surface not in ("table", "ground"):
+        raise ValueError(f"surface must be 'table' or 'ground', got {surface!r}")
     root = py_trees.composites.Sequence(name="Scan and announce objects", memory=True)
+    root.add_child(_headTilt(config, surface))
     root.add_child(_scanYolo26Retry(
         "Scan objects with YOLO26 SAM", config, bb_key=KEY_SCAN_RESULT,
         use_orbbec=True, prompt=config.prompt,
@@ -183,7 +207,7 @@ def createViewpointScanGrasp(config, *, miss_is_success):
     root.add_child(BtNode_ClearKey(name="Clear previous scan result", key=KEY_SCAN_RESULT))
     root.add_child(py_trees.composites.Selector(
         name="Scan or nothing seen", memory=True,
-        children=[createScanAnnounce(config),
+        children=[createScanAnnounce(config, surface="table"),
                   py_trees.behaviours.Success(name="Nothing seen")]))
     root.add_child(py_trees.composites.Selector(
         name="Grasp only if seen", memory=True,
@@ -276,10 +300,10 @@ def createDropElsewhere(config, next_pose):
     return root
 
 
-def _scan_or_miss(config, name):
+def _scan_or_miss(config, name, surface):
     return py_trees.composites.Selector(
         name=f"Scan or miss at {name}", memory=True,
-        children=[createScanAnnounce(config),
+        children=[createScanAnnounce(config, surface=surface),
                   py_trees.behaviours.Success(name="Miss, skip")])
 
 
@@ -311,7 +335,7 @@ def createTablesPhase(config, stops, *, enable_grasp):
                     name=f"Visit {rec.name}", memory=True)
                 visit.add_child(_gotoRetry(
                     f"Go to {rec.name}", pose_key(rec.name), config))
-                visit.add_child(_scan_or_miss(config, rec.name))
+                visit.add_child(_scan_or_miss(config, rec.name, "table"))
                 root.add_child(visit)
     return root
 
@@ -326,7 +350,7 @@ def createGroundPhase(config, stops):
             name=f"Visit {rec.name}", memory=True)
         visit.add_child(_gotoRetry(
             f"Go to {rec.name}", pose_key(rec.name), config))
-        visit.add_child(_scan_or_miss(config, rec.name))
+        visit.add_child(_scan_or_miss(config, rec.name, "ground"))
         root.add_child(visit)
     return root
 

@@ -18,7 +18,8 @@ def _config():
         pick_action="/manipulation/pick", pick_plan_effort="high",
         gripper_action="/xarm_gripper/gripper_action",
         gripper_open_position=0.0, gripper_open_tolerance=0.025,
-        gripper_max_effort=50.0,
+        gripper_max_effort=50.0, head_pan_deg=0.0, table_scan_tilt_deg=20.0,
+        ground_scan_tilt_deg=0.0, head_retry_limit=1,
     )
 
 
@@ -27,20 +28,20 @@ def _nodes(root, cls):
 
 
 def test_scan_announce_uses_yolo26_sam_and_orbbec():
-    scans = _nodes(createScanAnnounce(_config()), BtNode_ScanForYolo26)
+    scans = _nodes(createScanAnnounce(_config(), surface="table"), BtNode_ScanForYolo26)
     assert len(scans) == 1
     assert scans[0].service_name == "object_detection_yolo26_sam"
     assert scans[0].use_orbbec
 
 
 def test_scan_announce_has_announce_node():
-    root = createScanAnnounce(_config())
+    root = createScanAnnounce(_config(), surface="table")
     assert len(_nodes(root, BtNode_AnnounceDetections)) == 1
     assert not _nodes(root, BtNode_Tk27SavedPose)
 
 
 def test_scans_request_no_image_payload():
-    for root in (createScanAnnounce(_config()), createGrasp(_config())):
+    for root in (createScanAnnounce(_config(), surface="table"), createGrasp(_config())):
         for scan in _nodes(root, BtNode_ScanForYolo26):
             assert not (scan.return_rgb_image or scan.return_depth_image
                         or scan.return_segments)
@@ -84,7 +85,8 @@ def _tick(root):
 def test_announce_failure_is_logged_and_scan_still_succeeds(monkeypatch):
     monkeypatch.setattr(task, "BtNode_ScanForYolo26", _leaf(Status.SUCCESS))
     monkeypatch.setattr(task, "BtNode_AnnounceDetections", _leaf(Status.FAILURE))
-    root = createScanAnnounce(_config())
+    monkeypatch.setattr(task, "BtNode_HeadTilt", _leaf(Status.SUCCESS))
+    root = createScanAnnounce(_config(), surface="table")
     assert _tick(root) == Status.SUCCESS
     logged = [n for n in root.iterate() if n.name == "Log announce failure"]
     assert len(logged) == 1 and logged[0].status == Status.SUCCESS
@@ -93,13 +95,15 @@ def test_announce_failure_is_logged_and_scan_still_succeeds(monkeypatch):
 def test_scan_miss_still_fails_even_with_announce_fallback(monkeypatch):
     monkeypatch.setattr(task, "BtNode_ScanForYolo26", _leaf(Status.FAILURE))
     monkeypatch.setattr(task, "BtNode_AnnounceDetections", _leaf(Status.SUCCESS))
-    assert _tick(createScanAnnounce(_config())) == Status.FAILURE
+    monkeypatch.setattr(task, "BtNode_HeadTilt", _leaf(Status.SUCCESS))
+    assert _tick(createScanAnnounce(_config(), surface="table")) == Status.FAILURE
 
 
 def test_announce_success_does_not_log(monkeypatch):
     monkeypatch.setattr(task, "BtNode_ScanForYolo26", _leaf(Status.SUCCESS))
     monkeypatch.setattr(task, "BtNode_AnnounceDetections", _leaf(Status.SUCCESS))
-    root = createScanAnnounce(_config())
+    monkeypatch.setattr(task, "BtNode_HeadTilt", _leaf(Status.SUCCESS))
+    root = createScanAnnounce(_config(), surface="table")
     assert _tick(root) == Status.SUCCESS
     logged = [n for n in root.iterate() if n.name == "Log announce failure"]
     assert logged[0].status == Status.INVALID

@@ -246,3 +246,21 @@ def test_gripper_numbers_validated(tmp_path, key, value):
 def test_tk27_names_nonempty(tmp_path, key):
     with pytest.raises(ValueError, match=key):
         hgcfg.load_config(_write(tmp_path, **{key: " "}), poses=POSES)
+
+
+# ---- Orbbec head (pan-tilt) angles ----
+def test_head_angles_defaults():
+    c = hgcfg.load_config(TEST_CONFIG, enter_room="bedroom", poses=POSES)
+    assert c.head_pan_deg == 0.0
+    assert c.table_scan_tilt_deg == 20.0
+    assert c.ground_scan_tilt_deg == 0.0
+    assert c.head_retry_limit == 3
+
+
+@pytest.mark.parametrize("key, value", [
+    ("table_scan_tilt_deg", 31), ("table_scan_tilt_deg", -1),
+    ("ground_scan_tilt_deg", 45), ("ground_scan_tilt_deg", "0"),
+    ("head_pan_deg", True), ("head_retry_limit", 0)])
+def test_head_angles_validated(tmp_path, key, value):
+    with pytest.raises(ValueError, match=key):
+        hgcfg.load_config(_write(tmp_path, **{key: value}), poses=POSES)

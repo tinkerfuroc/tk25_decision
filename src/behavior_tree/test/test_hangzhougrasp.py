@@ -152,6 +152,20 @@ def test_no_grasp_builds_no_manipulation_nodes(config):
     assert not any("Deliver" in n.name or "Drop" in n.name for n in root.iterate())
 
 
+@pytest.mark.parametrize("grasp", [False, True])
+def test_every_orbbec_scan_commands_its_phase_tilt(config, grasp):
+    root = task.createHangzhouGrasp(config=config, enable_grasp=grasp)
+    for room in ("bedroom", "kitchen"):
+        room_node = _by_name(root, f"Room {room}")
+        for phase, tilt in (("Tables phase", 20.0), ("Ground phase", 0.0)):
+            node = _by_name(room_node, phase)
+            heads = _nodes(node, task.BtNode_HeadTilt)
+            orbbec = [s for s in _nodes(node, task.BtNode_ScanForYolo26) if s.use_orbbec]
+            assert heads and len(heads) == len(orbbec)
+            assert {h.y for h in heads} == {tilt}
+            assert {h.x for h in heads} == {0.0}
+
+
 def test_ground_phase_has_no_grasp(config):
     root = task.createHangzhouGrasp(config=config, enable_grasp=True)
     for room in ("bedroom", "kitchen"):
@@ -188,6 +202,8 @@ def test_ground_miss_is_success_and_navigation_retries_bounded(
 
     monkeypatch.setattr(task, "BtNode_GotoAction",
                         lambda **kw: Leaf("nav", Status.SUCCESS, **kw))
+    monkeypatch.setattr(task, "BtNode_HeadTilt",
+                        lambda **kw: Leaf("head", Status.SUCCESS, **kw))
     monkeypatch.setattr(task, "BtNode_ScanForYolo26",
                         lambda **kw: Leaf("scan", Status.FAILURE, **kw))
     root = task.createHangzhouGrasp(config=config, enable_grasp=False)

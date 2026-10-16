@@ -329,6 +329,7 @@ def _tick_stubbed(config, monkeypatch, name):
     BB.clear()
     MISSING.clear()
     monkeypatch.setattr(task, "BtNode_GotoAction", _goto)
+    monkeypatch.setattr(task, "BtNode_HeadTilt", lambda **kw: _stub()(**kw))
     monkeypatch.setattr(task, "BtNode_Tk27SavedPose", lambda **kw: _stub()(**kw))
     monkeypatch.setattr(task, "BtNode_ScanForYolo26", lambda **kw: _stub(
         reads=["bb_source"], writes=["bb_key"])(**kw))

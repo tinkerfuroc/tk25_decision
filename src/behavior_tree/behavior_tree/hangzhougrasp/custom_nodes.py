@@ -1,8 +1,50 @@
 """Task-local adapters; ROS primitives stay in TemplateNodes."""
 
+import math
+import time
+
 import py_trees
 
+from behavior_tree.TemplateNodes.Vision import BtNode_TurnPanTilt
+
 from .config import KEY_HOLDING
+
+
+class BtNode_HeadTilt(BtNode_TurnPanTilt):
+    """Absolute pan/tilt for the Orbbec head that only succeeds when settled.
+
+    The base leaf reports SUCCESS on a settle timeout; here the head must
+    report fresh, in-tolerance feedback after the command, else FAILURE
+    (modelled on HomeServiceHangzhou.ros_nodes.SettledPanTilt).
+    """
+    mock_config_name = "BtNode_TurnPanTilt"
+
+    def initialise(self):
+        self._feedback_received = 0.0
+        self._command_at = time.monotonic()
+        super().initialise()
+
+    def _state_cb(self, message):
+        super()._state_cb(message)
+        self._feedback_received = time.monotonic()
+
+    def update(self):
+        result = super().update()
+        if result != py_trees.common.Status.SUCCESS or self.mock_mode:
+            return result
+        state = self._latest_state
+        if (state is None or not state.feedback_ok
+                or self._feedback_received < self._command_at
+                or time.monotonic() - self._feedback_received > 0.5
+                or abs(math.degrees(state.pan_rad) - self.x) >= self.SETTLE_EPS_DEG
+                or abs(math.degrees(state.tilt_rad) - self.y) >= self.SETTLE_EPS_DEG):
+            self.feedback_message = (
+                f"Head did not settle at pan {self.x} tilt {self.y}")
+            if time.time() <= self._settle_deadline:
+                return py_trees.common.Status.RUNNING
+            return py_trees.common.Status.FAILURE
+        self.feedback_message = f"Head at pan {self.x} tilt {self.y}"
+        return py_trees.common.Status.SUCCESS
 
 
 class BtNode_SetHolding(py_trees.behaviour.Behaviour):
