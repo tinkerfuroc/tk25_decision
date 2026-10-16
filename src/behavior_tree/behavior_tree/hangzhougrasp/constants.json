@@ -31,7 +31,6 @@
   "label_map": {
     "coke": "可乐"
   },
-  "scan_camera": "orbbec",
   "detection_service": "object_detection_yolo26_sam",
   "announce_service": "announce",
   "navigation_action": "navigate_to_pose",

@@ -1,72 +1,117 @@
 # hangzhougrasp
 
 与 `HRI/`、`PickAndPlace/` 并列的任务模块，入口：
-`ros2 run behavior_tree hangzhougrasp`。
+`ros2 run behavior_tree hangzhougrasp`。多房间任务：每个房间先逐个桌子
+扫描并尝试抓取，再扫地面；房间顺序由 enterRoom profile 决定。
 
 ## 决策树
 
-不抓取（默认 `--no-grasp`）：
+两种模式都先写常量，再按 profile 的房间顺序依次执行 `Room <name>`：
 
 ```text
 Write constants
-→ Navigate to grasp2 [Retry]
-→ YOLO-World scan coke [Retry]
-→ 中文 announce [Retry]
-→ Navigate to point_area [Retry]
+→ [--grasp] Arm to navigation pose
+→ Room A: Tables phase → Ground phase
+→ Room B: Tables phase → Ground phase
+→ ...
 ```
 
-抓取（`--grasp`）：
+不抓取（默认 `--no-grasp`）：桌子阶段对每个桌子的每个视点依次
+`Go to <pose>` → `Scan or miss`（Orbbec + yolo26_sam 扫描，中文播报；
+没检测到则跳过，不算失败）。不构建任何机械臂、抓取、夹爪节点。
+
+抓取（`--grasp`）：桌子阶段对每个桌子：
 
 ```text
-Write constants
-→ Arm to navigation pose [Retry]
-→ Navigate to grasp2 [Retry]
-→ Arm to table scan pose [Retry]
-→ RealSense YOLO-World scan coke [Retry]
-→ 中文 announce [Retry]
-→ Select nearest detected object
-→ [重新扫描目标 label → 选取最近实例及对应 mask → Grasp] [Retry]
-→ Retract arm with object [Retry]
-→ Navigate to point_area [Retry]
+Visit table:  对每个视点（升序 m）
+  Skip or visit：已持有物体则跳过剩余视点
+    Go to <table 视点>
+    Grasp or miss:
+      Arm to table scan pose → RealSense 扫描 + 中文播报
+      → 选最近目标 → 重新扫描并抓取 → 收回机械臂 → 记为持有
+      任一步失败：收回机械臂，该视点算 miss，换下一个视点
+Deliver if holding:  持有物体才执行（规则见“放置规则”）
 ```
 
-`--grasp` 是**构建参数**：关闭时不构建任何机械臂、抓取、收回节点，
-也不等待这些 action server。开启时始终使用 RealSense；未开启时由
-`scan_camera` 选择相机（默认 Orbbec）。
+所有视点都没抓到则跳过这个桌子（记录，不算失败）。
+地面阶段：按 `(n, m)` 升序逐个 `Go to <ground pose>` → `Scan or miss`，
+只扫描播报，不抓取、不放置。
 
-抓取分支的 `Selector(memory=True)` 在扫描/播报/抓取失败后执行收回。
-收回后保留 FAILURE，不继续去第二个点；收回失败同样停止。
-正常抓取成功也必须收回成功后才能导航。
-不自动打开夹爪或放下物体，抵达第二个点后结束。
+`--grasp` 是**构建参数**：关闭时不构建机械臂、抓取、收回、夹爪节点，
+也不等待这些 action server。导航失败会让任务失败；扫描/抓取 miss 不会。
+抓取分支用 `Selector(memory=True)`：失败后先收回机械臂再换视点，
+不会带着张开的状态继续导航。
 
-## 配置与启动
+## 点位命名
 
-编辑同目录 `constants.json`，或通过 `--config /absolute/path/run.json`
-覆盖字段。外部 JSON 只需提供想覆盖的字段。
+Map Studio 点位名为 `<room>_<furniture>_<n>_<m>`，例如
+`bedroom_table_0_0`、`kitchen_ground_1_2`：
 
-默认从 Map Studio 的 `8902_2_edit.poses.yaml` 按名称读取点位：
-`pose_scan="grasp2"`，`pose_destination="point_area"`。
-配置如下，可直接启动：
+- `furniture` 只能是 `table` 或 `ground`；
+- `n` 是家具编号，`m` 是该家具的视点编号；
+- `room` 和 `furniture` 不含下划线（写 `livingroom`，不是 `living_room`）。
+
+顺序：房间内桌子按 `n` 升序，一个桌子的视点按 `m` 升序，地面点按
+`(n, m)` 升序。不符合命名的点位不进入索引，房间在 profile 里却没有任何
+桌子/地面点会启动即报错。destination 点位直接按名称从原始点位表读取，
+不要求符合上面的命名。
+
+## enter_profiles 与 enter_room
+
+`constants.json`（或 `--config` 的 JSON）中：
 
 ```json
 {
   "map_name": "8902_2_edit",
-  "pose_scan": "grasp2",
-  "pose_destination": "point_area",
-  "prompt": "coke",
-  "label_map": {"coke": "可乐"},
-  "detection_service": "object_detection_yolo_world"
+  "enter_room": "bedroom",
+  "enter_profiles": {
+    "bedroom":    {"rooms": ["bedroom", "livingroom", "kitchen"], "destination": "point_area"},
+    "livingroom": {"rooms": ["livingroom", "kitchen", "bedroom"], "destination": "point_area"}
+  }
 }
 ```
 
-点位文件的 yaw 单位是弧度；通过 `map_studio.poses.load_poses` 转为
-map frame 的 PoseStamped。默认读取安装的 navigation_bringup/maps，
-更新源点位后应重新构建 navigation_bringup；也可用
-`MAP_STUDIO_MAPS_DIR` 指向源 maps 目录。
-仍支持 HRI / PickAndPlace 格式的 point/orientation 字典覆盖 pose；
-也可通过 CLI 指定两个点：
-`--scan-pose X Y YAW_DEG --destination-pose X Y YAW_DEG`，
-位置单位为米，朝向为度，frame 为 `map`。CLI 覆盖 JSON。
+- 每个 profile 给出覆盖房间的顺序 `rooms`（必须包含自身）和本次的
+  `destination` 点位名。profile 不是对象、缺 `destination` 都是启动错误。
+- `--enter-room NAME` 覆盖 JSON 的 `enter_room`；未知名称是启动错误。
+- 不做任何回退：缺 `enter_profiles`、未知 `enter_room`、点位名找不到、
+  点位文件不存在，都会在 setup 与任何运动之前以清晰信息退出
+  （`--print-tree` 同样需要有效 profile）。
+- 外部 JSON 只需提供要覆盖的字段；未知键会被拒绝。
+
+## 放置规则
+
+抓到物体后（`Deliver if holding`）：
+
+- **在进入房间（enter room）抓到**：机械臂回导航姿态，导航到 profile 的
+  `destination`，打开夹爪放下，然后继续剩余的桌子、地面点和房间。
+- **在其他房间抓到**：到不了真正的放置位置。机械臂回导航姿态，导航到
+  **下一个扫描点**（路线中该桌子之后的下一个点：下一个桌子的第一个视点，
+  否则本房间第一个地面点，否则下一个房间的第一个点），播报
+  “无法到达真正的放置位置”，打开夹爪放在那里。导航姿态下相机看不到被放下的
+  物体，所以该点正常扫描，不会重复检测。
+- **没有下一个扫描点**（路线最后一个点）：回到 destination 做真正放置。
+- 一次运行可抓多个物体；每次放置后继续，最后一个点之后结束。
+  跳过的桌子不会中断任务。
+
+## 检测器 yolo26_sam
+
+扫描使用 `BtNode_ScanForYolo26`，服务 `object_detection_yolo26_sam`
+（`constants.json` 的 `detection_service`）。需先在独立终端启动：
+
+```bash
+ros2 run object_detection_generalist yolo26_sam_node
+```
+
+该节点用仅 bbox 的 YOLO26 权重加 MobileSAM 掩码。非空 `prompt` 必须与
+checkpoint 的标签完全一致，`label_map` 的键同理（当前 `coke` → 可乐）；
+`prompt=""` 时使用 `label_map` 的全部键，两者都空则拒绝启动。
+扫描无检测结果会失败，所以在各阶段被包在 `Scan or miss` 里。
+`--grasp` 的桌面扫描使用 RealSense（含 RGB/depth/mask），其余扫描使用 Orbbec。
+`label_map` 只控制中文播报，不控制抓取类别；每次抓最近的目标，重新检测时
+选同类的最近实例，不保证跨帧跟踪。
+
+## 配置与启动
 
 ```bash
 cd /home/tinker/tk25_ws
@@ -75,20 +120,20 @@ cd /home/tinker/tk25_ws
 ./tkbuild tk26_vision --packages-select object_detection_generalist
 source install/setup.bash
 
-# 独立终端：运行视觉服务（相机、导航和播报服务按原有 bringup 启动）
-ros2 run object_detection_generalist generalist_node --ros-args \
-  -r __node:=hangzhougrasp_yolo_world \
-  --params-file "$(ros2 pkg prefix object_detection_generalist)/share/object_detection_generalist/config/yolo_world.yaml"
-
-# 检测与播报，不构建抓取行为
-ros2 run behavior_tree hangzhougrasp --no-grasp
-
-# 增加抓取、收回，再导航；还需要 start_grasp 和 joint_move_action
-ros2 run behavior_tree hangzhougrasp --grasp
+# 全流程（还需要 start_grasp 和 joint_move_action）
+ros2 run behavior_tree hangzhougrasp --enter-room bedroom --grasp
 
 # 只打印树，不 setup，不连接服务，不发运动指令
-ros2 run behavior_tree hangzhougrasp --grasp --print-tree
+ros2 run behavior_tree hangzhougrasp --enter-room bedroom --grasp --print-tree
 ```
+
+点位文件的 yaw 单位是弧度；`map_studio.poses.load_poses` 转为 map frame 的
+PoseStamped。
+
+**Map Studio 重建陷阱**：默认读取已安装的 navigation_bringup/maps。在
+Map Studio 里新增/改名点位后，必须重新构建 navigation_bringup
+（`./tkbuild tk26_navigation --packages-select navigation_bringup`），
+否则任务读到的还是旧点位；也可设 `MAP_STUDIO_MAPS_DIR` 指向源 maps 目录。
 
 Python 工厂：
 
@@ -96,34 +141,62 @@ Python 工厂：
 from behavior_tree.hangzhougrasp.config import load_config
 from behavior_tree.hangzhougrasp.hangzhougrasp import createHangzhouGrasp
 
-config = load_config()
+config = load_config(enter_room="bedroom")
 root = createHangzhouGrasp(config=config, enable_grasp=True)
 ```
 
-`label_map` 就是传给 `BtNode_AnnounceDetections` 的 dictionary。
-当前 `prompt="coke"`，检测到后播报“我看到了可乐。”。
-YOLO-World 使用文本词表；`prompt=""` 时本任务使用 dictionary 的全部英文键，
-非空时使用指定 label（多类可用 `cup . bottle`）；空 prompt 且空字典会拒绝启动。
-服务配置关闭 `enable_vlm`，请求关闭 `use_vlm_sam_fallback` 和
-`force_vlm_sam`，因此 `coke` 走 YOLO-World + MobileSAM。
-该独立 endpoint 不改变其他 generalist 服务的配置；
-仍复用 generalist 路由（若改成 COCO 原生类别，会先尝试预训练 YOLO）。
-不需要自训 YOLO26 checkpoint，使用已有通用 YOLO-World 权重。
-字典只控制中文播报，不控制抓取类别；抓取类别由 prompt 和检测排序决定。
-按相机距离最近的目标优先，每次抓一个；重新检测时选择同类的最近实例，
-并不保证跨帧实例跟踪。
+### 已移除的参数
+
+- `--scan-pose`、`--destination-pose`：删除，传入会报错（不是忽略）。
+- JSON 键 `pose_scan`、`pose_destination`：删除，出现即为未知键错误。
+- `scan_camera`：删除（从未被读取；相机由是否 `--grasp` 决定）。
+- YOLO-World 检测器（`object_detection_yolo_world`）已被 yolo26_sam 取代。
+
+## 先测小部分
+
+`--part NAME`（默认 `full`）单独运行树的一部分。每个 part 与完整树使用
+同一批工厂函数，只写自己需要的点位常量，互不依赖对方的黑板输出，
+`--print-tree` 对所有 part 都可用。相关选项：`--room`、`--table N`、
+`--at POSE`（先导航到该点）、`--next-pose POSE`。缺必需选项、点位/房间不存在、
+需要机械臂却没加 `--grasp`，都在 setup 之前报错。
+
+| part | 作用 | 示例 |
+|---|---|---|
+| `scan-announce` | 原地扫描并播报，不动机械臂 | `--part scan-announce` |
+| `scan-grasp` | 扫描、选择、抓取，失败收回（需 `--grasp`） | `--grasp --part scan-grasp` |
+| `visit-table` | 某房间某桌子的全部视点，不放置（需 `--grasp`） | `--grasp --part visit-table --room bedroom --table 0` |
+| `deliver` | 臂回导航姿态，去 destination，开夹爪（需 `--grasp`） | `--grasp --part deliver` |
+| `drop-elsewhere` | 去 `--next-pose` 放下（需 `--grasp`） | `--grasp --part drop-elsewhere --next-pose kitchen_table_0_0` |
+| `ground` | 某房间的地面阶段 | `--no-grasp --part ground --room bedroom` |
+| `room` | 某房间：桌子阶段 + 地面阶段 | `--grasp --part room --room bedroom` |
+| `full` | 完整多房间任务 | `--enter-room bedroom --grasp` |
+
+建议顺序（从小到大，遇到第一个失败就停下）：
+
+1. 现场准备：Map Studio 标好 `<room>_table_<n>_<m>`、`<room>_ground_<n>_<m>`
+   和每个 profile 的 destination，重建 navigation_bringup。
+2. 编辑 `enter_profiles`，运行
+   `ros2 run behavior_tree hangzhougrasp --enter-room <room> --grasp --print-tree`，
+   确认路线点位顺序；名称或 profile 写错会清晰报错退出。
+3. 启动 `yolo26_sam_node`，然后依次：
+   `--part scan-announce`（不动）→ `--part scan-announce --at <pose>` →
+   `--no-grasp --part ground --room <r>` → `--grasp --part scan-grasp` →
+   `--grasp --part visit-table --room <r> --table 0` → `--grasp --part deliver` →
+   `--grasp --part drop-elsewhere --next-pose <pose>` →
+   `--grasp --part room --room <r>` → 完整运行。
 
 ## 与现有任务保持一致的约定
 
 - `config.py` 管理配置转换和 `KEY_*`；`constants.json` 管理现场数据。
   配置从模块路径读取，支持安装后的包，不依赖工作目录。
-- `hangzhougrasp.py` 只做组合，使用 `createConstantWriter`、
-  `createNavigateToScan`、`createScanAndAnnounce`、`createGrasp` 等工厂。
+- `hangzhougrasp.py` 只做组合，使用 `createConstantWriter`、`createScanAnnounce`、
+  `createVisitTable`、`createDeliver`、`createDropElsewhere`、`createRoom` 等工厂；
+  `parts.py` 的 `createPart` 复用同一批工厂。
 - 根与阶段均使用 `Sequence(memory=True)`；常量写入使用
   `Parallel(SuccessOnAll()) + BtNode_WriteToBlackboard`。
 - 原语直接复用 TemplateNodes：GotoAction、MoveArmSingle、Grasp、
-  ScanForGeneralist、AnnounceDetections。
-- `_gotoRetry`、`_moveArmRetry`、`_scanForYoloWorldRetry` 与
+  ScanForYolo26、AnnounceDetections。
+- `_gotoRetry`、`_moveArmRetry`、`_scanYolo26Retry` 与
   PickAndPlace helper 写法一致，均使用 `Retry(num_failures=...)`。
   默认导航 3、扫描 5、机械臂 3、抓取 3、播报 2；均可在 JSON 覆盖。
   数字是允许失败的总次数，例如 3 表示最多 3 次失败，不是额外重试 3 次。
@@ -153,6 +226,6 @@ source /opt/ros/humble/setup.bash
 source /home/tinker/tk25_ws/install/setup.bash
 cd /home/tinker/tk25_ws/src/tk25_decision
 PYTHONPATH="$PWD/src/behavior_tree:$PYTHONPATH" .venv_decision/bin/python -m pytest \
-  src/behavior_tree/test/test_hangzhougrasp.py -q
+  src/behavior_tree/test/ -q -k hangzhougrasp
 ```
 

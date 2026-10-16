@@ -38,7 +38,6 @@ class TaskConfig:
     arm_pos_table: list
     label_map: dict
     prompt: str
-    scan_camera: str
     detection_service: str
     announce_service: str
     navigation_action: str
@@ -76,6 +75,9 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
         raise ValueError(
             f"enter_room {room!r} is not a key of enter_profiles {sorted(profiles)}")
     profile = profiles[room]
+    if not isinstance(profile, dict):
+        raise ValueError(f"enter_profiles[{room!r}] must be an object with "
+                         f"'rooms' and 'destination'")
     rooms = profile.get("rooms")
     if (not isinstance(rooms, list) or not rooms
             or not all(isinstance(r, str) and r for r in rooms)):
@@ -84,6 +86,9 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
         raise ValueError(
             f"enter_room {room!r} is not in its own rooms {rooms}")
     destination_name = profile.get("destination")
+    if not isinstance(destination_name, str) or not destination_name.strip():
+        raise ValueError(
+            f"enter_profiles[{room!r}] needs a 'destination' pose name")
     if poses is None:
         from map_studio.poses import load_poses
         poses = load_poses(data["map_name"])
@@ -104,8 +109,6 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
                 "grasp_retry_limit", "announce_retry_limit"):
         if type(data[key]) is not int or data[key] < 1:
             raise ValueError(f"{key} must be a positive integer")
-    if data["scan_camera"] not in ("orbbec", "realsense"):
-        raise ValueError("scan_camera must be orbbec or realsense")
     if not isinstance(data["prompt"], str):
         raise ValueError("prompt must be a string")
     if not isinstance(data["label_map"], dict):
