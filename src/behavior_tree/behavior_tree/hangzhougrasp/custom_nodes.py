@@ -51,7 +51,6 @@ class BtNode_SelectGraspTarget(py_trees.behaviour.Behaviour):
         return py_trees.common.Status.SUCCESS
 
 
-
 class BtNode_SetHolding(py_trees.behaviour.Behaviour):
     """Record whether the gripper currently holds an object."""
 
@@ -65,4 +64,17 @@ class BtNode_SetHolding(py_trees.behaviour.Behaviour):
 
     def update(self):
         self.blackboard.set(KEY_HOLDING, self.value, overwrite=True)
+        return py_trees.common.Status.SUCCESS
+
+
+class BtNode_LogError(py_trees.behaviour.Behaviour):
+    """Log an ERROR and succeed, so a non-essential failure stays visible."""
+
+    def __init__(self, name, message):
+        super().__init__(name)
+        self.message = message
+
+    def update(self):
+        self.logger.error(self.message)
+        self.feedback_message = self.message
         return py_trees.common.Status.SUCCESS

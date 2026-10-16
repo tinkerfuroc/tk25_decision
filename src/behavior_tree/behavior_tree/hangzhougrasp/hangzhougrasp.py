@@ -18,7 +18,7 @@ from .config import (
     KEY_TARGET_LABEL, KEY_GRASP_LABEL, KEY_ANNOUNCEMENT, KEY_HOLDING,
     load_config, pose_key,
 )
-from .custom_nodes import BtNode_SelectGraspTarget, BtNode_SetHolding
+from .custom_nodes import BtNode_LogError, BtNode_SelectGraspTarget, BtNode_SetHolding
 
 
 def createConstantWriter(config, *, enable_grasp=False):
@@ -95,7 +95,7 @@ def createScanAnnounce(config, *, grasp=False):
         "Scan objects with YOLO26 SAM", config, bb_key=KEY_SCAN_RESULT,
         use_orbbec=not grasp, prompt=config.prompt, grasp_payload=grasp,
     ))
-    root.add_child(py_trees.decorators.Retry(
+    announce = py_trees.decorators.Retry(
         name="Retry announce detected objects",
         child=BtNode_AnnounceDetections(
             name="Announce detected objects in Chinese", bb_source=KEY_SCAN_RESULT,
@@ -103,7 +103,13 @@ def createScanAnnounce(config, *, grasp=False):
             service_name=config.announce_service,
         ),
         num_failures=config.announce_retry_limit,
-    ))
+    )
+    # A speech failure is logged but must not turn a detection into a miss.
+    root.add_child(py_trees.composites.Selector(
+        name="Announce or log failure", memory=True,
+        children=[announce, BtNode_LogError(
+            name="Log announce failure",
+            message="Announcing detections failed after retries; continuing")]))
     return root
 
 

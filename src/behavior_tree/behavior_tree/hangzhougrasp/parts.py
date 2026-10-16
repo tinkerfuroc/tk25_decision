@@ -8,7 +8,7 @@ from . import hangzhougrasp as task
 from .config import KEY_ARM_NAVIGATING, KEY_ARM_TABLE, pose_key
 
 PARTS = {
-    "scan-announce": "Scan and announce where the robot stands (or after --at); with --grasp the scan also moves the arm to the table pose",
+    "scan-announce": "Scan with the Orbbec camera and announce where the robot stands (or after --at); never moves the arm to the table pose",
     "scan-grasp": "Scan, announce, select and grasp, with failure cleanup (needs --grasp)",
     "visit-table": "All viewpoints of --room --table N without delivery (needs --grasp)",
     "deliver": "Arm to nav pose, go to the destination, open gripper (needs --grasp)",
@@ -137,7 +137,8 @@ def createPart(name, config, *, enable_grasp, room=None, table=None,
 
     # The arm must be in its navigation pose before the part navigates at all
     # (full tree does the same); deliver/drop-elsewhere do it in their own subtree.
-    arm_first = enable_grasp and (name in ("room", "visit-table") or bool(at))
+    arm_first = enable_grasp and (
+        name in ("room", "visit-table", "ground") or bool(at))
     arm_nav = arm_nav or arm_first
     root = py_trees.composites.Sequence(name=f"Part {name}", memory=True)
     root.add_child(_writer(config, ([at] if at else []) + poses,

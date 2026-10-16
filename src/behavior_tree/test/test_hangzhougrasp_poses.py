@@ -130,3 +130,39 @@ def test_old_keys_rejected(tmp_path):
     path = _write(tmp_path, pose_scan="grasp2")
     with pytest.raises(ValueError, match="Unknown"):
         hgcfg.load_config(path, enter_room="bedroom", poses=POSES)
+
+
+# ---- audit fixes: clearer config errors, Mandarin names ----
+def test_profile_room_name_that_cannot_match_fails(tmp_path):
+    path = _write(tmp_path, enter_profiles={
+        "bedroom": {"rooms": ["bedroom", "living_room"], "destination": "point_area"}})
+    with pytest.raises(ValueError, match="living_room.*lowercase"):
+        hgcfg.load_config(path, enter_room="bedroom", poses=POSES)
+
+
+def test_room_with_only_misnamed_poses_names_them(tmp_path):
+    path = _write(tmp_path, enter_profiles={
+        "bedroom": {"rooms": ["bedroom", "kitchen"], "destination": "point_area"}})
+    poses = {"bedroom_table_0_0": ps(1, 1), "kitchen_tabel_0_0": ps(2, 2),
+             "point_area": ps(9, 9)}
+    with pytest.raises(ValueError, match="kitchen_tabel_0_0"):
+        hgcfg.load_config(path, enter_room="bedroom", poses=poses)
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_missing_enter_room_says_how_to_set_it(tmp_path, value):
+    path = _write(tmp_path, enter_room=value)
+    with pytest.raises(ValueError, match="--enter-room"):
+        hgcfg.load_config(path, poses=POSES)
+
+
+@pytest.mark.parametrize("prompt", ["coke . cup", "coke, cup", "cup"])
+def test_prompt_label_without_mandarin_name_fails(prompt):
+    with pytest.raises(ValueError, match="cup.*Mandarin"):
+        hgcfg.load_config(enter_room="bedroom", prompt=prompt, poses=POSES)
+
+
+@pytest.mark.parametrize("prompt", ["coke", "Coke", "", "coke , coke"])
+def test_prompt_labels_with_mandarin_names_pass(prompt):
+    c = hgcfg.load_config(enter_room="bedroom", prompt=prompt, poses=POSES)
+    assert c.label_map == {"coke": "可乐"}

@@ -4,8 +4,9 @@ from dataclasses import dataclass
 
 from geometry_msgs.msg import PoseStamped
 
+ROOM_RE = re.compile(r"[a-z][a-z0-9]*")
 NAME_RE = re.compile(
-    r"(?P<room>[a-z][a-z0-9]*)_(?P<furniture>table|ground)_(?P<n>\d+)_(?P<m>\d+)"
+    rf"(?P<room>{ROOM_RE.pattern})_(?P<furniture>table|ground)_(?P<n>\d+)_(?P<m>\d+)"
 )
 
 

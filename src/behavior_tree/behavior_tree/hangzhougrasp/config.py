@@ -5,10 +5,11 @@ import json
 import logging
 import math
 from pathlib import Path
+import re
 
 from geometry_msgs.msg import PoseStamped
 
-from .pose_index import PoseIndex
+from .pose_index import ROOM_RE, PoseIndex
 from .route import build_route
 
 
@@ -67,6 +68,20 @@ def _report_unmatched(index, rooms, destination_name):
                     other)
 
 
+def _check_mandarin_names(prompt, label_map):
+    """Every label the prompt can detect needs a Mandarin name to be spoken."""
+    known = {label.strip().casefold() for label in label_map}
+    if prompt.strip().casefold() in known:  # yolo26_sam_node: exact label first
+        return
+    labels = [p.strip() for p in re.split(r"\s+\.\s+|[,，;；|\n]+", prompt)
+              if p.strip()]
+    missing = [label for label in labels if label.casefold() not in known]
+    if missing:
+        raise ValueError(
+            f"prompt labels {missing} have no Mandarin name in label_map; "
+            "every detectable label must be announced in Mandarin")
+
+
 def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
     """Load packaged defaults, overlay an optional JSON file and CLI values."""
     with Path(__file__).with_name("constants.json").open(encoding="utf-8") as stream:
@@ -87,7 +102,11 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
     profiles = data.pop("enter_profiles", None)
     if not isinstance(profiles, dict) or not profiles:
         raise ValueError("enter_profiles is missing or empty")
-    room = data["enter_room"]
+    room = data.get("enter_room")
+    if not isinstance(room, str) or not room.strip():
+        raise ValueError(
+            "enter_room is missing; set enter_room in constants.json or pass "
+            "--enter-room")
     if room not in profiles:
         raise ValueError(
             f"enter_room {room!r} is not a key of enter_profiles {sorted(profiles)}")
@@ -99,6 +118,12 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
     if (not isinstance(rooms, list) or not rooms
             or not all(isinstance(r, str) and r for r in rooms)):
         raise ValueError(f"enter_profiles[{room!r}].rooms must be a nonempty list")
+    bad_names = [r for r in rooms if not ROOM_RE.fullmatch(r)]
+    if bad_names:
+        raise ValueError(
+            f"enter_profiles[{room!r}].rooms {bad_names} can never match a pose "
+            f"name; room names must be lowercase letters and digits "
+            f"({ROOM_RE.pattern}), e.g. livingroom")
     duplicates = sorted({r for r in rooms if rooms.count(r) > 1})
     if duplicates:
         raise ValueError(
@@ -121,8 +146,9 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
     data["destination_name"] = destination_name
     data["destination"] = poses[destination_name]
     index = PoseIndex(poses)
-    data["route"] = build_route(index, data["rooms"])
+    # Misnamed poses first, so a room holding only misnamed poses names them.
     _report_unmatched(index, data["rooms"], destination_name)
+    data["route"] = build_route(index, data["rooms"])
     for key in ("arm_pos_navigating", "arm_pos_table"):
         values = data[key]
         if len(values) != 7 or not all(math.isfinite(float(v)) for v in values):
@@ -145,6 +171,7 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
         data["prompt"] = " . ".join(data["label_map"])
         if not data["prompt"]:
             raise ValueError("a prompt or a nonempty label_map is required")
+    _check_mandarin_names(data["prompt"], data["label_map"])
     for key in ("detection_service", "announce_service", "navigation_action",
                 "arm_action", "grasp_action"):
         if not isinstance(data[key], str) or not data[key].strip():

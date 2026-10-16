@@ -147,13 +147,15 @@ def _first_index(root, pred):
     return next(i for i, n in enumerate(root.iterate()) if pred(n))
 
 
+@pytest.mark.parametrize("name", ["room", "ground"])
 @pytest.mark.parametrize("at", [None, "bedroom_table_0_1"])
-def test_room_part_arms_to_nav_before_first_goto(config, at):
-    on = _build(config, "room", at=at)
+def test_room_part_arms_to_nav_before_first_goto(config, at, name):
+    on = createPart(name, config, enable_grasp=True, room="bedroom", at=at)
     arm = _first_index(on, lambda n: n.name == "Arm to nav before first navigation")
     goto = _first_index(on, lambda n: isinstance(n, task.BtNode_GotoAction))
     assert arm < goto
-    off = createPart("room", config, enable_grasp=False, room="bedroom", at=at)
+    assert arm_key_written(on)
+    off = createPart(name, config, enable_grasp=False, room="bedroom", at=at)
     assert not any("Arm to nav before" in n.name for n in off.iterate())
 
 

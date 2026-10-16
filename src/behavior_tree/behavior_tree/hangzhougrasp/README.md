@@ -43,6 +43,8 @@ Deliver if holding:  持有物体才执行（规则见“放置规则”）
 但失败后的收回机械臂（cleanup）若重试后仍失败，任务失败并停止，
 不会带着伸出的机械臂继续导航。
 抓取分支用 `Selector(memory=True)`：失败后先收回机械臂再换视点。
+播报（TTS）重试后仍失败只记一条 ERROR 日志（`Log announce failure`），
+不算 miss：照常继续抓取和后续路线。
 
 ## 点位命名
 
@@ -51,7 +53,9 @@ Map Studio 点位名为 `<room>_<furniture>_<n>_<m>`，例如
 
 - `furniture` 只能是 `table` 或 `ground`；
 - `n` 是家具编号，`m` 是该家具的视点编号；
-- `room` 和 `furniture` 不含下划线（写 `livingroom`，不是 `living_room`）。
+- `room` 只能是小写字母和数字、以字母开头（写 `livingroom`，不是
+  `living_room` 或 `LivingRoom`）；profile 的 `rooms` 里写了不合规的房间名
+  会启动即报错。
 
 顺序：房间内桌子按 `n` 升序，一个桌子的视点按 `m` 升序，地面点按
 `(n, m)` 升序。不符合命名的点位不进入索引：以 profile 中某个房间名加下划线开头
@@ -110,6 +114,8 @@ ros2 run object_detection_generalist yolo26_sam_node
 该节点用仅 bbox 的 YOLO26 权重加 MobileSAM 掩码。非空 `prompt` 必须与
 checkpoint 的标签完全一致，`label_map` 的键同理（当前 `coke` → 可乐）；
 `prompt=""` 时使用 `label_map` 的全部键，两者都空则拒绝启动。
+本任务的播报必须是普通话：`prompt` 里的每个标签都必须在 `label_map` 中有
+中文名，否则启动即报错并列出缺少的标签。
 扫描无检测结果会失败，所以在各阶段被包在 `Scan or miss` 里。
 `--grasp` 的桌面扫描使用 RealSense（含 RGB/depth/mask），其余扫描使用 Orbbec。
 `label_map` 只控制中文播报，不控制抓取类别；每次抓最近的目标，重新检测时
@@ -163,10 +169,12 @@ root = createHangzhouGrasp(config=config, enable_grasp=True)
 `--print-tree` 对所有 part 都可用。相关选项：`--room`、`--table N`、
 `--at POSE`（先导航到该点）、`--next-pose POSE`。缺必需选项、点位/房间不存在、
 需要机械臂却没加 `--grasp`，都在 setup 之前报错。
+加 `--grasp` 时，`room`、`visit-table`、`ground` 以及任何带 `--at` 的 part
+在第一次导航前先把机械臂收回导航姿态。
 
 | part | 作用 | 示例 |
 |---|---|---|
-| `scan-announce` | 原地扫描并播报（加 `--grasp` 时扫描前会把机械臂移到桌面扫描姿态） | `--part scan-announce` |
+| `scan-announce` | 原地用 Orbbec 扫描并播报（不会把机械臂移到桌面扫描姿态） | `--part scan-announce` |
 | `scan-grasp` | 扫描、选择、抓取，失败收回（需 `--grasp`） | `--grasp --part scan-grasp` |
 | `visit-table` | 某房间某桌子的全部视点，不放置（需 `--grasp`） | `--grasp --part visit-table --room bedroom --table 0` |
 | `deliver` | 臂回导航姿态，去 destination，开夹爪（需 `--grasp`） | `--grasp --part deliver` |
