@@ -124,10 +124,9 @@ def createPart(name, config, *, enable_grasp, room=None, table=None,
         poses.append(config.destination_name)
         body = task.createRoom(config, room, stops, enable_grasp=enable_grasp)
 
-    # The arm must be in its navigation pose before the part navigates at all
-    # (full tree does the same); deliver/drop-elsewhere do it in their own subtree.
-    arm_first = enable_grasp and (
-        name in ("room", "visit-table", "ground") or bool(at))
+    # The arm must be in its navigation pose before the part navigates at all,
+    # in every mode (every goto also stows first; see task._gotoRetry).
+    arm_first = name in ("room", "visit-table", "ground") or bool(at)
     root = py_trees.composites.Sequence(name=f"Part {name}", memory=True)
     root.add_child(_writer(config, ([at] if at else []) + poses))
     if arm_first:

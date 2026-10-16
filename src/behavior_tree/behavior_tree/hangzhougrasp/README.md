@@ -12,7 +12,7 @@
 
 ```text
 Write constants
-→ [--grasp] Arm to navigation pose
+→ Arm to nav before entering the arena（所有模式）
 → Room A: Tables phase → Ground phase
 → Room B: Tables phase → Ground phase
 → ...
@@ -20,7 +20,7 @@ Write constants
 
 不抓取（默认 `--no-grasp`）：桌子阶段对每个桌子的每个视点依次
 `Go to <pose>` → `Scan or miss`（Orbbec + yolo26_sam 扫描，中文播报；
-没检测到则跳过，不算失败）。不构建任何机械臂、抓取、夹爪节点。
+没检测到则跳过，不算失败）。不构建 Pick、夹爪节点。
 
 抓取（`--grasp`，TK27 机械臂）：桌子阶段对每个桌子：
 
@@ -50,8 +50,8 @@ Deliver if holding:  持有物体才执行（规则见“放置规则”）
 桌子 `table_scan_tilt_deg`=0，地面 `ground_scan_tilt_deg`=0，pan `head_pan_deg`=0，
 范围限定 [-30, 30]。云台重试 `head_retry_limit`（3）次仍未到位则记 ERROR 并照常扫描。
 
-`--grasp` 是**构建参数**：关闭时不构建机械臂、Pick、夹爪节点，
-也不等待这些 action server。导航失败会让任务失败；扫描/抓取 miss 不会，
+`--grasp` 是**构建参数**：关闭时不构建 Pick、夹爪节点，
+也不等待这些 action server。**所有模式**下每次导航前都先 MoveToSavedPose(navigation)，进入场地前也先收回，所以 `--no-grasp` 也需要 TK27 的 `/manipulation/move_to_saved_pose`。导航失败会让任务失败；扫描/抓取 miss 不会，
 但失败后的收回机械臂（cleanup）若重试后仍失败，任务失败并停止，
 不会带着伸出的机械臂继续导航。
 播报（TTS）重试后仍失败只记一条 ERROR 日志（`Log announce failure`），

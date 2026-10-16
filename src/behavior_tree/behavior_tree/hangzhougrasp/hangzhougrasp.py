@@ -61,13 +61,20 @@ def _gripperOpen(name, config):
 
 
 def _gotoRetry(name, pose_key, config):
-    return py_trees.decorators.Retry(
-        name=f"Retry {name}",
-        child=BtNode_GotoAction(
-            name=name, key=pose_key, action_name=config.navigation_action,
-        ),
-        num_failures=config.nav_retry_limit,
-    )
+    """Every navigation stows the arm in its navigation pose first (all modes)."""
+    return py_trees.composites.Sequence(
+        name=f"Stow then {name}", memory=True,
+        children=[
+            _savedPoseRetry(f"Arm to nav before {name}",
+                            config.arm_pose_navigating, config),
+            py_trees.decorators.Retry(
+                name=f"Retry {name}",
+                child=BtNode_GotoAction(
+                    name=name, key=pose_key, action_name=config.navigation_action,
+                ),
+                num_failures=config.nav_retry_limit,
+            ),
+        ])
 
 
 def _scanYolo26Retry(name, config, *, bb_key, use_orbbec, prompt):
@@ -251,9 +258,7 @@ def createVisitTable(config, viewpoints):
 
 def _release(name, config, goto_name, goto_key):
     root = py_trees.composites.Sequence(name=name, memory=True)
-    root.add_child(_savedPoseRetry(
-        "Arm to navigation pose", config.arm_pose_navigating, config))
-    root.add_child(_gotoRetry(goto_name, goto_key, config))
+    root.add_child(_gotoRetry(goto_name, goto_key, config))  # stows first
     return root
 
 
@@ -363,15 +368,18 @@ def createRoom(config, room, route_slice, *, enable_grasp):
 
 
 def createHangzhouGrasp(*, enable_grasp=False, config=None):
-    """Build grasp nodes only when enable_grasp=True; one mission per run."""
+    """Build Pick/gripper nodes only when enable_grasp=True; one mission per run.
+
+    In every mode the arm is stowed before entering the arena and before
+    every navigation (see _gotoRetry).
+    """
     if type(enable_grasp) is not bool:
         raise TypeError("enable_grasp must be a boolean")
     config = config if config is not None else load_config()
     root = py_trees.composites.Sequence(name="HangzhouGrasp Root", memory=True)
     root.add_child(createConstantWriter(config))
-    if enable_grasp:
-        root.add_child(_savedPoseRetry(
-            "Arm to nav before first navigation", config.arm_pose_navigating, config))
+    root.add_child(_savedPoseRetry(
+        "Arm to nav before entering the arena", config.arm_pose_navigating, config))
     route = config.route
     paired = [
         (stop, route[i + 1].viewpoints[0] if i + 1 < len(route) else None)

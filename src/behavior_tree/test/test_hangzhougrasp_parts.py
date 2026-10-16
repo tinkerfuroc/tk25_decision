@@ -204,8 +204,11 @@ def test_room_part_arms_to_nav_before_first_goto(config, at, name):
     goto = _first_index(on, lambda n: isinstance(n, task.BtNode_GotoAction))
     assert arm < goto
     assert first_arm_is_navigation(on)
+    # --no-grasp stows before navigating too.
     off = createPart(name, config, enable_grasp=False, room="bedroom", at=at)
-    assert not any("Arm to nav before" in n.name for n in off.iterate())
+    arm = _first_index(off, lambda n: n.name == "Arm to nav before first navigation")
+    assert arm < _first_index(off, lambda n: isinstance(n, task.BtNode_GotoAction))
+    assert first_arm_is_navigation(off)
 
 
 @pytest.mark.parametrize("name", ["scan-grasp", "visit-table", "deliver"])
@@ -225,8 +228,9 @@ def first_arm_is_navigation(root):
 @pytest.mark.parametrize("name", ["room", "ground"])
 def test_room_and_ground_build_without_grasp(config, name):
     root = createPart(name, config, enable_grasp=False, room="kitchen")
-    for cls in TK27_LEAVES + (task.BtNode_SetHolding,):
+    for cls in (BtNode_Tk27Pick, BtNode_Tk27GripperOpen, task.BtNode_SetHolding):
         assert not _classes(root, cls)
+    assert {n.pose_name for n in _classes(root, BtNode_Tk27SavedPose)} == {"navigation"}
     if name == "room":
         assert _writes(root) == ["Write kitchen_table_0_0",
                                  "Write kitchen_ground_0_0", "Write point_area"]

@@ -143,13 +143,30 @@ def test_room_with_only_tables():
         assert task.createHangzhouGrasp(config=conf, enable_grasp=grasp)
 
 
-def test_no_grasp_builds_no_manipulation_nodes(config):
+def test_no_grasp_builds_no_pick_or_gripper_nodes(config):
     root = task.createHangzhouGrasp(config=config, enable_grasp=False)
-    banned = (task.BtNode_Tk27SavedPose, task.BtNode_Tk27Pick,
-              task.BtNode_Tk27GripperOpen, task.BtNode_SetHolding)
+    banned = (task.BtNode_Tk27Pick, task.BtNode_Tk27GripperOpen, task.BtNode_SetHolding)
     assert not _nodes(root, banned)
+    # The only arm command in --no-grasp is the navigation stow.
+    assert {n.pose_name for n in _nodes(root, task.BtNode_Tk27SavedPose)} == {"navigation"}
     assert len(_nodes(root, task.BtNode_ScanForYolo26)) == 5
     assert not any("Deliver" in n.name or "Drop" in n.name for n in root.iterate())
+
+
+@pytest.mark.parametrize("grasp", [False, True])
+def test_every_navigation_is_preceded_by_a_stow(config, grasp):
+    root = task.createHangzhouGrasp(config=config, enable_grasp=grasp)
+    nodes = list(root.iterate())
+    stows = [i for i, n in enumerate(nodes) if isinstance(n, task.BtNode_Tk27SavedPose)]
+    first_goto = next(i for i, n in enumerate(nodes) if isinstance(n, task.BtNode_GotoAction))
+    entering = next(n for n in nodes if n.name == "Arm to nav before entering the arena")
+    assert entering.pose_name == "navigation" and stows[0] < first_goto
+    for goto in (n for n in nodes if isinstance(n, task.BtNode_GotoAction)):
+        stow_then = goto.parent.parent  # Retry -> "Stow then ..." Sequence
+        assert stow_then.name == f"Stow then {goto.name}"
+        first = stow_then.children[0].children[0]
+        assert isinstance(first, task.BtNode_Tk27SavedPose)
+        assert first.pose_name == "navigation"
 
 
 @pytest.mark.parametrize("grasp", [False, True])
@@ -171,7 +188,7 @@ def test_ground_phase_has_no_grasp(config):
     for room in ("bedroom", "kitchen"):
         ground = _by_name(_by_name(root, f"Room {room}"), "Ground phase")
         assert not _nodes(ground, task.BtNode_Tk27Pick)
-        assert not _nodes(ground, task.BtNode_Tk27SavedPose)
+        assert {n.pose_name for n in _nodes(ground, task.BtNode_Tk27SavedPose)} == {"navigation"}
         assert len(_nodes(ground, task.BtNode_ScanForYolo26)) == 1
 
 
@@ -204,6 +221,8 @@ def test_ground_miss_is_success_and_navigation_retries_bounded(
                         lambda **kw: Leaf("nav", Status.SUCCESS, **kw))
     monkeypatch.setattr(task, "BtNode_HeadTilt",
                         lambda **kw: Leaf("head", Status.SUCCESS, **kw))
+    monkeypatch.setattr(task, "BtNode_Tk27SavedPose",
+                        lambda **kw: Leaf("arm", Status.SUCCESS, **kw))
     monkeypatch.setattr(task, "BtNode_ScanForYolo26",
                         lambda **kw: Leaf("scan", Status.FAILURE, **kw))
     root = task.createHangzhouGrasp(config=config, enable_grasp=False)
