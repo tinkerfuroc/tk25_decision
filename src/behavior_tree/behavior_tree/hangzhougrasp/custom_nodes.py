@@ -4,6 +4,8 @@ import copy
 
 import py_trees
 
+from .config import KEY_HOLDING
+
 
 class BtNode_SelectGraspTarget(py_trees.behaviour.Behaviour):
     """Keep the nearest object's mask and label together in a grasp response."""
@@ -48,3 +50,19 @@ class BtNode_SelectGraspTarget(py_trees.behaviour.Behaviour):
         self.feedback_message = f"Selected nearest {selected.objects[0].cls}"
         return py_trees.common.Status.SUCCESS
 
+
+
+class BtNode_SetHolding(py_trees.behaviour.Behaviour):
+    """Record whether the gripper currently holds an object."""
+
+    def __init__(self, name, value):
+        super().__init__(name)
+        if type(value) is not bool:
+            raise TypeError("value must be a boolean")
+        self.value = value
+        self.blackboard = self.attach_blackboard_client(name=name)
+        self.blackboard.register_key(KEY_HOLDING, access=py_trees.common.Access.WRITE)
+
+    def update(self):
+        self.blackboard.set(KEY_HOLDING, self.value, overwrite=True)
+        return py_trees.common.Status.SUCCESS

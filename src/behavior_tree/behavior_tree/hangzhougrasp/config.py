@@ -21,6 +21,7 @@ KEY_GRASP_VISION_RES = "hg_grasp_vision_result"
 KEY_TARGET_LABEL = "hg_target_label"
 KEY_GRASP_LABEL = "hg_grasp_label"
 KEY_ANNOUNCEMENT = "hg_announcement"
+KEY_HOLDING = "hg_holding"
 
 
 def pose_key(name: str) -> str:

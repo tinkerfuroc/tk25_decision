@@ -1,19 +1,24 @@
 """Phase factories and mission composition, matching HRI/PickAndPlace style."""
 
+import operator
+
 import py_trees
 
-from behavior_tree.TemplateNodes.Audio import BtNode_AnnounceDetections
+from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_AnnounceDetections
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Manipulation import BtNode_Grasp, BtNode_MoveArmSingle
+from behavior_tree.TemplateNodes.Manipulation import (
+    BtNode_GripperAction, BtNode_Grasp, BtNode_MoveArmSingle,
+)
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import BtNode_ScanForYolo26
 
 from .config import (
     KEY_POSE_SCAN, KEY_POSE_DESTINATION, KEY_ARM_NAVIGATING, KEY_ARM_TABLE,
     KEY_SCAN_RESULT, KEY_GRASP_SCAN_RESULT, KEY_GRASP_VISION_RES,
-    KEY_TARGET_LABEL, KEY_GRASP_LABEL, KEY_ANNOUNCEMENT, load_config,
+    KEY_TARGET_LABEL, KEY_GRASP_LABEL, KEY_ANNOUNCEMENT, KEY_HOLDING,
+    load_config, pose_key,
 )
-from .custom_nodes import BtNode_SelectGraspTarget
+from .custom_nodes import BtNode_SelectGraspTarget, BtNode_SetHolding
 
 
 def createConstantWriter(config, *, enable_grasp=False):
@@ -156,6 +161,68 @@ def createScanGraspWithCleanup(config):
         name="Scan and grasp with failure cleanup", memory=True,
         children=[attempt, cleanup],
     )
+
+
+def _holding_is_set():
+    return py_trees.behaviours.CheckBlackboardVariableValue(
+        name="Already holding an object?",
+        check=py_trees.common.ComparisonExpression(
+            variable=KEY_HOLDING, value=True,
+            operator=operator.eq),
+    )
+
+
+def createVisitTable(config, viewpoints):
+    """Try each viewpoint in order; stop after the first successful grasp.
+
+    Navigation failure fails the tree; a scan or grasp miss moves on.
+    Succeeds with holding true or false.
+    """
+    root = py_trees.composites.Sequence(name="Visit table", memory=True)
+    for rec in viewpoints:
+        visit = py_trees.composites.Sequence(
+            name=f"Visit {rec.name}", memory=True)
+        visit.add_child(_gotoRetry(
+            f"Go to {rec.name}", pose_key(rec.name), config))
+        grasp = py_trees.composites.Sequence(
+            name=f"Grasp at {rec.name}", memory=True,
+            children=[createScanGraspWithCleanup(config),
+                      BtNode_SetHolding(name="Set holding", value=True)])
+        visit.add_child(py_trees.composites.Selector(
+            name=f"Grasp or miss at {rec.name}", memory=True,
+            children=[grasp, py_trees.behaviours.Success(name="Miss, skip")]))
+        root.add_child(py_trees.composites.Selector(
+            name=f"Skip or visit {rec.name}", memory=True,
+            children=[_holding_is_set(), visit]))
+    return root
+
+
+def _release(name, config, goto_key):
+    root = py_trees.composites.Sequence(name=name, memory=True)
+    root.add_child(_moveArmRetry(
+        "Arm to navigation pose", KEY_ARM_NAVIGATING, config))
+    root.add_child(_gotoRetry("Go to drop pose", goto_key, config))
+    return root
+
+
+def createDeliver(config):
+    root = _release("Deliver object", config, KEY_POSE_DESTINATION)
+    root.add_child(BtNode_GripperAction(name="Open gripper", open_gripper=True))
+    root.add_child(BtNode_SetHolding(name="Clear holding", value=False))
+    return root
+
+
+def createDropElsewhere(config, next_pose):
+    """Drop at the next scan pose; with no next pose, the real drop."""
+    if next_pose is None:
+        return createDeliver(config)
+    root = _release("Drop object elsewhere", config, pose_key(next_pose.name))
+    root.add_child(BtNode_Announce(
+        name="Announce unreachable drop target", bb_source=None,
+        message="无法到达真正的放置位置，我将在这里放下物体。"))
+    root.add_child(BtNode_GripperAction(name="Open gripper", open_gripper=True))
+    root.add_child(BtNode_SetHolding(name="Clear holding", value=False))
+    return root
 
 
 def createNavigateToDestination(config):
