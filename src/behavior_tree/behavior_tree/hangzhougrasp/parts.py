@@ -1,7 +1,5 @@
 """Independently runnable parts: same creators as the full tree, own constants."""
 
-import dataclasses
-
 import py_trees
 
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
@@ -111,7 +109,7 @@ def createPart(name, config, *, enable_grasp, room=None, table=None,
         if not stops:
             raise ValueError(f"room {room!r} has no table {table}")
         arm_nav = arm_table = True
-        poses = _names([(stops[0], None)])
+        poses = [rec.name for rec in stops[0].viewpoints]
         body = task.createVisitTable(config, stops[0].viewpoints)
     elif name == "deliver":
         arm_nav = True
@@ -121,7 +119,7 @@ def createPart(name, config, *, enable_grasp, room=None, table=None,
         arm_nav = True
         rec = next((r for s in config.route for r in s.viewpoints
                     if r.name == next_pose), None)
-        if rec is None:
+        if rec is None:  # the destination is a pose but not a route viewpoint
             raise ValueError(f"--next-pose {next_pose!r} is not a route viewpoint")
         poses = [next_pose]
         body = task.createDropElsewhere(config, rec)
@@ -142,5 +140,8 @@ def createPart(name, config, *, enable_grasp, room=None, table=None,
                            arm_nav=arm_nav, arm_table=arm_table))
     if at:
         root.add_child(_goto(config, at))
+    if name == "room" and enable_grasp:
+        root.add_child(task._moveArmRetry(
+            "Arm to nav before first navigation", KEY_ARM_NAVIGATING, config))
     root.add_child(body)
     return root

@@ -143,18 +143,145 @@ def test_grasp_part_without_enable_grasp_fails(config, name):
         createPart(name, config, enable_grasp=False, **ARGS)
 
 
-@pytest.mark.parametrize("name", sorted(PARTS))
-def test_part_reads_only_constants_it_writes(config, name):
-    """Independence: every pose/arm constant a part reads, its own writer writes.
+def test_room_part_arms_to_nav_first_only_when_grasping(config):
+    on = _build(config, "room")
+    assert [n.name for n in on.children][-2:] == [
+        "Retry Arm to nav before first navigation", "Room bedroom"]
+    off = createPart("room", config, enable_grasp=False, room="bedroom")
+    assert not any("Arm to nav before" in n.name for n in off.iterate())
 
-    Scan, grasp-bundle and announcement keys are written at runtime by nodes
-    inside the same creator; the cross-part inputs are the constants.
-    """
+
+@pytest.mark.parametrize("name", ["room", "ground"])
+def test_room_and_ground_build_without_grasp(config, name):
+    root = createPart(name, config, enable_grasp=False, room="kitchen")
+    for cls in (task.BtNode_MoveArmSingle, task.BtNode_Grasp,
+                task.BtNode_GripperAction):
+        assert not _classes(root, cls)
+    assert _writes(root) == ["Write kitchen_table_0_0", "Write kitchen_ground_0_0",
+                             "Write point_area"] or name == "ground"
+    if name == "ground":
+        assert _writes(root) == ["Write kitchen_ground_0_0"]
+
+
+# Keys a part's own subtree writes while it runs; every other hg_ key a part
+# reads must come from that part's constants writer.
+RUNTIME_KEYS = {cfg.KEY_SCAN_RESULT, cfg.KEY_GRASP_SCAN_RESULT,
+                cfg.KEY_GRASP_VISION_RES, cfg.KEY_TARGET_LABEL,
+                cfg.KEY_GRASP_LABEL, cfg.KEY_ANNOUNCEMENT, cfg.KEY_HOLDING}
+Access = py_trees.common.Access
+Status = py_trees.common.Status
+
+
+def _scan_response():
+    from sensor_msgs.msg import Image
+    from tinker_vision_msgs_26.msg import Object
+    from tinker_vision_msgs_26.srv import ObjectDetectionGeneralist
+    rgb = Image(height=2, width=2, encoding="bgr8", step=6, data=bytes([1] * 12))
+    depth = Image(height=2, width=2, encoding="16UC1", step=4, data=bytes([1] * 8))
+    return ObjectDetectionGeneralist.Response(
+        status=0, header=Header(frame_id="cam"), objects=[Object(cls="cup")],
+        segments=[Image(height=2, width=2, encoding="8UC1", step=2,
+                        data=bytes([255] * 4))],
+        rgb_image=rgb, depth_image=depth, detection_source="yolo")
+
+
+MISSING = []
+
+
+class _Stub(py_trees.behaviour.Behaviour):
+    """Leaf stub: reads/writes the keys the real node would; logs missing reads."""
+    reads, writes = (), ()
+
+    def __init__(self, name, **kw):
+        super().__init__(name)
+        kw.pop('name', None)
+        self.kw = kw
+        self.bb = self.attach_blackboard_client(name=name)
+        for key in self._reads():
+            self.bb.register_key(key, access=Access.READ)
+        for key in self._writes():
+            self.bb.register_key(key, access=Access.WRITE)
+
+    def _reads(self):
+        return [k for k in self.reads if k]
+
+    def _writes(self):
+        return [k for k in self.writes if k]
+
+    def update(self):
+        for key in self._reads():
+            try:
+                self.bb.get(key)
+            except KeyError:
+                MISSING.append((self.name, key))
+                return Status.FAILURE
+        for key in self._writes():
+            self.bb.set(key, self._value(key), overwrite=True)
+        return Status.SUCCESS
+
+    def _value(self, key):
+        return _scan_response()
+
+
+def _stub(reads=(), writes=()):
+    """reads/writes: lists of kwarg names (or literal keys) of the real node."""
+    class S(_Stub):
+        def _reads(self):
+            return [self.kw.get(k) for k in reads if self.kw.get(k)]
+
+        def _writes(self):
+            return [self.kw.get(k) for k in writes if self.kw.get(k)]
+
+        def _value(self, key):
+            return _scan_response() if key != self.kw.get("bb_key_object_label") else "cup"
+    return S
+
+
+def _goto(name, key, **kw):
+    return _stub(reads=["key"])(name=name, key=key)
+
+
+def _move(name, arm_pose_bb_key, **kw):
+    return _stub(reads=["arm_pose_bb_key"])(name=name, arm_pose_bb_key=arm_pose_bb_key)
+
+
+@pytest.mark.parametrize("name", sorted(PARTS))
+def test_part_ticks_on_empty_blackboard_with_stubbed_leaves(config, monkeypatch, name):
+    _tick_stubbed(config, monkeypatch, name)
+
+
+def test_stub_tick_detects_a_missing_constant(config, monkeypatch):
+    from behavior_tree.hangzhougrasp import parts
+    monkeypatch.setattr(parts, "_writer", lambda *a, **k: py_trees.behaviours.Success(name="none"))
+    with pytest.raises(AssertionError):
+        _tick_stubbed(config, monkeypatch, "deliver")
+
+
+def _tick_stubbed(config, monkeypatch, name):
+    """Independence: build on an empty blackboard, tick with stubbed leaves;
+    no leaf may miss a key because another part would have written it."""
     BB.clear()
-    _build(config, name)
-    checked = 0
+    MISSING.clear()
+    monkeypatch.setattr(task, "BtNode_GotoAction", _goto)
+    monkeypatch.setattr(task, "BtNode_MoveArmSingle", _move)
+    monkeypatch.setattr(task, "BtNode_ScanForYolo26", lambda **kw: _stub(
+        reads=["bb_source"], writes=["bb_key"])(**kw))
+    monkeypatch.setattr(task, "BtNode_AnnounceDetections", lambda **kw: _stub(
+        reads=["bb_source"], writes=["bb_text_key"])(**kw))
+    monkeypatch.setattr(task, "BtNode_Grasp", lambda **kw: _stub(
+        reads=["bb_key_vision_res", "bb_key_object_label"])(**kw))
+    monkeypatch.setattr(task, "BtNode_GripperAction", lambda **kw: _stub()(**kw))
+    monkeypatch.setattr(task, "BtNode_Announce", lambda **kw: _stub()(**kw))
+    root = _build(config, name)
+    # every hg_ key read is written inside the part: its writer or runtime keys
     for key, md in BB.metadata.items():
-        if key.lstrip("/").startswith(("hg_pose_", "hg_arm_")) and md.read:
-            checked += 1
+        bare = key.lstrip("/")
+        if bare.startswith("hg_") and md.read and bare not in RUNTIME_KEYS:
             assert md.write, f"{name}: {key} read but not written by the part"
-    assert checked or name == "scan-announce"
+    tree = py_trees.trees.BehaviourTree(root)
+    for _ in range(300):
+        tree.tick()
+        if root.status in (Status.SUCCESS, Status.FAILURE):
+            break
+    assert not MISSING, f"{name}: cross-part dependency {MISSING}"
+    assert root.status == Status.SUCCESS
