@@ -1,0 +1,16 @@
+{
+  "map_name": "test_map",
+  "maps": {
+    "test_map": {
+      "enter_room": "bedroom",
+      "enter_profiles": {
+        "bedroom": {
+          "rooms": [
+            "bedroom"
+          ],
+          "destination": "point_area"
+        }
+      }
+    }
+  }
+}

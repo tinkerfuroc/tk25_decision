@@ -4,6 +4,9 @@ import dataclasses
 
 import py_trees
 import pytest
+
+from pathlib import Path as _Path
+TEST_CONFIG = str(_Path(__file__).with_name("hangzhougrasp_test_config.json"))
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Header
 
@@ -41,7 +44,7 @@ POSES = {
 
 @pytest.fixture
 def config():
-    conf = cfg.load_config(map_name="8902_2_edit", enter_room="bedroom", poses=POSES)
+    conf = cfg.load_config(TEST_CONFIG, enter_room="bedroom", poses=POSES)
     rooms = ["bedroom", "kitchen"]
     return dataclasses.replace(
         conf, rooms=rooms, route=build_route(PoseIndex(POSES), rooms))

@@ -6,6 +6,9 @@ import math
 
 import py_trees
 import pytest
+
+from pathlib import Path as _Path
+TEST_CONFIG = str(_Path(__file__).with_name("hangzhougrasp_test_config.json"))
 from sensor_msgs.msg import Image
 from std_msgs.msg import Header
 from tinker_vision_msgs_26.msg import Object
@@ -45,7 +48,7 @@ ROUTE_POSES = {
 
 def _config(poses=None, rooms=("bedroom", "kitchen"), enter="bedroom"):
     import behavior_tree.hangzhougrasp.config as c
-    conf = c.load_config(map_name="8902_2_edit", enter_room=enter, poses=poses or ROUTE_POSES)
+    conf = c.load_config(TEST_CONFIG, enter_room=enter, poses=poses or ROUTE_POSES)
     return conf
 
 

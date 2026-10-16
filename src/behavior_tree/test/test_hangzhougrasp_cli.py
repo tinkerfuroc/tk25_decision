@@ -215,6 +215,19 @@ ROBOCUP_NAMES = [
 ]
 
 
+# 8902_2_edit after the 2026-10-16 rename (was grasp1, grasp2, point_area).
+LAB_POSES = {"room1_table_0_0": _pose(2.8, -0.1), "room2_table_0_0": _pose(1.3, -0.1),
+             "room1_destination": _pose(1.8, 0.8)}
+
+
+def test_lab_map_shipped_profile():
+    c = cfg.load_config(map_name="8902_2_edit", poses=dict(LAB_POSES))
+    assert (c.enter_room, c.rooms, c.destination_name) == (
+        "room1", ["room1", "room2"], "room1_destination")
+    assert [r.name for s in c.route for r in s.viewpoints] == [
+        "room1_table_0_0", "room2_table_0_0"]
+
+
 def _robocup_poses(names=ROBOCUP_NAMES):
     return {n: _pose(i, 0) for i, n in enumerate(names)}
 
@@ -284,15 +297,17 @@ def test_map_flag_selects_map_and_its_poses(monkeypatch, capsys):
 
     def load(name):
         asked.append(name)
-        return _robocup_poses() if name == ROBOCUP else dict(POSES)
+        return _robocup_poses() if name == ROBOCUP else dict(LAB_POSES)
     monkeypatch.setattr(map_studio.poses, "load_poses", load)
     cli.main(["--map", ROBOCUP, "--enter-room", "diningroom", "--print-tree"])
     out = capsys.readouterr().out
     assert asked == [ROBOCUP]
     assert out.index("diningroom_table_0_0") < out.index("kitchen_table_0_0")
-    cli.main(["--map", "8902_2_edit", "--print-tree"])
+    cli.main(["--map", "8902_2_edit", "--grasp", "--print-tree"])
     assert asked[-1] == "8902_2_edit"
-    assert "bedroom_table_0_0" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert out.index("room1_table_0_0") < out.index("room2_table_0_0")
+    assert "Go to destination room1_destination" in out
 
 
 def test_unknown_map_lists_known_maps():

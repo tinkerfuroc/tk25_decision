@@ -25,13 +25,14 @@
       }
     },
     "8902_2_edit": {
-      "enter_room": "bedroom",
+      "enter_room": "room1",
       "enter_profiles": {
-        "bedroom": {
+        "room1": {
           "rooms": [
-            "bedroom"
+            "room1",
+            "room2"
           ],
-          "destination": "point_area"
+          "destination": "room1_destination"
         }
       }
     }

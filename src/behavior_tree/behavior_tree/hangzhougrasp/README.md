@@ -87,8 +87,8 @@ Map Studio 点位名为 `<room>_<furniture>_<n>_<m>`，例如
       }
     },
     "8902_2_edit": {
-      "enter_room": "bedroom",
-      "enter_profiles": {"bedroom": {"rooms": ["bedroom"], "destination": "point_area"}}
+      "enter_room": "room1",
+      "enter_profiles": {"room1": {"rooms": ["room1", "room2"], "destination": "room1_destination"}}
     }
   }
 }
@@ -98,7 +98,9 @@ Map Studio 点位名为 `<room>_<furniture>_<n>_<m>`，例如
 - robocup 地图只有客厅（livingroom）和餐厅（diningroom）两个入口。
   `livingroom_destination`、`diningroom_destination` 需要在 Map Studio 里标出
   （名字可在 `constants.json` 改）；没标之前启动会报错并给出缺失的点位名。
-- `8902_2_edit` 目前没有 `<room>_table|ground_<n>_<m>` 点位，标好之前无法启动。
+- `8902_2_edit`（实验室地图）：点位已改名为 `room1_table_0_0`、`room2_table_0_0`
+  （原 `grasp1`、`grasp2`）和 `room1_destination`（原 `point_area`）；
+  入口 room1，顺序 room1 → room2。
 - 每个 profile 给出覆盖房间的顺序 `rooms`（必须包含自身）和本次的
   `destination` 点位名。profile 不是对象、缺 `destination` 都是启动错误。
 - `--enter-room NAME` 覆盖所选地图的 `enter_room`；未知名称是启动错误。

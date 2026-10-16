@@ -27,8 +27,9 @@ per-map section. `map_name` picks the default map.
     }
   },
   "8902_2_edit": {
-    "enter_room": "bedroom",
-    "enter_profiles": {"bedroom": {"rooms": ["bedroom"], "destination": "point_area"}}
+    "enter_room": "room1",
+    "enter_profiles": {"room1": {"rooms": ["room1", "room2"],
+                                 "destination": "room1_destination"}}
   }
 }
 ```
@@ -43,8 +44,11 @@ per-map section. `map_name` picks the default map.
 
 ## Decisions from you
 
-- Second map: `8902_2_edit`. It has no `<room>_table|ground_<n>_<m>` poses
-  yet, so it refuses to start until they are marked in Map Studio.
+- Second map: `8902_2_edit`. Its poses were renamed on 2026-10-16 (you
+  asked): `grasp1` → `room1_table_0_0`, `grasp2` → `room2_table_0_0`,
+  `point_area` → `room1_destination`. You wrote `room1_table0`; I used the
+  full `<room>_table_<n>_<m>` form the parser requires. Entry room1,
+  order room1 → room2.
 - robocup map entry rooms: livingroom and diningroom only.
   - livingroom: livingroom → kitchen → diningroom → bedroom.
   - diningroom: diningroom → kitchen → bedroom → livingroom.
