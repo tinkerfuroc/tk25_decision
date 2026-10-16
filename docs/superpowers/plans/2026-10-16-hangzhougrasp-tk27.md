@@ -74,8 +74,7 @@ git commit -m "feat(hangzhougrasp): TK27 Pick, MoveToSavedPose and strict grippe
 ### Task 2: Blackboard helper leaves
 
 **Files:**
-- Modify: `src/behavior_tree/behavior_tree/hangzhougrasp/custom_nodes.py` (add three classes; delete `BtNode_SelectGraspTarget`)
-- Modify: `src/behavior_tree/test/test_hangzhougrasp.py` (delete the `BtNode_SelectGraspTarget` tests at ~lines 230-275 and its import)
+- Modify: `src/behavior_tree/behavior_tree/hangzhougrasp/custom_nodes.py` (add three classes; keep `BtNode_SelectGraspTarget` until Task 3, because `hangzhougrasp.py` still imports it)
 - Test: `src/behavior_tree/test/test_hangzhougrasp_tk27.py` (append)
 
 **Interfaces:**
@@ -86,14 +85,14 @@ git commit -m "feat(hangzhougrasp): TK27 Pick, MoveToSavedPose and strict grippe
 
 - [ ] **Step 1: Write the failing tests** (append): `test_clear_key_sets_none`; `test_scan_saw_objects` parametrized over missing key, `None`, `status=1`, `objects=[]`, one object → only the last SUCCESS; `test_select_nearest_label_takes_first` (`["cup","coke"]` → `"cup"`); `test_select_nearest_label_rejects_blank` (`cls="  "` → FAILURE, label key `""`); `test_select_nearest_label_clears_old_label` (old `"coke"`, then failing input → `""`).
 - [ ] **Step 2: Run** the file. Expected: FAIL on import.
-- [ ] **Step 3: Implement** in `custom_nodes.py`; remove `BtNode_SelectGraspTarget` and the `copy` import if unused.
-- [ ] **Step 4: Run** `test_hangzhougrasp_tk27.py test_hangzhougrasp.py`. Expected: pass (test_hangzhougrasp.py still imports `BtNode_SelectGraspTarget` from hangzhougrasp.py nowhere else; if a collection error remains, it belongs to Task 3, note it and leave it).
-- [ ] **Step 5: Commit** `custom_nodes.py`, `test_hangzhougrasp_tk27.py`, `test_hangzhougrasp.py`: `feat(hangzhougrasp): scan-seen, nearest-label and clear-key leaves`.
+- [ ] **Step 3: Implement** the three classes in `custom_nodes.py`.
+- [ ] **Step 4: Run** the full hangzhougrasp suite. Expected: all pass (140 + new).
+- [ ] **Step 5: Commit** `custom_nodes.py`, `test_hangzhougrasp_tk27.py`: `feat(hangzhougrasp): scan-seen, nearest-label and clear-key leaves`.
 
 ### Task 3: Config and tree migration
 
 **Files:**
-- Modify: `hangzhougrasp/config.py`, `hangzhougrasp/constants.json`, `hangzhougrasp/hangzhougrasp.py`, `hangzhougrasp/parts.py`
+- Modify: `hangzhougrasp/config.py`, `hangzhougrasp/constants.json`, `hangzhougrasp/hangzhougrasp.py`, `hangzhougrasp/parts.py`, `hangzhougrasp/custom_nodes.py` (delete `BtNode_SelectGraspTarget` and the `copy` import)
 - Modify tests: `test_hangzhougrasp.py`, `test_hangzhougrasp_subtrees.py`, `test_hangzhougrasp_parts.py`, `test_hangzhougrasp_scan.py`, `test_hangzhougrasp_poses.py`, `test_hangzhougrasp_cli.py`, `test/hangzhougrasp_test_config.json` (only if it carries removed keys)
 - Test: new tree tests in `test_hangzhougrasp_subtrees.py`
 
@@ -131,10 +130,10 @@ git commit -m "feat(hangzhougrasp): TK27 Pick, MoveToSavedPose and strict grippe
   - `test_every_pick_preceded_by_open` (parts file): for each `BtNode_Tk27Pick` in the full grasp tree, its parent is a Sequence whose previous child is a `BtNode_Tk27GripperOpen`.
   - Update `test_no_grasp_builds_no_manipulation_nodes` to ban the three TK27 classes plus `BtNode_SetHolding`.
 - [ ] **Step 3: Run** all hangzhougrasp tests. Expected: new tests FAIL (missing names / old structure).
-- [ ] **Step 4: Implement** config.py (validation per spec), constants.json, hangzhougrasp.py, parts.py as in Interfaces. Then update the remaining old tests: `test_hangzhougrasp_scan.py` (no grasp variant; scans request no payload), `test_hangzhougrasp_parts.py` `_tick_stubbed` monkeypatches (replace `BtNode_MoveArmSingle`/`BtNode_Grasp`/`BtNode_GripperAction` stubs with the three TK27 leaves; Pick stub reads `prompt_bb_key`; `RUNTIME_KEYS` drops removed keys and keeps `KEY_SCAN_RESULT`, `KEY_GRASP_SCAN_RESULT`, `KEY_TARGET_LABEL`, `KEY_ANNOUNCEMENT`, `KEY_HOLDING`), writer-name assertions that listed `Write arm navigating`/`Write arm table`, and `arm_key_written`.
+- [ ] **Step 4: Implement** config.py (validation per spec), constants.json, hangzhougrasp.py, parts.py as in Interfaces. Then update the remaining old tests: delete the `BtNode_SelectGraspTarget` tests and import in `test_hangzhougrasp.py` (~lines 19, 230-275); `test_hangzhougrasp_scan.py` (no grasp variant; scans request no payload), `test_hangzhougrasp_parts.py` `_tick_stubbed` monkeypatches (replace `BtNode_MoveArmSingle`/`BtNode_Grasp`/`BtNode_GripperAction` stubs with the three TK27 leaves; Pick stub reads `prompt_bb_key`; `RUNTIME_KEYS` drops removed keys and keeps `KEY_SCAN_RESULT`, `KEY_GRASP_SCAN_RESULT`, `KEY_TARGET_LABEL`, `KEY_ANNOUNCEMENT`, `KEY_HOLDING`), writer-name assertions that listed `Write arm navigating`/`Write arm table`, and `arm_key_written`.
 - [ ] **Step 5: Run** `.claude/hg_pytest.py src/behavior_tree/test/test_hangzhougrasp*.py -q`. Expected: all pass, count ≥ 140 + new.
 - [ ] **Step 6: Print-tree check**: `PYTHONPATH` is set by the helper only for pytest, so verify with a test instead: `test_cli_grasp_print_tree_uses_tk27` in `test_hangzhougrasp_cli.py` (`cli.main(["--config", conf_path, "--grasp", "--print-tree"])` output contains `Pick selected object`, `Arm to table pose`, `Open gripper before pick`, and not `Grasp selected object`).
-- [ ] **Step 7: Commit** the four source files and the touched tests: `feat(hangzhougrasp): drive --grasp through TK27 Pick and saved poses`.
+- [ ] **Step 7: Commit** the five source files and the touched tests: `feat(hangzhougrasp): drive --grasp through TK27 Pick and saved poses`.
 
 ### Task 4: Docs
 
