@@ -45,5 +45,7 @@ Each script sources `common.sh` for: workspace sourcing, FastDDS profile env, pa
 ## Stopping a session
 
 ```bash
-tmux kill-session -t tinker-hri
+src/tk25_basic/tools/tkstop tinker-hri
 ```
+
+Panes close as they stop; any pane whose processes won't stop stays open and is listed as a survivor (exit 1). Never SIGKILLs.
