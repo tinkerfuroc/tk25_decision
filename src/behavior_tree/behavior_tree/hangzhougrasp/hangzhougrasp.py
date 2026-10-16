@@ -141,20 +141,22 @@ def createScanAnnounce(config, *, surface):
 def createGrasp(config):
     """pick45, RealSense gate and label, then open + TK27 Pick, then stow.
 
-    Each retry round re-sends the open and a fresh Pick goal; Pick does its
-    own observation, so the scan is not repeated.
+    Once the tree has entered grasping (the Orbbec scan saw something), the
+    whole attempt is retried up to grasp_retry_limit times: back to pick45,
+    a fresh RealSense scan and label, a fresh open and a fresh Pick goal.
     """
     root = py_trees.composites.Sequence(name="Grasp nearest object", memory=True)
-    root.add_child(_savedPoseRetry("Arm to table pose", config.arm_pose_table, config))
-    root.add_child(_scanYolo26Retry(
+    attempt = py_trees.composites.Sequence(name="Grasp attempt", memory=True)
+    # Re-sent every round: a failed Pick may leave the arm off pick45.
+    attempt.add_child(_savedPoseRetry("Arm to table pose", config.arm_pose_table, config))
+    attempt.add_child(_scanYolo26Retry(
         "Scan table with RealSense", config, bb_key=KEY_GRASP_SCAN_RESULT,
         use_orbbec=False, prompt=config.prompt,
     ))
-    root.add_child(BtNode_SelectNearestLabel(
+    attempt.add_child(BtNode_SelectNearestLabel(
         name="Select nearest label", bb_source=KEY_GRASP_SCAN_RESULT,
         label_key=KEY_TARGET_LABEL,
     ))
-    attempt = py_trees.composites.Sequence(name="Open gripper then pick", memory=True)
     # Voice note: always open before Pick; a failed open means no Pick.
     attempt.add_child(_gripperOpen("Open gripper before pick", config))
     attempt.add_child(BtNode_Tk27Pick(
@@ -162,7 +164,7 @@ def createGrasp(config):
         action_name=config.pick_action, plan_effort=config.pick_plan_effort,
     ))
     root.add_child(py_trees.decorators.Retry(
-        name="Retry open and pick", child=attempt,
+        name="Retry grasp attempt", child=attempt,
         num_failures=config.grasp_retry_limit,
     ))
     # Holding is true the moment Pick succeeds, even if the retract fails.

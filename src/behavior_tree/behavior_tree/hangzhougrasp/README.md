@@ -31,9 +31,10 @@ Visit table:  对每个视点（升序 m）
     Clear previous scan result
     Orbbec 扫描 + 中文播报（机械臂保持 navigation 姿态）
     只有 Orbbec 看到物体才继续（没看到：该视点算 miss，机械臂不动）：
-      MoveToSavedPose(pick45)
-      → RealSense yolo26 扫描（门控 + 取最近目标的标签；不再播报）
-      → 重试（grasp_retry_limit）：打开夹爪（严格检查）→ TK27 Pick(标签, high)
+      整个抓取尝试最多 grasp_retry_limit（3）次，每次都重新执行：
+        MoveToSavedPose(pick45)
+        → RealSense yolo26 扫描（门控 + 取最近目标的标签；不再播报）
+        → 打开夹爪（严格检查）→ TK27 Pick(标签, high)
       → 记为持有 → MoveToSavedPose(navigation)
       任一步失败：MoveToSavedPose(navigation)；成功则该视点算 miss，
       收回本身失败则整个任务失败

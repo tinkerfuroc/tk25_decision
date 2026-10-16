@@ -234,6 +234,31 @@ def test_realsense_miss_is_miss_with_stow(monkeypatch):
     assert not _holding()
 
 
+def test_whole_grasp_attempt_retried_up_to_limit(monkeypatch):
+    log = []
+    _stub(monkeypatch, log, overrides={REALSENSE_SCAN: S.FAILURE})
+    root = hg.createViewpointScanGrasp(_cfg(grasp_retry_limit=3), miss_is_success=True)
+    assert _tick(root) == S.SUCCESS
+    assert log.count(TABLE_POSE) == 3 and log.count(REALSENSE_SCAN) == 3
+    assert log.count(CLEANUP) == 1 and PICK not in log
+
+
+def test_grasp_succeeds_on_a_later_attempt(monkeypatch):
+    log = []
+    picks = iter([S.FAILURE, S.FAILURE, S.SUCCESS])
+
+    class Pick(py_trees.behaviour.Behaviour):
+        def update(self):
+            log.append(PICK)
+            return next(picks)
+    _stub(monkeypatch, log)
+    monkeypatch.setattr(hg, "BtNode_Tk27Pick", lambda **kw: Pick(kw["name"]))
+    root = hg.createViewpointScanGrasp(_cfg(grasp_retry_limit=3), miss_is_success=True)
+    assert _tick(root) == S.SUCCESS
+    assert log.count(TABLE_POSE) == 3 and log.count(OPEN) == 3 and log.count(PICK) == 3
+    assert CLEANUP not in log and _holding() is True
+
+
 def test_failed_open_never_ticks_pick(monkeypatch):
     log = []
     _stub(monkeypatch, log, overrides={OPEN: S.FAILURE})
