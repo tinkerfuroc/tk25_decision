@@ -68,10 +68,11 @@ def test_build_route_order():
     names = ["kitchen_table_1_0", "kitchen_table_0_0", "kitchen_table_0_1",
              "kitchen_ground_0_0", "bedroom_table_0_0"]
     idx = PoseIndex({n: ps(0, 0) for n in names})
+    # Per room: ground poses first, then tables.
     assert _route_names(build_route(idx, ["kitchen", "bedroom"])) == [
+        ("kitchen", "ground", ["kitchen_ground_0_0"]),
         ("kitchen", "table", ["kitchen_table_0_0", "kitchen_table_0_1"]),
         ("kitchen", "table", ["kitchen_table_1_0"]),
-        ("kitchen", "ground", ["kitchen_ground_0_0"]),
         ("bedroom", "table", ["bedroom_table_0_0"]),
     ]
 
@@ -107,7 +108,7 @@ def test_load_config_builds_route_and_destination():
     assert c.destination_name == "point_area"
     assert c.destination.pose.position.x == 9.0
     assert [(s.room, s.kind) for s in c.route] == [
-        ("bedroom", "table"), ("bedroom", "ground")]
+        ("bedroom", "ground"), ("bedroom", "table")]
     assert hgcfg.pose_key("x") == "hg_pose_x"
     assert not hasattr(c, "pose_scan")
 

@@ -60,20 +60,24 @@ def _gripperOpen(name, config):
     )
 
 
-def _gotoRetry(name, pose_key, config):
-    """Every navigation stows the arm in its navigation pose first (all modes)."""
+def _gotoRetry(name, pose_key, config, *, stow=True):
+    """Navigation; with stow (every --grasp drive) the arm goes to its
+    navigation pose first. --no-grasp passes stow=False: no arm commands."""
+    goto = py_trees.decorators.Retry(
+        name=f"Retry {name}",
+        child=BtNode_GotoAction(
+            name=name, key=pose_key, action_name=config.navigation_action,
+        ),
+        num_failures=config.nav_retry_limit,
+    )
+    if not stow:
+        return goto
     return py_trees.composites.Sequence(
         name=f"Stow then {name}", memory=True,
         children=[
             _savedPoseRetry(f"Arm to nav before {name}",
                             config.arm_pose_navigating, config),
-            py_trees.decorators.Retry(
-                name=f"Retry {name}",
-                child=BtNode_GotoAction(
-                    name=name, key=pose_key, action_name=config.navigation_action,
-                ),
-                num_failures=config.nav_retry_limit,
-            ),
+            goto,
         ])
 
 
@@ -338,13 +342,13 @@ def createTablesPhase(config, stops, *, enable_grasp):
                 visit = py_trees.composites.Sequence(
                     name=f"Visit {rec.name}", memory=True)
                 visit.add_child(_gotoRetry(
-                    f"Go to {rec.name}", pose_key(rec.name), config))
+                    f"Go to {rec.name}", pose_key(rec.name), config, stow=False))
                 visit.add_child(_scan_or_miss(config, rec.name, "table"))
                 root.add_child(visit)
     return root
 
 
-def createGroundPhase(config, stops):
+def createGroundPhase(config, stops, *, enable_grasp):
     root = py_trees.composites.Sequence(name="Ground phase", memory=True)
     for stop, _ in stops:
         if stop.kind != "ground":
@@ -353,33 +357,35 @@ def createGroundPhase(config, stops):
         visit = py_trees.composites.Sequence(
             name=f"Visit {rec.name}", memory=True)
         visit.add_child(_gotoRetry(
-            f"Go to {rec.name}", pose_key(rec.name), config))
+            f"Go to {rec.name}", pose_key(rec.name), config, stow=enable_grasp))
         visit.add_child(_scan_or_miss(config, rec.name, "ground"))
         root.add_child(visit)
     return root
 
 
 def createRoom(config, room, route_slice, *, enable_grasp):
+    """Ground poses first (scan and announce), then tables (scan and grasp)."""
     root = py_trees.composites.Sequence(name=f"Room {room}", memory=True)
+    root.add_child(createGroundPhase(config, route_slice, enable_grasp=enable_grasp))
     root.add_child(createTablesPhase(
         config, route_slice, enable_grasp=enable_grasp))
-    root.add_child(createGroundPhase(config, route_slice))
     return root
 
 
 def createHangzhouGrasp(*, enable_grasp=False, config=None):
-    """Build Pick/gripper nodes only when enable_grasp=True; one mission per run.
+    """Build arm/Pick/gripper nodes only when enable_grasp=True; one mission per run.
 
-    In every mode the arm is stowed before entering the arena and before
-    every navigation (see _gotoRetry).
+    With --grasp the arm is stowed before entering the arena and before every
+    navigation (see _gotoRetry); --no-grasp sends no arm commands.
     """
     if type(enable_grasp) is not bool:
         raise TypeError("enable_grasp must be a boolean")
     config = config if config is not None else load_config()
     root = py_trees.composites.Sequence(name="HangzhouGrasp Root", memory=True)
     root.add_child(createConstantWriter(config))
-    root.add_child(_savedPoseRetry(
-        "Arm to nav before entering the arena", config.arm_pose_navigating, config))
+    if enable_grasp:
+        root.add_child(_savedPoseRetry(
+            "Arm to nav before entering the arena", config.arm_pose_navigating, config))
     route = config.route
     paired = [
         (stop, route[i + 1].viewpoints[0] if i + 1 < len(route) else None)

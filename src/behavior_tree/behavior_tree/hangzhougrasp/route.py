@@ -12,10 +12,11 @@ class Stop:
 
 
 def build_route(index: PoseIndex, rooms: list) -> list:
+    """Per room: ground poses first, then tables (the run's visit order)."""
     route = []
     for room in rooms:
-        stops = [Stop(room, "table", list(t)) for t in index.tables(room)]
-        stops += [Stop(room, "ground", [g]) for g in index.ground(room)]
+        stops = [Stop(room, "ground", [g]) for g in index.ground(room)]
+        stops += [Stop(room, "table", list(t)) for t in index.tables(room)]
         if not stops:
             raise ValueError(f"room {room!r} has no table or ground poses")
         route += stops

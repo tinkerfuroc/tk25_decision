@@ -45,8 +45,8 @@ def _writer(config, pose_names):
     return root
 
 
-def _goto(config, at):
-    return task._gotoRetry(f"Go to {at}", pose_key(at), config)
+def _goto(config, at, *, stow):
+    return task._gotoRetry(f"Go to {at}", pose_key(at), config, stow=stow)
 
 
 def _room_stops(config, room):
@@ -116,7 +116,7 @@ def createPart(name, config, *, enable_grasp, room=None, table=None,
     elif name == "ground":
         stops = _room_stops(config, room)
         poses = _names([p for p in stops if p[0].kind == "ground"])
-        body = task.createGroundPhase(config, stops)
+        body = task.createGroundPhase(config, stops, enable_grasp=enable_grasp)
     elif name == "room":
         stops = _room_stops(config, room)
         poses = _names(stops)
@@ -124,15 +124,17 @@ def createPart(name, config, *, enable_grasp, room=None, table=None,
         poses.append(config.destination_name)
         body = task.createRoom(config, room, stops, enable_grasp=enable_grasp)
 
-    # The arm must be in its navigation pose before the part navigates at all,
-    # in every mode (every goto also stows first; see task._gotoRetry).
-    arm_first = name in ("room", "visit-table", "ground") or bool(at)
+    # With --grasp the arm must be in its navigation pose before the part
+    # navigates at all (every --grasp goto also stows; see task._gotoRetry).
+    # --no-grasp sends no arm commands.
+    arm_first = enable_grasp and (
+        name in ("room", "visit-table", "ground") or bool(at))
     root = py_trees.composites.Sequence(name=f"Part {name}", memory=True)
     root.add_child(_writer(config, ([at] if at else []) + poses))
     if arm_first:
         root.add_child(task._savedPoseRetry(
             "Arm to nav before first navigation", config.arm_pose_navigating, config))
     if at:
-        root.add_child(_goto(config, at))
+        root.add_child(_goto(config, at, stow=enable_grasp))
     root.add_child(body)
     return root

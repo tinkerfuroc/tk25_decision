@@ -74,8 +74,9 @@ def _gotos(root):
 def test_route_order_in_tree(config):
     root = task.createHangzhouGrasp(config=config, enable_grasp=True)
     gotos = _gotos(root)
-    expected = ["bedroom_table_0_0", "bedroom_table_0_1", "bedroom_ground_0_0",
-                "kitchen_table_0_0", "kitchen_ground_0_0"]
+    # Per room: ground poses first, then tables.
+    expected = ["bedroom_ground_0_0", "bedroom_table_0_0", "bedroom_table_0_1",
+                "kitchen_ground_0_0", "kitchen_table_0_0"]
     visits = [g for g in gotos if g.startswith(("Go to bedroom", "Go to kitchen"))]
     first = [v for v in visits if any(v.endswith(e) for e in expected)]
     order = []
@@ -89,8 +90,23 @@ def _by_name(root, name):
     return next(n for n in root.iterate() if n.name == name)
 
 
-def test_enter_room_uses_deliver_other_room_uses_drop(config):
-    root = task.createHangzhouGrasp(config=config, enable_grasp=True)
+# bedroom (enter room), kitchen and livingroom, each with ground then tables.
+THREE_ROOMS = {
+    "bedroom_ground_0_0": _pose(2, 2), "bedroom_table_0_0": _pose(1, 2),
+    "kitchen_ground_0_0": _pose(6, 2), "kitchen_table_0_0": _pose(5, 2),
+    "kitchen_table_1_0": _pose(5, 3),
+    "livingroom_ground_0_0": _pose(8, 2), "livingroom_table_0_0": _pose(8, 3),
+    "point_area": _pose(3, 4),
+}
+
+
+def _three_rooms():
+    rooms = ["bedroom", "kitchen", "livingroom"]
+    return _with_rooms(_config(THREE_ROOMS), rooms, THREE_ROOMS)
+
+
+def test_enter_room_uses_deliver_other_room_uses_drop():
+    root = task.createHangzhouGrasp(config=_three_rooms(), enable_grasp=True)
     bedroom = _by_name(root, "Room bedroom")
     kitchen = _by_name(root, "Room kitchen")
     assert any(n.name == "Deliver object" for n in bedroom.iterate())
@@ -103,19 +119,22 @@ def goto_keys(monkeypatch):
     keys = {}
     monkeypatch.setattr(
         task, "_gotoRetry",
-        lambda name, key, config: keys.setdefault(name, []).append(key) or
+        lambda name, key, config, **kw: keys.setdefault(name, []).append(key) or
         py_trees.behaviours.Success(name))
     return keys
 
 
-def test_next_pose_is_next_stop_first_viewpoint(config, goto_keys):
-    root = task.createHangzhouGrasp(config=config, enable_grasp=True)
-    drop = _by_name(_by_name(root, "Room kitchen"), "Drop object elsewhere")
-    assert drop is not None
-    # bedroom (enter room) delivers to the destination, kitchen drops at next pose
-    assert goto_keys["Go to destination point_area"] == ["hg_pose_point_area"]
-    assert goto_keys["Go to drop pose kitchen_ground_0_0"] == [
-        "hg_pose_kitchen_ground_0_0"]
+def test_next_pose_is_next_stop_first_viewpoint(goto_keys):
+    task.createHangzhouGrasp(config=_three_rooms(), enable_grasp=True)
+    # bedroom (enter room) delivers to the destination; so does the very last
+    # table of the route (livingroom), which has no next stop
+    assert goto_keys["Go to destination point_area"] == ["hg_pose_point_area"] * 2
+    # kitchen table 0 drops at kitchen table 1 (the next stop) ...
+    assert goto_keys["Go to drop pose kitchen_table_1_0"] == [
+        "hg_pose_kitchen_table_1_0"]
+    # ... and kitchen's last table drops at livingroom's first stop: its ground
+    assert goto_keys["Go to drop pose livingroom_ground_0_0"] == [
+        "hg_pose_livingroom_ground_0_0"]
 
 
 def test_last_table_stop_drops_at_destination(goto_keys):
@@ -143,19 +162,17 @@ def test_room_with_only_tables():
         assert task.createHangzhouGrasp(config=conf, enable_grasp=grasp)
 
 
-def test_no_grasp_builds_no_pick_or_gripper_nodes(config):
+def test_no_grasp_builds_no_manipulation_nodes(config):
     root = task.createHangzhouGrasp(config=config, enable_grasp=False)
-    banned = (task.BtNode_Tk27Pick, task.BtNode_Tk27GripperOpen, task.BtNode_SetHolding)
+    banned = (task.BtNode_Tk27SavedPose, task.BtNode_Tk27Pick,
+              task.BtNode_Tk27GripperOpen, task.BtNode_SetHolding)
     assert not _nodes(root, banned)
-    # The only arm command in --no-grasp is the navigation stow.
-    assert {n.pose_name for n in _nodes(root, task.BtNode_Tk27SavedPose)} == {"navigation"}
     assert len(_nodes(root, task.BtNode_ScanForYolo26)) == 5
     assert not any("Deliver" in n.name or "Drop" in n.name for n in root.iterate())
 
 
-@pytest.mark.parametrize("grasp", [False, True])
-def test_every_navigation_is_preceded_by_a_stow(config, grasp):
-    root = task.createHangzhouGrasp(config=config, enable_grasp=grasp)
+def test_every_grasp_navigation_is_preceded_by_a_stow(config):
+    root = task.createHangzhouGrasp(config=config, enable_grasp=True)
     nodes = list(root.iterate())
     stows = [i for i, n in enumerate(nodes) if isinstance(n, task.BtNode_Tk27SavedPose)]
     first_goto = next(i for i, n in enumerate(nodes) if isinstance(n, task.BtNode_GotoAction))
@@ -188,6 +205,7 @@ def test_ground_phase_has_no_grasp(config):
     for room in ("bedroom", "kitchen"):
         ground = _by_name(_by_name(root, f"Room {room}"), "Ground phase")
         assert not _nodes(ground, task.BtNode_Tk27Pick)
+        # --grasp: the ground drives stow first, but nothing else moves the arm.
         assert {n.pose_name for n in _nodes(ground, task.BtNode_Tk27SavedPose)} == {"navigation"}
         assert len(_nodes(ground, task.BtNode_ScanForYolo26)) == 1
 
@@ -244,20 +262,29 @@ def test_ground_miss_is_success_and_navigation_retries_bounded(
         if root.status != Status.RUNNING:
             break
     assert root.status == Status.FAILURE
-    assert counts["Go to bedroom_table_0_0"] == config.nav_retry_limit
+    # The first drive of the run is now the bedroom's ground pose.
+    assert counts["Go to bedroom_ground_0_0"] == config.nav_retry_limit
+    assert counts["Go to bedroom_table_0_0"] == 0
 
 
-def test_table_stop_then_ground_drop_elsewhere_targets_first_ground(goto_keys):
+def test_last_table_drop_targets_next_rooms_first_ground(goto_keys):
     poses = {"bedroom_table_0_0": _pose(1, 2), "kitchen_table_0_0": _pose(5, 2),
-             "kitchen_ground_0_0": _pose(6, 2), "kitchen_ground_0_1": _pose(6, 3),
-             "point_area": _pose(3, 4)}
-    conf = _with_rooms(_config(poses), ["bedroom", "kitchen"], poses)
+             "livingroom_ground_0_0": _pose(6, 2), "livingroom_ground_0_1": _pose(6, 3),
+             "livingroom_table_0_0": _pose(7, 3), "point_area": _pose(3, 4)}
+    conf = _with_rooms(_config(poses), ["bedroom", "kitchen", "livingroom"], poses)
     root = task.createHangzhouGrasp(config=conf, enable_grasp=True)
     kitchen = _by_name(root, "Room kitchen")
     assert _by_name(kitchen, "Drop object elsewhere")
-    assert goto_keys["Go to drop pose kitchen_ground_0_0"] == [
-        "hg_pose_kitchen_ground_0_0"]
-    assert "Go to drop pose kitchen_ground_0_1" not in goto_keys
+    assert goto_keys["Go to drop pose livingroom_ground_0_0"] == [
+        "hg_pose_livingroom_ground_0_0"]
+    assert "Go to drop pose livingroom_ground_0_1" not in goto_keys
+
+
+def test_room_runs_ground_phase_before_tables_phase(config):
+    for grasp in (False, True):
+        room = _by_name(task.createHangzhouGrasp(config=config, enable_grasp=grasp),
+                        "Room bedroom")
+        assert [c.name for c in room.children] == ["Ground phase", "Tables phase"]
 
 
 def test_enable_grasp_is_required_keyword(config):

@@ -1,8 +1,8 @@
 # hangzhougrasp
 
 与 `HRI/`、`PickAndPlace/` 并列的任务模块，入口：
-`ros2 run behavior_tree hangzhougrasp`。多房间任务：每个房间先逐个桌子
-扫描并尝试抓取，再扫地面；房间顺序由 enterRoom profile 决定。
+`ros2 run behavior_tree hangzhougrasp`。多房间任务：每个房间先扫地面点（只扫描播报），
+再逐个桌子扫描并尝试抓取；房间顺序由 enterRoom profile 决定。
 支持两张已知地图（`--map`）：`robocup_home_2026_measured_5cm`（默认）和
 `8902_2_edit`，每张地图有自己的入口房间与 profile。
 
@@ -12,9 +12,9 @@
 
 ```text
 Write constants
-→ Arm to nav before entering the arena（所有模式）
-→ Room A: Tables phase → Ground phase
-→ Room B: Tables phase → Ground phase
+→ [--grasp] Arm to nav before entering the arena
+→ Room A: Ground phase → Tables phase
+→ Room B: Ground phase → Tables phase
 → ...
 ```
 
@@ -51,7 +51,7 @@ Deliver if holding:  持有物体才执行（规则见“放置规则”）
 范围限定 [-30, 30]。云台重试 `head_retry_limit`（3）次仍未到位则记 ERROR 并照常扫描。
 
 `--grasp` 是**构建参数**：关闭时不构建 Pick、夹爪节点，
-也不等待这些 action server。**所有模式**下每次导航前都先 MoveToSavedPose(navigation)，进入场地前也先收回，所以 `--no-grasp` 也需要 TK27 的 `/manipulation/move_to_saved_pose`。导航失败会让任务失败；扫描/抓取 miss 不会，
+也不等待这些 action server（`--no-grasp` 不发任何机械臂指令）。`--grasp` 时每次导航前都先 MoveToSavedPose(navigation)，进入场地前也先收回。导航失败会让任务失败；扫描/抓取 miss 不会，
 但失败后的收回机械臂（cleanup）若重试后仍失败，任务失败并停止，
 不会带着伸出的机械臂继续导航。
 播报（TTS）重试后仍失败只记一条 ERROR 日志（`Log announce failure`），
@@ -162,8 +162,8 @@ Map Studio 点位名为 `<room>_<furniture>_<n>_<m>`，例如
 - **在进入房间（enter room）抓到**：机械臂回导航姿态，导航到 profile 的
   `destination`，打开夹爪放下，然后继续剩余的桌子、地面点和房间。
 - **在其他房间抓到**：到不了真正的放置位置。机械臂回导航姿态，导航到
-  **下一个扫描点**（路线中该桌子之后的下一个点：下一个桌子的第一个视点，
-  否则本房间第一个地面点，否则下一个房间的第一个点），播报
+  **下一个扫描点**（路线中该桌子之后的下一个点：本房间下一个桌子的第一个视点，
+  否则下一个房间的第一个点——即它的第一个地面点），播报
   “无法到达真正的放置位置”，打开夹爪放在那里。导航姿态下相机看不到被放下的
   物体，所以该点正常扫描，不会重复检测。
 - **没有下一个扫描点**（路线最后一个点）：回到 destination 做真正放置。
