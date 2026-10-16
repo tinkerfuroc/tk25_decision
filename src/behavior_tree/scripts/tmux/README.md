@@ -48,4 +48,4 @@ Each script sources `common.sh` for: workspace sourcing, FastDDS profile env, pa
 src/tk25_basic/tools/tkstop tinker-hri
 ```
 
-Panes close as they stop; any pane whose processes won't stop stays open and is listed as a survivor (exit 1). Never SIGKILLs.
+Panes close as they stop; any pane whose processes won't stop stays open and is listed as a survivor (exit 1). tkstop itself never sends SIGKILL (`ros2 launch` still escalates on its own children after ~10 s).
