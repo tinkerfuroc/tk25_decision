@@ -9,6 +9,8 @@
 # mobile_bringup grasp_bringup.launch.py or arm_api: they double-drive the arm.
 # arm.launch.py brings up the RealSense and wrist camera itself, so the
 # cameras window only starts the Orbbec.
+# Bash-only; `sh hangzhougrasp.sh` (dash) re-runs itself under bash.
+if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
@@ -42,7 +44,7 @@ retile "$SESSION:drivers"
 
 new_window "$SESSION" "vision"
 # The task's own scan (service object_detection_yolo26_sam).
-run "$SESSION:vision" "ros2 run object_detection_generalist yolo26_sam_node"
+run "$SESSION:vision" "ros2 run object_detection_generalist yolo26_sam_node --ros-args -p model_path:=yolo26n-20261016-171034-yolo26n-c8ec-best.pt -p confidence_threshold:=0.65"
 retile "$SESSION:vision"
 
 new_window "$SESSION" "manip"

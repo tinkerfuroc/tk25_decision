@@ -5,10 +5,14 @@
 WS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../../.." && pwd)"
 export WS_ROOT
 
+# One vision_log/<ts>/ session per launcher run, shared by every pane
+# (same convention as the tk25_basic master_*/tmux_* scripts).
+export TINKER_VISION_SESSION_TS="${TINKER_VISION_SESSION_TS:-$(date +%Y%m%d_%H%M%S)}"
+
 # Each tmux pane is its own shell with no inherited env, so every pane
 # re-sources the workspace. Cost is amortized at startup only.
 source_ws_cmd() {
-    printf '%s' "unset ALL_PROXY all_proxy http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ; export FASTRTPS_DEFAULT_PROFILES_FILE=\"$WS_ROOT/src/tk26_vision/config/fastdds_shm.xml\" ; source \"$WS_ROOT/install/setup.zsh\""
+    printf '%s' "unset ALL_PROXY all_proxy http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ; export FASTRTPS_DEFAULT_PROFILES_FILE=\"$WS_ROOT/src/tk26_vision/config/fastdds_shm.xml\" ; export TINKER_VISION_SESSION_TS=\"$TINKER_VISION_SESSION_TS\" ; source \"$WS_ROOT/install/setup.zsh\""
 }
 
 pan_tilt_dev() {
