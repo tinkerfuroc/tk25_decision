@@ -50,7 +50,7 @@
     "HandSanitizer": "洗手液",
     "SoapBox": "药盒",
     "TeddyBear": "泰迪熊",
-    "Detergent": "洗衣液"
+    "Detergent": "洗洁精"
   },
   "detection_service": "object_detection_yolo26_sam",
   "announce_service": "announce",

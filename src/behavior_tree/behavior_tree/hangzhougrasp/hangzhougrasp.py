@@ -303,7 +303,7 @@ def createDropElsewhere(config, next_pose):
                     f"Go to drop pose {next_pose.name}", pose_key(next_pose.name))
     root.add_child(BtNode_Announce(
         name="Announce unreachable drop target", bb_source=None,
-        message="无法到达真正的放置位置，我将在这里放下物体。"))
+        message="无法到达得分区，我将在这里放下"))
     _open_and_clear(root, next_pose.name, config)
     return root
 
