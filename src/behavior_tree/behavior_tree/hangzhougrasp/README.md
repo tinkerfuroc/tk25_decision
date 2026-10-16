@@ -45,8 +45,8 @@ Deliver if holding:  持有物体才执行（规则见“放置规则”）
 只扫描播报，不抓取、不放置。
 
 每次 Orbbec 扫描前都先把云台转到绝对角度（固件角度：30 = 水平，0 = 向下约 30°）：
-桌子 `table_scan_tilt_deg`=20，地面 `ground_scan_tilt_deg`=0，pan `head_pan_deg`=0，
-范围限定 [0, 30]。云台重试 `head_retry_limit`（3）次仍未到位则记 ERROR 并照常扫描。
+桌子 `table_scan_tilt_deg`=0，地面 `ground_scan_tilt_deg`=-15，pan `head_pan_deg`=0，
+范围限定 [-30, 30]。云台重试 `head_retry_limit`（3）次仍未到位则记 ERROR 并照常扫描。
 
 `--grasp` 是**构建参数**：关闭时不构建机械臂、Pick、夹爪节点，
 也不等待这些 action server。导航失败会让任务失败；扫描/抓取 miss 不会，

@@ -111,8 +111,8 @@ def _check_tk27(data):
             raise ValueError(f"{key} must be positive, got {data[key]}")
 
 
-# Firmware tilt range of the head: 30 = optical axis horizontal, 0 = ~30 deg down.
-HEAD_TILT_RANGE_DEG = (0.0, 30.0)
+# Firmware tilt range (controller tilt_min_deg -30, mechanical stop 30); 30 = level.
+HEAD_TILT_RANGE_DEG = (-30.0, 30.0)
 
 
 def _check_head(data):
