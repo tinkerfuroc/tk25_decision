@@ -42,10 +42,18 @@ validation step 3 checks this.
 
 ## Decisions from you
 
-1. **Pick prompt and gating:** keep the yolo26 scan and Mandarin
-   announcement. Pick runs only if the scan saw something, and its prompt is
-   the nearest detected label (the object just announced). A scan with no
-   detections is a miss at that viewpoint, as today.
+1. **Scan order, Pick prompt and gating (revised after approval):** at each
+   table viewpoint the robot first scans with the Orbbec camera and announces
+   in Mandarin, with the arm still in its navigation pose. Only if that scan
+   saw something does it move the arm to `pick45`. It then scans again with
+   the RealSense camera and starts its Pick. The Pick prompt is the nearest
+   label from the RealSense scan.
+   - No Orbbec detections: a miss at that viewpoint, and the arm does not
+     move.
+   - Orbbec saw something but the RealSense scan finds nothing: a miss
+     (cleanup stows the arm).
+   - The RealSense scan does not announce again, so each viewpoint is
+     announced once.
 2. **Table pose:** saved pose `pick45`.
 3. **Pre-open:** keep a separate, strictly checked gripper open before every
    Pick attempt, as the voice note says, even though TK27's Pick also opens.
@@ -64,12 +72,23 @@ validation step 3 checks this.
 ## New grasp tree (per table viewpoint, `--grasp`)
 
 ```text
+Sequence "Viewpoint scan then grasp"
+  Clear hg_scan_result                   # no stale detections from a prior pose
+  Selector "Scan or nothing seen"
+    Scan and announce                    # Orbbec, arm still in navigation pose;
+                                         #   same subtree as ground/--no-grasp
+    Success "Nothing seen"
+  Selector "Grasp only if seen"
+    Inverter(Scan saw objects?)          # nothing seen -> skip, arm never moves
+    <Scan and grasp with failure cleanup, below>
+
 Selector "Scan and grasp with failure cleanup"
   Sequence attempt
     SavedPose(pick45)                    # replaces MoveArmSingle(table joints)
-    Scan objects with YOLO26 SAM         # RealSense, no image/mask payload
-    Announce or log failure              # unchanged (audit fix A)
-    Select nearest detected label        # objects[0].cls -> hg_target_label
+    Scan objects with RealSense          # yolo26_sam again, prompt = task prompt,
+                                         #   no image/mask payload, no announce
+    Select nearest detected label        # objects[0].cls of the RealSense scan
+                                         #   -> hg_target_label
     Retry(grasp_retry_limit)
       Sequence
         Open gripper (strict)
@@ -81,6 +100,9 @@ Selector "Scan and grasp with failure cleanup"
     Report miss / failure                # unchanged semantics
 ```
 
+- An Orbbec miss never reaches the cleanup branch, so a failed cleanup stow
+  can still stop the run (the audit fix is kept). The "Scan or nothing seen"
+  Selector catches only the Orbbec scan.
 - Each Retry round sends a fresh open and a fresh Pick goal.
 - Everything else in the mission keeps its shape: stop at first grasp,
   holding flag, delivery and drop rules, `--part` independence.
@@ -148,8 +170,13 @@ because the voice note fixes it.
 - Mock mode reuses existing mock-config entries (`mock_config_name`):
   Pick → `BtNode_Grasp`, saved pose → `BtNode_MoveArmSingle`,
   gripper → `BtNode_GripperAction`. `mock_config.json` is not edited.
-- The table scan stays on RealSense, which is the camera that sees the table
-  in the table pose. It now asks for no images or masks.
+- The Orbbec and RealSense scans write separate blackboard keys
+  (`hg_scan_result`, `hg_grasp_scan_result`), so the label Pick receives
+  always comes from the RealSense scan made at `pick45`. Neither scan asks
+  for images or masks.
+- The RealSense scan uses the task prompt (every configured label), not
+  only the labels Orbbec announced, so a label Orbbec missed can still be
+  picked.
 - No startup check that `pick45.yaml` exists. The server's
   `export_directory` may differ from the source tree, so this is a
   live-validation step instead.
