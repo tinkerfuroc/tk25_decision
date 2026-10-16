@@ -60,4 +60,3 @@ run "$SESSION:bt" "echo 'Run the BT by hand once both manipulation GPU workers r
 tmux select-window -t "$SESSION:manip"
 echo "[hg] Session '$SESSION' created (BT not started). Attach: tmux a -t $SESSION"
 echo "[hg] Then, in window 'bt': ros2 run behavior_tree hangzhougrasp --map <map> --enter-room <room> --grasp"
-echo "[hg] NOTE: until the TK27 grasp change lands, --grasp still waits for TK25's joint_move_action/start_grasp and blocks at setup with this stack; --no-grasp is unaffected."
