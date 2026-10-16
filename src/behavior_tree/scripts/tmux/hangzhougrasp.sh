@@ -37,7 +37,7 @@ run "$SESSION:drivers" "ros2 launch navigation_bringup driver.launch.py"
 if [ -n "$DEV" ]; then
     add "$SESSION:drivers" "ros2 run pan_tilt controller --ros-args -p device:=$DEV"
 fi
-add "$SESSION:drivers" "ros2 run pan_tilt state_publisher"
+add "$SESSION:drivers" "ros2 run pan_tilt state_publisher --ros-args -p joint_state_topic:=/pan_tilt/joint_states"
 retile "$SESSION:drivers"
 
 new_window "$SESSION" "vision"
