@@ -143,12 +143,31 @@ def test_grasp_part_without_enable_grasp_fails(config, name):
         createPart(name, config, enable_grasp=False, **ARGS)
 
 
-def test_room_part_arms_to_nav_first_only_when_grasping(config):
-    on = _build(config, "room")
-    assert [n.name for n in on.children][-2:] == [
-        "Retry Arm to nav before first navigation", "Room bedroom"]
-    off = createPart("room", config, enable_grasp=False, room="bedroom")
+def _first_index(root, pred):
+    return next(i for i, n in enumerate(root.iterate()) if pred(n))
+
+
+@pytest.mark.parametrize("at", [None, "bedroom_table_0_1"])
+def test_room_part_arms_to_nav_before_first_goto(config, at):
+    on = _build(config, "room", at=at)
+    arm = _first_index(on, lambda n: n.name == "Arm to nav before first navigation")
+    goto = _first_index(on, lambda n: isinstance(n, task.BtNode_GotoAction))
+    assert arm < goto
+    off = createPart("room", config, enable_grasp=False, room="bedroom", at=at)
     assert not any("Arm to nav before" in n.name for n in off.iterate())
+
+
+@pytest.mark.parametrize("name", ["scan-grasp", "visit-table", "deliver"])
+def test_grasp_parts_with_at_arm_before_first_goto(config, name):
+    root = _build(config, name, at="bedroom_table_0_1")
+    arm = _first_index(root, lambda n: isinstance(n, task.BtNode_MoveArmSingle))
+    goto = _first_index(root, lambda n: isinstance(n, task.BtNode_GotoAction))
+    assert arm < goto
+    assert arm_key_written(root)
+
+
+def arm_key_written(root):
+    return "Write arm navigating" in _writes(root)
 
 
 @pytest.mark.parametrize("name", ["room", "ground"])
@@ -157,9 +176,10 @@ def test_room_and_ground_build_without_grasp(config, name):
     for cls in (task.BtNode_MoveArmSingle, task.BtNode_Grasp,
                 task.BtNode_GripperAction):
         assert not _classes(root, cls)
-    assert _writes(root) == ["Write kitchen_table_0_0", "Write kitchen_ground_0_0",
-                             "Write point_area"] or name == "ground"
-    if name == "ground":
+    if name == "room":
+        assert _writes(root) == ["Write kitchen_table_0_0",
+                                 "Write kitchen_ground_0_0", "Write point_area"]
+    else:
         assert _writes(root) == ["Write kitchen_ground_0_0"]
 
 

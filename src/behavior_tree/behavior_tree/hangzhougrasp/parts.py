@@ -135,13 +135,17 @@ def createPart(name, config, *, enable_grasp, room=None, table=None,
         arm_nav = arm_table = enable_grasp
         body = task.createRoom(config, room, stops, enable_grasp=enable_grasp)
 
+    # The arm must be in its navigation pose before the part navigates at all
+    # (full tree does the same); deliver/drop-elsewhere do it in their own subtree.
+    arm_first = enable_grasp and (name in ("room", "visit-table") or bool(at))
+    arm_nav = arm_nav or arm_first
     root = py_trees.composites.Sequence(name=f"Part {name}", memory=True)
     root.add_child(_writer(config, ([at] if at else []) + poses,
                            arm_nav=arm_nav, arm_table=arm_table))
-    if at:
-        root.add_child(_goto(config, at))
-    if name == "room" and enable_grasp:
+    if arm_first:
         root.add_child(task._moveArmRetry(
             "Arm to nav before first navigation", KEY_ARM_NAVIGATING, config))
+    if at:
+        root.add_child(_goto(config, at))
     root.add_child(body)
     return root
