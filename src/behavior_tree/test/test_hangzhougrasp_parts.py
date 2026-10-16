@@ -15,6 +15,9 @@ from behavior_tree.hangzhougrasp import hangzhougrasp as task
 from behavior_tree.hangzhougrasp.parts import PARTS, createPart
 from behavior_tree.hangzhougrasp.pose_index import PoseIndex
 from behavior_tree.hangzhougrasp.route import build_route
+from behavior_tree.hangzhougrasp.tk27_nodes import (
+    BtNode_Tk27GripperOpen, BtNode_Tk27Pick, BtNode_Tk27SavedPose,
+)
 
 BB = py_trees.blackboard.Blackboard
 
@@ -79,25 +82,69 @@ def test_each_part_builds_alone(config, name):
     assert isinstance(_build(config, name), py_trees.behaviour.Behaviour)
 
 
+TK27_LEAVES = (BtNode_Tk27SavedPose, BtNode_Tk27Pick, BtNode_Tk27GripperOpen)
+
+
 def test_scan_announce_part_needs_no_manipulation_nodes(config):
     root = createPart("scan-announce", config, enable_grasp=False)
-    for cls in (task.BtNode_MoveArmSingle, task.BtNode_Grasp,
-                task.BtNode_GripperAction):
+    for cls in TK27_LEAVES:
         assert not _classes(root, cls)
     assert _classes(root, task.BtNode_ScanForYolo26)
 
 
 def test_scan_grasp_part_contains_grasp_and_cleanup(config):
     root = _build(config, "scan-grasp")
-    assert _classes(root, task.BtNode_Grasp)
+    assert _classes(root, BtNode_Tk27Pick)
     assert any(n.name == "Retract arm on failure" for n in root.iterate())
+    assert any(n.name == "Scan objects with YOLO26 SAM" for n in root.iterate())
 
 
 def test_visit_table_part_only_that_table(config):
     root = _build(config, "visit-table", table=0, at=None)
     gotos = [n.name for n in _classes(root, task.BtNode_GotoAction)]
     assert gotos == ["Go to bedroom_table_0_0", "Go to bedroom_table_0_1"]
-    assert not _classes(root, task.BtNode_GripperAction)
+    opens = [n.name for n in _classes(root, BtNode_Tk27GripperOpen)]
+    # only the pre-pick opens; visit-table never releases
+    assert opens == ["Open gripper before pick"] * 2
+
+
+def _grasp_trees(config):
+    trees = [_build(config, name) for name in sorted(PARTS)]
+    trees.append(task.createHangzhouGrasp(enable_grasp=True, config=config))
+    return trees
+
+
+def test_no_legacy_manipulation_in_grasp_trees(config):
+    from behavior_tree.TemplateNodes import Manipulation
+    legacy = (Manipulation.BtNode_Grasp, Manipulation.BtNode_MoveArmSingle,
+              Manipulation.BtNode_GripperAction)
+    for root in _grasp_trees(config):
+        for node in root.iterate():
+            assert not isinstance(node, legacy), node.name
+            assert getattr(node, "action_name", None) not in (
+                "start_grasp", "joint_move_action"), node.name
+    assert not hasattr(task, "BtNode_Grasp")
+    assert not hasattr(task, "BtNode_MoveArmSingle")
+
+
+def test_every_pick_preceded_by_open(config):
+    picks = 0
+    for root in _grasp_trees(config):
+        for node in root.iterate():
+            if isinstance(node, BtNode_Tk27Pick):
+                picks += 1
+                siblings = node.parent.children
+                assert isinstance(node.parent, py_trees.composites.Sequence)
+                previous = siblings[siblings.index(node) - 1]
+                assert isinstance(previous, BtNode_Tk27GripperOpen)
+                assert siblings.index(node) > 0
+    assert picks > 0
+
+
+def test_saved_poses_are_pick45_and_navigation(config):
+    root = task.createHangzhouGrasp(enable_grasp=True, config=config)
+    poses = {n.pose_name for n in _classes(root, BtNode_Tk27SavedPose)}
+    assert poses == {"pick45", "navigation"}
 
 
 def test_part_writes_only_poses_it_uses(config):
@@ -108,10 +155,9 @@ def test_part_writes_only_poses_it_uses(config):
     assert _writes(root) == []
 
 
-def test_deliver_writes_destination_and_arm_only(config):
+def test_deliver_writes_destination_only(config):
     root = _build(config, "deliver", at=None)
-    assert sorted(_writes(root)) == [
-        "Write arm navigating", "Write point_area"]
+    assert _writes(root) == ["Write point_area"]
 
 
 def test_missing_arguments_fail(config):
@@ -157,7 +203,7 @@ def test_room_part_arms_to_nav_before_first_goto(config, at, name):
     arm = _first_index(on, lambda n: n.name == "Arm to nav before first navigation")
     goto = _first_index(on, lambda n: isinstance(n, task.BtNode_GotoAction))
     assert arm < goto
-    assert arm_key_written(on)
+    assert first_arm_is_navigation(on)
     off = createPart(name, config, enable_grasp=False, room="bedroom", at=at)
     assert not any("Arm to nav before" in n.name for n in off.iterate())
 
@@ -165,21 +211,21 @@ def test_room_part_arms_to_nav_before_first_goto(config, at, name):
 @pytest.mark.parametrize("name", ["scan-grasp", "visit-table", "deliver"])
 def test_grasp_parts_with_at_arm_before_first_goto(config, name):
     root = _build(config, name, at="bedroom_table_0_1")
-    arm = _first_index(root, lambda n: isinstance(n, task.BtNode_MoveArmSingle))
+    arm = _first_index(root, lambda n: isinstance(n, BtNode_Tk27SavedPose))
     goto = _first_index(root, lambda n: isinstance(n, task.BtNode_GotoAction))
     assert arm < goto
-    assert arm_key_written(root)
+    assert first_arm_is_navigation(root)
 
 
-def arm_key_written(root):
-    return "Write arm navigating" in _writes(root)
+def first_arm_is_navigation(root):
+    first = next(n for n in root.iterate() if isinstance(n, BtNode_Tk27SavedPose))
+    return first.pose_name == "navigation"
 
 
 @pytest.mark.parametrize("name", ["room", "ground"])
 def test_room_and_ground_build_without_grasp(config, name):
     root = createPart(name, config, enable_grasp=False, room="kitchen")
-    for cls in (task.BtNode_MoveArmSingle, task.BtNode_Grasp,
-                task.BtNode_GripperAction):
+    for cls in TK27_LEAVES + (task.BtNode_SetHolding,):
         assert not _classes(root, cls)
     if name == "room":
         assert _writes(root) == ["Write kitchen_table_0_0",
@@ -191,8 +237,7 @@ def test_room_and_ground_build_without_grasp(config, name):
 # Keys a part's own subtree writes while it runs; every other hg_ key a part
 # reads must come from that part's constants writer.
 RUNTIME_KEYS = {cfg.KEY_SCAN_RESULT, cfg.KEY_GRASP_SCAN_RESULT,
-                cfg.KEY_GRASP_VISION_RES, cfg.KEY_TARGET_LABEL,
-                cfg.KEY_GRASP_LABEL, cfg.KEY_ANNOUNCEMENT, cfg.KEY_HOLDING}
+                cfg.KEY_TARGET_LABEL, cfg.KEY_ANNOUNCEMENT, cfg.KEY_HOLDING}
 Access = py_trees.common.Access
 Status = py_trees.common.Status
 
@@ -258,16 +303,12 @@ def _stub(reads=(), writes=()):
             return [self.kw.get(k) for k in writes if self.kw.get(k)]
 
         def _value(self, key):
-            return _scan_response() if key != self.kw.get("bb_key_object_label") else "cup"
+            return _scan_response()
     return S
 
 
 def _goto(name, key, **kw):
     return _stub(reads=["key"])(name=name, key=key)
-
-
-def _move(name, arm_pose_bb_key, **kw):
-    return _stub(reads=["arm_pose_bb_key"])(name=name, arm_pose_bb_key=arm_pose_bb_key)
 
 
 @pytest.mark.parametrize("name", sorted(PARTS))
@@ -288,14 +329,14 @@ def _tick_stubbed(config, monkeypatch, name):
     BB.clear()
     MISSING.clear()
     monkeypatch.setattr(task, "BtNode_GotoAction", _goto)
-    monkeypatch.setattr(task, "BtNode_MoveArmSingle", _move)
+    monkeypatch.setattr(task, "BtNode_Tk27SavedPose", lambda **kw: _stub()(**kw))
     monkeypatch.setattr(task, "BtNode_ScanForYolo26", lambda **kw: _stub(
         reads=["bb_source"], writes=["bb_key"])(**kw))
     monkeypatch.setattr(task, "BtNode_AnnounceDetections", lambda **kw: _stub(
         reads=["bb_source"], writes=["bb_text_key"])(**kw))
-    monkeypatch.setattr(task, "BtNode_Grasp", lambda **kw: _stub(
-        reads=["bb_key_vision_res", "bb_key_object_label"])(**kw))
-    monkeypatch.setattr(task, "BtNode_GripperAction", lambda **kw: _stub()(**kw))
+    monkeypatch.setattr(task, "BtNode_Tk27Pick", lambda **kw: _stub(
+        reads=["prompt_bb_key"])(**kw))
+    monkeypatch.setattr(task, "BtNode_Tk27GripperOpen", lambda **kw: _stub()(**kw))
     monkeypatch.setattr(task, "BtNode_Announce", lambda **kw: _stub()(**kw))
     root = _build(config, name)
     # every hg_ key read is written inside the part: its writer or runtime keys

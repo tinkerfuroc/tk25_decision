@@ -3,9 +3,9 @@ from types import SimpleNamespace
 import py_trees
 
 from behavior_tree.TemplateNodes.Audio import BtNode_AnnounceDetections
-from behavior_tree.TemplateNodes.Manipulation import BtNode_MoveArmSingle
 from behavior_tree.TemplateNodes.Vision import BtNode_ScanForYolo26
-from behavior_tree.hangzhougrasp.hangzhougrasp import createScanAnnounce
+from behavior_tree.hangzhougrasp.hangzhougrasp import createScanAnnounce, createGrasp
+from behavior_tree.hangzhougrasp.tk27_nodes import BtNode_Tk27SavedPose
 
 
 def _config():
@@ -13,7 +13,12 @@ def _config():
         detection_service="object_detection_yolo26_sam", prompt="cup",
         label_map={"cup": "杯子"}, announce_service="announce",
         scan_retry_limit=2, arm_retry_limit=2, announce_retry_limit=2,
-        arm_action="arm_action",
+        grasp_retry_limit=2, saved_pose_action="/manipulation/move_to_saved_pose",
+        arm_pose_table="pick45", arm_pose_navigating="navigation",
+        pick_action="/manipulation/pick", pick_plan_effort="high",
+        gripper_action="/xarm_gripper/gripper_action",
+        gripper_open_position=0.0, gripper_open_tolerance=0.025,
+        gripper_max_effort=50.0,
     )
 
 
@@ -31,17 +36,26 @@ def test_scan_announce_uses_yolo26_sam_and_orbbec():
 def test_scan_announce_has_announce_node():
     root = createScanAnnounce(_config())
     assert len(_nodes(root, BtNode_AnnounceDetections)) == 1
-    assert not _nodes(root, BtNode_MoveArmSingle)
+    assert not _nodes(root, BtNode_Tk27SavedPose)
 
 
-def test_grasp_variant_requests_payload_and_moves_arm():
-    root = createScanAnnounce(_config(), grasp=True)
-    scan = _nodes(root, BtNode_ScanForYolo26)[0]
-    assert scan.return_rgb_image and scan.return_depth_image
-    assert scan.return_segments
+def test_scans_request_no_image_payload():
+    for root in (createScanAnnounce(_config()), createGrasp(_config())):
+        for scan in _nodes(root, BtNode_ScanForYolo26):
+            assert not (scan.return_rgb_image or scan.return_depth_image
+                        or scan.return_segments)
+
+
+def test_grasp_scan_is_realsense_after_table_pose():
+    root = createGrasp(_config())
     order = [n for n in root.iterate()
-             if isinstance(n, (BtNode_MoveArmSingle, BtNode_ScanForYolo26))]
-    assert isinstance(order[0], BtNode_MoveArmSingle)
+             if isinstance(n, (BtNode_Tk27SavedPose, BtNode_ScanForYolo26))]
+    assert isinstance(order[0], BtNode_Tk27SavedPose)
+    assert order[0].pose_name == "pick45"
+    assert isinstance(order[1], BtNode_ScanForYolo26)
+    assert not order[1].use_orbbec
+    assert order[1].object == "cup"
+    assert not _nodes(root, BtNode_AnnounceDetections)
 
 
 # ---- a speech failure is logged, not a miss ----
@@ -67,12 +81,10 @@ def _tick(root):
     return root.status
 
 
-@pytest.mark.parametrize("grasp", [False, True])
-def test_announce_failure_is_logged_and_scan_still_succeeds(monkeypatch, grasp):
+def test_announce_failure_is_logged_and_scan_still_succeeds(monkeypatch):
     monkeypatch.setattr(task, "BtNode_ScanForYolo26", _leaf(Status.SUCCESS))
     monkeypatch.setattr(task, "BtNode_AnnounceDetections", _leaf(Status.FAILURE))
-    monkeypatch.setattr(task, "BtNode_MoveArmSingle", _leaf(Status.SUCCESS))
-    root = createScanAnnounce(_config(), grasp=grasp)
+    root = createScanAnnounce(_config())
     assert _tick(root) == Status.SUCCESS
     logged = [n for n in root.iterate() if n.name == "Log announce failure"]
     assert len(logged) == 1 and logged[0].status == Status.SUCCESS

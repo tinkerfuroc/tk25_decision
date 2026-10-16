@@ -1,4 +1,4 @@
-"""HangzhouGrasp composition, bounded retries and grasp payload contracts."""
+"""HangzhouGrasp composition and bounded retries."""
 
 from collections import Counter
 import json
@@ -9,14 +9,10 @@ import pytest
 
 from pathlib import Path as _Path
 TEST_CONFIG = str(_Path(__file__).with_name("hangzhougrasp_test_config.json"))
-from sensor_msgs.msg import Image
 from std_msgs.msg import Header
-from tinker_vision_msgs_26.msg import Object
-from tinker_vision_msgs_26.srv import ObjectDetectionGeneralist
 
 from behavior_tree.hangzhougrasp import hangzhougrasp as task
 from behavior_tree.hangzhougrasp import config as cfg
-from behavior_tree.hangzhougrasp.custom_nodes import BtNode_SelectGraspTarget
 
 Status = py_trees.common.Status
 BB = py_trees.blackboard.Blackboard
@@ -64,19 +60,6 @@ def _with_rooms(conf, rooms, poses):
     from behavior_tree.hangzhougrasp.route import build_route
     return dataclasses.replace(
         conf, rooms=list(rooms), route=build_route(PoseIndex(poses), rooms))
-
-
-def result(labels=("bottle", "cup")):
-    rgb = Image(height=2, width=2, encoding="bgr8", step=6, data=bytes([1] * 12))
-    depth = Image(height=2, width=2, encoding="16UC1", step=4, data=bytes([1] * 8))
-    return ObjectDetectionGeneralist.Response(
-        status=0, header=Header(frame_id="camera_optical_frame"),
-        objects=[Object(cls=label) for label in labels],
-        segments=[Image(height=2, width=2, encoding="8UC1", step=2,
-                        data=bytes([255 - i] * 4)) for i, _ in enumerate(labels)],
-        rgb_image=rgb, depth_image=depth, detection_source="yolo",
-    )
-
 
 
 def _nodes(root, cls):
@@ -162,8 +145,8 @@ def test_room_with_only_tables():
 
 def test_no_grasp_builds_no_manipulation_nodes(config):
     root = task.createHangzhouGrasp(config=config, enable_grasp=False)
-    banned = (task.BtNode_MoveArmSingle, task.BtNode_Grasp,
-              task.BtNode_GripperAction, task.BtNode_SetHolding)
+    banned = (task.BtNode_Tk27SavedPose, task.BtNode_Tk27Pick,
+              task.BtNode_Tk27GripperOpen, task.BtNode_SetHolding)
     assert not _nodes(root, banned)
     assert len(_nodes(root, task.BtNode_ScanForYolo26)) == 5
     assert not any("Deliver" in n.name or "Drop" in n.name for n in root.iterate())
@@ -173,13 +156,13 @@ def test_ground_phase_has_no_grasp(config):
     root = task.createHangzhouGrasp(config=config, enable_grasp=True)
     for room in ("bedroom", "kitchen"):
         ground = _by_name(_by_name(root, f"Room {room}"), "Ground phase")
-        assert not _nodes(ground, task.BtNode_Grasp)
-        assert not _nodes(ground, task.BtNode_MoveArmSingle)
+        assert not _nodes(ground, task.BtNode_Tk27Pick)
+        assert not _nodes(ground, task.BtNode_Tk27SavedPose)
         assert len(_nodes(ground, task.BtNode_ScanForYolo26)) == 1
 
 
 def test_constants_cover_route_and_destination(config):
-    writer = task.createConstantWriter(config, enable_grasp=False)
+    writer = task.createConstantWriter(config)
     names = {n.name for n in writer.children}
     assert "Write point_area" in names and "Write kitchen_table_0_0" in names
     assert len(writer.children) == 6
@@ -227,49 +210,6 @@ def test_ground_miss_is_success_and_navigation_retries_bounded(
             break
     assert root.status == Status.FAILURE
     assert counts["Go to bedroom_table_0_0"] == config.nav_retry_limit
-
-
-def selector():
-    return BtNode_SelectGraspTarget("Select", "scan", "selected", "label")
-
-
-def test_nearest_mask_and_original_response_preserved():
-    source = result()
-    BB.set("scan", source)
-    assert selector().update() == Status.SUCCESS
-    selected = BB.get("selected")
-    assert selected is not source
-    assert [o.cls for o in selected.objects] == ["bottle"]
-    assert selected.segments == [source.segments[0]]
-    assert selected.rgb_image == source.rgb_image
-    assert selected.depth_image == source.depth_image
-    assert len(source.objects) == len(source.segments) == 2
-    assert BB.get("label") == "bottle"
-
-
-@pytest.mark.parametrize("bad", ["empty", "mask_count", "size", "no_rgb", "no_frame", "zero_mask"])
-def test_invalid_grasp_bundle_clears_old_target(bad):
-    node = selector()
-    BB.set("scan", result())
-    assert node.update() == Status.SUCCESS
-    value = result()
-    if bad == "empty":
-        value.objects = []
-    elif bad == "mask_count":
-        value.segments = []
-    elif bad == "size":
-        value.depth_image.width = 3
-    elif bad == "no_rgb":
-        value.rgb_image.data = b""
-    elif bad == "no_frame":
-        value.header.frame_id = ""
-    else:
-        value.segments[0].data = bytes(4)
-    BB.set("scan", value)
-    assert node.update() == Status.FAILURE
-    assert BB.get("selected") is None and BB.get("label") == ""
-
-
 
 
 def test_table_stop_then_ground_drop_elsewhere_targets_first_ground(goto_keys):

@@ -335,3 +335,13 @@ def test_unknown_key_in_map_entry_rejected(tmp_path):
     path.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="unknown keys.*destination"):
         cfg.load_config(str(path), poses=POSES)
+
+
+def test_cli_grasp_print_tree_uses_tk27(conf_path, capsys):
+    cli.main(["--config", conf_path, "--grasp", "--print-tree"])
+    out = capsys.readouterr().out
+    for name in ("Pick selected object", "Arm to table pose",
+                 "Open gripper before pick", "Scan table with RealSense"):
+        assert name in out
+    assert "Grasp selected object" not in out
+    assert out.index("Scan objects with YOLO26 SAM") < out.index("Arm to table pose")

@@ -37,24 +37,6 @@
       }
     }
   },
-  "arm_pos_navigating": [
-    -15,
-    -44,
-    12,
-    65,
-    5,
-    -55,
-    8
-  ],
-  "arm_pos_table": [
-    0,
-    -43,
-    4,
-    73,
-    0,
-    71,
-    5
-  ],
   "prompt": "coke",
   "label_map": {
     "coke": "可乐"
@@ -62,8 +44,15 @@
   "detection_service": "object_detection_yolo26_sam",
   "announce_service": "announce",
   "navigation_action": "navigate_to_pose",
-  "arm_action": "joint_move_action",
-  "grasp_action": "start_grasp",
+  "pick_action": "/manipulation/pick",
+  "saved_pose_action": "/manipulation/move_to_saved_pose",
+  "gripper_action": "/xarm_gripper/gripper_action",
+  "pick_plan_effort": "high",
+  "arm_pose_navigating": "navigation",
+  "arm_pose_table": "pick45",
+  "gripper_open_position": 0.0,
+  "gripper_open_tolerance": 0.025,
+  "gripper_max_effort": 50.0,
   "nav_retry_limit": 3,
   "scan_retry_limit": 5,
   "arm_retry_limit": 3,

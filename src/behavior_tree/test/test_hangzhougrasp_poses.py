@@ -177,3 +177,59 @@ def test_prompt_label_without_mandarin_name_fails(prompt):
 def test_prompt_labels_with_mandarin_names_pass(prompt):
     c = hgcfg.load_config(TEST_CONFIG, enter_room="bedroom", prompt=prompt, poses=POSES)
     assert c.label_map == {"coke": "可乐"}
+
+
+# ---- TK27 manipulation config ----
+def test_tk27_config_defaults():
+    c = hgcfg.load_config(TEST_CONFIG, enter_room="bedroom", poses=POSES)
+    assert c.pick_action == "/manipulation/pick"
+    assert c.saved_pose_action == "/manipulation/move_to_saved_pose"
+    assert c.gripper_action == "/xarm_gripper/gripper_action"
+    assert c.pick_plan_effort == "high"
+    assert c.arm_pose_navigating == "navigation"
+    assert c.arm_pose_table == "pick45"
+    assert c.gripper_open_position == 0.0
+    assert c.gripper_open_tolerance == 0.025
+    assert c.gripper_max_effort == 50.0
+    for old in ("arm_pos_navigating", "arm_pos_table", "arm_action", "grasp_action"):
+        assert not hasattr(c, old)
+
+
+@pytest.mark.parametrize("key", [
+    "arm_pos_navigating", "arm_pos_table", "arm_action", "grasp_action"])
+def test_old_arm_keys_rejected(tmp_path, key):
+    with pytest.raises(ValueError, match="Unknown"):
+        hgcfg.load_config(_write(tmp_path, **{key: "x"}), poses=POSES)
+
+
+@pytest.mark.parametrize("effort, ok", [
+    ("low", True), ("medium", True), ("high", True), ("auto", True),
+    ("max", False), ("", False), ("HIGH", False)])
+def test_plan_effort_validated(tmp_path, effort, ok):
+    path = _write(tmp_path, pick_plan_effort=effort)
+    if ok:
+        assert hgcfg.load_config(path, poses=POSES).pick_plan_effort == effort
+    else:
+        with pytest.raises(ValueError, match="pick_plan_effort"):
+            hgcfg.load_config(path, poses=POSES)
+
+
+@pytest.mark.parametrize("key, value", [
+    ("gripper_open_tolerance", 0), ("gripper_open_tolerance", -0.1),
+    ("gripper_open_tolerance", True), ("gripper_max_effort", 0),
+    ("gripper_max_effort", -1), ("gripper_open_position", "0.0"),
+    ("gripper_open_position", "inf")])
+def test_gripper_numbers_validated(tmp_path, key, value):
+    path = _write(tmp_path, **{key: value})
+    if value == "inf":  # JSON cannot hold inf; write the token json accepts
+        path.write_text(path.read_text().replace('"inf"', "Infinity"))
+    with pytest.raises(ValueError, match=key):
+        hgcfg.load_config(path, poses=POSES)
+
+
+@pytest.mark.parametrize("key", [
+    "arm_pose_table", "arm_pose_navigating", "pick_action",
+    "saved_pose_action", "gripper_action"])
+def test_tk27_names_nonempty(tmp_path, key):
+    with pytest.raises(ValueError, match=key):
+        hgcfg.load_config(_write(tmp_path, **{key: " "}), poses=POSES)

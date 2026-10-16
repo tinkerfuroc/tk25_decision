@@ -6,22 +6,21 @@ import py_trees
 
 from behavior_tree.TemplateNodes.Audio import BtNode_Announce, BtNode_AnnounceDetections
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
-from behavior_tree.TemplateNodes.Manipulation import (
-    BtNode_GripperAction, BtNode_Grasp, BtNode_MoveArmSingle,
-)
 from behavior_tree.TemplateNodes.Navigation import BtNode_GotoAction
 from behavior_tree.TemplateNodes.Vision import BtNode_ScanForYolo26
 
 from .config import (
-    KEY_ARM_NAVIGATING, KEY_ARM_TABLE,
-    KEY_SCAN_RESULT, KEY_GRASP_SCAN_RESULT, KEY_GRASP_VISION_RES,
-    KEY_TARGET_LABEL, KEY_GRASP_LABEL, KEY_ANNOUNCEMENT, KEY_HOLDING,
-    load_config, pose_key,
+    KEY_SCAN_RESULT, KEY_GRASP_SCAN_RESULT, KEY_TARGET_LABEL,
+    KEY_ANNOUNCEMENT, KEY_HOLDING, load_config, pose_key,
 )
-from .custom_nodes import BtNode_LogError, BtNode_SelectGraspTarget, BtNode_SetHolding
+from .custom_nodes import (
+    BtNode_ClearKey, BtNode_LogError, BtNode_ScanSawObjects,
+    BtNode_SelectNearestLabel, BtNode_SetHolding,
+)
+from .tk27_nodes import BtNode_Tk27GripperOpen, BtNode_Tk27Pick, BtNode_Tk27SavedPose
 
 
-def createConstantWriter(config, *, enable_grasp=False):
+def createConstantWriter(config):
     root = py_trees.composites.Parallel(
         name="Write HangzhouGrasp constants",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(),
@@ -34,11 +33,6 @@ def createConstantWriter(config, *, enable_grasp=False):
         if name not in seen:
             seen.add(name)
             writes.append((f"Write {name}", pose_key(name), pose))
-    if enable_grasp:
-        writes.extend([
-            ("Write arm navigating", KEY_ARM_NAVIGATING, config.arm_pos_navigating),
-            ("Write arm table", KEY_ARM_TABLE, config.arm_pos_table),
-        ])
     for name, key, value in writes:
         root.add_child(BtNode_WriteToBlackboard(
             name=name, bb_namespace="", bb_source=None, bb_key=key, object=value,
@@ -46,14 +40,23 @@ def createConstantWriter(config, *, enable_grasp=False):
     return root
 
 
-def _moveArmRetry(name, arm_pose_key, config):
+def _savedPoseRetry(name, pose_name, config):
+    """TK27 MoveToSavedPose (avoid_collisions=False), bounded retries."""
     return py_trees.decorators.Retry(
         name=f"Retry {name}",
-        child=BtNode_MoveArmSingle(
-            name=name, action_name=config.arm_action,
-            arm_pose_bb_key=arm_pose_key, add_octomap=False,
+        child=BtNode_Tk27SavedPose(
+            name=name, pose_name=pose_name, action_name=config.saved_pose_action,
         ),
         num_failures=config.arm_retry_limit,
+    )
+
+
+def _gripperOpen(name, config):
+    return BtNode_Tk27GripperOpen(
+        name=name, action_name=config.gripper_action,
+        open_position=config.gripper_open_position,
+        open_tolerance=config.gripper_open_tolerance,
+        max_effort=config.gripper_max_effort,
     )
 
 
@@ -67,33 +70,31 @@ def _gotoRetry(name, pose_key, config):
     )
 
 
-def _scanYolo26Retry(name, config, *, bb_key, use_orbbec,
-                     bb_source=None, prompt=None, grasp_payload=False):
+def _scanYolo26Retry(name, config, *, bb_key, use_orbbec, prompt):
+    """yolo26_sam scan, nearest first. No images or masks: Pick observes itself."""
     return py_trees.decorators.Retry(
         name=f"Retry {name}",
         child=BtNode_ScanForYolo26(
-            name=name, bb_source=bb_source, bb_key=bb_key, object=prompt,
+            name=name, bb_source=None, bb_key=bb_key, object=prompt,
             service_name=config.detection_service, use_orbbec=use_orbbec,
             transform_to_map=False, sort_closest=True, sort_highest=False,
-            return_rgb_image=grasp_payload, return_depth_image=grasp_payload,
-            return_segments=grasp_payload,
+            return_rgb_image=False, return_depth_image=False,
+            return_segments=False,
         ),
         num_failures=config.scan_retry_limit,
     )
 
 
-def createScanAnnounce(config, *, grasp=False):
-    """Scan on yolo26_sam and announce; grasp=True adds arm pose + payload.
+def createScanAnnounce(config):
+    """Orbbec scan on yolo26_sam, then the Mandarin announcement.
 
     A scan with no detections FAILS; wrap in a Selector ending in
     py_trees.behaviours.Success where a miss must not abort the mission.
     """
     root = py_trees.composites.Sequence(name="Scan and announce objects", memory=True)
-    if grasp:
-        root.add_child(_moveArmRetry("Arm to table scan pose", KEY_ARM_TABLE, config))
     root.add_child(_scanYolo26Retry(
         "Scan objects with YOLO26 SAM", config, bb_key=KEY_SCAN_RESULT,
-        use_orbbec=not grasp, prompt=config.prompt, grasp_payload=grasp,
+        use_orbbec=True, prompt=config.prompt,
     ))
     announce = py_trees.decorators.Retry(
         name="Retry announce detected objects",
@@ -114,65 +115,86 @@ def createScanAnnounce(config, *, grasp=False):
 
 
 def createGrasp(config):
-    """Select once, then reacquire the chosen class before each grasp attempt."""
+    """pick45, RealSense gate and label, then open + TK27 Pick, then stow.
+
+    Each retry round re-sends the open and a fresh Pick goal; Pick does its
+    own observation, so the scan is not repeated.
+    """
     root = py_trees.composites.Sequence(name="Grasp nearest object", memory=True)
-    root.add_child(BtNode_SelectGraspTarget(
-        name="Select nearest detected object", bb_source=KEY_SCAN_RESULT,
-        bb_key=KEY_GRASP_VISION_RES, label_key=KEY_TARGET_LABEL,
+    root.add_child(_savedPoseRetry("Arm to table pose", config.arm_pose_table, config))
+    root.add_child(_scanYolo26Retry(
+        "Scan table with RealSense", config, bb_key=KEY_GRASP_SCAN_RESULT,
+        use_orbbec=False, prompt=config.prompt,
     ))
-    attempt = py_trees.composites.Sequence(name="Reacquire and grasp", memory=True)
-    attempt.add_child(_scanYolo26Retry(
-        "Reacquire selected label with RealSense", config,
-        bb_key=KEY_GRASP_SCAN_RESULT, use_orbbec=False,
-        bb_source=KEY_TARGET_LABEL, grasp_payload=True,
+    root.add_child(BtNode_SelectNearestLabel(
+        name="Select nearest label", bb_source=KEY_GRASP_SCAN_RESULT,
+        label_key=KEY_TARGET_LABEL,
     ))
-    attempt.add_child(BtNode_SelectGraspTarget(
-        name="Prepare fresh single-object grasp bundle",
-        bb_source=KEY_GRASP_SCAN_RESULT,
-        bb_key=KEY_GRASP_VISION_RES, label_key=KEY_GRASP_LABEL,
-    ))
-    attempt.add_child(BtNode_Grasp(
-        name="Grasp selected object", action_name=config.grasp_action,
-        bb_key_vision_res=KEY_GRASP_VISION_RES,
-        bb_key_object_label=KEY_GRASP_LABEL, use_mesh=True, stay=False,
+    attempt = py_trees.composites.Sequence(name="Open gripper then pick", memory=True)
+    # Voice note: always open before Pick; a failed open means no Pick.
+    attempt.add_child(_gripperOpen("Open gripper before pick", config))
+    attempt.add_child(BtNode_Tk27Pick(
+        name="Pick selected object", prompt_bb_key=KEY_TARGET_LABEL,
+        action_name=config.pick_action, plan_effort=config.pick_plan_effort,
     ))
     root.add_child(py_trees.decorators.Retry(
-        name="Retry reacquire and grasp", child=attempt,
+        name="Retry open and pick", child=attempt,
         num_failures=config.grasp_retry_limit,
     ))
-    # Holding is true the moment the grasp succeeds, even if the retract fails.
+    # Holding is true the moment Pick succeeds, even if the retract fails.
     root.add_child(BtNode_SetHolding(name="Set holding after grasp", value=True))
-    root.add_child(_moveArmRetry(
-        "Retract arm with object", KEY_ARM_NAVIGATING, config))
+    root.add_child(_savedPoseRetry(
+        "Retract arm with object", config.arm_pose_navigating, config))
     return root
 
 
 def createScanGraspWithCleanup(config, *, miss_is_success=False):
     """Selector cleanup like PickAndPlace.
 
-    The grasp sets holding as soon as it succeeds. On any failure the arm is
+    Pick sets holding as soon as it succeeds. On any failure the arm is
     retracted; if that retract succeeds the result is FAILURE (a recovered
     miss) unless miss_is_success, in which case SUCCESS. If the cleanup
     retract itself fails, FAILURE always propagates.
     """
-    attempt = py_trees.composites.Sequence(
-        name="Scan announce and grasp", memory=True,
-        children=[createScanAnnounce(config, grasp=True), createGrasp(config)],
-    )
     outcome = (py_trees.behaviours.Success(name="Report recovered miss")
                if miss_is_success else
                py_trees.behaviours.Failure(name="Report scan or grasp failure"))
     cleanup = py_trees.composites.Sequence(
         name="Retract on scan or grasp failure", memory=True,
         children=[
-            _moveArmRetry("Retract arm on failure", KEY_ARM_NAVIGATING, config),
+            _savedPoseRetry("Retract arm on failure", config.arm_pose_navigating,
+                            config),
             outcome,
         ],
     )
     return py_trees.composites.Selector(
         name="Scan and grasp with failure cleanup", memory=True,
-        children=[attempt, cleanup],
+        children=[createGrasp(config), cleanup],
     )
+
+
+def createViewpointScanGrasp(config, *, miss_is_success):
+    """Orbbec scan + announce with the arm stowed; grasp only if it saw objects.
+
+    An Orbbec miss never reaches the cleanup branch, so the arm does not move
+    and a failed cleanup stow can still fail the run.
+    """
+    root = py_trees.composites.Sequence(name="Viewpoint scan then grasp", memory=True)
+    root.add_child(BtNode_ClearKey(name="Clear previous scan result", key=KEY_SCAN_RESULT))
+    root.add_child(py_trees.composites.Selector(
+        name="Scan or nothing seen", memory=True,
+        children=[createScanAnnounce(config),
+                  py_trees.behaviours.Success(name="Nothing seen")]))
+    root.add_child(py_trees.composites.Selector(
+        name="Grasp only if seen", memory=True,
+        children=[
+            py_trees.decorators.Inverter(
+                name="Nothing to grasp",
+                child=BtNode_ScanSawObjects(
+                    name="Scan saw objects?", bb_source=KEY_SCAN_RESULT)),
+            createScanGraspWithCleanup(config, miss_is_success=miss_is_success),
+        ]))
+    return root
 
 
 def _holding_is_set():
@@ -197,7 +219,7 @@ def createVisitTable(config, viewpoints):
             name=f"Visit {rec.name}", memory=True)
         visit.add_child(_gotoRetry(
             f"Go to {rec.name}", pose_key(rec.name), config))
-        visit.add_child(createScanGraspWithCleanup(config, miss_is_success=True))
+        visit.add_child(createViewpointScanGrasp(config, miss_is_success=True))
         root.add_child(py_trees.composites.Selector(
             name=f"Skip or visit {rec.name}", memory=True,
             children=[_holding_is_set(), visit]))
@@ -206,15 +228,29 @@ def createVisitTable(config, viewpoints):
 
 def _release(name, config, goto_name, goto_key):
     root = py_trees.composites.Sequence(name=name, memory=True)
-    root.add_child(_moveArmRetry(
-        "Arm to navigation pose", KEY_ARM_NAVIGATING, config))
+    root.add_child(_savedPoseRetry(
+        "Arm to navigation pose", config.arm_pose_navigating, config))
     root.add_child(_gotoRetry(goto_name, goto_key, config))
     return root
 
 
-def _open_and_clear(root, where):
-    root.add_child(BtNode_GripperAction(
-        name=f"Open gripper at {where}", open_gripper=True))
+def _open_and_clear(root, where, config):
+    """Retry the release; if it still fails, log and go on (scans still score).
+
+    Holding is cleared either way, or every later viewpoint would be skipped.
+    """
+    root.add_child(py_trees.composites.Selector(
+        name=f"Release or log at {where}", memory=True,
+        children=[
+            py_trees.decorators.Retry(
+                name=f"Retry open gripper at {where}",
+                child=_gripperOpen(f"Open gripper at {where}", config),
+                num_failures=config.arm_retry_limit),
+            BtNode_LogError(
+                name=f"Log release failure at {where}",
+                message=f"Gripper did not open at {where} after retries; "
+                        "continuing the run"),
+        ]))
     root.add_child(BtNode_SetHolding(
         name=f"Clear holding after release at {where}", value=False))
 
@@ -223,7 +259,7 @@ def createDeliver(config):
     dest = config.destination_name
     root = _release("Deliver object", config, f"Go to destination {dest}",
                     pose_key(dest))
-    _open_and_clear(root, dest)
+    _open_and_clear(root, dest, config)
     return root
 
 
@@ -236,14 +272,14 @@ def createDropElsewhere(config, next_pose):
     root.add_child(BtNode_Announce(
         name="Announce unreachable drop target", bb_source=None,
         message="无法到达真正的放置位置，我将在这里放下物体。"))
-    _open_and_clear(root, next_pose.name)
+    _open_and_clear(root, next_pose.name, config)
     return root
 
 
 def _scan_or_miss(config, name):
     return py_trees.composites.Selector(
         name=f"Scan or miss at {name}", memory=True,
-        children=[createScanAnnounce(config, grasp=False),
+        children=[createScanAnnounce(config),
                   py_trees.behaviours.Success(name="Miss, skip")])
 
 
@@ -309,10 +345,10 @@ def createHangzhouGrasp(*, enable_grasp=False, config=None):
         raise TypeError("enable_grasp must be a boolean")
     config = config if config is not None else load_config()
     root = py_trees.composites.Sequence(name="HangzhouGrasp Root", memory=True)
-    root.add_child(createConstantWriter(config, enable_grasp=enable_grasp))
+    root.add_child(createConstantWriter(config))
     if enable_grasp:
-        root.add_child(_moveArmRetry(
-            "Arm to nav before first navigation", KEY_ARM_NAVIGATING, config))
+        root.add_child(_savedPoseRetry(
+            "Arm to nav before first navigation", config.arm_pose_navigating, config))
     route = config.route
     paired = [
         (stop, route[i + 1].viewpoints[0] if i + 1 < len(route) else None)

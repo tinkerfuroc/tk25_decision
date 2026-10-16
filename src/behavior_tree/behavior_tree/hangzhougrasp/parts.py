@@ -5,11 +5,11 @@ import py_trees
 from behavior_tree.TemplateNodes.BaseBehaviors import BtNode_WriteToBlackboard
 
 from . import hangzhougrasp as task
-from .config import KEY_ARM_NAVIGATING, KEY_ARM_TABLE, pose_key
+from .config import pose_key
 
 PARTS = {
     "scan-announce": "Scan with the Orbbec camera and announce where the robot stands (or after --at); never moves the arm to the table pose",
-    "scan-grasp": "Scan, announce, select and grasp, with failure cleanup (needs --grasp)",
+    "scan-grasp": "Orbbec scan and announce, then pick45, RealSense gate, open gripper and TK27 Pick, with failure cleanup (needs --grasp)",
     "visit-table": "All viewpoints of --room --table N without delivery (needs --grasp)",
     "deliver": "Arm to nav pose, go to the destination, open gripper (needs --grasp)",
     "drop-elsewhere": "Drop the object at --next-pose (needs --grasp)",
@@ -28,8 +28,8 @@ def _known_poses(config):
     return poses
 
 
-def _writer(config, pose_names, *, arm_nav=False, arm_table=False):
-    """Constants writer limited to the named poses (and chosen arm poses)."""
+def _writer(config, pose_names):
+    """Constants writer limited to the named poses."""
     known = _known_poses(config)
     root = py_trees.composites.Parallel(
         name="Write part constants",
@@ -39,11 +39,6 @@ def _writer(config, pose_names, *, arm_nav=False, arm_table=False):
         if name not in seen:
             seen.add(name)
             writes.append((f"Write {name}", pose_key(name), known[name]))
-    if arm_nav:
-        writes.append(("Write arm navigating", KEY_ARM_NAVIGATING,
-                       config.arm_pos_navigating))
-    if arm_table:
-        writes.append(("Write arm table", KEY_ARM_TABLE, config.arm_pos_table))
     for name, key, value in writes:
         root.add_child(BtNode_WriteToBlackboard(
             name=name, bb_namespace="", bb_source=None, bb_key=key, object=value))
@@ -96,27 +91,22 @@ def createPart(name, config, *, enable_grasp, room=None, table=None,
     if name == "full":
         return task.createHangzhouGrasp(enable_grasp=enable_grasp, config=config)
 
-    arm_nav = arm_table = False
     poses, body = [], None
     if name == "scan-announce":
-        body = task.createScanAnnounce(config, grasp=False)
+        body = task.createScanAnnounce(config)
     elif name == "scan-grasp":
-        arm_nav = arm_table = True
-        body = task.createScanGraspWithCleanup(config)
+        body = task.createViewpointScanGrasp(config, miss_is_success=False)
     elif name == "visit-table":
         stops = [s for s, _ in _room_stops(config, room)
                  if s.kind == "table" and s.viewpoints[0].n == table]
         if not stops:
             raise ValueError(f"room {room!r} has no table {table}")
-        arm_nav = arm_table = True
         poses = [rec.name for rec in stops[0].viewpoints]
         body = task.createVisitTable(config, stops[0].viewpoints)
     elif name == "deliver":
-        arm_nav = True
         poses = [config.destination_name]
         body = task.createDeliver(config)
     elif name == "drop-elsewhere":
-        arm_nav = True
         rec = next((r for s in config.route for r in s.viewpoints
                     if r.name == next_pose), None)
         if rec is None:  # the destination is a pose but not a route viewpoint
@@ -132,20 +122,17 @@ def createPart(name, config, *, enable_grasp, room=None, table=None,
         poses = _names(stops)
         poses += [p[1].name for p in stops[-1:] if p[1] is not None]
         poses.append(config.destination_name)
-        arm_nav = arm_table = enable_grasp
         body = task.createRoom(config, room, stops, enable_grasp=enable_grasp)
 
     # The arm must be in its navigation pose before the part navigates at all
     # (full tree does the same); deliver/drop-elsewhere do it in their own subtree.
     arm_first = enable_grasp and (
         name in ("room", "visit-table", "ground") or bool(at))
-    arm_nav = arm_nav or arm_first
     root = py_trees.composites.Sequence(name=f"Part {name}", memory=True)
-    root.add_child(_writer(config, ([at] if at else []) + poses,
-                           arm_nav=arm_nav, arm_table=arm_table))
+    root.add_child(_writer(config, ([at] if at else []) + poses))
     if arm_first:
-        root.add_child(task._moveArmRetry(
-            "Arm to nav before first navigation", KEY_ARM_NAVIGATING, config))
+        root.add_child(task._savedPoseRetry(
+            "Arm to nav before first navigation", config.arm_pose_navigating, config))
     if at:
         root.add_child(_goto(config, at))
     root.add_child(body)

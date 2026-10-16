@@ -15,13 +15,9 @@ from .route import build_route
 
 log = logging.getLogger(__name__)
 
-KEY_ARM_NAVIGATING = "hg_arm_navigating"
-KEY_ARM_TABLE = "hg_arm_table"
-KEY_SCAN_RESULT = "hg_scan_result"
-KEY_GRASP_SCAN_RESULT = "hg_grasp_scan_result"
-KEY_GRASP_VISION_RES = "hg_grasp_vision_result"
-KEY_TARGET_LABEL = "hg_target_label"
-KEY_GRASP_LABEL = "hg_grasp_label"
+KEY_SCAN_RESULT = "hg_scan_result"              # Orbbec scan at the viewpoint
+KEY_GRASP_SCAN_RESULT = "hg_grasp_scan_result"  # RealSense scan at the table pose
+KEY_TARGET_LABEL = "hg_target_label"            # Pick prompt
 KEY_ANNOUNCEMENT = "hg_announcement"
 KEY_HOLDING = "hg_holding"
 
@@ -38,15 +34,20 @@ class TaskConfig:
     destination_name: str
     destination: PoseStamped
     route: list
-    arm_pos_navigating: list
-    arm_pos_table: list
     label_map: dict
     prompt: str
     detection_service: str
     announce_service: str
     navigation_action: str
-    arm_action: str
-    grasp_action: str
+    pick_action: str
+    saved_pose_action: str
+    gripper_action: str
+    pick_plan_effort: str
+    arm_pose_navigating: str
+    arm_pose_table: str
+    gripper_open_position: float
+    gripper_open_tolerance: float
+    gripper_max_effort: float
     nav_retry_limit: int
     scan_retry_limit: int
     arm_retry_limit: int
@@ -80,6 +81,30 @@ def _report_unmatched(index, rooms, destination_name):
     if other:
         log.warning("Ignoring poses not named <room>_<table|ground>_<n>_<m>: %s",
                     other)
+
+
+PLAN_EFFORTS = ("low", "medium", "high", "auto")
+
+
+def _check_tk27(data):
+    """TK27 endpoints, saved-pose names, Pick effort and gripper-open numbers."""
+    for key in ("pick_action", "saved_pose_action", "gripper_action",
+                "arm_pose_navigating", "arm_pose_table"):
+        if not isinstance(data[key], str) or not data[key].strip():
+            raise ValueError(f"{key} must be a nonempty name")
+    if data["pick_plan_effort"] not in PLAN_EFFORTS:
+        raise ValueError(
+            f"pick_plan_effort must be one of {list(PLAN_EFFORTS)}, "
+            f"got {data['pick_plan_effort']!r}")
+    for key in ("gripper_open_position", "gripper_open_tolerance",
+                "gripper_max_effort"):
+        value = data[key]
+        if (type(value) not in (int, float) or not math.isfinite(value)):
+            raise ValueError(f"{key} must be a finite number, got {value!r}")
+        data[key] = float(value)
+    for key in ("gripper_open_tolerance", "gripper_max_effort"):
+        if data[key] <= 0:
+            raise ValueError(f"{key} must be positive, got {data[key]}")
 
 
 def _check_mandarin_names(prompt, label_map):
@@ -185,11 +210,7 @@ def load_config(path=None, *, map_name=None, enter_room=None, prompt=None,
     # Misnamed poses first, so a room holding only misnamed poses names them.
     _report_unmatched(index, data["rooms"], destination_name)
     data["route"] = build_route(index, data["rooms"])
-    for key in ("arm_pos_navigating", "arm_pos_table"):
-        values = data[key]
-        if len(values) != 7 or not all(math.isfinite(float(v)) for v in values):
-            raise ValueError(f"{key} requires seven finite joint angles in degrees")
-        data[key] = [math.radians(float(v)) for v in values]
+    _check_tk27(data)
     for key in ("nav_retry_limit", "scan_retry_limit", "arm_retry_limit",
                 "grasp_retry_limit", "announce_retry_limit"):
         if type(data[key]) is not int or data[key] < 1:
@@ -208,8 +229,7 @@ def load_config(path=None, *, map_name=None, enter_room=None, prompt=None,
         if not data["prompt"]:
             raise ValueError("a prompt or a nonempty label_map is required")
     _check_mandarin_names(data["prompt"], data["label_map"])
-    for key in ("detection_service", "announce_service", "navigation_action",
-                "arm_action", "grasp_action"):
+    for key in ("detection_service", "announce_service", "navigation_action"):
         if not isinstance(data[key], str) or not data[key].strip():
             raise ValueError(f"{key} must be a nonempty endpoint")
     return TaskConfig(**data)
