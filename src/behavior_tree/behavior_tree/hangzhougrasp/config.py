@@ -8,7 +8,7 @@ from pathlib import Path
 from geometry_msgs.msg import PoseStamped
 
 from .pose_index import PoseIndex
-from .route import Stop, build_route
+from .route import build_route
 
 
 KEY_ARM_NAVIGATING = "hg_arm_navigating"
@@ -128,4 +128,3 @@ def load_config(path=None, *, enter_room=None, prompt=None, poses=None):
         if not isinstance(data[key], str) or not data[key].strip():
             raise ValueError(f"{key} must be a nonempty endpoint")
     return TaskConfig(**data)
-

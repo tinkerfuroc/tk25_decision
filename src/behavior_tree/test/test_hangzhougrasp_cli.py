@@ -108,7 +108,6 @@ def test_cli_missing_pose_file_exits_nonzero(conf_path, monkeypatch):
     assert exc.value.code != 0
 
 
-
 def _write(tmp_path, profiles):
     path = tmp_path / "bad.json"
     path.write_text(json.dumps({"enter_profiles": profiles, "enter_room": "bedroom"}))
